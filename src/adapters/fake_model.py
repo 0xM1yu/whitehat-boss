@@ -481,8 +481,9 @@ def _build_pov_action(
 def _auditor_investigation(
     context: FakeContext, history: Sequence[ChatTurn]
 ) -> dict[str, object] | None:
-    """Auditor 툴 루프의 fake **조사 홉** (#419) — 두 봉투(`AuditorAction` ·
-    `AuditorProcedureAction`)가 같은 액션을 낸다. 홉을 `history` 길이로 가르고, `answer` 홉이면
+    """Auditor 툴 루프의 fake **조사 홉** (#419) — 루프 봉투 셋(`AuditorAction` ·
+    `AuditorProcedureAction` · ⏵ 2026-10-09 `AuditorProcedureNullableCweAction`)이 같은 액션을
+    낸다. 홉을 `history` 길이로 가르고, `answer` 홉이면
     `None`이다(그 홉의 최종 답은 봉투마다 다르다 — 호출한 빌더가 싣는다).
 
     hop0(history 빔)은 `lookup` — 대상 함수를 부르는 쪽(없으면 대상 자신)의 본문을 이름으로

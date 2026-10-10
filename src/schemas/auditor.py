@@ -26,7 +26,9 @@
   문자열이 도구 인자로 들어가지 않고, 같은 사실의 두 번째 데이터원이 생기지 않는다.
 
 v10 판은 최종 답으로 `Finding`이 아니라 `AuditProcedure`를 싣는 형제 봉투
-(`AuditorProcedureAction`)를 쓴다. 두 봉투의 공통 필드와 액션 규율은 베이스(`_AuditorEnvelope`)가
+(`AuditorProcedureAction`)를 쓴다(⏵ 2026-10-09 v11은 셋째 `AuditorProcedureNullableCweAction`).
+봉투의
+공통 필드와 액션 규율은 베이스(`_AuditorEnvelope`)가
 들고, `answer`가 싣는 필드 하나(`finding` ↔ `procedure`)와 `rationale`만 갈린다.
 """
 
@@ -68,7 +70,9 @@ _REQUIRED_BY_ACTION: dict[str, str] = {
 }
 
 
-# 두 봉투(`AuditorAction` · `AuditorProcedureAction`)의 공통 부분. **필드 선언 순서를 지킨다** —
+# 루프 봉투(`AuditorAction` · `AuditorProcedureAction` · ⏵ 2026-10-09
+# `AuditorProcedureNullableCweAction`)의
+# 공통 부분. **필드 선언 순서를 지킨다** —
 # pydantic은 베이스의 필드를 먼저 놓으므로 여기서 `rationale`을 선언하면 `finding`이 그 **뒤로**
 # 밀려 `AuditorAction`의 JSON 스키마(property 순서)가 바뀌고, 그것이 v8·v9 루프의 요청 바이트다
 # (evaluation §2.3). 그래서 베이스는 `action`·`requests`·`tool`·`spec`까지만 선언하고 `answer`의
@@ -77,7 +81,7 @@ _REQUIRED_BY_ACTION: dict[str, str] = {
 # 이 docstring은 요청 payload에 안 실린다 — 서브클래스가 각자 docstring을 든다(`description`은
 # 그 클래스 자신의 것만 나간다).
 class _AuditorEnvelope(HarnessModel):
-    """두 봉투가 공유하는 필드와 액션 규율."""
+    """루프 봉투가 공유하는 필드와 액션 규율."""
 
     # `answer`가 싣는 필드의 이름. 서브클래스가 정한다 — 아래 `__pydantic_init_subclass__`가
     # **클래스 정의 시점에** 그 이름이 실재하는 필드인지 본다. 미루면 그 위반이 첫 인스턴스화의
@@ -280,7 +284,8 @@ class AuditorProcedureAction(_AuditorEnvelope):
 #
 # ⏵ 2026-10-09 — `no_signal`은 뿌리 원인을 못 세운 판정이라 참인 CWE가 없는데, v8~v10의 계약은
 # 그때도 `CWE-<number>`를 요구해 **모델이 지어낸 값**이 SARIF `ruleId`와 보고서 중복 제거 키로
-# 갔다(CLAUDE.md §0). 사용자 결정(2026-10-09)으로 `no_signal`에 한해 null을 허용한다.
+# 갈 수 있었다(CLAUDE.md §0 — 실제로 지어냈는지는 미측정, D107 「관측」). 사용자
+# 결정(2026-10-09)으로 `no_signal`에 한해 null을 허용한다.
 #
 # **v10의 두 클래스(`AuditProcedure` · `AuditorProcedureAction`)는 고치지 않는다.** 그 JSON
 # 스키마가 v10의 요청 payload라(`AuditorProcedureAction`의 `$defs`) `cwe`를 `anyOf`로 넓히면 v10

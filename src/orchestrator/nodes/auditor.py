@@ -80,7 +80,8 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   「조회 실패」 관측으로 되먹인다(`runner._fuzz_entrypoint`의 같은 가드 — 보조 조회 하나가 run을
   멈추지 않는다).
 - **모델 문자열은 조회·도구 입력에 안 들어간다.** `lookup`은 resolver가 인덱스 표에서 푸는 이름이고,
-  `probe`는 스키마가 닫은 Literal(`AuditorTool` — 두 봉투가 공유한다)의 **이름만** argv에 넣는다.
+  `probe`는 스키마가 닫은 Literal(`AuditorTool` — 루프 봉투 셋이 공유한다, ⏵ 2026-10-09 v11 포함)의
+  **이름만** argv에 넣는다.
 - ⚠ **`probe`의 `spec`은 도구 입력이 아니다.** 지금 도구(`container_tools.plan()`의
   asan·gdb·poc)는 인자·stdin 없이 돈다 — `spec`으로 조립한 바이트는 sha256과 길이만 홉 이벤트에
   남고 도구에 안 간다. 모델에게도 관측에 그렇게 적는다(`_probe_observation`). ⏵ **2026-10-09 —
@@ -117,6 +118,7 @@ from src.schemas.auditor import (
     AuditorProcedureAction,
     AuditorProcedureNullableCweAction,
     AuditProcedure,
+    AuditProcedureNullableCwe,
 )
 from src.schemas.candidate import Candidate
 from src.schemas.capsule import ContextCapsule
@@ -157,9 +159,9 @@ _LOOP_ENVELOPES: tuple[type[_LoopEnvelope], ...] = (
     AuditorProcedureAction,
     AuditorProcedureNullableCweAction,
 )
-# 홉 하나가 든 값 — 두 봉투는 `action`·`requests`·`tool`·`spec`을 공유하므로(`schemas/auditor.py`의
-# 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·`_request_key`)는 둘을 같이
-# 받는다.
+# 홉 하나가 든 값 — 루프 봉투(⏵ 2026-10-09부터 셋)는 `action`·`requests`·`tool`·`spec`을 공유하므로
+# (`schemas/auditor.py`의 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·
+# `_request_key`)는 셋을 같이 받는다.
 _Hop = _LoopEnvelope
 
 # 이 역할이 낼 수 있는 구조화 출력 스키마 — `nodes/scout.py`의 같은 이름과 같은 패턴이다.
@@ -262,7 +264,8 @@ CALLERS_SECTION = "callers"
 # 196,736이고 **hop0를 빼고도 128토큰 넘는다**(계산값). hop0 입력 28,833(프롬프트 **v4**의 최악
 # 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06 v9, ⏵ 2026-10-07 v10) prefix가 훨씬 길다:
 # v8 33,209자 · v9 35,501자 · v10 56,906자(`load_prompt(...).prefix`의 글자 수 — **실측**이고
-# `tests/test_auditor_prompt_v10.py`가 핀으로 든다 · ⏵ 2026-10-09 서빙 판 v11은 56,872자) ↔ v4
+# `tests/test_auditor_prompt_v10.py`가 핀으로 든다 · ⏵ 2026-10-09 서빙 판 v11은 56,872자 —
+# `tests/test_nullable_cwe.py`가 핀으로 든다) ↔ v4
 # 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
 # hop0가 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
@@ -296,7 +299,8 @@ _PROBE_BODY_CHARS = 2000
 # — 두 문장을 대조하는 테스트는 따로 필요하다.
 _SCOUT_FOLLOWUP_TAIL = "Judge the same candidate again"
 
-# 다음 홉이 **마지막 허용 홉**일 때 관측 뒤에 붙이는 안내. 봉투 설명(두 봉투 다)이 *상한에 닿으면
+# 다음 홉이 **마지막 허용 홉**일 때 관측 뒤에 붙이는 안내. 봉투 설명(루프 봉투 셋 다 — v11은 v10의
+# 설명을 그대로 싣는다)이 *상한에 닿으면
 # 마지막 홉은 `answer`여야 한다*고 말하는데, 그 홉이 **지금**이라는 사실은 모델이 모른다 — 안
 # 알리면 마지막 홉에도 조사를 내고 Finding 없이 `MAX_HOP`으로 끝난다.
 _LAST_HOP_NOTE = (
@@ -452,7 +456,8 @@ def _ask_model(
 ) -> Finding:
     """Finding을 얻는다 — 한 방 호출 또는 도구 루프. 어느 쪽인지는 프롬프트 meta가 정한다.
 
-    루프 판이 어느 봉투(`AuditorAction` · `AuditorProcedureAction`)를 요청하든 **돌려주는 것은
+    루프 판이 어느 봉투(`AuditorAction` · `AuditorProcedureAction` · ⏵ 2026-10-09 v11의
+    `AuditorProcedureNullableCweAction`)를 요청하든 **돌려주는 것은
     `Finding`이다** — v10의 `AuditProcedure`는 `_run_hops`가 `answer` 홉에서 옮겨 담는다. 한 방
     경로가 `OUTPUT_SCHEMA`(`Finding`)를 보내는 것은 선언이 `Finding`일 때뿐이다: 루프 봉투를
     선언했는데 한 방으로 새는 길은 `loop_problem`이 막는다(상한 0이면 `PromptError`).
@@ -795,12 +800,23 @@ def _answer_observed(answer: Finding | AuditProcedure, *, cited: int) -> dict[st
     - `path_without_endpoints` — 경로가 비면 안 되는 상태인데 `source`·`sink` 양 끝이 없다.
       게이트의 `p2`가 그 Finding을 떨어뜨리는데(`path_ok`), 그 강등이 **합법적인
       reachability_unknown의 빈 경로와 trace에서 구분되지 않아** 규칙 위반을 셀 수 없었다.
+    - `cwe_present_on_no_signal` — ⏵ 2026-10-09(이슈 #525) v11 답(`AuditProcedureNullableCwe`)이
+      `no_signal`인데 `cwe`가 null이 아니다. v11 산문은 null을 시키고 스키마는 안 막는다(거절하면
+      최종 답 재생성 — 같은 근거) → 그 위반을 여기서 센다. **v11로만 제한한다** — v8~v10은 계약이
+      non-null이라 `no_signal`에도 CWE를 쓰는 것이 규칙 준수다. ⚠ `no_signal`은 언제나
+      `audit is None`이라 아래 조기 반환 **앞**에 둔다 — 뒤에 두면 영영 안 생긴다.
     """
     observed: dict[str, TraceValue] = {"cited_probe_evidence": cited}
     if answer.trigger_status:
         observed["trigger_status"] = answer.trigger_status
     if not isinstance(answer, AuditProcedure):
         return observed
+    if (
+        isinstance(answer, AuditProcedureNullableCwe)
+        and answer.trigger_status == "no_signal"
+        and answer.cwe is not None
+    ):
+        observed["cwe_present_on_no_signal"] = True
     audit = answer.audit
     if audit is None:
         return observed
@@ -1068,7 +1084,7 @@ def _probe(
 ) -> tuple[dict[str, TraceValue], str]:
     """`probe` — 도구 하나를 돌린다. **도구 이름만** argv에 넣는다(`pov.run_tool`과 같은 계약).
 
-    `AuditorTool`(두 봉투가 공유하는 `tool`의 타입)이 스키마에서 닫힌 Literal이라 argv는 고정된
+    `AuditorTool`(루프 봉투 셋이 공유하는 `tool`의 타입)이 스키마에서 닫힌 Literal이라 argv는 고정된
     여섯 이름 중 하나다. `subject_id`는 후보 id다 — `call_tool`은 `subject_kind`를 안 받고
     `tool_call.finding_id`에 이 값을 싣는다. Finding은 `answer` 홉에서야 생기므로 이 홉의 도구
     호출은 후보에 귀속되고, `auditor_hop.subject_id`와 같은 키로 조인된다. 홉 이벤트의

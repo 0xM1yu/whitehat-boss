@@ -1336,7 +1336,8 @@ def test_a_seat_the_fake_exemption_covers_records_no_tool_hops(tmp_path: Path) -
 
 
 def test_a_served_loop_seat_records_the_cap_it_ran_with(tmp_path: Path) -> None:
-    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: v10 · `AuditorProcedureAction`)은 16이 그대로
+    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: ⏵ 2026-10-09부터 v11 ·
+    `AuditorProcedureNullableCweAction` — 그 전 v10)은 16이 그대로
     실린다.
 
     위만 보면 러너가 이 키를 늘 빼도 초록이다. 켠 run이 어떤 상한으로 돌았는지가 이 기록의
