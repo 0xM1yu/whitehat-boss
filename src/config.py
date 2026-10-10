@@ -579,6 +579,8 @@ class CapsuleBudgets(HarnessModel):
 # real-serving-run-arvo1065-vastai-remote.md` · `checksum` 0이라 비교표 밖).
 # ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, 이슈
 # #525).
+# ⏵ 2026-10-10 — 서빙 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v11과 바이트
+# 동일, 이슈 #67).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -750,6 +752,7 @@ class Thresholds(HarnessModel):
     # 서술·선언한다. v7·v8은 안 하므로 켜고 그 둘을 고르면 `cli` run·doctor가 막는다.
     # ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다(meta `source_options` 여덟 중 하나).
     # ⏵ 2026-10-09 — 서빙 판 v11(이슈 #525)도 같은 서술로 선언한다.
+    # ⏵ 2026-10-10 — 서빙 판 v13(이슈 #67)도 같은 서술로 선언한다.
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
@@ -796,6 +799,7 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-09 — 서빙 판은 v11이고 봉투는 셋이다: v11은 셋째
     # `AuditorProcedureNullableCweAction`(최종 답
     # `AuditProcedureNullableCwe` — `no_signal`에서 `cwe`가 null일 수 있다, 이슈 #525)을 낸다.
+    # ⏵ 2026-10-10 — 서빙 판은 v13이고 봉투는 v11의 셋째와 같다(이슈 #67 — FACTS만 다르다).
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
