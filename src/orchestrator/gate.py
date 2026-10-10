@@ -25,6 +25,11 @@
 | E3 | `p2` **and** `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
 | E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` |
 
+- **E0의 조건은 「모델이 인용을 안 했다」가 아니라 「붙일 관측이 없었다」다** (이슈 #552).
+  `evidence_refs`는 모델이 쓰지만 **6단계가 판정 전에 그 타깃에서 관측한 Evidence를 붙인다**
+  (`nodes/gate_node.attach_observed` — 8단계도 같은 함수를 쓴다). 그래서 이 단락에 걸리는 것은
+  관측이 0건인 타깃이다. 붙이기 전에는 심사 대상의 자기 신고가 심사 여부를 정했다 —
+  실측(`run_20261007_0001`): Finding 5건이 인용 0건이라 전부 E0였고 7단계 이벤트가 0건이었다.
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
 - **E3는 E2를 포함한다 (이슈 #154).** 단조 하강은 「위에서부터 처음 참인 것」이지 포함이
   아니므로 포함은 술어가 직접 든다 — `p3`가 `p2`를 요구한다. 없으면 E2를 못 넘은 Finding이

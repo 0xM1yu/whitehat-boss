@@ -594,10 +594,21 @@ def test_the_new_classes_add_no_repo_internal_reference_to_the_request() -> None
     한 방 `Finding`과 v8·v9 봉투가 이미 보내는 것이라 이 변경이
     만든 것이 아니다. 검출기는 늦게 import한다 — 그쪽 이름이 바뀌어도 이 파일의 나머지 검사는 산다.
     """
-    from src.schemas import PovAction, ScoutResponse
+    from src.schemas import (
+        AuditorProcedureNullableCweAction,
+        AuditProcedureNullableCwe,
+        PovAction,
+        ScoutResponse,
+    )
     from tests.test_auditor_loop import _leaking_definitions
 
-    own = _leaking_definitions(AuditorProcedureAction.model_json_schema(), "AuditorProcedureAction")
+    # ⏵ 2026-10-09 — v11 형제 봉투(이슈 #525)도 같은 가드 안에 둔다. 그 docstring도 요청 payload에
+    # 실리므로 `#525` 같은 참조가 새로 들어가면 여기서 빨개진다.
+    own = _leaking_definitions(
+        AuditorProcedureAction.model_json_schema(), "AuditorProcedureAction"
+    ) | _leaking_definitions(
+        AuditorProcedureNullableCweAction.model_json_schema(), "AuditorProcedureNullableCweAction"
+    )
     already_sent = (
         _leaking_definitions(Finding.model_json_schema(), "Finding")
         | _leaking_definitions(ScoutResponse.model_json_schema(), "ScoutResponse")
@@ -608,6 +619,8 @@ def test_the_new_classes_add_no_repo_internal_reference_to_the_request() -> None
         for cls in (
             AuditorProcedureAction,
             AuditProcedure,
+            AuditorProcedureNullableCweAction,
+            AuditProcedureNullableCwe,
             AuditBlock,
             AuditPoint,
             AuditOrigin,
