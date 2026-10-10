@@ -783,6 +783,10 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v10도 그날까지 서빙 판이었다) —
         # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
         ("auditor", "qwen3.8-27b", "v11", []),
+        # 실물 형제 문형 — prompts/auditor/v12/meta.yaml:3 「지금은 어느 registry 엔트리도 이 버전을
+        # 고르지 않는다」. v12(2026-10-10 · 이슈 #578)는 처음부터 미선택 판으로 섰다. 구절이 주석
+        # 줄바꿈으로 안 갈린다.
+        ("auditor", "qwen3.8-27b", "v12", ["auditor/v12"]),
         # 실물 형제 문형 — prompts/pov/v3/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry 엔트리도 이
         # 버전을 고르지 않는다」. pov v4 배선(2026-10-08)으로 미선택이 되며 달았고, 그 전에는
         # 이 판이 서빙 판이었다. 구절이 한 줄에 든다(주석 줄바꿈이 가르지 않는다).
@@ -802,7 +806,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     새 음성 통제가 되어 일곱 · ⏵ 2026-10-06 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
     음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
     음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
-    되어 열) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    되어 열 · ⏵ 2026-10-10 미선택 판으로 선 v12가 양성으로 더해져 열하나) — 새 철자로 적은 meta는
+    목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -845,6 +850,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("auditor", "v10", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/auditor/v11/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
         ("auditor", "v11", set()),
+        # prompts/auditor/v12/meta.yaml:3 — 미선택 판으로 섰다(FT Auditor 서빙 때 고를 판).
+        ("auditor", "v12", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/pov/v3/meta.yaml 머리의 ⏵ — pov v4 배선으로 미선택이 되어 셋째 철자를 쓴다.
         ("pov", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형이다(실재하는 문형).
@@ -857,8 +864,9 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 열 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
-    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 열하나 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열 · ⏵ 2026-10-10 v12를 더해
+    열하나) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 

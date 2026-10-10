@@ -125,7 +125,7 @@ graph LR
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
 >   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다).
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
->   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 같은 날부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
+>   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 같은 날부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판이 아닌 v12도 같다, 이슈 #578). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
 >   PoV 프롬프트에도 든다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
