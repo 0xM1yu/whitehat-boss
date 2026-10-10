@@ -157,7 +157,7 @@
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |
 | D104 | ~~Auditor 입력이 피호출 함수를 1단만 붙여, 래퍼·이름만 바꾸는 매크로 뒤의 실제 구현이 빠진다~~ | 닫힘 | [본문](open-questions/D/D104.md) |
 | D105 | **Auditor 입력에 함수 포인터 간접 호출 대상(C6)과 버퍼·길이 쓰기 지점(C5(a))이 없다** | 열림 | [본문](open-questions/D/D105.md) |
-| D106 | **심사 대상의 자기 신고가 심사 여부를 정한다 — Auditor가 `evidence_refs`를 비우면 게이트가 E0로 `queued`에 내려 Critic이 그 주장을 못 본다** | 열림 | [본문](open-questions/D/D106.md) |
+| D106 | **심사 대상의 자기 신고가 심사 여부를 정한다 — 게이트가 모델의 인용 목록을 등급 계산에 쓰던 것. (b) 채택·6단계 수정됨 · ②③④ 미실측 · (b)가 켜는 E2 결함은 #576 | 열림 | [본문](open-questions/D/D106.md) |
 | D107 | ~~`Finding.cwe`가 non-null이라 `no_signal`에도 CWE를 요구한다~~ (v11: `no_signal`에서만 null) | 닫힘 | [본문](open-questions/D/D107.md) |
 
 ## 3. 팀·운영 미정

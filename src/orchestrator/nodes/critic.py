@@ -235,7 +235,8 @@ def _describe_evidence(
         line = f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
         # **위치를 적는다 — Critic이 「이 근거가 그 주장과 같은 자리를 가리키나」를 볼 재료다.**
         # 게이트 등급은 이 값으로 안 정해진다: `p1 = static_ok or location_ok`이고 Evidence에 위치를
-        # 싣는 곳이 semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`gate.evaluate` ·
+        # 싣는 곳이 semgrep(STATIC) 하나라 **인용과 무관하게** `static_ok`가 이미 참이다
+        # (6단계가 타깃 관측분을 붙인다 — 이슈 #552. `gate.evaluate` ·
         # `container_tools.first_hit_location`). 그 위치는 semgrep `results[0]`(첫 히트) 하나라
         # 주장한 줄과 다를 수 있다. 이 노출이 인용·판정을 바꾸는지는 미실측이다(이슈 #563 —
         # `run_20261007_0001`이 위치를 싣고 돌았으나 그 히트가 후보 위치와 안 겹쳤다).
