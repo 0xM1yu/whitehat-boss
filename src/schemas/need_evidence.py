@@ -71,6 +71,12 @@ class Resolution(HarnessModel):
     # 결과라도 「조회했는데 못 찾음」과 다르다(#315). 예전에는 네 칸이 다 비었다는 것으로만
     # 가렸다(암묵 규칙). 기본값 `True`는 이 필드가 생기기 전의 생성자 호출을 그대로 둔다.
     index_available: bool = True
+    # 원소·역참조 쓰기 표(index-v3 `writes`)가 있었는가(#304). `False`면 대입 라벨(3·4·13)에
+    # `buf[i] = x`·`*p = x` 꼴이 **원천적으로 못 든다**(v2 이하 인덱스·인덱스 없음) — 대입 조각이
+    # 없는 것이 「그 함수에 원소 대입이 없다」인지 「인덱스가 그것을 모른다」인지를 가르는 값이다.
+    # 지금은 `Resolution`에만 실린다(읽는 코드 0) — trace 반영은 후속.
+    # 기본값 `True`는 `index_available`과 같은 이유다(이 필드 전의 생성자 호출을 그대로 둔다).
+    writes_available: bool = True
 
     @property
     def fixable_count(self) -> int:

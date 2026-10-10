@@ -1,0 +1,27 @@
+# 도구 루프 판. 배선 조건은 v11과 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
+# `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
+# 지금은 어느 registry 엔트리도 이 버전을 고르지 않는다 — FT Auditor(Teacher v4 데이터로 학습)를 서빙할 때 고를 판이고,
+# 서빙 판을 바꾸는 것은 그때의 결정이다(이슈 #578).
+#
+# v12 = v11 + **`audit`를 모든 상태에서 채운다** (이슈 #578 · 팀 결정 2026-10-10: no_signal도 audit를 채운다).
+# FT 데이터 Teacher v4가 no_signal에도 `audit`를 채우는데 v10·v11은 no_signal이면 `audit`가 정확히 null이라, 그 데이터로
+# 학습한 Auditor를 v11로 서빙하면 구조화 출력이 학습한 출력을 막는다.
+# - prefix는 v11에서 `audit` 서술만 바꿨다 — no_signal이면 가장 가까웠던 후보를 같은 다섯 점검으로 걸러내 기록하고
+#   `category` `none` · `defense.status` `not_applicable` · `refutation.result` `no_candidate`를 쓴다(셋은 no_signal에서만).
+#   문구는 Teacher v4(Role · Review procedure · Trigger rules · Output contract)를 따랐고 하네스의 구조 · 도구 · FACTS ·
+#   SOURCE 옵션 서술은 v11 그대로다. Teacher 전용 규칙(`evidence_refs`는 항상 `[]` · FACTS 없음)은 옮기지 않았다.
+#   body는 v11과 같다(`tests/test_auditor_v12.py`가 바뀐 줄과 안 바뀐 서술을 문다).
+# - 봉투는 형제 `AuditorProcedureAuditAlwaysAction`이고 최종 답은 `AuditProcedureAuditAlways`다 — `audit`가 non-null이고,
+#   no_signal ⟺ 위 세 값 셋 다를 하네스가 검증한다. `cwe` 규칙(null은 no_signal에서만)은 v11 그대로다. v10·v11의 클래스를
+#   고치지 않은 것은 그 JSON 스키마가 그 판들의 요청 바이트라서다(`docs/agent-contracts.md` 규칙 1, `docs/evaluation.md` §2.3).
+# - `refutation.result` ↔ 나머지 네 상태의 어긋남은 v10·v11처럼 거절하지 않고 센다(`nodes/auditor._answer_observed`).
+# - no_signal이면 하네스가 `Finding.path`를 비운다 — 그 경로는 걸러낸 후보를 따라간 기록이라 `audit.path`에만 남는다
+#   (`nodes/auditor._finding_from_procedure`).
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 서술이 모델에게 어떻게 읽히는지, FT 모델이 이 계약대로 내는지는 미실측이다.
+# 글자 수는 여기 적지 않는다(CLAUDE.md 2.3) — `tests/test_auditor_v12.py`가 v11 대비 차이로 문다.
+role: auditor
+version: v12
+output_schema: AuditorProcedureAuditAlwaysAction
+description: v11에서 no_signal에도 audit를 채우게 바꾼 판입니다(이슈 #578). no_signal이면 가장 가까웠던 후보를 같은 다섯 점검으로 걸러낸 기록을 category none, defense.status not_applicable, refutation.result no_candidate로 남깁니다. Teacher v4 데이터로 학습한 FT Auditor를 서빙할 때 쓰는 판이고, 그 밖의 서술·도구·SOURCE 옵션은 v11과 같습니다.
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]

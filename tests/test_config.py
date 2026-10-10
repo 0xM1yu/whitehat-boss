@@ -756,6 +756,8 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
         # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성: v3 자체는 미배선이다」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
+        # 실물 — prompts/critic/v7/meta.yaml:1-2가 첫째·셋째 철자를 함께 든다(critic/v4 모양).
+        ("critic", "gpt-oss-20b", "v7", ["critic/v7"]),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
@@ -790,6 +792,10 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v11도 그날까지 서빙 판이었다) —
         # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
         ("auditor", "qwen3.8-27b", "v13", []),
+        # 실물 형제 문형 — prompts/auditor/v12/meta.yaml:3 「지금은 어느 registry 엔트리도 이 버전을
+        # 고르지 않는다」. v12(2026-10-10 · 이슈 #578)는 처음부터 미선택 판으로 섰다. 구절이 주석
+        # 줄바꿈으로 안 갈린다.
+        ("auditor", "qwen3.8-27b", "v12", ["auditor/v12"]),
         # 실물 형제 문형 — prompts/pov/v3/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry 엔트리도 이
         # 버전을 고르지 않는다」. pov v4 배선(2026-10-08)으로 미선택이 되며 달았고, 그 전에는
         # 이 판이 서빙 판이었다. 구절이 한 줄에 든다(주석 줄바꿈이 가르지 않는다).
@@ -809,8 +815,9 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     새 음성 통제가 되어 일곱 · ⏵ 2026-10-07 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
     음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
     음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
-    되어 열 · ⏵ 2026-10-10 v13 배선으로 v11이 양성으로 옮겨가고 v13이 새 음성 통제가 되어 열하나)
-    — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    되어 열 · ⏵ 2026-10-10 critic/v7(미배선)과 미선택 판 v12가 양성으로 더해져 열둘 ·
+    ⏵ 같은 날 v13 배선으로 v11이 양성으로 옮겨가고 v13이 새 음성 통제가 되어 열셋) — 새 철자로 적은 meta는
+    목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -831,6 +838,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v4", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/critic/v3/meta.yaml:1
         ("critic", "v3", {"아직 미활성"}),
+        # prompts/critic/v7/meta.yaml:1-2 — critic/v4처럼 첫째·셋째 철자를 함께 든다(미배선 판).
+        ("critic", "v7", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
@@ -856,6 +865,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("auditor", "v11", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/auditor/v13/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
         ("auditor", "v13", set()),
+        # prompts/auditor/v12/meta.yaml:3 — 미선택 판으로 섰다(FT Auditor 서빙 때 고를 판).
+        ("auditor", "v12", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/pov/v3/meta.yaml 머리의 ⏵ — pov v4 배선으로 미선택이 되어 셋째 철자를 쓴다.
         ("pov", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형이다(실재하는 문형).
@@ -868,10 +879,10 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 열하나 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
-    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열 · ⏵ 2026-10-10 v13을 더해
-    열하나) 오늘 문구에 묶인다 — 머리
-    주석을 고치면 기대값도 고친다."""
+    않는다(#341 R2). ⚠ 이 열셋 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열 ·
+    ⏵ 2026-10-10 critic/v7과 v12를 더해 열둘 · ⏵ 같은 날 v13을 더해 열셋) 오늘 문구에 묶인다 —
+    머리 주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
 
@@ -1414,6 +1425,79 @@ def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None
 
     with pytest.raises(ValidationError, match="양수"):
         load_config("dev_fake", config_dir=tmp_path)
+
+
+def _harness_pool_with_role_caps(dest: Path, **caps: int) -> None:
+    """`harness_pool`을 그대로 두고 저장소의 `output_max_by_role`에 `caps`만 덮어 쓴다."""
+    declared = load_config("harness_pool").thresholds.output_max_by_role
+    _copy_config(
+        dest,
+        profile="harness_pool",
+        profile_patch={},
+        thresholds_patch={"output_max_by_role": {**declared, **caps}},
+    )
+
+
+# 999,999 · 2**31은 이슈 #214 본문의 관측값이다(`load_config` 실측 — 둘 다 로드를 통과했다).
+# 131,072는 `gpt-oss-20b`의 registry `context_limit` 그 자체 — 입력 몫이 0이라 모든 호출이 400이다.
+@pytest.mark.parametrize("cap", [131072, 999999, 2**31])
+def test_a_role_cap_at_or_above_its_model_window_fails_at_load(tmp_path: Path, cap: int) -> None:
+    """출력 상한이 그 역할이 앉은 모델의 창 이상이면 **로드에서** 죽는다 (이슈 #214 (a)).
+
+    vLLM은 `prompt_tokens + max_tokens > max_model_len`이면 400이다. 프롬프트는 최소 1토큰이라
+    상한 ≥ 창이면 그 역할은 입력과 무관하게 전량 400이다 — 전엔 그 설정이 로드를 통과했다.
+    """
+    _harness_pool_with_role_caps(tmp_path, critic=cap)
+
+    with pytest.raises(ConfigError, match=r"critic\(gpt-oss-20b\)"):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_role_cap_one_below_the_window_still_loads(tmp_path: Path) -> None:
+    """경계는 「창 이상」뿐이다 — 창보다 1 작으면 통과한다.
+
+    입력 몫을 얼마 남겨야 하는지는 입력 크기에 달려 로드 때 정할 수 없고, 임의 여유를 두면 그
+    수가 근거 없는 상수가 된다(이슈 #214 「닫히는 조건」의 ⚠). 이 검사가 더 엄격해지면 여기서 깬다.
+    """
+    _harness_pool_with_role_caps(tmp_path, critic=131072 - 1)
+
+    config = load_config("harness_pool", config_dir=tmp_path)
+
+    assert config.thresholds.output_max_for("critic") == 131071
+
+
+def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: Path) -> None:
+    """역할별 선언이 없는 역할은 전역 `output_max`가 실효 상한이다 — 그 값도 같은 대조를 받는다.
+
+    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b`·`seccoderx-8b`)에 앉는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile="harness_pool",
+        profile_patch={},
+        thresholds_patch={"output_max": 40960},
+    )
+
+    with pytest.raises(ConfigError, match=r"scout_memory\(qwen3-14b\)"):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_fake_role_is_not_held_to_the_window(tmp_path: Path) -> None:
+    """Fake 좌석은 서버로 요청을 안 보내므로 400이 날 자리가 없다 — 대조하지 않는다.
+
+    `dev_fake`의 Fake registry 창은 32,768이고 저장소 상한은 `critic` 32,768(동률)·`auditor`
+    65,536(초과)이라, Fake까지 대조하면 저장소 그대로의 `dev_fake`가 로드에서 죽는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={},
+        thresholds_patch={"output_max_by_role": {"critic": 2**31}},
+    )
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.served_models() == {}
+    assert config.thresholds.output_max_for("critic") == 2**31
 
 
 def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:

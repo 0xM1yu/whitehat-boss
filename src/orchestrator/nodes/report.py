@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.enums import FindingState, PathStepKind
 from src.schemas.finding import Finding
 
@@ -103,6 +104,12 @@ class Report:
     # 0건이거나 — `validated`가 0건이고 `pov_attempt_top_n`이 0이거나 그 추가 대상 풀이 비었다 —,
     # 프로필에 pov 좌석이 없다). 그 run에 0건 줄이 나오면 장식이다.
     pov_results: dict[str, str] = field(default_factory=dict)
+    # 버린 finding_id → 그것을 대신해 남은 대표 finding_id (이슈 #101 잔여). `duplicates`의 근거다 —
+    # 수만 있으면 **무엇과 합쳐졌는지**가 어디에도 없어 정답 대조에서 사라진 Finding(실측
+    # `run_20260827_0004`의 `find_0005`)을 추적할 수 없었다. 같은 사실을 trace의
+    # `finding_deduped`가 건당 1행으로 싣는다. `render()`는 목록을 안 찍는다 — `deferred`의
+    # 목록을 `target_skipped`에 둔 것과 같은 이유다(리포트는 요약이라 수백 줄이 Finding을 묻는다).
+    merged_into: dict[str, str] = field(default_factory=dict)
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
@@ -119,7 +126,11 @@ class Report:
             if parts:
                 lines += [f"등급 분포: {' · '.join(parts)}", ""]
         if self.duplicates:
-            lines += [f"중복 제거: {self.duplicates}건", ""]
+            # 무엇과 합쳤는지는 trace에 건당 1행으로 있다(`merged_into` 필드 주석).
+            lines += [
+                f"중복 제거: {self.duplicates}건 (무엇과 합쳤는지는 trace의 `finding_deduped`)",
+                "",
+            ]
         if self.deferred or self.dropped:
             lines += [
                 # ⚠ **둘을 한 이름으로 묶지 않는다 — 단위가 다르다**(위 필드 주석).
@@ -189,7 +200,24 @@ def dedupe(
     grades: dict[str, str] | None = None,
     files: dict[str, str | None] | None = None,
 ) -> tuple[list[Finding], int]:
-    """같은 CWE·같은 파일·같은 대상 함수는 한 건으로 본다.
+    """같은 CWE·같은 파일·같은 대상 함수는 한 건으로 본다. 버린 수를 돌려준다.
+
+    무엇과 합쳤는지(버린 것 → 대표)가 필요하면 `dedupe_with_merges`를 부른다 — 이 함수는 그
+    결과에서 수만 남긴 것이고 대표 선택 규칙은 그쪽 docstring이 정본이다.
+    """
+    kept, _ = dedupe_with_merges(findings, grades, files)
+    return kept, len(findings) - len(kept)
+
+
+def dedupe_with_merges(
+    findings: list[Finding],
+    grades: dict[str, str] | None = None,
+    files: dict[str, str | None] | None = None,
+) -> tuple[list[Finding], dict[str, str]]:
+    """`dedupe`와 같은 판정에 **버린 finding_id → 대표 finding_id**를 더해 돌려준다 (#101 잔여).
+
+    대표는 같은 키에서 처음 남은 것이다 — 아래 정렬이 등급·`finding_id` 순이므로 그 키의
+    최고 등급(동급이면 가장 작은 id)이다. 버린 쪽은 언제나 대표보다 뒤에 정렬된 것이다.
 
     **대표는 등급이 높은 것을 남긴다 (#101 b).** 예전에는 `finding_id` 오름차순으로 처음
     것을 남겨 등급을 안 봤고, 그래서 E3가 낮은 등급 대표에 밀려 리포트에서 사라졌다
@@ -205,7 +233,9 @@ def dedupe(
     grades = grades or {}
     files = files or {}
     kept: list[Finding] = []
-    seen: set[tuple[str | None, str, str]] = set()
+    # 키 → 그 키의 대표 finding_id. 예전엔 `set`이라 버리는 순간 대표가 누구인지 잃었다.
+    seen: dict[tuple[str | None, str, str], str] = {}
+    merged_into: dict[str, str] = {}
 
     def _rank(finding: Finding) -> tuple[int, str]:
         # 등급 높은 것 먼저, 동급은 finding_id로 — 둘 다 결정론.
@@ -215,10 +245,11 @@ def dedupe(
     for finding in sorted(findings, key=_rank):
         key = _dedupe_key(finding, files.get(finding.finding_id))
         if key in seen:
+            merged_into[finding.finding_id] = seen[key]
             continue
-        seen.add(key)
+        seen[key] = finding.finding_id
         kept.append(finding)
-    return kept, len(findings) - len(kept)
+    return kept, merged_into
 
 
 def run(
@@ -243,14 +274,41 @@ def run(
     같다 — 등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시
     매기지 않는다. `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어
     넘긴다 — dedupe 키가 파일을 가르는 데 쓴다(#101 a).
+
+    버린 Finding마다 `finding_deduped`를 하나 낸다(#101 잔여) — `subject_id`가 버린 것이고
+    `representative`가 대신 남은 것이다. 중복이 없는 run은 0건이다(**9단계에 도달한 run에서
+    이벤트 부재 = 안 합쳤다** — 그 전에 크래시한 run은 0건이어도 모른다).
     """
     grades = grades or {}
+    files = files or {}
     with ctx.stage(Stage.REPORT):
-        kept, duplicates = dedupe(findings, grades, files)
+        kept, merged_into = dedupe_with_merges(findings, grades, files)
+        for finding in sorted(findings, key=lambda f: f.finding_id):
+            representative = merged_into.get(finding.finding_id)
+            if representative is None:
+                continue
+            cwe, file, target = _dedupe_key(finding, files.get(finding.finding_id))
+            ctx.trace.emit(
+                EventKind.FINDING_DEDUPED,
+                stage=Stage.REPORT,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                representative=representative,
+                # 등급을 함께 싣는다 — 대표가 등급 우선으로 골랐는지(#101 b)를 이 행만 보고
+                # 대조하려면 둘 다 있어야 한다. 등급이 없으면 `null`이다("E0"이 아니다).
+                grade=grades.get(finding.finding_id),
+                representative_grade=grades.get(representative),
+                # 합친 근거인 키 세 칸. 셋째 칸은 CWE가 `None`이면 후보 ID다(`_dedupe_key`).
+                cwe=cwe,
+                file=file,
+                target=target,
+            )
+    duplicates = len(findings) - len(kept)
     return Report(
         run_id=ctx.run_id,
         findings=tuple(kept),
         duplicates=duplicates,
+        merged_into=merged_into,
         unanalyzed_targets=unanalyzed_targets,
         deferred=deferred,
         dropped=dropped,
@@ -268,13 +326,13 @@ def _dedupe_key(finding: Finding, file: str | None) -> tuple[str | None, str, st
     ⏵ 2026-10-09 (이슈 #525 선택지 1) — CWE는 `None`일 수 있다(v11의 `no_signal`). 이 키는
     **정렬되지 않고** 집합 소속만 본다(`dedupe`의 `seen` — 순서는 `_rank`가 등급·`finding_id`로
     정한다). 그래서 `None`을 그대로 둔다 — 실제 CWE와는 다른 칸이다.
-    ⚠ **셋째 칸은 `None`이면 후보 ID다.** `no_signal`은 `audit`가 null이라 `path`가 언제나
-    비고(`nodes/auditor._finding_from_procedure`) 아래 `_target_symbol`이 **모델이 쓴 제목**으로
-    떨어진다. 그대로 두면 키가 `(None, 파일, 제목)`이 되어 **서로 다른 후보의 부정 결론이 제목만
-    같으면 한 건으로 합쳐진다** — v10까지는 지어낸 CWE가 서로 달라 갈라졌을 수 있던 자리다.
-    그래서 `None`이면 대상 함수 대신 `candidate_id`를 쓴다: 다른 후보는 안 묶이고, 같은 후보의
-    `no_signal` 둘만 한 건이다. CWE가 있는 키는 종전 그대로다. 실제 제목 분포(합쳐졌을 빈도)는
-    미실측이다.
+    ⚠ **셋째 칸은 `None`이면 후보 ID다.** `no_signal`은 `path`가 언제나 비고(v10·v11은 `audit`가
+    null이라, v12는 노드가 비워서 — `nodes/auditor._finding_from_procedure`) 아래 `_target_symbol`이
+    **모델이 쓴 제목**으로 떨어진다. 그대로 두면 키가 `(None, 파일, 제목)`이 되어 **서로 다른
+    후보의 부정 결론이 제목만 같으면 한 건으로 합쳐진다** — v10까지는 지어낸 CWE가 서로 달라
+    갈라졌을 수 있던 자리다. 그래서 `None`이면 대상 함수 대신 `candidate_id`를 쓴다: 다른 후보는
+    안 묶이고, 같은 후보의 `no_signal` 둘만 한 건이다. CWE가 있는 키는 종전 그대로다. 실제 제목
+    분포(합쳐졌을 빈도)는 미실측이다.
 
     대상 함수는 **경로의 PROPAGATE 칸**이다 — Finding을 서로 다르게 만드는 것이 그것이고,
     SOURCE는 호출자가 없으면 `"input"` 상수로 접히며(`fake_model`) SINK는 여럿이 공유한다
