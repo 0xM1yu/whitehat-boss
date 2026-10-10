@@ -20,6 +20,10 @@
 # 서술이 모델에게 어떻게 읽히는지, no_signal에서 실제로 null을 내는지는 미실측이다.
 # 글자 수는 여기 적지 않는다 — 적은 자리는 셋(`config/budgets.yaml` · `src/config.py` · `nodes/auditor.py`)이고
 #   `tests/test_nullable_cwe.py`가 그 셋과 실측을 묶는다(CLAUDE.md 2.3).
+# ⏵ 2026-10-10 — `qwen3.8-27b`를 v13으로 올려 지금은 어느 registry 엔트리도 이 버전을 고르지 않는다. 위 첫 줄의
+# 「엔트리가 이 버전을 고르고」는 그날까지의 기록이다 — v13(이슈 #67)이 FACTS의 `source` 사본을 뺐다. 이 판의
+# prefix·body·meta 키와 봉투는 그대로고 FACTS에 `source`를 싣는 것도 그대로다(요청 바이트가 같다 —
+# `tests/test_auditor_v13_facts.py`). `_CONTENT_AWARE_VERSIONS`에도 남는다.
 role: auditor
 version: v11
 output_schema: AuditorProcedureNullableCweAction

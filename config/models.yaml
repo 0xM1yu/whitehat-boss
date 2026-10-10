@@ -676,7 +676,13 @@ models:
     # 수 있다. v10 문장·스키마를 그 자리에서 고치지 않은 것은 같은 규칙 1이다 — v10의 요청 바이트가 그대로다.
     # v11도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈 run은 0건이다(v10은 2026-10-08 실서빙 1건 — `checksum` 0이라
     # 비교표 밖, `docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`).
-    prompt_template_version: "v11"
+    # ⏵ 2026-10-10 — v11에서 **v13**으로 올렸다(이슈 #67 · 저장소 소유자 결정). v13 = v11 + FACTS에서
+    # `source` 사본을 뺀다 — 원문은 산문 SOURCE 블록 하나로 간다(meta `facts_source: false`). body의 Facts
+    # 머리 문장 한 줄과 prefix의 `FACTS.source` 한 자리만 다르다(`prompts/auditor/v13/meta.yaml`). 봉투는
+    # v11과 같다. v12는 2026-10-10 열린 PR #580(FT Auditor 계약)이 쓰는 번호라 건너뛰었다. v11 문장을 그
+    # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈
+    # run은 0건이다.
+    prompt_template_version: "v13"
     fallback: null
     benchmark:
       measured_at: null

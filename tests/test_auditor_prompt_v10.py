@@ -1,7 +1,9 @@
 """v10 프롬프트의 산문이 **코드가 쥔 값·문구와 같은 말을 하는지** 문다 (Auditor 서빙 판 ·
 2026-10-06).
 
-⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). v10 파일은 동결이라 그것만 읽는 핀은 다시 빨개질 수
+⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). ⏵ 같은 날 — **v13이 됐다**(이슈 #67 — v11 +
+FACTS에서 `source` 사본을 뺀다. 아래 「서빙 판」은 config에서 읽으므로 v13을 문다). v10 파일은
+동결이라 그것만 읽는 핀은 다시 빨개질 수
 없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 넷을 빼고 **v10과 config의 서빙 판** 둘에서
 돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와 같은 장치). v10
 전용 넷(봉투 이름 · `cwe` null 금지 · 글자 수 둘)의 서빙 판 쪽은 `tests/test_nullable_cwe.py`가
@@ -1376,12 +1378,15 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # 줄만 바꿨고 그 약속 문장은 같다(`tests/test_nullable_cwe.py`가 차이를 그 네 줄로 묶는다). 서빙
 # 판이
 # v11로 올라가도 이 약속의 「스위치가 켜져 있다」는 그대로 걸려야 한다.
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11"})
+# ⏵ 2026-10-10 v13(이슈 #67)도 같다 — v11에서 FACTS `source` 서술 두 줄만 바꿨다
+# (`tests/test_auditor_v13_facts.py`가 차이를 그 두 줄로 묶는다).
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v13"})
 
 
 def _profiles_serving_v10() -> list[str]:
-    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11)을 고르는 프로필 —
-    판 이름을 이 검사가 쥐지 않고 **설정에서 읽는다**(배선한 프로필이 늘면 같이 따라온다)."""
+    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11·v13)을 고르는
+    프로필 — 판 이름을 이 검사가 쥐지 않고 **설정에서 읽는다**(배선한 프로필이 늘면 같이
+    따라온다)."""
     text = (CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8")
     return [
         name
@@ -1427,7 +1432,7 @@ def test_the_v10_repro_spec_promise_matches_the_switch_and_the_node() -> None:
         assert phrase in flat, f"산문에 {phrase!r}가 없다"
 
     serving = _profiles_serving_v10()
-    assert serving, "전제 — v10·v11을 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
+    assert serving, "전제 — v10·v11·v13을 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
     for profile in serving:
         assert load_config(profile).thresholds.synthesize_repro_spec == 1, profile
 
