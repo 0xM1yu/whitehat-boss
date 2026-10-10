@@ -661,6 +661,54 @@ def test_environment_fatal_codes_are_not_the_targets_verdict(code: int) -> None:
     assert error is not None
 
 
+def test_every_code_the_classifier_calls_environmental_also_carries_a_reason() -> None:
+    """🔴 **성질 핀 — 서빙 prefix가 약속하는 것이 이것이다.** v5는 *"하네스가 **대상의 판정으로
+    읽을 수 없다**고 가른 홉은 `ok`가 거짓이고 관측의 `error=`가 그 사유를 적는다"*고 적는다.
+    위 검사들은 **손으로 적은 코드 목록**을 돌아서, 판별자에 코드를 **더하면서** 관측 쪽을 안
+    고치면 초록으로 남는다 — 그러면 모델은 `ok=false`만 보고 사유를 못 읽는다.
+
+    그래서 목록이 아니라 **판별자에서 끌어온다**: `_poc_is_harness_failure`가 참이라 말하는 모든
+    코드에 대해 `judge`가 `ok=False`와 **빈 문자열이 아닌 사유**를 돌려야 한다.
+
+    ⚠ **한계** — 전수가 아니다. 음수·`>255`는 무한하므로 각 갈래의 **대표값**을 돈다. 판별자가
+    새 *갈래*를 열면(예: 특정 stderr 문형) 이 핀은 그것을 모른다 — 그때는 `_POC_DAEMON_UNREACHABLE`
+    처럼 자기 검사를 같이 세운다.
+    """
+    representative = [
+        *sorted(container_tools._POC_HARNESS_FAILURE),
+        *sorted(container_tools._POC_ENV_FATAL),
+        -9,
+        256,
+        3221225477,
+    ]
+    assert all(container_tools._poc_is_harness_failure(c) for c in representative)
+
+    verdicts = {code: judge("poc", [Step(code, "", "")], 1) for code in representative}
+    silent = [
+        code
+        for code, (ok, _, error) in verdicts.items()
+        if ok is not False or not (error or "").strip()
+    ]
+
+    assert silent == [], f"환경 실패로 갈랐는데 사유가 없는 코드: {silent}"
+
+    # 🔴 **빈 문자열만 막으면 뜻을 뒤집는 변이가 산다**(적대적 리뷰 2026-10-09 독립 2인이 둘 다
+    # 재현: 사유를 *"대상이 크래시했다 (정상 판정)"*으로 바꿔도 378건이 통과했다). 그 문구는
+    # 모델 관측의 `error=`로 실리므로 **모델이 환경 실패를 크래시로 읽게 만든다.**
+    # ⏵ 2026-10-09 (리뷰 2라운드) — 구절 포함·「크래시」 부재 두 검사도 **철자 둘**만 물었다:
+    # *"…읽을 수 없는 종료 코드가 아니다 (exit=N) — 대상이 터졌다, 같은 PoC로 submit"*(뜻 반대)이
+    # 둘을 다 통과했다. 그래서 **전체 문자열**을 여기 리터럴로 적고 같음을 단언한다.
+    # ⚠ **한계 — 이것도 철자를 문다.** 뜻을 지키는 고쳐 쓰기도 빨개지고(그때 이 리터럴을 같이
+    # 고친다), 뜻 자체를 기계가 읽는 것은 아니다. 무는 것은 「이 철자에서 벗어나면 죽는다」까지다.
+    expected = (
+        "poc: 대상의 판정으로 읽을 수 없는 종료 코드다 (exit={code}) — 실행 환경이 "
+        "낸 값이거나 대상의 것과 갈리지 않는다"
+    )
+    assert container_tools.POC_UNREADABLE_EXIT_REASON == expected
+    for code, (_, _, error) in verdicts.items():
+        assert error == expected.format(code=code), f"exit={code}의 사유가 핀과 다르다"
+
+
 @pytest.mark.parametrize("code", [139, 71, 77])
 def test_codes_the_target_can_really_produce_stay_the_targets_verdict(code: int) -> None:
     """반대 방향 — `139`(SIGSEGV)·`71`(OOM)·`77`은 대상이 낼 수 있는 값이라 `ok=True`다.
