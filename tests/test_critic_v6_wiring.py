@@ -1,5 +1,6 @@
 """Critic v6의 실제 배선과 공유 SOURCE 계약 — 모델 판정 품질은 재지 않는다."""
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -330,3 +331,24 @@ def test_run_always_passes_the_source_argument(ctx, monkeypatch):
     monkeypatch.setattr(critic, "_ask_model", recording)
     critic.run(ctx, finding=_finding("finding_0001"))
     assert "source" in calls[0] and calls[0]["source"] is None
+
+
+
+# 2026-10-10 PR #588 수정 뒤 값 — `test_auditor_v12.py`의 `_PROMPT_SHA256_BEFORE_V12` 모양.
+_CRITIC_V7_SHA256 = (
+    "b275187bc5db3bcbff969e1c0e482d90d91a6384f16ef3aebac95d0515d41be8",  # prefix
+    "44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2",  # body
+)
+
+
+def test_critic_v7_prompt_text_is_byte_identical():
+    """이 핀은 바이트를 묻는다 — Check A↔E 일관성이라는 성질은 리뷰어가 읽어 판정한다
+    (S13 Santa 2026-10-10)."""
+    from src.orchestrator.prompt_loader import load_prompt
+
+    template = load_prompt(Role.CRITIC, "v7")
+    digest = (
+        hashlib.sha256(template.prefix.encode("utf-8")).hexdigest(),
+        hashlib.sha256(template.body.encode("utf-8")).hexdigest(),
+    )
+    assert digest == _CRITIC_V7_SHA256
