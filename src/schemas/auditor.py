@@ -284,7 +284,7 @@ class AuditorProcedureAction(_AuditorEnvelope):
 #
 # ⏵ 2026-10-09 — `no_signal`은 뿌리 원인을 못 세운 판정이라 참인 CWE가 없는데, v8~v10의 계약은
 # 그때도 `CWE-<number>`를 요구해 **모델이 지어낸 값**이 SARIF `ruleId`와 보고서 중복 제거 키로
-# 갈 수 있었다(CLAUDE.md §0 — 실제로 지어냈는지는 미측정, D107 「관측」). 사용자
+# 갈 수 있었다(CLAUDE.md §0 — 실제로 지어냈는지는 미측정, 이슈 #525 「안 쟀다」). 사용자
 # 결정(2026-10-09)으로 `no_signal`에 한해 null을 허용한다.
 #
 # **v10의 두 클래스(`AuditProcedure` · `AuditorProcedureAction`)는 고치지 않는다.** 그 JSON
