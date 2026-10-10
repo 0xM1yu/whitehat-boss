@@ -130,6 +130,14 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 (engineering-guide.md §5). 그래서 `seq`는 시각이 아니라 발생 순번이고, ID는
 `src.ids.IdFactory`가 결정론적으로 발급하며, 이벤트 필드 순서는 모델 정의 순서로 고정된다.
 새 필드에 시각·난수·경로 절댓값을 넣으면 이 기준이 깨진다.
+
+**바이트 동일은 Fake 경로 run의 계약이다 (#64, 2026-10-10 결정 · `tests/test_pipeline_e2e.py`가
+문다).** 실도구·실서빙 run은 바이트 재현 대상이 아니다 — `data`에 시간 파생값이 들고
+(`budget`의 `gpu_ms`·`tool_ms`, `model_call`·`retrieval_call`의 `gpu_ms`, `scout_hop`·`pov_hop`의
+`latency_s`, `model_swap`의 `report.*`),
+시간 상한에 닿는 시점이 `budget` 이벤트 열 자체를 바꾼다. 그래서 비교에서 빼는 것을 `data` 키로
+넓히지 않는다. 위 「새 필드」 규칙은 그래도 모든 run에 선다 — 새 휘발 값은 `data`가 아니라 최상위
+`wall_ms`나 사이드카로 낸다(`oracle_log`의 선례).
 """
 
 import json
@@ -143,7 +151,8 @@ from pydantic import Field
 from src.orchestrator.stages import Stage
 from src.schemas.common import HarnessModel, Identifier, to_utc_iso
 
-# 재현성 비교 시 제거하는 필드. 두 실행에서 값이 달라지는 것은 이 둘뿐이어야 한다.
+# 재현성 비교 시 제거하는 필드. Fake 경로의 두 실행에서 값이 달라지는 것은 이 둘뿐이어야 한다 —
+# 실도구·실서빙 run의 `data` 시간 값은 비교 범위 밖이다(위 「재현성 기준」).
 VOLATILE_FIELDS = ("ts", "wall_ms")
 
 # trace `data`에 넣을 수 있는 값. 임의 객체를 허용하면 JSONL 직렬화가 실행 중에 깨진다.
