@@ -459,8 +459,9 @@ class EventKind(StrEnum):
     # `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
     # **gen 홉은 그 홉이 조립한 PoC의 `poc_sha256`도 싣는다**(맨 hex — 종단 이벤트의 `poc_sha256`과
     # 같은 형식이라 바로 대조된다). 종단 이벤트를 건너뛰는 중단 경로(예산 소진·서버 쪽 게이트웨이
-    # 오류)에서 잃은 PoC를 특정하는 흔적이다 — 그 홉 자신의 도구 호출에서 끊기면 이벤트가 나가기
-    # 전이라 없다(`poc_log` 모듈 docstring의 「한계」).
+    # 오류)에서 잃은 PoC를 특정하는 흔적이다 — 그 홉 자신의 도구 호출이 예산에서 끊겨도 루프가 이
+    # 이벤트(`error=BudgetExhausted`)를 내고 다시 던진다(#394). 그 밖의 형으로 끊기면 없다(`poc_log`
+    # 모듈 docstring의 「한계」).
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대

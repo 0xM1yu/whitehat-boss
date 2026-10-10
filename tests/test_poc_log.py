@@ -25,7 +25,6 @@ import builtins
 import dataclasses
 import hashlib
 import io
-import json
 import os
 import shutil
 from pathlib import Path
@@ -771,7 +770,7 @@ def test_a_failing_cleanup_never_masks_the_exception_that_caused_it(
     assert attempts == ["0001.poc.tmp"], f"정리가 시도되지 않았다: {attempts}"
 
 
-# --- 중단 경로 — 파일은 없고, 해시 흔적은 홉 이벤트가 나간 뒤에 끊긴 경우에만 남는다 ------
+# --- 중단 경로 — 파일은 없고, 해시 흔적은 gen 홉의 이벤트가 남긴다(#394) ---------------
 
 
 def test_gen_hop_events_carry_the_poc_sha256_and_other_hops_do_not(
@@ -823,8 +822,9 @@ def _tight_budget(ctx: RunContext) -> RunContext:  # noqa: F811
 _LOST = hashlib.sha256(b"A" * 8).hexdigest()
 
 
-def _whole_trace(ctx: RunContext) -> str:  # noqa: F811
-    return json.dumps([e.model_dump(mode="json") for e in ctx.trace.events])
+def _tool_calls(ctx: RunContext) -> list:  # noqa: F811
+    """`tool_call` 이벤트들 — 픽스처 준비(build 등)가 낸 것도 든다. 그래서 전후로 견준다."""
+    return [e for e in ctx.trace.events if e.kind is EventKind.TOOL_CALL]
 
 
 def test_a_gateway_abort_at_the_next_hop_files_nothing_but_the_hop_event_names_the_lost_poc(
@@ -857,33 +857,100 @@ def test_a_gateway_abort_at_the_next_hop_files_nothing_but_the_hop_event_names_t
     assert gen_hop.data["poc_sha256"] == _LOST
 
 
-def test_a_budget_abort_inside_the_gen_hops_own_tool_call_leaves_no_trace_of_the_poc(
+def test_a_budget_abort_inside_the_gen_hops_own_tool_call_still_names_the_lost_poc(
     ctx: RunContext,  # noqa: F811
     tmp_path: Path,
 ) -> None:
-    """**알려진 구멍을 고정한다 — 위 경로보다 흔한 쪽이다.** 토큰 예산은 **그 홉 자신의 모델
-    호출**이 소진시키는 것이 보통이고, 그러면 같은 홉의 `call_tool`이 `ensure`에서
-    `BudgetExhausted`를 낸다 — gen PoC를 조립한 **뒤**, 홉 이벤트를 내기 **전**이다. 그 PoC는
-    파일도 없고 어느 이벤트도 해시를 싣지 않는다(`poc_sha256`을 `pov_hop`에 얹는 것만으로는
-    이 경로가 안 잡힌다).
+    """**#394 — 위 경로보다 흔한 쪽도 해시를 남긴다.** 토큰 예산은 **그 홉 자신의 모델 호출**이
+    소진시키는 것이 보통이고, 그러면 같은 홉의 `call_tool`이 `ensure`에서 `BudgetExhausted`를
+    낸다 — gen PoC를 조립한 **뒤**, 홉 이벤트를 내기 **전**이다. 루프가 `run_tool` 둘레에서 그것을
+    받아 그 홉의 `pov_hop`(`poc_sha256`·`error`)을 내고 **같은 예외를** 다시 던진다.
 
-    메우려면 `run_tool` 둘레에서 예외를 받아 홉 이벤트를 내고 다시 던져야 하는데 그것은 루프 모양을
-    바꾸는 일이라 이 변경에서 하지 않았다. 메웠으면 이 검사를 뒤집는다.
+    전에는 이 검사가 「이벤트 0건 · 해시 부재」를 고정했다(알려진 구멍). 파일은 여전히 없다 —
+    종단(`_pov_finish`)을 안 부르는 것은 그대로다(`poc_log` 모듈 docstring 「한계」).
+    원장은 그대로다 — `ensure`가 막은 호출은 도구를 안 돌렸으므로 `tool_call`도 청구도 없다.
     """
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
     run_dir = tmp_path / RUN_ID
     scripted = _scripted(_wired(_tight_budget(ctx), run_dir), [_gen(count=8), _SUBMIT])
+    calls_before = _tool_calls(scripted)
+    tool_ms_before = scripted.ledger.tool_ms
 
     with pytest.raises(BudgetExhausted):
         runner._run_pov_hops(scripted, state, finding, capsule)
 
     assert not (run_dir / DIR_NAME).exists()
     assert not _terminals(scripted)
-    assert _hops(scripted) == [], "그 홉의 이벤트가 나가기 전에 끊기는 경로다"
-    assert _LOST not in _whole_trace(scripted), (
-        "구멍이 메워졌다 — poc_log docstring의 「한계」와 이 검사를 같이 고친다"
-    )
+    (hop,) = _hops(scripted)
+    assert hop.data["hop"] == 0 and hop.data["action"] == "gen"
+    assert hop.data["poc_sha256"] == _LOST
+    assert hop.data["error"] == "BudgetExhausted"
+    assert hop.data["schema_ok"] is True  # 모델 응답은 파싱됐다 — 끊긴 것은 도구 호출이다
+    assert "stop_reason" not in hop.data  # `PovStopReason`에는 예산 소진 값이 없다(올려 보낸다)
+    assert "tool" not in hop.data  # 도구는 안 돌았다
+    # 도구가 안 돌았고 원장은 hop0 모델 호출의 1토큰만 들었다 — 이중 청구·청구 누락 없음.
+    assert _tool_calls(scripted) == calls_before
+    assert scripted.ledger.input_tokens == 1  # 원장은 이 검사가 새로 만든 것이다(`_tight_budget`)
+    assert scripted.ledger.tool_ms == tool_ms_before
+    # 순서 — 원장의 소진 기록이 먼저, 그 홉 이벤트가 뒤다(이벤트는 예외를 받은 뒤 낸다).
+    kinds = [e.kind for e in scripted.trace.events]
+    assert kinds.index(EventKind.BUDGET) < kinds.index(EventKind.POV_HOP)
+
+
+@pytest.mark.parametrize("after_gen", [False, True], ids=["inspect_at_hop0", "inspect_after_gen"])
+def test_a_budget_abort_inside_an_inspect_hops_tool_call_also_emits_its_hop(
+    ctx: RunContext,  # noqa: F811
+    tmp_path: Path,
+    after_gen: bool,
+) -> None:
+    """inspect 홉의 도구 호출이 끊겨도 같은 자리라 그 홉의 이벤트가 나간다 — 그 홉이 조립한 PoC가
+    없으니 `poc_sha256`은 없다(gen 홉에만 싣는다는 위 검사와 같은 규칙). inspect가 도구에 싣는
+    것은 **직전 gen의** PoC이지만 그 해시는 직전 gen 홉 이벤트에 이미 있다 — 여기 또 실으면
+    「이 홉이 조립했다」로 읽힌다(`after_gen`이 그 변이를 문다).
+
+    `after_gen`이면 예산이 hop1의 모델 호출에서 닿도록 상한을 2토큰으로 둔다(홉당 usage 1토큰).
+    """
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    run_dir = tmp_path / RUN_ID
+    tokens = 2 if after_gen else 1
+    ledger = BudgetLedger(Budget(input_tokens=tokens, output_tokens=0, gpu_seconds=0), ctx.trace)
+    actions = [_gen(count=8), _INSPECT, _SUBMIT] if after_gen else [_INSPECT, _SUBMIT]
+    scripted = _scripted(_wired(dataclasses.replace(ctx, ledger=ledger), run_dir), actions)
+
+    with pytest.raises(BudgetExhausted):
+        runner._run_pov_hops(scripted, state, finding, capsule)
+
+    *before, hop = _hops(scripted)
+    assert [h.data["action"] for h in before] == (["gen"] if after_gen else [])
+    assert hop.data["action"] == "inspect" and hop.data["error"] == "BudgetExhausted"
+    assert "poc_sha256" not in hop.data
+    if after_gen:
+        assert before[0].data["poc_sha256"] == _LOST and "error" not in before[0].data
+    assert not _terminals(scripted)
+
+
+def test_a_failing_hop_event_does_not_mask_the_budget_abort(
+    ctx: RunContext,  # noqa: F811
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """이벤트 쓰기가 던져도 **올라가는 것은 원래의 `BudgetExhausted`다** — run이 멈추는 사유가
+    바뀌면 `run_pipeline`의 예산 갈래(경고·보고서)를 건너뛴다. 이벤트 실패는 노트로 붙는다."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    scripted = _scripted(_tight_budget(ctx), [_gen(count=8), _SUBMIT])
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise OSError("trace disk full")
+
+    monkeypatch.setattr(runner, "_emit_pov_hop", broken)
+
+    with pytest.raises(BudgetExhausted) as caught:
+        runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert any("pov_hop을 내지 못했다: OSError" in note for note in caught.value.__notes__)
 
 
 # --- 이미 있던 핀 — 예산·dry-run -----------------------------------------------------
