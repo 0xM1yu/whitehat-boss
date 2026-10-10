@@ -64,8 +64,10 @@ def write_input(directory: Path, data: bytes) -> Path:
     파일을 지우고 `OSError`다(틀린 입력 파일은 없는 파일보다 나쁘다). **말단 링크를 따라가지
     않는다** — scratch는 RW 마운트이고 대상 코드가 거기서 돈다: 예측되는 이름에 링크를 심으면
     `write_bytes`가 마운트 밖 파일을 덮는다. 그래서 있던 항목을 `unlink`하고 `xb`(`O_EXCL`)로
-    만든다 — 그사이 심긴 것은 남의 것이라 안 지우고 `FileExistsError`다(`poc_log.PocLog.write`가
-    같은 선례, 상위 디렉터리 링크는 못 막는다). 예외 문구에 경로를 싣지 않는다 — 어댑터가 Evidence로
+    만든다 — 그사이 심긴 것은 남의 것이라 안 지우고 `FileExistsError`다(상위 디렉터리 링크는 못
+    막는다). ⚠ `poc_log.PocLog.write`는 같은 선례가 **아니다** — 그쪽은 `unlink`를 앞세우지 않고
+    연 뒤 신원 대조로 막는다(#565). 여기서 Windows의 끊어진 링크가 안 걸리는 것은 `O_EXCL` 덕이
+    아니라 `unlink` 선행 덕이다. 예외 문구에 경로를 싣지 않는다 — 어댑터가 Evidence로
     올리고 관측으로 모델에 간다. 컨테이너 어댑터도 이 함수를 쓴다 — 쓰기 규칙이 갈라지지 않게.
     """
     directory.mkdir(parents=True, exist_ok=True)
