@@ -1417,11 +1417,12 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
 ) -> None:
     """풀 멤버 하나가 전량 실패하면 차단기가 걸려 run이 **비교표에서 빠진다** (D68 수정).
 
-    기제: **연속 폐기 카운터가 역할별이다.** 한 단계의 작업 단위가 target × 역할로 펼쳐지고
-    `consecutive`가 역할을 키로 세므로, 고장난 멤버(`scout_boundary`)의 실패가 형제의 성공에
-    지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에 닿는다. 그래서 `stopped_after`가 채워지고
-    `is_complete`가 **False**가 된다 — Scout 커버리지 1/3이 빈 run이 정상 완주로 기록되던
-    맹점(옛 `_does_not_trip_..._yet`)이 닫혔다.
+    기제: **자리 연속 폐기 카운터가 자리를 가른다.** 한 단계의 작업 단위가 target × 역할로
+    펼쳐지고 자리 카운터가 `_caller(단계, 자리)`를 키로 세므로(#197), 고장난 멤버
+    (`scout_boundary`)의 실패가 형제의 성공에 지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에
+    닿는다. run 카운터는 형제의 성공이 지우므로 이 경우를 못 잡는다 — 이 검사가 자리 카운터를 문다.
+    그래서 `stopped_after`가 채워지고 `is_complete`가 **False**가 된다 — Scout 커버리지 1/3이
+    빈 run이 정상 완주로 기록되던 맹점(옛 `_does_not_trip_..._yet`)이 닫혔다.
 
     ⚠ **단일 `scout`과 대조**: `test_a_systematically_broken_single_scout_trips_the_circuit_breaker`
     가 같은 결과를 단일 역할에서 낸다. 풀에서도 같아진 것이 이 수정의 요점이다.
@@ -1432,7 +1433,7 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
     result, trace_path = _run(tmp_path, configure=_poolify(mode))
 
     assert result.record.stopped_after is not None, (
-        "풀 멤버 하나가 전량 422인데 차단기가 안 걸렸다 — 역할별 카운터(D68)가 회귀했다. "
+        "풀 멤버 하나가 전량 422인데 차단기가 안 걸렸다 — 자리 카운터(D68)가 회귀했다. "
         "형제 멤버의 성공이 고장난 멤버의 연속 카운터를 지우고 있다"
     )
     assert not result.record.is_complete, (
@@ -1455,6 +1456,94 @@ def test_a_broken_pool_member_trips_the_circuit_breaker(
     # #193 ① — 폐기 이벤트가 어느 자리에서 죽었는지(scout_member)를 싣는다.
     assert all(e["data"].get("scout_member") == "scout_boundary" for e in dropped), (
         "target_skipped에 scout_member가 없거나 다르다 — 고장난 것은 scout_boundary다(#193 ①)"
+    )
+
+
+def _break_roles(monkeypatch: pytest.MonkeyPatch, broken: set[str]) -> None:
+    """`broken` 역할들의 모델 호출을 **전부** 422로 실패시킨다 — `_break_one_role`의 여러 역할 판.
+
+    422인 이유는 `_break_one_role`과 같다 — 크기 거절과 크기가 아닌 400은 카운터를 못 잰다.
+    """
+    original = FakeModelClient.complete
+
+    def complete(  # noqa: ANN001
+        self, *, role: Role, prompt: object, schema: object, history: object = ()
+    ) -> object:
+        if role.value in broken:
+            raise ModelGatewayError(f"{role.value} 체계적 고장(테스트)", status=422)
+        return original(self, role=role, prompt=prompt, schema=schema, history=history)
+
+    monkeypatch.setattr(FakeModelClient, "complete", complete)
+
+
+def _gateway_drops(trace_path: Path, stage: Stage) -> list[dict]:
+    """그 단계에서 게이트웨이 사유로 버린 시도(`target_skipped`)."""
+    return [
+        e
+        for e in _of(_events(trace_path), "target_skipped", stage=int(stage))
+        if e["data"].get("reason") == _REASON_GATEWAY_ERROR
+    ]
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_a_pool_wide_outage_stops_at_the_cap_whatever_the_seat_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**풀 세 자리가 전부 죽으면 상한번째 시도에 선다 — 자리 수와 무관하다 (D73 ①, #197).**
+
+    자리 키 카운터 하나뿐이던 동안(#195 ~ #197)은 각 자리가 따로 상한까지 올라가야 해서 상한 3에
+    풀 3자리면 **7번째** 시도에 섰다(D73 본문의 계산). run 카운터가 자리를 안 가르고 세므로 이제
+    단일 `scout`과 같은 3번째다. 대상이 넷이라(`_with_index`) 시도가 12건 — 7건에 닿을 수 있어,
+    옛 동작이면 이 검사가 7을 본다.
+    """
+    _break_roles(monkeypatch, {"scout_memory", "scout_boundary", "scout_injection"})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    assert result.record.stopped_after == int(Stage.SCOUT)
+    assert _run_transition(trace_path)["data"]["reason"] == "consecutive_target_failures"
+    dropped = _gateway_drops(trace_path, Stage.SCOUT)
+    assert len(dropped) == runner._MAX_CONSECUTIVE_DROPS, (
+        f"전 자리 장애가 {len(dropped)}번째 시도에 섰다 — "
+        f"상한({runner._MAX_CONSECUTIVE_DROPS})번째여야 한다. "
+        "자리 수만큼 늦어졌으면 run 카운터가 빠졌다(D73 ①)"
+    )
+    assert len({e["data"]["scout_member"] for e in dropped}) > 1, (
+        "전제: 폐기가 여러 자리에 걸쳐야 한다 — 한 자리뿐이면 자리 카운터와 못 가른다"
+    )
+
+
+@pytest.mark.parametrize("mode", [None, "per_stage"], ids=["per_candidate", "per_stage"])
+def test_auditor_failures_count_in_one_bucket_not_one_per_scout_seat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """**5단계 Auditor 장애는 Auditor 키 하나로 센다 — Scout 자리로 안 갈린다 (D73 ②, #197).**
+
+    `_InFlight.role`은 팬아웃에서 정해지는 4단계 자리인데 5단계도 같은 items로 돈다. 그 자리를
+    키로 세던 동안은 Auditor 장애가 Scout 세 버킷으로 갈렸고, 후보 단위에서는 Scout가 안 올린
+    대상의 완주가 그 자리 키를 지웠다 — Auditor가 매번 죽어도 상한에 늦게 닿거나 안 닿았다.
+    옛 키로는 이 fixture에서 Auditor 실패 6건(자리마다 2건)을 다 태우고 끝의 성공 0 백스톱에서야
+    섰다(origin/main 러너로 돌려 확인).
+
+    ⚠ **이 검사가 무는 것은 「상한번째에 선다」까지다.** 이 fixture에서는 Auditor 실패 사이에
+    완주가 안 끼어 run 카운터와 Auditor 키가 같이 상한에 닿는다 — 어느 쪽이 세웠는지는 못 가른다.
+    키가 단계를 따른다는 것 자체는 `tests/test_nodes.py`의
+    `test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_does`가 문다.
+    """
+    _break_roles(monkeypatch, {Role.AUDITOR.value})
+
+    result, trace_path = _run(tmp_path, before=_with_index(), configure=_poolify(mode))
+
+    assert result.record.stopped_after == int(Stage.AUDITOR)
+    dropped = _gateway_drops(trace_path, Stage.AUDITOR)
+    assert len(dropped) == runner._MAX_CONSECUTIVE_DROPS, (
+        f"Auditor 실패 {len(dropped)}건에 섰다 — "
+        f"상한({runner._MAX_CONSECUTIVE_DROPS})번째여야 한다. "
+        "더 늦으면 Auditor 장애가 Scout 자리 키로 갈려 세지고 있다(D73 ②)"
+    )
+    assert len({e["data"]["scout_member"] for e in dropped}) > 1, (
+        "전제: 실패한 Auditor 호출이 여러 Scout 자리의 후보여야 한다 — "
+        "한 자리뿐이면 옛 키와 못 가른다"
     )
 
 
@@ -5123,8 +5212,10 @@ def test_a_config_400_at_the_auditor_stops_the_run_at_the_first_call(
     Auditor를 `--reasoning-parser` 없이 띄우면 사고 예산을 실은 요청이 전부 400이다. 예전에는
     400이면 전부 크기 거절로 읽어 카운터에 안 셌고, run은 Auditor 결과가 전부 빈 채 완주했다.
 
-    **세지 않고 첫 건에서 멈추는 이유.** 후보 단위에서는 Scout가 안 올린 대상이 카운터를 0으로
-    되돌리고 키가 Scout 자리라(D73), 세는 방식으로는 Auditor가 전부 거절해도 안 설 수 있다.
+    **세지 않고 첫 건에서 멈추는 이유.** 다음 요청도 같으므로 세면 상한까지 같은 거절을 더 태울
+    뿐이다. 이 정지가 생길 때는 이유가 하나 더 있었다 — 카운터 키가 Scout 자리였고 Scout가 안
+    올린 대상의 완주가 그 키를 지워, 세는 방식으로는 Auditor가 전부 거절해도 안 설 수 있었다.
+    키가 `_caller(단계, 자리)`가 된 뒤(D73)로는 그 구멍이 없다.
     """
     _every_call_fails(
         monkeypatch, Role.AUDITOR, _rejected(_RUN_REJECTIONS["thinking_budget_without_parser"])
