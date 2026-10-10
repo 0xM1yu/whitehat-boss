@@ -87,6 +87,12 @@ docker run --rm --network none --pull never \
    Desktop은 데몬이 꺼지면 `125`가 아니라 `1`을 낸다(실측 — stderr *"failed to connect to the docker
    API …"*). 그 `1`은 stderr의 클라이언트 연결 실패 문구로 가려 「관측 실패」로 낸다
    (`container_tools._POC_DAEMON_UNREACHABLE` · #567 리뷰).
+   ⏵ 2026-10-09 — **위 코드들이 전부가 아니다**(적대적 리뷰): `137`(docker SIGKILL — **우리가 `--memory`를
+   건다**) · `255`(singularity FATAL) · `>255`(Windows NTSTATUS)도 「관측 실패」로 낸다
+   (`_POC_ENV_FATAL` · `_poc_is_harness_failure`). ⚠ **`137`은 대상 자신의 OOM과 갈리지 않는다** —
+   `src/adapters/container_tools.py`의 `_POC_ENV_FATAL` 주석이 그것을 적는다. 그래서 사유 문구는
+   「띄우지 못했다」로 단정하지 않고 「대상의 판정으로 읽을 수 없다」까지만 말한다
+   (`POC_UNREADABLE_EXIT_REASON`).
 2. **채점은 오라클만 한다. 이 도구는 관측만 낸다.** 둘이 갈리면 오라클이 이긴다.
     **이 ADR은 「지정은 채점기 값을 읽지 않는다」를 건드리지 않는다** —
    `test_designation_does_not_read_oracle_fields`가 그대로 선다.
