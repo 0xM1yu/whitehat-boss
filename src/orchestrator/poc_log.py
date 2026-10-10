@@ -35,9 +35,13 @@
   BudgetExhausted`·`poc_sha256`)을 내고 다시 던진다. 원장은 안 건드린다 — `ensure`가 막은 호출은
   도구를 안 돌렸고 청구도 없다.
 
+`--oracle-submit`이 켜진 run에서 PoV 판이 v3 이상(`pov._WIDE_INPUT_VERSIONS`)이고 중간 홉이면
+`oracle_submitted`도 같은 `poc_sha256`을 이미 싣는다(홉과의 연결은 없다) - 위 이벤트가 새로
+덮는 것은 제출이 없는 run·마지막 홉·v2다.
+
 ⚠ **남는 구멍** — `run_tool` 안에서 `BudgetExhausted` **밖의** 형이 올라가면(예: `store.put`의
-`sqlite3.OperationalError`) 그 홉의 이벤트는 여전히 없다. `tests/test_poc_log.py`가 두 경로를
-고정한다 — 파일까지 남기는 변경이면 그 검사를 뒤집고 이 절을 고친다.
+`sqlite3.OperationalError`) 그 홉의 이벤트는 여전히 없다. `tests/test_poc_log.py`가 두 경로와 이
+구멍을 고정한다 — 파일까지 남기는 변경이면 그 검사를 뒤집고 이 절을 고친다.
 
 ## 쓰기
 

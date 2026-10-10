@@ -1851,10 +1851,12 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
         return
     # 🔴 `finally`로 **빈칸을 메운다.** `_run_pov_hops`의 `except`는
     # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
-    # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다. 적대적 리뷰가 설정만으로 닿는 둘을
-    # 재현했다 — pov 좌석 `prompt_template_version` 오타의 `PromptError`(`run()`은
-    # `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다.
+    # 적대적 리뷰가 설정만으로 닿는 둘을 재현했다 — pov 좌석 `prompt_template_version` 오타의
+    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
+    # ⏵ 2026-10-10 도구 호출 둘레의 `except BudgetExhausted`(#394)는 홉 이벤트를 낸 뒤 그대로
+    # 올리므로 사유 0건은 여전하고 이 `finally`가 메운다.
     # `setdefault`라 정상 출구가 적은 사유를 덮지 않는다 — 아무도 안 적었을 때만 들어간다.
     # 채점기 제출(#386)은 이 `try` 안이다: `_submit_vul_to_oracle`이 `Exception`을 스스로 흡수하므로
     # `finally`가 루프가 이미 적은 사유(`submitted`)를 덮을 일이 없고, 올라가는 인터럽트가 있어도
@@ -2452,8 +2454,10 @@ def _run_pov_hops(
             except BudgetExhausted as exc:
                 # 🔴 **그 홉의 이벤트를 내고 다시 던진다**(#394). `call_tool`도 `ledger.ensure`를
                 # 하므로 예산은 이 자리에서도 끊긴다 — gen PoC를 조립한 **뒤**, 홉 이벤트를 내기
-                # **전**이다. 안 내면 그 PoC는 해시조차 어디에도 없다. 내면 다음 홉에서 끊긴
-                # 경로와 같아진다(그 홉 gen 이벤트의 `poc_sha256`이 잃은 PoC를 특정한다).
+                # **전**이다. 안 내면 오라클 제출이 없는 run·마지막 홉·v2에서 그 PoC의 해시는 trace
+                # 어디에도 없다(제출이 있으면 `oracle_submitted`가 같은 해시를 싣는다 - 홉과의
+                # 연결만 없다). 내면 다음 홉에서 끊긴 경로와 같아진다(그 홉 gen 이벤트의
+                # `poc_sha256`이 잃은 PoC를 특정한다).
                 # 원장은 안 건드린다 — `ensure`가 막은 호출은 도구를 안 돌렸고 청구도 없다.
                 # 예외는 그대로 올린다(추가형 계약 — 예산 소진은 run의 사실). 종단(`_pov_finish`)은
                 # 여전히 안 부른다 — 파일은 이 경로에서도 없다(`poc_log` 모듈 docstring 「한계」).
@@ -2461,7 +2465,7 @@ def _run_pov_hops(
                 try:
                     _emit_pov_hop(
                         ctx, finding, hop=hop, action=action.action, poc=hop_poc,
-                        failed=(exc, (ctx.monotonic_ms() - started) / 1000.0),
+                        failed=(exc, None), wall_ms=max(0, ctx.monotonic_ms() - started),
                         fuzz=fuzz if hop == 0 else None,
                     )
                 except Exception as emit_exc:
@@ -2584,6 +2588,7 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
     run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
+    ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
@@ -2608,13 +2613,15 @@ def _emit_pov_hop(
     evidence: Evidence | None = None,
     poc: bytes | None = None,
     stop_reason: str | None = None,
-    failed: tuple[Exception, float] | None = None,
+    failed: tuple[Exception, float | None] | None = None,
+    wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
     **도구 호출**이 예산에서 끊긴 경우도 `failed`로 낸다(#394) — 그때는 응답이 있어 `action`이
-    같이 실리고 `schema_ok`가 참이다.
+    같이 실리고 `schema_ok`가 참이다. 이 경우 경과는 `data`가 아니라 최상위 `wall_ms`로 보낸다
+    (`failed`의 시간은 `None`) — Fake 경로의 결정론 trace에 시계값을 `data`로 넣지 않는다.
 
     `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
     이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
@@ -2645,7 +2652,8 @@ def _emit_pov_hop(
     if failed is not None:
         exc, latency_s = failed
         data["schema_ok"] = not isinstance(exc, SchemaParseError)
-        data["latency_s"] = latency_s
+        if latency_s is not None:
+            data["latency_s"] = latency_s
         data["error"] = type(exc).__name__
         data["error_detail"] = error_detail(exc)
     ctx.trace.emit(
@@ -2653,6 +2661,7 @@ def _emit_pov_hop(
         stage=Stage.VALIDATE,
         subject_kind="finding",
         subject_id=finding.finding_id,
+        wall_ms=wall_ms,
         **data,
     )
 
