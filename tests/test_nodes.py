@@ -2508,15 +2508,51 @@ def test_report_records_which_representative_each_dropped_finding_merged_into(
     """
     low, mid, high = _finding("find_0001"), _finding("find_0005"), _finding("find_0009")
     elsewhere = _finding("find_0002")  # 같은 (CWE, 대상 함수)지만 다른 파일
-    grades = {"find_0001": "E0", "find_0005": "E2", "find_0009": "E3", "find_0002": "E1"}
-    files = {"find_0001": "a.c", "find_0005": "a.c", "find_0009": "a.c", "find_0002": "b.c"}
+    # 둘째 그룹에도 버려지는 쪽을 둔다 — 없으면 대표를 그 키가 아닌 곳에서 가져오는 변이가 산다.
+    second_drop = _finding("find_0012")  # b.c — find_0002(E1)에 흡수
+    ungraded = _finding("find_0013")  # a.c — 등급 없음: 흡수되고 `grade`는 `null`
+    bare_a, bare_b = _finding("find_0020"), _finding("find_0021")  # c.c — 둘 다 등급 없음
+    grades = {
+        "find_0001": "E0",
+        "find_0005": "E2",
+        "find_0009": "E3",
+        "find_0002": "E1",
+        "find_0012": "E0",
+    }
+    files = {
+        "find_0001": "a.c",
+        "find_0005": "a.c",
+        "find_0009": "a.c",
+        "find_0002": "b.c",
+        "find_0012": "b.c",
+        "find_0013": "a.c",
+        "find_0020": "c.c",
+        "find_0021": "c.c",
+    }
 
-    result = report.run(ctx, findings=[mid, high, elsewhere, low], grades=grades, files=files)
+    result = report.run(
+        ctx,
+        findings=[mid, high, elsewhere, bare_b, second_drop, ungraded, bare_a, low],
+        grades=grades,
+        files=files,
+    )
 
-    assert result.merged_into == {"find_0001": "find_0009", "find_0005": "find_0009"}
+    assert result.merged_into == {
+        "find_0001": "find_0009",
+        "find_0005": "find_0009",
+        "find_0012": "find_0002",
+        "find_0013": "find_0009",
+        "find_0021": "find_0020",
+    }
     events = [e for e in ctx.trace.events if e.kind is EventKind.FINDING_DEDUPED]
-    assert len(events) == result.duplicates == 2
-    assert [e.subject_id for e in events] == ["find_0001", "find_0005"]  # finding_id 순
+    assert len(events) == result.duplicates == 5
+    assert [e.subject_id for e in events] == [
+        "find_0001",
+        "find_0005",
+        "find_0012",
+        "find_0013",
+        "find_0021",
+    ]
     assert all(e.stage == int(Stage.REPORT) and e.subject_kind == "finding" for e in events)
     assert events[0].data == {
         "representative": "find_0009",
@@ -2528,7 +2564,13 @@ def test_report_records_which_representative_each_dropped_finding_merged_into(
     }
     assert events[1].data["representative"] == "find_0009"
     assert events[1].data["grade"] == "E2"
-    assert "중복 제거: 2건 (무엇과 합쳤는지는 trace의 `finding_deduped`)" in result.render()
+    assert events[2].data["representative"] == "find_0002"  # 자기 그룹의 대표 — a.c의 것이 아니다
+    assert (events[2].data["grade"], events[2].data["representative_grade"]) == ("E0", "E1")
+    # 등급 없음은 "E0"이 아니라 `null`이다 — 키는 있고 값이 None.
+    assert events[3].data["grade"] is None and events[3].data["representative_grade"] == "E3"
+    # 대표도 등급이 없으면 `representative_grade`가 `null`이다.
+    assert events[4].data["grade"] is None and events[4].data["representative_grade"] is None
+    assert "중복 제거: 5건 (무엇과 합쳤는지는 trace의 `finding_deduped`)" in result.render()
 
 
 def test_dedupe_with_merges_ties_go_to_the_smallest_finding_id() -> None:
@@ -2544,8 +2586,8 @@ def test_dedupe_with_merges_ties_go_to_the_smallest_finding_id() -> None:
 
 
 def test_report_without_duplicates_records_nothing(ctx: RunContext) -> None:
-    """중복이 없으면 대응을 하나도 안 남긴다 — 이벤트 부재가 「안 합쳤다」이고, 리포트 바이트도
-    종전과 같다(중복 줄 자체가 없다)."""
+    """중복이 없으면 대응을 하나도 안 남긴다 — `report.run`이 돈 run에서 이벤트 부재가
+    「안 합쳤다」이고, 리포트 바이트도 종전과 같다(중복 줄 자체가 없다)."""
     a = _finding("find_0001")
     b = _finding("find_0002")
 

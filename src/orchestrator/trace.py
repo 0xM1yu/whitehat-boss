@@ -36,7 +36,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
-| 중복 제거 대응 | `finding_deduped` | `count(*) = Report.duplicates`. **이벤트 부재 = 안 합쳤다** |
+| 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
@@ -578,8 +578,9 @@ class EventKind(StrEnum):
     # `ok`·`wall_ms`를 보고하므로 접두사 없이 펴면 하네스의 값과 이름이 겹친다.
     MODEL_SWAP = "model_swap"
     # 9단계 dedupe가 버린 Finding 하나 (이슈 #101 잔여). 내는 곳은 `nodes/report.run`이다 —
-    # **버린 건당 1행이고 `count(*) = Report.duplicates`**, 중복이 없는 run은 0건이다(이벤트 부재 =
-    # 안 합쳤다). `subject_id`는 버린 finding이고 `representative`가 대신 남은 finding이다.
+    # **버린 건당 1행이고 `count(*) = Report.duplicates`**, 중복이 없는 run은 0건이다(9단계에 도달한
+    # run에서 이벤트 부재 = 안 합쳤다 — 그 전에 크래시한 run은 0건이어도 모른다).
+    # `subject_id`는 버린 finding이고 `representative`가 대신 남은 finding이다.
     # `grade`·`representative_grade`(러너가 넘긴 등급, 없으면 `null` — "E0"이 아니다)와 합친 근거인
     # 키 세 칸 `cwe`·`file`·`target`(`report._dedupe_key` — `cwe`가 `null`이면 `target`은 후보 ID)을
     # 싣는다. 행 순서는 `finding_id` 오름차순이다.

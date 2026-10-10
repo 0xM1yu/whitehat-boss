@@ -276,7 +276,8 @@ def run(
     넘긴다 — dedupe 키가 파일을 가르는 데 쓴다(#101 a).
 
     버린 Finding마다 `finding_deduped`를 하나 낸다(#101 잔여) — `subject_id`가 버린 것이고
-    `representative`가 대신 남은 것이다. 중복이 없는 run은 0건이다(**이벤트 부재 = 안 합쳤다**).
+    `representative`가 대신 남은 것이다. 중복이 없는 run은 0건이다(**9단계에 도달한 run에서
+    이벤트 부재 = 안 합쳤다** — 그 전에 크래시한 run은 0건이어도 모른다).
     """
     grades = grades or {}
     files = files or {}
