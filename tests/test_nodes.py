@@ -3048,3 +3048,36 @@ def _finding(
         produced_by=ProducedBy(role=Role.AUDITOR, model="fake", prompt_version="v1"),
         repro_spec=ReproSpec(steps=["./build.sh"], expected_signal=signal) if backed else None,
     )
+
+
+def test_a_seat_failing_in_different_stages_does_not_add_up_but_in_one_stage_does(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**자리 연속 폐기 카운터의 키는 `_caller(단계, 자리)`다 (D73 ②, #197).**
+
+    같은 Scout 자리의 시도가 4단계에서 한 번, 5단계에서 한 번 죽은 것은 「그 자리가 체계적으로
+    고장 났다」가 아니다 — 죽은 모델이 다르다. 예전 키(`item.role`)는 둘을 한 버킷에 쌓아 상한에
+    닿았다. 같은 단계에서 다시 죽으면 쌓인다(D68 — 멤버 하나의 전량 실패는 여전히 선다).
+
+    실패 사이마다 `completed()`를 부르는 것은 **형제 자리의 완주**다 — run 카운터를 지워 자리
+    카운터만 남긴다(풀에서 형제가 멀쩡할 때의 모양). 상한 2로 낮춰 세 번 안에 가른다.
+    """
+    monkeypatch.setattr(runner, "_MAX_CONSECUTIVE_DROPS", 2)
+    # `_drop`이 target에서 읽는 것은 위치와 슬라이스 id뿐이다.
+    target = runner._Target(
+        artifact=None, location=VULN_TARGET, evidences=(), signal_rank=0
+    )
+    state = runner._Accumulator()
+    drops = runner._ConsecutiveDrops()
+
+    def fail(stage: Stage) -> None:
+        runner._drop(
+            ctx, state, target, "schema_parse_failed", SchemaParseError("bad"), drops,
+            stage=stage, role=Role.SCOUT_MEMORY,
+        )
+        drops.completed()
+
+    fail(Stage.SCOUT)
+    fail(Stage.AUDITOR)  # 다른 단계 — 같은 자리여도 4단계 키에 안 쌓인다
+    with pytest.raises(runner._TooManyDrops, match="4단계 scout_memory"):
+        fail(Stage.SCOUT)  # 같은 단계 두 번째 — 상한
