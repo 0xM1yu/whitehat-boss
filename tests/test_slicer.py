@@ -469,12 +469,14 @@ def _scala_code(segment: str) -> str:
 
 
 def test_case_a_drops_empty_named_methods_from_both_lists():
-    """#347: one empty-named method row voids the run (`valid_candidate` rejects it, the payload
-    check fails, 0 slices). The guards are pinned on the `val` lines themselves, in code (not
-    comments), and the payload is pinned to be exactly `(api ++ readers).distinct` so nothing
-    re-adds unfiltered methods. ⚠ Spelling pin (CLAUDE.md §2.5): it fails when this spelling is
-    reverted or moved off the `val` line, it does not prove the filter runs -- the Scala is not
-    executed here, and the semantically-equal rewrites fail it falsely."""
+    """#347: one empty-named method row voided the run (`valid_candidate` rejected it, the payload
+    check failed, 0 slices). Since #361 such a row is dropped and counted (`candidates_invalid`)
+    instead; this filter keeps it from reaching that check at all. The guards are pinned on the
+    `val` lines themselves, in code (not comments), and the payload is pinned to be exactly
+    `(api ++ readers).distinct` so nothing re-adds unfiltered methods. ⚠ Spelling pin (CLAUDE.md
+    §2.5): it fails when this spelling is reverted or moved off the `val` line, it does not prove
+    the filter runs -- the Scala is not executed here, and the semantically-equal rewrites fail it
+    falsely."""
     code = _scala_code(queries.candidates_a_query())
     lines = [line.strip() for line in code.splitlines()]
     assert (
@@ -1042,6 +1044,91 @@ def test_missing_candidate_location_consumes_id_without_reuse(monkeypatch, repo,
     # 관계를 여기서 고정해 둬야 한쪽만 움직이는 변경이 조용히 지나가지 않는다.
     assert result["counters"]["locations_unmapped"] == 1
     assert [item["id"] for item in result["slices"]] == ["slice_0002"]
+
+
+def _empty_symbol(row):
+    # #361 (#352 review mock): the empty-name shape #347 saw from real Joern in Case A
+    # (libexpat xmlrole.h:119), carried into Case B. Whether real Joern emits it there is unknown.
+    row["symbol"] = ""
+    return row
+
+
+def _negative_ast_path(row):
+    # #361 (#352 review mock): `selector.ast_path` with a -1 element.
+    row["selector"]["ast_path"] = [1, -1]
+    return row
+
+
+@pytest.mark.parametrize(
+    ("spoil", "field"), [(_empty_symbol, "symbol"), (_negative_ast_path, "selector")]
+)
+def test_one_invalid_case_b_row_is_dropped_not_the_whole_run(
+    monkeypatch, repo, tmp_path, spoil, field
+):
+    """#361: before, one bad Case B row failed the payload check -> `exit=2 partial slices=0`
+    (#352 review mock). Now the valid row is sliced and the bad one is dropped -- and counted,
+    named, quoted and made `partial`, so the drop is not silent."""
+    bad = spoil(candidate("memcpy", 5))
+    code, result, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_b=[candidate("sprintf", 5), bad])
+    )
+    assert code == 2 and result["status"] == "partial"
+    assert result["counters"]["queries_aborted"] == 0
+    assert result["counters"]["candidates_invalid"] == 1
+    assert result["counters"]["candidates_case_b"] == 1
+    assert [item["case"] for item in result["slices"]] == ["B"]
+    assert "backward" in transport.stages
+    assert result["measurement_notes"]["candidates_invalid"] == (
+        f"case_b: 1 rows dropped ({field}: 1)"
+    )
+    [entry] = [d for d in result["diagnostics"] if d.get("stage") == "case_b"]
+    assert entry["rows"] == [bad]
+    assert "Dropped 1 invalid case_b candidate rows" in result["error"]
+
+
+def test_invalid_rows_of_both_cases_are_counted_together(monkeypatch, repo, tmp_path):
+    """Case A's line -1 row is NOT invalid (valid_location checks the type only; it is unmapped
+    later, test above). A row without anchors is invalid in either case."""
+    no_anchors = candidate("b")
+    del no_anchors["anchors"]
+    no_file = candidate("c")
+    no_file["file"] = None
+    data = payloads(
+        case_a=[candidate(), no_anchors, no_file, candidate("a", -1)],
+        case_b=[candidate("sprintf", 5), _empty_symbol(candidate("x", 5))],
+        flow_count=1,
+    )
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["counters"]["candidates_invalid"] == 3
+    assert result["counters"]["candidates_case_a"] == 2
+    assert result["counters"]["candidates_unmapped"] == 1
+    assert result["measurement_notes"]["candidates_invalid"] == (
+        "case_a: 2 rows dropped (anchors: 1, location: 1); case_b: 1 rows dropped (symbol: 1)"
+    )
+    assert sorted(item["case"] for item in result["slices"]) == ["A", "B"]
+
+
+def test_a_fully_valid_candidate_payload_is_unchanged(monkeypatch, repo, tmp_path):
+    """No invalid row -> the counter is measured as 0, no note, no diagnostic, status ok."""
+    data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert code == 0 and result["status"] == "ok"
+    assert result["counters"]["candidates_invalid"] == 0
+    assert "candidates_invalid" not in result["measurement_notes"]
+    assert not [d for d in result["diagnostics"] if str(d.get("stage")).startswith("case_")]
+
+
+def test_a_candidate_payload_that_is_not_a_list_still_fails_the_stage(monkeypatch, repo, tmp_path):
+    """Row isolation needs rows: a non-list payload is still rejected whole, and the counter stays
+    unmeasured when neither candidate payload passed."""
+    data = payloads()
+    data["case_a"] = response("case_a", {"symbol": "entry"})
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["counters"]["queries_aborted"] == 1
+    assert result["slices"] == []
+    assert "Invalid case_a payload schema" in result["error"]
+    assert result["counters"]["candidates_invalid"] is None
+    assert result["measurement_notes"]["candidates_invalid"] == "Stage not reached"
 
 
 def test_crossfile_flow_and_new_context_survive_assembly(monkeypatch, repo, tmp_path):
@@ -1645,13 +1732,21 @@ def test_cli_rejects_invalid_limits(option, value):
 
 
 def test_malformed_scope_is_rejected_before_query_interpolation(monkeypatch, repo, tmp_path):
-    row = candidate()
+    """The malformed row never reaches a query. Before #361 the whole case_a payload was rejected
+    (`queries_aborted` 1, no case_b); now only that row is dropped and the valid one is sliced --
+    the injected text still appears in no request."""
+    row = candidate("a")
     row["scope"]["line"] = '1); throw new RuntimeException("injected"); //'
-    _, result, transport = run_cli(monkeypatch, repo, tmp_path, payloads(case_a=[row]))
+    _, result, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=[row, candidate()], flow_count=1)
+    )
     assert result["status"] == "partial"
-    assert result["counters"]["queries_aborted"] == 1
-    assert result["counters"]["candidates_case_a"] is None
-    assert "case_b" not in transport.stages and "flows" not in transport.stages
+    assert result["counters"]["queries_aborted"] == 0
+    assert result["counters"]["candidates_invalid"] == 1
+    assert result["counters"]["candidates_case_a"] == 1
+    assert "case_b" in transport.stages and transport.stages.count("flows") == 1
+    sent = [json.loads(req.data)["query"] for req, _ in transport.requests]
+    assert not any("injected" in query for query in sent)
 
 
 def test_failed_atomic_replace_preserves_previous_artifact(monkeypatch, tmp_path):
