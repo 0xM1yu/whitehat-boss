@@ -55,10 +55,21 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 `hop_header`」를 양방향으로 건다. **불리언이 아니면 거절한다** — 오타 하나(`"true"`)가 그 줄을
 조용히 끈다.
 
+## meta의 `facts_source` — FACTS가 `source` 사본을 드는가 (auditor)
+
+`false`면 그 판의 FACTS에 `source` 키가 **없다** — 분석 대상 코드는 산문 `{{SOURCE}}` 블록 하나로만
+간다 (이슈 #67 · 2026-10-10 저장소 소유자 결정: 산문 블록을 남기고 FACTS의 같은 사본을 걷는다).
+없으면 `true`라 그 전 판(Auditor v1~v11 · 다른 역할 전부)은 FACTS가 바이트 그대로다. 노드의 이름
+목록이 아니라 여기 둔 것은 위 「버전 이름으로 분기하지 않는 이유」와 같다 — 그 사본을 안 싣는다고
+적는 body 문장과 그 선언이 같은 디렉터리에 있어야 갈리지 않는다. `false`인데 body에 `{{SOURCE}}`가
+없으면 로드에서 거절한다 — 코드가 프롬프트 어디에도 안 실린다. **불리언이 아니면
+거절한다**(`hop_header`와 같다).
+
 ## meta의 키 — 모르는 키는 거절한다
 
-위 `input`·`source_options`·`tools`·`hop_header`는 **값**만 닫으면 모자란다. 키 이름이 틀리면
-(`inputs:` · `toosl:` · `hop_heder:`) 로더가 그 키를 못 읽고 **기본값으로 가서** 값 검사에 닿지도
+위 `input`·`source_options`·`tools`·`hop_header`·`facts_source`는 **값**만 닫으면 모자란다. 키
+이름이 틀리면 (`inputs:` · `toosl:` · `hop_heder:`) 로더가 그 키를 못 읽고 **기본값으로 가서** 값
+검사에 닿지도
 않는다 — 가드가 조용히 꺼지는 같은 실패가 키 쪽에서 난다. 그래서 최상위 키의 집합(`META_KEYS`)도
 닫는다. 키를 새로 읽게 하는 변경은 이 목록에도 넣는다(안 넣으면 그 키를 쓰는 판이 로드에서 죽는다).
 
@@ -69,8 +80,10 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 
 ## body의 마지막 ```json 펜스
 
-**그 블록이 모델이 읽는 사실 전부다**(S1 계약). ID는 노드가 미리 발급해 여기 실어
-보낸다 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
+**그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
+v13)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드는 산문
+SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈 #67). ID는 노드가 미리 발급해 여기 실어 보낸다
+— 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.
 
 ## 누출 방지
@@ -110,7 +123,8 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
-# 나머지 여덟은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
+# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13)이 뺀다.
+# 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
 # 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
@@ -136,7 +150,7 @@ class PromptError(Exception):
 # meta.yaml의 `input`이 가질 수 있는 값(모듈 docstring 「meta의 `input`」).
 INPUT_KINDS = ("source", "slice")
 
-# meta.yaml이 가질 수 있는 최상위 키(모듈 docstring 「meta의 키」). 앞의 일곱은 `_load_cached`가
+# meta.yaml이 가질 수 있는 최상위 키(모듈 docstring 「meta의 키」). 앞의 여덟은 `_load_cached`가
 # 읽는 것이고, 뒤의 다섯은 **로더가 안 읽는 기록용**이다 — `description`은 판의 변경 서술이고
 # 나머지 넷(`profile`·`model`·`cwe_scope`·`based_on`)은 디스크의 scout 세 역할 v3·v4가 든다.
 META_KEYS = (
@@ -147,6 +161,7 @@ META_KEYS = (
     "source_options",
     "tools",
     "hop_header",
+    "facts_source",
     "description",
     "profile",
     "model",
@@ -189,6 +204,9 @@ class PromptTemplate:
     tools: tuple[str, ...] = ()
     # followup 첫 줄에 홉 줄을 붙이는 판인가(모듈 docstring 「meta의 `hop_header`」 — pov만 읽는다).
     hop_header: bool = False
+    # FACTS에 `source` 사본을 싣는 판인가(모듈 docstring 「meta의 `facts_source`」). `False`면
+    # Auditor 노드(와 bench)가 `build_facts(include_source=False)`로 뺀다 — 다른 노드는 안 읽는다.
+    facts_source: bool = True
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
         """가변부를 채운 `Prompt`. prefix는 손대지 않는다.
@@ -273,6 +291,17 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
             f"{directory}/meta.yaml의 hop_header {hop_header!r}은 true/false여야 한다"
         )
 
+    facts_source = meta.get("facts_source", True)
+    if not isinstance(facts_source, bool):
+        raise PromptError(
+            f"{directory}/meta.yaml의 facts_source {facts_source!r}은 true/false여야 한다"
+        )
+    if not facts_source and "SOURCE" not in {m.group("name") for m in _TOKEN.finditer(body)}:
+        raise PromptError(
+            f"{directory}: facts_source가 false인데 body.md에 {{{{SOURCE}}}} 블록이 없다 — "
+            "분석 대상 코드가 프롬프트 어디에도 안 실린다"
+        )
+
     return PromptTemplate(
         role=role,
         version=version,
@@ -283,6 +312,7 @@ def _load_cached(role: Role, version: str, root: Path) -> PromptTemplate:
         source_options=tuple(source_options),
         tools=tuple(tools),
         hop_header=hop_header,
+        facts_source=facts_source,
     )
 
 
@@ -622,6 +652,7 @@ def build_facts(
     callers: Iterable[str] = (),
     evidence_bodies: Mapping[str, Mapping[str, object]] | None = None,
     evidence_locations: bool = False,
+    include_source: bool = True,
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
@@ -639,6 +670,11 @@ def build_facts(
     `evidence_locations`도 같은 opt-in이다 — 노드가 content-aware **판**일 때만 켠다. 켜면 각
     evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
+    `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
+    `facts_source: false`를 선언한 경우(Auditor v13 — 이슈 #67)에만 노드가 `False`를 준다. 그때 키가
+    **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은 「원문을 못
+    읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트 그대로다.
+
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
     (CLAUDE.md §0 — 안 잰 값은 0으로 두고 사유를 남긴다). 그 dict를 만드는 곳은
@@ -652,6 +688,8 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13)은 `source`를 여기 안 싣고 body가
+        # 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도 싣는다.
         "capsule_sections": [
             {
                 "kind": section.kind,
@@ -663,7 +701,7 @@ def build_facts(
         ]
         if capsule
         else [],
-        "source": source,
+        **({"source": source} if include_source else {}),
         # `evidence_bodies`가 주어진 evidence만 본문(body·truncated)을 싣는다. 안 주면
         # (Scout, 그리고 Auditor·Critic 중 노드의 `_CONTENT_AWARE_VERSIONS`에 없는 버전)
         # 종전과 바이트 동일하게 id·kind·ok만 나간다 — opt-in.

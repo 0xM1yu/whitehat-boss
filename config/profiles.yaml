@@ -148,7 +148,8 @@ profiles:
     #   양수여야 돈다). ⏵ 2026-10-06 — v9로 올렸다(v8 + `auditor_guards` 서술 — v9도 그 집합에 든다).
     #   ⏵ 2026-10-07 — **v10으로 올렸다**(v7 전면 재작성 · 매 홉 봉투가 `AuditorProcedureAction`이고
     #   최종 답이 `AuditProcedure` — v10도 그 집합에 든다. v10으로 돈 run은 0건이다 — ⏵ 2026-10-08 1건이 됐다, `checksum` 0이라 비교표 밖).
-    #   ⏵ 2026-10-09 — **v11로 올렸다**(`config/models.yaml`의 `qwen3.8-27b` · 이슈 #525). critic gpt-oss와
+    #   ⏵ 2026-10-09 — **v11로 올렸다**(`config/models.yaml`의 `qwen3.8-27b` · 이슈 #525). ⏵ 2026-10-10 —
+    #   **v13으로 올렸다**(이슈 #67 — v11 + FACTS에서 `source` 사본을 뺀다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.
