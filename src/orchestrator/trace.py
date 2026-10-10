@@ -434,6 +434,8 @@ class EventKind(StrEnum):
     #   새로 붙는다 — 그 판의 `Finding`도 이 필드를 든다) · 어긴 경우에만
     #   `status_result_mismatch`(`refutation.result`가 가리키는 상태 ↔ `trigger_status`, 값은
     #   `"<상태>/<result>"`)·`path_without_endpoints`(경로가 비면 안 되는 상태인데 양 끝이 없다) ·
+    #   ⏵ 2026-10-09 `cwe_present_on_no_signal`(v11 답이 `no_signal`인데 `cwe`가 null이 아니다 —
+    #   v11만, 이슈 #525) ·
     #   그리고 `cited_probe_evidence`(최종 답이 `evidence_refs`로 인용한 `probe` Evidence
     #   수). ⚠ 그 Evidence는 러너가 게이트에 넘기는 `state.evidences`에 **없어서** 인용해도
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
