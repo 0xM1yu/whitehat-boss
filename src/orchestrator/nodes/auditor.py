@@ -251,7 +251,7 @@ CALLERS_SECTION = "callers"
 # 최악 비에서는 16홉만으로 넘는다**: 입력 몫 196,608(창 262,144 − 출력 상한 65,536, `config.py`의
 # `auditor_tool_hops` 주석)에서 비 1.22면 한 번이 12,296토큰이라 16홉 `lookup` 관측만으로
 # 196,736이고 **hop0를 빼고도 128토큰 넘는다**(계산값). hop0 입력 28,833(프롬프트 **v4**의 최악
-# 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06 v9, ⏵ 같은 날 v10) prefix가 훨씬 길다:
+# 추정 — ⏵ 2026-10-04 정본은 루프 판 v8이었고(⏵ 2026-10-06 v9, ⏵ 2026-10-07 v10) prefix가 훨씬 길다:
 # v8 33,209자 · v9 35,501자 · v10 56,906자(`load_prompt(...).prefix`의 글자 수 — **실측**이고
 # `tests/test_auditor_prompt_v10.py`가 핀으로 든다) ↔ v4
 # 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
@@ -1102,7 +1102,8 @@ def _probe_observation(ctx: RunContext, hop: int, evidence: Evidence, *, spec_ig
     같은 문구로 주면 모델이 그 신호를 「알 수 없음」으로 읽고, 학습 궤적에도 그렇게 남는다(CLAUDE.md
     §0).
 
-    `evidence_id`는 모델이 그 근거를 `Finding.evidence_refs`로 **인용할 수 있게** 싣는다. ⚠ 이
+    `evidence_id`는 모델이 그 근거를 `Finding.evidence_refs`로 **인용할 수 있게** 싣는다 —
+    다만 그 인용이 **등급을 가르지는 않는다**(6단계가 타깃 관측분을 직접 붙인다 — 이슈 #552). ⚠ 이
     Evidence는 증거 저장소에는 있으나 러너가 게이트에 넘기는 `evidences`에는 없다(`run()`의 반환
     계약이 불변이다) — 인용해도 `gate.evidences_for`가 모르는 참조로 조용히 버린다. 그래서 `answer`
     홉 이벤트가 인용한 수(`cited_probe_evidence`)를 남긴다. 연결은 별 결정이다(이슈 #419의
