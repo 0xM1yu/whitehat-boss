@@ -170,7 +170,8 @@ thresholds:
   # 같이 움직인다.
   #
   # 이 값과 배선된 프롬프트 판은 **같은 말을 해야 한다** — 양수인데 판이 `Finding`을
-  # 선언하거나, 0인데 판이 루프 봉투(`AuditorAction`·`AuditorProcedureAction`)를 선언하거나,
+  # 선언하거나, 0인데 판이 루프 봉투(`AuditorAction`·`AuditorProcedureAction`·⏵ 2026-10-09 v11의
+  # `AuditorProcedureNullableCweAction`)를 선언하거나,
   # 루프 판이 meta `tools`를 안 들면
   # `nodes/auditor.loop_problem`이 run과 doctor를 같은 문장으로 막는다(한쪽만 통과하는
   # 설정이면 통과한 run이 첫 Auditor 호출에서야 선다 — 그 앞 단계의 GPU 시간 뒤다).
@@ -201,6 +202,9 @@ thresholds:
   #   빨개지고, 그때 이 주석과 아래 자리들을 같이 고친다. 핀을 둔 이유는 이 수가 **한 세션에서
   #   두 번 낡았기 때문이다**(산문을 고치고 다시 재지 않았다).
   #   가드 블록은 SOURCE에 붙는 몫이라 따로 안 셌다(미실측).
+  # - ⏵ 2026-10-09 — 서빙 판은 **v11**이다(이슈 #525 — v10 + no_signal의 `cwe`를 null로 내라는 서술 네 줄).
+  #   prefix 56,872자로 v10보다 34자 짧다(`load_prompt(...).prefix`의 길이 — 실측). 위 v10 계산값을
+  #   다시 안 셌다 — 34자는 같은 3.04로 약 11토큰(계산값)이다.
   # - 🔴 **그 hop0 수들은 SOURCE를 한 번만 센다 — hop0 user 턴은 SOURCE를 두 번 싣는다.**
   #   `prompts/auditor/*/body.md`가 `{{SOURCE}}`와 `{{FACTS}}`를 둘 다 두고 `build_facts`가
   #   FACTS에 `source`를 싣는다(`prompt_loader`). 2026-10-06 적대적 검토가 렌더 결과에서 센티널이
@@ -596,7 +600,7 @@ thresholds:
     expanded: 18000
     focused: 8000
 
-  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 **v10**(⏵ 2026-10-07 — v7에서
+  # Auditor `SOURCE` 옵션(#349). 정본 Auditor 프롬프트 **v10**(⏵ 2026-10-09부터 정본은 v11 — 아래 ⏵)(⏵ 2026-10-07 — v7에서
   # 전면 재작성한 판이고 출력 계약이 바뀐다. 이 옵션 여덟을 스스로 서술·선언하지만 앞 판과
   # **바이트 동일이 아니라** 그 서술이 러너와 맞는지는 `tests/test_config.py`의 서빙판 핀이 문다.
   # 그 전 판 **v9**(⏵ 2026-10-06 — v8 + `auditor_guards` 서술.
@@ -605,6 +609,8 @@ thresholds:
   # 그 전 판 v7(v6 + 이 넷의 서술 · ⏵ 2026-10-04 맨 아래 래퍼 너머 · 간접 피호출 · 쓰기 지점 창까지 일곱)이 이 넷을 서술하고 meta의
   # `source_options`로 선언한다 -> 하나라도 끄면 v7의 서술이 거짓이 된다(`cli`는 켠 쪽만 검사).
   # ⏵ 여덟째 `auditor_guards`(맨 아래)는 v9·v10이 서술·선언한다(v7·v8은 안 한다 — 아래).
+  # ⏵ 2026-10-09 — 정본은 **v11**이다(이슈 #525 — v10 + `cwe` 서술 네 줄). 옵션 여덟의 서술·선언은 v10과
+  # 바이트 동일이다(`tests/test_nullable_cwe.py`가 v10과의 차이를 그 네 줄로 묶는다).
   # 고른 근거는 둘 다 로컬 소표본이다(run ID 없음 · 원자료 저장소 밖):
   # - 20,000토큰 + 정의 + 피호출 -> 2026-10-01 s500 실패 표본 9개(GT 보는 슬라이스 35)에서 정의 누락
   #   97.9 -> 69.4% · 피호출 누락 56.3 -> 47.2% · 입력 토큰 중앙값 347 -> 1,106(`measure_results/
@@ -649,6 +655,7 @@ thresholds:
   # (`prompts/critic/v6/prefix.md`). 둘 다 머리줄이 스스로 「구문상 · 지배 안 할 수 있음」을 적는다.
   # ⏵ 2026-10-06 — 켰다(사용자 지시). Auditor v9가 이 옵션을 서술·선언한다(`prompts/auditor/v9/`)
   # — ⏵ 2026-10-07 서빙 판이 된 v10도 서술·선언한다(`prompts/auditor/v10/`).
+  # ⏵ 2026-10-09 — 서빙 판 v11도 같은 서술로 선언한다(`prompts/auditor/v11/` — 이슈 #525).
   # v7·v8은 선언하지 않아 그 판을 고르고 켜면 `cli`의 run·doctor가 막는다(`_undescribed_source_options`).
   auditor_guards: 1
 

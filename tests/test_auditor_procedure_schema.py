@@ -389,6 +389,11 @@ def test_cwe_enforces_the_pattern_and_refuses_null_even_for_no_signal() -> None:
     it is never null, whatever the trigger_status」. `Finding.cwe`가 nullable이 아니고 그 값을
     읽는 자리가 여섯이라(SARIF `ruleId` 포함) 이 스키마는 넓히지 않는다 — 산문이 한 번 null을
     적었던 자리라서 no_signal까지 일부러 못 박는다.
+
+    ⏵ 2026-10-09 — 「`Finding.cwe`가 nullable이 아니고」는 그날까지의 사실이다. `Finding.cwe`는
+    `no_signal`에서 `None`을 받게 됐고(이슈 #525 선택지 1 · D107) null을 받는 응답 스키마는 v11의
+    `AuditProcedureNullableCwe`다. **v10의 이 스키마는 그대로 거절한다** — JSON 스키마가 v10의 요청
+    바이트라서 안 넓혔다(`tests/test_nullable_cwe.py`).
     """
     schema = AuditProcedure.model_json_schema()
     no_signal = {"audit": None, "trigger_status": "no_signal", "confidence": 0.05}
@@ -589,10 +594,21 @@ def test_the_new_classes_add_no_repo_internal_reference_to_the_request() -> None
     한 방 `Finding`과 v8·v9 봉투가 이미 보내는 것이라 이 변경이
     만든 것이 아니다. 검출기는 늦게 import한다 — 그쪽 이름이 바뀌어도 이 파일의 나머지 검사는 산다.
     """
-    from src.schemas import PovAction, ScoutResponse
+    from src.schemas import (
+        AuditorProcedureNullableCweAction,
+        AuditProcedureNullableCwe,
+        PovAction,
+        ScoutResponse,
+    )
     from tests.test_auditor_loop import _leaking_definitions
 
-    own = _leaking_definitions(AuditorProcedureAction.model_json_schema(), "AuditorProcedureAction")
+    # ⏵ 2026-10-09 — v11 형제 봉투(이슈 #525)도 같은 가드 안에 둔다. 그 docstring도 요청 payload에
+    # 실리므로 `#525` 같은 참조가 새로 들어가면 여기서 빨개진다.
+    own = _leaking_definitions(
+        AuditorProcedureAction.model_json_schema(), "AuditorProcedureAction"
+    ) | _leaking_definitions(
+        AuditorProcedureNullableCweAction.model_json_schema(), "AuditorProcedureNullableCweAction"
+    )
     already_sent = (
         _leaking_definitions(Finding.model_json_schema(), "Finding")
         | _leaking_definitions(ScoutResponse.model_json_schema(), "ScoutResponse")
@@ -603,6 +619,8 @@ def test_the_new_classes_add_no_repo_internal_reference_to_the_request() -> None
         for cls in (
             AuditorProcedureAction,
             AuditProcedure,
+            AuditorProcedureNullableCweAction,
+            AuditProcedureNullableCwe,
             AuditBlock,
             AuditPoint,
             AuditOrigin,

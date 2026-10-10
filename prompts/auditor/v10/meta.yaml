@@ -3,6 +3,8 @@
 #
 # v10 = **v7을 전면 재작성한 판**이다 — 분석 절차(5단계 점검 · 우선순위 · 트리거 규칙)와 출력 계약(`audit` 블록)을
 # 새로 썼고 도구는 v8·v9와 같은 홉 구조(lookup · probe · answer)로 부른다. 아직 어느 run도 안 썼다.
+# (⏵ 2026-10-08 — 1건이 썼다: `docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` ·
+# `checksum` 0이라 비교표 밖.)
 # 그 재작성이 하네스가 실제로 하는 일과 어긋난 자리를 이 판에서 교정했다. 서술은 코드를 열어 대조했다
 # (CLAUDE.md 2.1):
 # - **도구는 네이티브 도구 호출이 아니다.** 하네스는 도구 정의를 안 보내고 매 홉 구조화 출력 JSON 봉투 하나를
@@ -25,6 +27,11 @@
 # (`nodes/auditor._loop_envelope` · `loop_problem` — `cli`의 doctor `_check_auditor_loop`가 `loop_problem`을
 # 거쳐 푼다).
 # ⚠ 그 서술이 모델에게 어떻게 읽히는지, 켠 옵션이 판정을 바꾸는지는 미실측이다.
+# ⏵ 2026-10-09 — `qwen3.8-27b`를 v11로 올려 지금은 어느 registry 엔트리도 이 버전을 고르지 않는다. 위 첫 줄의
+# 「엔트리가 이 버전을 고르고」와 셋째 항목의 「`cwe`는 no_signal에서도 null이 아니다」는 그날까지의 기록이다 —
+# v11(이슈 #525 선택지 1)이 no_signal의 `cwe`를 null로 바꿨고 봉투도 형제(`AuditorProcedureNullableCweAction`)다.
+# 이 판의 prefix·body·meta 키와 봉투(`AuditorProcedureAction`)는 그대로고 `_CONTENT_AWARE_VERSIONS`에도 남는다 —
+# 요청 바이트가 같다(`tests/test_nullable_cwe.py`).
 role: auditor
 version: v10
 output_schema: AuditorProcedureAction
