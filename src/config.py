@@ -793,6 +793,9 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-09 — 서빙 판은 v11이고 봉투는 셋이다: v11은 셋째
     # `AuditorProcedureNullableCweAction`(최종 답
     # `AuditProcedureNullableCwe` — `no_signal`에서 `cwe`가 null일 수 있다, 이슈 #525)을 낸다.
+    # ⏵ 2026-10-10 — 봉투는 넷이다: v12(서빙 판 아님)가 넷째
+    # `AuditorProcedureAuditAlwaysAction`(최종 답 `AuditProcedureAuditAlways` — `no_signal`에도
+    # `audit`를 채운다, 이슈 #578)을 낸다.
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -831,6 +834,8 @@ class Thresholds(HarnessModel):
     # 없다(선언하면 `resolve_output_schema`가 거절한다).
     # ⏵ 2026-10-09 — v11은 `AuditorProcedureNullableCweAction`을 선언해 허용집합은 넷이다(이슈
     # #525).
+    # ⏵ 2026-10-10 — v12는 `AuditorProcedureAuditAlwaysAction`을 선언해 허용집합은 다섯이다(이슈
+    # #578).
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:

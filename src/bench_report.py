@@ -124,6 +124,7 @@ def schema_for(
     auditor 한 방 판=Finding, 도구 루프 판=AuditorAction). ⏵ 2026-10-06 — 루프 봉투가 둘이라
     v8·v9=`AuditorAction`, v10=`AuditorProcedureAction`이다(위 `AuditorAction`은 v8·v9의 이름).
     ⏵ 2026-10-09 — v11=`AuditorProcedureNullableCweAction`(이슈 #525)이 셋째다.
+    ⏵ 2026-10-10 — v12=`AuditorProcedureAuditAlwaysAction`(이슈 #578)이 넷째다.
     노드가 프롬프트 meta가 선언한 것을
     요청하므로(`nodes/scout.py`·`nodes/auditor.py`) bench도 같은 것을 재야 **운영 grammar**를 재는
     것이 된다 — 그 자리에서 `ROLE_SPEC`의 스키마는 캡슐 레벨 전용이 된다.

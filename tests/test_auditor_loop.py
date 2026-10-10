@@ -49,12 +49,19 @@ from src.schemas.auditor import (
     AUDITOR_TOOLS,
     AuditorAction,
     AuditorProcedureAction,
+    AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
     AuditProcedure,
+    AuditProcedureAuditAlways,
     AuditProcedureNullableCwe,
 )
 from src.schemas.enums import AuditorStopReason, EvidenceKind, UnfilledReason
-from src.schemas.finding import AuditBlock, AuditRefutation, Finding
+from src.schemas.finding import (
+    AuditBlock,
+    AuditRefutation,
+    AuditRefutationWithNoSignal,
+    Finding,
+)
 from src.schemas.need_evidence import Resolution, RetrievedBlock, Unfilled
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.scout_response import RequestedContext, ScoutResponse
@@ -835,6 +842,10 @@ def test_bench_requests_the_schema_the_auditor_prompt_declares() -> None:
         auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v11").output_schema)
         is AuditorProcedureNullableCweAction
     )
+    assert (
+        auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v12").output_schema)
+        is AuditorProcedureAuditAlwaysAction
+    )
     # `ROLE_SPEC`이 auditor 자리에 든 이름(캡슐 레벨 전용이 된 쪽)을 `declared`로 주고, bench가
     # 그것을 **무시하고 판 선언을 푸는지** 본다. 문자열 핀으로 걸었을 때는 분기를 `elif False:`로
     # 막아도 초록이었다(CLAUDE.md 2.5).
@@ -845,6 +856,7 @@ def test_bench_requests_the_schema_the_auditor_prompt_declares() -> None:
         ("v8", AuditorAction),
         ("v10", AuditorProcedureAction),
         ("v11", AuditorProcedureNullableCweAction),
+        ("v12", AuditorProcedureAuditAlwaysAction),
     ):
         resolved = bench_report.schema_for(
             Role.AUDITOR, load_prompt(Role.AUDITOR, version), declared
@@ -1929,6 +1941,9 @@ def _convert(procedure: AuditProcedure) -> Finding:
         pytest.param(
             "v11", "AuditorProcedureNullableCweAction", True, id="v11-nullable-cwe-envelope"
         ),
+        pytest.param(
+            "v12", "AuditorProcedureAuditAlwaysAction", True, id="v12-audit-always-envelope"
+        ),
     ],
 )
 def test_the_places_that_ask_is_this_a_loop_prompt_all_get_the_same_answer(
@@ -1966,16 +1981,19 @@ def test_the_allowed_schemas_are_the_one_shot_finding_plus_exactly_the_loop_enve
     allowed = set(auditor.ALLOWED_OUTPUT_SCHEMAS)
 
     # ⏵ 2026-10-09 — 셋째 봉투(v11의 `AuditorProcedureNullableCweAction`, 이슈 #525)가 더해졌다.
+    # ⏵ 2026-10-10 — 넷째 봉투(v12의 `AuditorProcedureAuditAlwaysAction`, 이슈 #578)가 더해졌다.
     assert allowed == {
         Finding,
         AuditorAction,
         AuditorProcedureAction,
         AuditorProcedureNullableCweAction,
+        AuditorProcedureAuditAlwaysAction,
     }
     assert allowed - set(auditor._LOOP_ENVELOPES) == {auditor.OUTPUT_SCHEMA}
     assert AuditProcedure not in allowed
     assert AuditProcedureNullableCwe not in allowed
-    for payload in ("AuditProcedure", "AuditProcedureNullableCwe"):
+    assert AuditProcedureAuditAlways not in allowed
+    for payload in ("AuditProcedure", "AuditProcedureNullableCwe", "AuditProcedureAuditAlways"):
         with pytest.raises(PromptError, match="이 역할이 낼 수 없다"):
             auditor.resolve_output_schema(payload)
 
@@ -1988,8 +2006,8 @@ def test_the_one_shot_sentence_names_every_loop_envelope_and_the_declared_schema
     assert problem is not None
     assert "Finding(한 방)을 선언하는데" in problem
     assert (
-        "AuditorAction · AuditorProcedureAction · AuditorProcedureNullableCweAction 판에서만 돈다"
-        in problem
+        "AuditorAction · AuditorProcedureAction · AuditorProcedureNullableCweAction · "
+        "AuditorProcedureAuditAlwaysAction 판에서만 돈다" in problem
     )
 
 
@@ -2372,15 +2390,24 @@ def test_every_value_the_procedure_accepts_converts_to_a_finding() -> None:
 
     ⚠ **이 명제가 못 덮는 것 셋** — `rca_draft`(`Finding.rca_draft`가 `str = ""`이라 비어 있어도
     변환이 된다), `AuditPoint.expression`·`AuditRefutation.witness`(`Finding.audit`가 **같은
-    클래스**라 한쪽만 느슨해질 수 없다)는 변환을 못 깬다. 그 셋의 「비어 있지 않음」은 아래 검사가
+    클래스**라 한쪽만 느슨해질 수 없다 — ⏵ 2026-10-10 v12 블록이 더해져 「같은 클래스를 멤버로
+    든다」다)는 변환을 못 깬다. 그 셋의 「비어 있지 않음」은 아래 검사가
     스키마의 문자열 자리 전부에 거는 것으로 묶는다."""
     shared = set(AuditProcedure.model_fields) & set(Finding.model_fields)
     assert shared == {*_OWN_DECLARED, "audit", "repro_spec"}, (
         f"공유 필드가 바뀌었다({sorted(shared)}) — 새 필드는 위 표에 넣거나 같은 클래스인지 본다"
     )
-    for name in ("audit", "repro_spec"):
-        same = AuditProcedure.model_fields[name], Finding.model_fields[name]
-        assert same[0].annotation == same[1].annotation, f"{name}: 두 모델이 다른 클래스를 쓴다"
+    same = AuditProcedure.model_fields["repro_spec"], Finding.model_fields["repro_spec"]
+    assert same[0].annotation == same[1].annotation, "repro_spec: 두 모델이 다른 클래스를 쓴다"
+    # ⏵ 2026-10-10 — `Finding.audit`는 v12 블록도 받아(이슈 #578) 주석이 같지 않다. 명제는 「응답이
+    # 싣는 블록 클래스를 `Finding`이 전부 받는다」이므로 그것을 합집합 소속으로 건다 — v10·v11의
+    # `AuditBlock`도 v12의 `AuditBlockWithNoSignal`도 `Finding.audit`의 멤버다.
+    stored = set(get_args(Finding.model_fields["audit"].annotation))
+    for procedure_class in (AuditProcedure, AuditProcedureAuditAlways):
+        carried = set(get_args(procedure_class.model_fields["audit"].annotation)) or {
+            procedure_class.model_fields["audit"].annotation
+        }
+        assert carried <= stored, f"{procedure_class.__name__}.audit를 Finding이 못 싣는다"
 
     finding_props = Finding.model_json_schema()["properties"]
     procedure_props = AuditProcedure.model_json_schema()["properties"]
@@ -2537,13 +2564,21 @@ def test_the_status_map_has_exactly_the_refutation_results_the_schema_allows() -
     `KeyError`가 나고, 그 예외는 모델이 낸 출력이 아니라 **하네스 코드의 것**이다. 반대로 맵에만
     있는 키는 죽은 대응이다. 값 쪽은 `trigger_status`가 실제로 허용하는 상태여야 한다 — 아니면
     그 칸은 항상 「모순」으로 센다. 이 파일이 손으로 든 `_AUDIT_RESULTS`도 같은 집합이어야 한다
-    (표 검사들이 그 목록으로 돈다)."""
+    (표 검사들이 그 목록으로 돈다).
+
+    ⏵ 2026-10-10 — v12(이슈 #578)의 `AuditRefutationWithNoSignal.result`가 `no_candidate`를 더해
+    맵의 키는 **v12의 값 집합**이고 v10·v11의 집합은 그 부분집합이다. `no_signal`로 가는 키는
+    `no_candidate` 하나뿐이다(v12 검증기가 그 쌍을 묶는다)."""
     results = set(get_args(AuditRefutation.model_fields["result"].annotation))
+    results_v12 = set(get_args(AuditRefutationWithNoSignal.model_fields["result"].annotation))
     statuses = set(get_args(AuditProcedure.model_fields["trigger_status"].annotation))
 
     assert results and statuses, "전제 — Literal에서 값을 못 뽑았다. 검사가 비어 있다"
-    assert set(auditor._STATUS_BY_RESULT) == results
-    assert set(auditor._STATUS_BY_RESULT.values()) <= statuses - {"no_signal"}
+    assert results_v12 - results == {"no_candidate"}
+    assert set(auditor._STATUS_BY_RESULT) == results_v12
+    assert set(auditor._STATUS_BY_RESULT.values()) <= statuses
+    to_no_signal = [k for k, v in auditor._STATUS_BY_RESULT.items() if v == "no_signal"]
+    assert to_no_signal == ["no_candidate"]
     assert set(_AUDIT_RESULTS) == results
 
 

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Literal
 
-from pydantic import Field, WithJsonSchema, model_validator
+from pydantic import Field, WithJsonSchema, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from src.schemas.common import (
@@ -149,6 +149,112 @@ class AuditBlock(HarnessModel):
     refutation: AuditRefutation
 
 
+# === v12: `no_signal`에도 채우는 감사 블록 (이슈 #578) ===========================================
+#
+# ⏵ 2026-10-10 — FT 데이터(Teacher v4)가 `no_signal`에도 `audit`를 채운다(팀 결정 2026-10-10). 그때
+# 블록은 「가장 가까웠던 후보를 다섯 점검으로 걸러낸 기록」이고 값 셋이 더해진다 — `category`의
+# `none` · `defense.status`의 `not_applicable` · `refutation.result`의 `no_candidate`. 셋은
+# `no_signal`에서만 쓰고 `no_signal`이면 셋 다 쓴다 — 그 조건은 블록이 상태를 모르므로 v12의 최종 답
+# (`schemas/auditor.AuditProcedureAuditAlways`)이 건다.
+#
+# **위 세 클래스(`AuditBlock` · `AuditDefense` · `AuditRefutation`)는 고치지 않는다.** 그 JSON
+# 스키마가 v10·v11 요청 payload의 `$defs`라 enum을 넓히면 그 판들의 프롬프트가 안 바뀌었는데 요청
+# 바이트가 바뀐다(agent-contracts §4 규칙 1, evaluation §2.3). v11이 `AuditProcedure`에 한 선례대로
+# 형제를 둔다. 값 집합은 위 클래스의 것 + 하나씩이다(`tests/test_auditor_v12.py`가 문다).
+# `AuditPoint` · `AuditOrigin` · `PathStep`은 값이 안 바뀌어 그대로 쓴다.
+#
+# ⚠ docstring은 v12 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다(위 ⚠와 같다).
+
+
+class AuditDefenseWithNoSignal(HarnessModel):
+    """보이는 방어 — 검사 식, 그 상태, 검사가 실패한다면 어디가 틀렸는가.
+
+    `not_applicable`은 위험한 연산이 아니라서 방어가 필요 없던 후보에만 쓴다(`no_signal`).
+    """
+
+    expression: NonEmptyStr
+    status: Literal["absent", "fails", "covers", "not_applicable"]
+    gap: Literal["width", "operands", "both_bounds", "off_by_one", "order", "other"] | None
+    fact: NonEmptyStr
+
+
+class AuditRefutationWithNoSignal(HarnessModel):
+    """반박 시도의 결과 — 무너뜨렸는가 · 막혔는가 · 경로가 못 도는가 · 결정적 코드가 없는가 ·
+    위험한 연산으로 서는 후보가 없는가(`no_signal`)."""
+
+    result: Literal[
+        "defeated", "holds", "path_not_executable", "decisive_code_missing", "no_candidate"
+    ]
+    witness: NonEmptyStr
+    missing_information: list[NonEmptyStr]
+
+
+class AuditBlockWithNoSignal(HarnessModel):
+    """취약점 감사 한 건 — 범주 · 위험 지점 · 값의 출처 · 경로 · 방어 · 반박.
+
+    `no_signal`이면 가장 가까웠던 후보를 같은 다섯 점검으로 걸러낸 기록이고 `category`는 `none`이다.
+    """
+
+    category: Literal[
+        "spatial_bounds",
+        "lifetime_null",
+        "initialization",
+        "resource",
+        "integer",
+        "type",
+        "control_flow",
+        "input_validation",
+        "format_string",
+        "injection",
+        "path_traversal",
+        "info_exposure",
+        "concurrency",
+        "authorization",
+        "crypto_config",
+        "none",
+    ]
+    point: AuditPoint
+    origin: AuditOrigin
+    # `AuditBlock.path`와 같은 이유로 `min_length`를 안 건다 — `no_signal`도 빈 경로가 합법이다
+    # (Teacher v4 검증기가 `no_signal`·`reachability_unknown`의 빈 경로를 받는다).
+    path: list[PathStep]
+    defense: AuditDefenseWithNoSignal
+    refutation: AuditRefutationWithNoSignal
+
+
+# `no_signal`에서만 쓰는 값 — v12 최종 답의 검증기와 노드가 같이 읽는다.
+NO_SIGNAL_ONLY_AUDIT_VALUES = {
+    "category": "none",
+    "defense.status": "not_applicable",
+    "refutation.result": "no_candidate",
+}
+
+
+def no_signal_only_values_in(block: AuditBlockWithNoSignal) -> dict[str, str]:
+    """`block`이 쓴 `no_signal` 전용 값 — 위 표의 키 중 그 값을 든 것만."""
+    actual = {
+        "category": block.category,
+        "defense.status": block.defense.status,
+        "refutation.result": block.refutation.result,
+    }
+    return {
+        key: value for key, value in actual.items() if NO_SIGNAL_ONLY_AUDIT_VALUES[key] == value
+    }
+
+
+def _canonical_audit(value: object) -> object:
+    """`Finding.audit`에 들어오는 v12 블록을 dict로 풀어 아래 `left_to_right` 합집합이 다시 고르게
+    한다 — `AuditBlock`으로 서는 값이면 `AuditBlock`, `no_signal` 전용 값을 들면 v12 블록이다.
+
+    이유는 저장 왕복이다. `HarnessModel.transition`·저장소 재적재는 `model_dump()`한 dict를 다시
+    검증하므로, 들어올 때의 클래스를 그대로 두면 v12 `triggerable` 블록이 전이 한 번에
+    `AuditBlock`으로 바뀌어 같은 Finding이 전이 앞뒤로 같지 않게 된다. 값으로 정하면 앞뒤가 같다.
+    """
+    if isinstance(value, AuditBlockWithNoSignal):
+        return value.model_dump()
+    return value
+
+
 # `Finding.cwe`의 타입 — 검증은 `Cwe | None`, **JSON 스키마는 종전 `Cwe` 필드 그대로**다
 # (⏵ 2026-10-09, 이슈 #525 선택지 1 — 이유는 그 필드 주석). 아래 dict는 넓히기 전
 # `Finding.model_json_schema()["properties"]["cwe"]`를 그대로 옮긴 것이고,
@@ -224,7 +330,17 @@ class Finding(HarnessModel):
     # `AuditorAction`(`$defs`에 `Finding`이 든다 — v8·v9 루프)이 **프롬프트가 안 바뀌었는데 요청
     # 바이트가 바뀐다**(evaluation §2.3). 모델이 채울 값이 아닌 필드를 그 판들에 보여 주는 일이기도
     # 하다. 검증·직렬화(`model_dump`)에는 그대로 선다.
-    audit: SkipJsonSchema[AuditBlock | None] = None
+    #
+    # ⏵ 2026-10-10 (이슈 #578) — v12 블록(`AuditBlockWithNoSignal`)도 받는다. v12는 `no_signal`에도
+    # 블록을 채우므로 **v12 Finding에서는 `None`이 안 난다** — 위 「두 뜻」은 v1~v11의 것이다.
+    # 어느 클래스로 서는지는 **값이 정한다**(`_canonical_audit` · `left_to_right`): `AuditBlock`
+    # 으로 서는 값이면 `AuditBlock`, `no_signal` 전용 값(`category` `none` 등)을 들면 v12 블록이다.
+    # 그래서 블록 클래스로 판을 가르지 않는다 — 판은 `produced_by.prompt_version`이 든다.
+    # 요청 스키마는 그대로다 — `SkipJsonSchema`가 합집합째로 뺀다(`tests/test_auditor_v12.py`가
+    # `Finding` 스키마의 sha256을 문다).
+    audit: SkipJsonSchema[AuditBlock | AuditBlockWithNoSignal | None] = Field(
+        default=None, union_mode="left_to_right"
+    )
     # 트리거 가능성의 명시적 상태 (윤경 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
     # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
     # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
@@ -252,6 +368,7 @@ class Finding(HarnessModel):
     # 넓히면 프롬프트가 안 바뀌었는데 그 판들의 요청이 바뀐다(evaluation §2.3 — 위 `audit`의
     # `SkipJsonSchema`와 같은 규율). 그 판들의 계약은 「non-null」이고 그대로 기록이다. `None`을
     # 싣는 길은 하네스가 v11 응답(`AuditProcedureNullableCwe`)을 옮겨 담는 것 하나다.
+    # ⏵ 2026-10-10 — v12 응답(`AuditProcedureAuditAlways` — 그 서브클래스, 이슈 #578)도 같은 길이다.
     cwe: _FindingCwe
     title: NonEmptyStr
     # `path`와 같은 이유로 기본값이 없다 (위 주석).
@@ -265,6 +382,11 @@ class Finding(HarnessModel):
     # `nodes/auditor._finding_from`(⏵ 2026-10-06 — 그 전 v8·v9 루프는 모델이 쓴 값이 남았다).
     # v2 프롬프트도 "harness metadata, do not fabricate"로 그렇게 적는다.
     produced_by: ProducedBy
+
+    @field_validator("audit", mode="before")
+    @classmethod
+    def _audit_by_value(cls, value: object) -> object:
+        return _canonical_audit(value)
 
     @model_validator(mode="after")
     def _promoted_states_need_backing(self) -> "Finding":
