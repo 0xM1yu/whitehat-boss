@@ -199,8 +199,8 @@ def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
         artifact_id="art_0001",
         target=_TARGET,
         source=filler,
-        # 노드와 같은 선언을 따른다 — `facts_source: false` 판(Auditor v13 · 이슈 #67)은 FACTS에
-        # `source`가 없다. 안 따르면 bench가 노드와 다른 요청을 잰다.
+        # 선언을 따른다 — `facts_source: false` 판(Auditor v13 · 이슈 #67)은 FACTS에 `source`가
+        # 없다. ⚠ 노드와 같은 것은 Auditor뿐: 다른 역할이 선언하면 bench만 빼고 노드는 안 뺀다.
         include_source=template.facts_source,
     )
     fields = {

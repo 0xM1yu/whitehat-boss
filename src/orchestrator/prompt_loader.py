@@ -123,7 +123,8 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
-# 나머지 여덟은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
+# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13)이 뺀다.
+# 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
 # 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
@@ -204,7 +205,7 @@ class PromptTemplate:
     # followup 첫 줄에 홉 줄을 붙이는 판인가(모듈 docstring 「meta의 `hop_header`」 — pov만 읽는다).
     hop_header: bool = False
     # FACTS에 `source` 사본을 싣는 판인가(모듈 docstring 「meta의 `facts_source`」). `False`면
-    # 노드가 `build_facts(include_source=False)`로 그 키를 뺀다.
+    # Auditor 노드(와 bench)가 `build_facts(include_source=False)`로 뺀다 — 다른 노드는 안 읽는다.
     facts_source: bool = True
 
     def render(self, *, facts: Mapping[str, object], **fields: str) -> Prompt:
