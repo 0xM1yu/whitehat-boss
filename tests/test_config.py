@@ -1462,8 +1462,8 @@ def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: P
 def test_a_fake_role_is_not_held_to_the_window(tmp_path: Path) -> None:
     """Fake 좌석은 서버로 요청을 안 보내므로 400이 날 자리가 없다 — 대조하지 않는다.
 
-    `dev_fake`의 Fake registry 창은 32,768이고 저장소의 `critic` 상한도 32,768이라, Fake까지
-    대조하면 저장소 그대로의 `dev_fake`가 로드에서 죽는다.
+    `dev_fake`의 Fake registry 창은 32,768이고 저장소 상한은 `critic` 32,768(동률)·`auditor`
+    65,536(초과)이라, Fake까지 대조하면 저장소 그대로의 `dev_fake`가 로드에서 죽는다.
     """
     _copy_config(
         tmp_path,
