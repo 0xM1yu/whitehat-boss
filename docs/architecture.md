@@ -125,7 +125,7 @@ graph LR
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
 >   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다).
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
->   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판 v13도 같다). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
+>   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판이 아닌 v12도 같다, 이슈 #578 · ⏵ 같은 날 서빙 판 v13도 같다, 이슈 #67). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
 >   PoV 프롬프트에도 든다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
@@ -277,7 +277,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 
 | 구성 요소 | 책임 | 비고 |
 | --- | --- | --- |
-| Stateful Orchestrator | 단계 실행 순서, checkpoint/resume(⚠ 2026-09-24 — resume 경로는 `src/`에 없고, 구버전 `state.db`를 되읽는 버전 게이트 부재가 [D86](open-questions/D/D86.md)이다), human gate | LangGraph v1 후보. 각 node는 순수 함수 + Pydantic schema |
+| Stateful Orchestrator | 단계 실행 순서, checkpoint/resume(resume 경로는 `src/`에 없다. ⏵ 2026-10-10 — `state.db`는 여는 자리에서 저장 형태 판(`PRAGMA user_version`)을 대조한다: 새 파일엔 지금 판을 적고, 판이 다르면 행을 읽기 전에 `StateDbVersionError`로 거부, 판 0(게이트 전 파일)은 종전대로 연다. 판 올림은 사람이 판정 — 규칙은 `src/adapters/sqlite_store.py` 모듈 docstring · resume 지원 여부는 [D86](open-questions/D/D86.md)), human gate | LangGraph v1 후보. 각 node는 순수 함수 + Pydantic schema |
 | Model Gateway | 역할→모델 라우팅, fallback, 구조화 출력 강제, prefix cache 활용 | vLLM(OpenAI-compatible) + LiteLLM |
 | Budget Ledger | 실행 단위 토큰·GPU-second 한도 집행, 초과 시 단계 차단 | 예산 소진 시 부분 결과로 리포트 |
 | Evidence Store | 세션에서 관찰된 사실(로그, 분석 결과) 저장 | KB(재사용 지식)와 분리 → [knowledge-base.md](knowledge-base.md) |
