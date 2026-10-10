@@ -1718,7 +1718,7 @@ def test_the_d_status_claim_regex_actually_matches_a_claim() -> None:
     hits = {
         # 맨형 — `PROJECT-CONTEXT.md:146`이 로스터 표 뒤에 적는 형태
         "- [D77](docs/open-questions/D/D77.md) 닫힘": ("D77", "닫힘"),
-        # 맨형(굵게) — `D64.md:62`
+        # 맨형(굵게) — `D64.md:62`가 2026-10-10 취소선 전까지 적었던 형태
         "(관련: **D54** 부분 — 로스터 모델 중 어느 것도)": ("D54", "부분"),
         # 인접형 — `D74.md`를 (a)로 닫는 PR이 실험 보고서에 남긴 문장
         "- [D74](../../open-questions/D/D74.md)는 열림 상태를 유지한다.": ("D74", "열림"),
