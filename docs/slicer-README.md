@@ -687,6 +687,23 @@ Joern 재파싱 후 결과 동등성은 별도 실측으로 확인한다.
 기존 한계인 함수 내부 stack overflow 후보 누락, free alias 미해결, 함수 간 이중 해제 후보
 누락은 유지된다. fuzzy parsing·매크로·동적 호출이 빠진 그래프를 완전한 그래프로 만들지는 않는다.
 
+**매크로·`#include` 템플릿으로 만든 메서드의 본문은 못 잡는다(#244).** 슬라이서는 CPGQL 계층이라 CPG에 노드가
+없는 sink에는 어떤 질의로도 못 닿는다 -> 앵커·WRITERS를 늘려도 안 풀리는 파싱 단계 한계다. 실측 두 건(ATOM · 2026-09-22 ·
+release-eval-slices-20260918 표본 · Joern 버전 미기록. compile-aware가 들어온 #276(2026-09-24 머지) 전이라 둘 다 그것 없이 잰 값):
+
+- sample_25 libvnc -> GT sink `thisRow[x*3+c] = pix[c]` @ `src/libvncclient/tight.c:516`, 함수 `FilterGradientBPP`(BPP
+  매크로 템플릿). 메서드는 `cpg.method`에 있고 줄 범위 468-522가 516을 덮지만 `.ast.isCall`이 0개다 -> 본문이 CPG에 없다
+  ([보고서](experiments/harness/2026-09-22-case-b-operator-anchors-atom.md) §5)
+- sample_31 libjpeg -> GT sink `outptr0[RGB_RED] = range_limit[...]` @ `jdmrgext.c:130`. `jdmrgext.c`는 RGB 구성마다 여러 번
+  `#include`되는 템플릿 파일이고, 같은 CPG에서 baseline·operator 두 Case B 질의 모두 그 줄 hits=0(이슈 #244 본문 —
+  보고서 파일에는 이 표본이 없다)
+
+compile-aware import(`--compile-commands`, #276)와 그 후속은 **다른 모양**을 복구했다 -> #291(상대 `-I` 절대화)이 매크로로
+정의된 메서드(sample_02 node-re2 `NAN_METHOD` `WrappedRE2::Split` — 전에는 `split.cc`가 메서드 0개)를, #292(`generated_headers`
+추가)가 config 매크로 가드 뒤의 파일(sample_14 libpng `pngrtran.c` 메서드 0 -> 49)을 살렸다(둘 다 vast · 각 PR 본문의 측정).
+**위 두 표본이 compile-aware로 잡히는지는 2026-09-22 이후 다시 안 쟀다(미측정).** 안 고른 길 둘은 이슈 #244에 남는다 ->
+전처리 확장 소스 투입(라인 재매핑·빌드 플래그 필요), 매크로·템플릿 파일만 tree-sitter로 앵커 후보 보강(데이터플로 없음).
+
 근거: [Joern data flow 단계](https://docs.joern.io/cpgql/data-flow-steps/),
 [4.0.646 경로 API 구현](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/language/ExtendedCfgNode.scala),
 [4.0.646 backward slicer](https://github.com/joernio/joern/blob/v4.0.646/dataflowengineoss/src/main/scala/io/joern/dataflowengineoss/slicing/DataFlowSlicing.scala).
