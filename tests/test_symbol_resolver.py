@@ -13,8 +13,9 @@ same function")인데, 그 LHS는 **배열 첨자 대입**(`subscript_expression
 `identifier`일 때만 기록한다. 원소 대입은 index-v3(#304)부터 **`writes` 표에 따로** 들지만
 `resolve()`는 그 표를 아직 안 읽는다. 그래서 실 인덱서로 이 파일을 인덱싱하면 `assigns`가
 **비어 있고**, `resolve()`가 `assigns`만 보는 한 이 조각은 나오지
-않는다 — 아래 `test_resolve_finds_the_hop1_declaration_and_macro_named_blocks_...`가 이것을
-실측으로 고정한다. 렌더 계층의 바이트 일치는 `test_symbol_render.py`의
+않는다 — 아래 `test_resolve_finds_the_hop1_declaration_macro_named_and_element_assignment_blocks`가
+이것을 실측으로 고정했다(⏵ 아래 — 지금은 그 검사가 반대를 박는다). 렌더 계층의 바이트 일치는
+`test_symbol_render.py`의
 `test_render_followup_reproduces_the_hop1_example_byte_for_byte`가 이미 증명했다(조각을
 직접 넣었다) — 그 격차가 정확히 이 한 줄이다. `_resolve_same_function_assignment`가
 **평범한 이름 대입**(`i = n;`)에는 맞게 동작하는 것은
@@ -270,10 +271,17 @@ void swap(void)
 def _writes_graph(tmp_path: Path, *, version: str | None = None) -> GraphIndex:
     """`_WRITES_C`를 실 인덱서로 인덱싱한다. `version="index-v2"`면 v3 이상 표를 떼어 #304 전
     이미지가 내던 v2 문서로 만든다(v2 표는 v3에서 한 글자도 안 바뀌었다 — `indexer.py` v3 절)."""
+    return _files_graph(tmp_path, {"w.c": _WRITES_C}, version=version)
+
+
+def _files_graph(
+    tmp_path: Path, files: dict[str, str], *, version: str | None = None
+) -> GraphIndex:
     root = tmp_path / "repo"
     root.mkdir()
-    (root / "w.c").write_text(_WRITES_C, encoding="utf-8", newline="\n")
-    index = _indexer.build_index([root / "w.c"], root)
+    for name, text in files.items():
+        (root / name).write_text(text, encoding="utf-8", newline="\n")
+    index = _indexer.build_index([root / name for name in files], root)
     if version is not None:
         index["version"] = version
         for name in V3_TABLES + V4_TABLES:
@@ -283,8 +291,8 @@ def _writes_graph(tmp_path: Path, *, version: str | None = None) -> GraphIndex:
     return GraphIndex(out)
 
 
-def _writes_resolve(graph: GraphIndex, tmp_path: Path, target: str):
-    query = _query(requests=(_request("variable", target),), target_file="w.c")
+def _writes_resolve(graph: GraphIndex, tmp_path: Path, target: str, target_file: str = "w.c"):
+    query = _query(requests=(_request("variable", target),), target_file=target_file)
     return resolve(query, table=graph.table, read_lines=_read_lines(tmp_path / "repo"))
 
 
@@ -355,6 +363,104 @@ def test_label_3_carries_field_based_element_writes(tmp_path: Path):
 
     length = _writes_resolve(graph, tmp_path, "h->len")
     assert _labelled(length, "assignment to .len") == [(14, 15, 16)]
+
+
+# 아래 다섯 핀은 `_WRITES_C`로는 안 죽는 변이를 문다(S13 적대적 리뷰 4 — 변이를 넣어 빨개짐을 봤다).
+
+_PIN_A_C = """\
+void f(void)
+{
+    char *p;
+    p = 0;
+    p[0] = 1;
+    p = 0;
+    p[1] = 2;
+}
+"""
+_PIN_B_C = """\
+void f(void)
+{
+    char *p;
+    p = 0;
+    p[0] = 1;
+    p = 0;
+    p[1] = 2;
+    p[2] = 3;
+}
+"""
+
+
+def test_label_4_ignores_a_same_named_function_in_another_file(tmp_path: Path):
+    """`a.c`·`b.c`에 함수 `f`·변수 `p`가 같다. `b.c` 8행 쓰기가 `a.c` 8행(`}`)으로 새면 안 된다."""
+    graph = _files_graph(tmp_path, {"a.c": _PIN_A_C, "b.c": _PIN_B_C})
+
+    resolution = _writes_resolve(graph, tmp_path, "p", target_file="a.c")
+
+    assert _labelled(resolution, "assignment in the same function") == [(4,), (5,), (6,), (7,)]
+
+
+def test_label_4_interleaves_name_assigns_and_element_writes_by_line(tmp_path: Path):
+    """`p = 0;`(4·6행, `assigns`)과 `p[i] = …`(5·7행, `writes`)가 번갈아 온다 — 줄 순이다."""
+    graph = _files_graph(tmp_path, {"a.c": _PIN_A_C})
+
+    resolution = _writes_resolve(graph, tmp_path, "p", target_file="a.c")
+
+    assert _labelled(resolution, "assignment in the same function") == [(4,), (5,), (6,), (7,)]
+
+
+def test_label_3_drops_a_field_based_write_on_the_same_line_as_a_field_assign(tmp_path: Path):
+    """4행 `h->buf = q; h->buf[0] = 1;` — 필드 대입과 필드 기저 쓰기가 한 줄이다. 조각은 하나."""
+    source = (
+        "struct hdr { char *buf; };\n"
+        "void g(struct hdr *h, char *q)\n"
+        "{\n"
+        "    h->buf = q; h->buf[0] = 1;\n"
+        "}\n"
+    )
+    graph = _files_graph(tmp_path, {"c.c": source})
+
+    resolution = _writes_resolve(graph, tmp_path, "h->buf", target_file="c.c")
+
+    assert _labelled(resolution, "assignment to .buf") == [(3, 4, 5)]
+
+
+def test_writes_available_is_true_for_a_v3_index_with_no_element_writes(tmp_path: Path):
+    """`writes` 표가 **빈 채로** 있다(`{}`) — 인덱스는 원소 쓰기를 알고 그것이 0건이다. 비었다고
+    `False`로 읽으면 「인덱스가 모른다」로 오독된다."""
+    source = "void k(void)\n{\n    int n;\n    n = 1;\n}\n"
+    graph = _files_graph(tmp_path, {"d.c": source})
+    assert graph.table("writes") == {}
+
+    resolution = _writes_resolve(graph, tmp_path, "n", target_file="d.c")
+
+    assert _labelled(resolution, "assignment in the same function") == [(4,)]
+    assert resolution.writes_available is True
+
+
+def test_label_13_puts_name_assigns_before_element_writes_on_different_lines(tmp_path: Path):
+    """`g_p[0] = 1;`(4행)이 `g_p = q;`(8행)보다 앞인데 이름 대입이 먼저 실린다 — `writes`가 없는
+    인덱스(v2)의 출력이 v3 출력의 앞부분으로 남는 순서다(`_resolve_global_assignment` 주석)."""
+    source = (
+        "char *g_p;\nvoid a(void)\n{\n    g_p[0] = 1;\n}\nvoid b(char *q)\n{\n    g_p = q;\n}\n"
+    )
+    graph = _files_graph(tmp_path, {"e.c": source})
+
+    resolution = _writes_resolve(graph, tmp_path, "g_p", target_file="e.c")
+
+    assert _labelled(resolution, "assignment to g_p") == [(7, 8, 9), (3, 4, 5)]
+
+
+def test_label_13_keeps_same_line_writes_in_different_files(tmp_path: Path):
+    """`x.c`·`y.c` 4행에 같은 전역 쓰기 `g_p[0] = 1;`이 있다 — 중복 제거 키는 (파일, 줄)이라
+    조각이 둘이다. 줄만으로 거르면 둘째 파일의 쓰기가 사라진다."""
+    x = "char *g_p;\nvoid a(void)\n{\n    g_p[0] = 1;\n}\n"
+    y = "extern char *g_p;\nvoid b(void)\n{\n    g_p[0] = 1;\n}\n"
+    graph = _files_graph(tmp_path, {"x.c": x, "y.c": y})
+
+    resolution = _writes_resolve(graph, tmp_path, "g_p", target_file="x.c")
+
+    blocks = [b for b in resolution.blocks if b.label == "assignment to g_p"]
+    assert [(b.file, b.lines) for b in blocks] == [("x.c", (3, 4, 5)), ("y.c", (3, 4, 5))]
 
 
 def test_a_v2_index_keeps_the_old_output_and_says_writes_are_unavailable(tmp_path: Path):
