@@ -1082,7 +1082,7 @@ def test_one_invalid_case_b_row_is_dropped_not_the_whole_run(
         f"case_b: 1 rows dropped ({field}: 1)"
     )
     [entry] = [d for d in result["diagnostics"] if d.get("stage") == "case_b"]
-    assert entry["rows"] == [bad]
+    assert [json.loads(row) for row in entry["rows"]] == [bad]
     assert "Dropped 1 invalid case_b candidate rows" in result["error"]
 
 
@@ -1116,6 +1116,75 @@ def test_a_fully_valid_candidate_payload_is_unchanged(monkeypatch, repo, tmp_pat
     assert result["counters"]["candidates_invalid"] == 0
     assert "candidates_invalid" not in result["measurement_notes"]
     assert not [d for d in result["diagnostics"] if str(d.get("stage")).startswith("case_")]
+
+
+@pytest.mark.parametrize(
+    ("a_bad", "b_bad", "note"),
+    [
+        (False, False, None),
+        (True, False, "case_a: 1 rows dropped (anchors: 1)"),
+        (False, True, "case_b: 1 rows dropped (symbol: 1)"),
+        (True, True, "case_a: 1 rows dropped (anchors: 1); case_b: 1 rows dropped (symbol: 1)"),
+    ],
+)
+def test_the_invalid_note_survives_whichever_case_has_the_bad_row(
+    monkeypatch, repo, tmp_path, a_bad, b_bad, note
+):
+    """#361 review HIGH: a clean Case B measured the counter again and erased Case A's note."""
+    no_anchors = candidate("b")
+    del no_anchors["anchors"]
+    case_a = [candidate(), *([no_anchors] if a_bad else [])]
+    case_b = [candidate("sprintf", 5), *([_empty_symbol(candidate("x", 5))] if b_bad else [])]
+    _, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=case_a, case_b=case_b, flow_count=1)
+    )
+    assert result["counters"]["candidates_invalid"] == a_bad + b_bad
+    assert result["measurement_notes"].get("candidates_invalid") == note
+
+
+@pytest.mark.parametrize("count", [1, 2])
+@pytest.mark.parametrize("stage", ["case_a", "case_b"])
+def test_a_candidate_payload_with_only_invalid_rows_still_fails_the_stage(
+    monkeypatch, repo, tmp_path, stage, count
+):
+    """#361 review N-A: a schema change that spoils EVERY row is a stage failure, not a clean
+    run with 0 candidates -- one spoiled row included. The guard throws before the counter moves:
+    Case A all invalid leaves it unmeasured; Case B all invalid keeps Case A's one dropped row."""
+    no_anchors = candidate("a")
+    del no_anchors["anchors"]
+    rows = [_empty_symbol(candidate(f"x{n}")) for n in range(count)]
+    data = payloads(**{stage: rows})
+    if stage == "case_b":
+        data = payloads(case_a=[candidate(), no_anchors], case_b=rows)
+    _, result, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    assert result["counters"]["queries_aborted"] == 1
+    assert f"Invalid {stage} payload schema" in result["error"]
+    notes = result["measurement_notes"]
+    if stage == "case_a":
+        assert result["counters"]["candidates_invalid"] is None
+        assert notes["candidates_invalid"] == "Stage not reached"
+        assert result["slices"] == []
+    else:
+        assert result["counters"]["candidates_invalid"] == 1
+        assert notes["candidates_invalid"] == "case_a: 1 rows dropped (anchors: 1)"
+
+
+@pytest.mark.parametrize("checkpoint", [False, True])
+def test_echoing_a_dropped_row_cannot_lose_the_run(monkeypatch, repo, tmp_path, checkpoint):
+    """#361 review MEDIUM: the verbatim echo of a dropped row carried a lone surrogate and
+    NaN/Infinity from fields nobody validates into `write_result`, which then wrote no file."""
+    bad = _empty_symbol(candidate("b"))
+    bad["reasons"] = [float("nan"), float("inf"), "x\ud800y"]
+    options = ["--checkpoint", str(tmp_path / "state.db")] if checkpoint else []
+    monkeypatch.setattr(slicer, "read_version", lambda *args: ("test-joern", "test fixture"))
+    code, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, payloads(case_a=[candidate(), bad], flow_count=1), *options
+    )
+    assert code == 2 and [item["case"] for item in result["slices"]] == ["A"]
+    [entry] = [d for d in result["diagnostics"] if d.get("stage") == "case_a"]
+    [echo] = entry["rows"]
+    assert isinstance(echo, str) and echo.isascii()
+    assert json.loads(echo)["reasons"][2] == "x\ud800y"
 
 
 def test_a_candidate_payload_that_is_not_a_list_still_fails_the_stage(monkeypatch, repo, tmp_path):
@@ -1745,6 +1814,7 @@ def test_malformed_scope_is_rejected_before_query_interpolation(monkeypatch, rep
     assert result["counters"]["candidates_invalid"] == 1
     assert result["counters"]["candidates_case_a"] == 1
     assert "case_b" in transport.stages and transport.stages.count("flows") == 1
+    assert result["measurement_notes"]["candidates_invalid"] == "case_a: 1 rows dropped (scope: 1)"
     sent = [json.loads(req.data)["query"] for req, _ in transport.requests]
     assert not any("injected" in query for query in sent)
 
