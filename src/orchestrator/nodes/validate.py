@@ -17,8 +17,9 @@ PoC 크래시였다" 같은 어긋남이 `ok=True`·비-0 종료 코드로 남�
 단계에서 판정되지 못했고 `gate_eval` trace에 **한 번도 나타나지 않았다** — 도구 검증 제거율의
 분자가 구조적으로 0이었다.
 
-`_attach()`가 실행 로그를 Finding에 붙여 두는데 그 뒤에 판정하는 사람이 없던 상태다
-(그 함수 docstring이 "이걸 하지 않으면 E4가 성립하지 않는다"고 적어 뒀다).
+`attach_observed()`가 실행 로그를 Finding에 붙여 두는데 그 뒤에 판정하는 사람이 없던 상태다
+(그 함수 docstring이 "이걸 하지 않으면 E4가 성립하지 않는다"고 적어 뒀다). 그 함수는
+**6단계가 같은 일을 하게 되면서** `nodes/gate_node.py`로 옮겼다(이슈 #552).
 
 ## 모델이 쓴 `steps`가 예약 자리표와 같으면 실행하지 않고 거절한다
 
@@ -34,6 +35,7 @@ from src.ids import sha256_text
 from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator import gate
 from src.orchestrator.context import RunContext
+from src.orchestrator.nodes.gate_node import attach_observed
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.stages import Stage
@@ -103,13 +105,14 @@ def run(
         if tool is not None:
             produced.append(_call(ctx, BUILD_TOOL, [BUILD_TOOL, *spec.steps], workdir, finding))
             produced.append(_call(ctx, tool, [tool, *spec.steps], workdir, finding))
-        finding = _attach(ctx, finding, produced)
-        # `_attach()`가 방금 만든 근거를 `evidence_refs`에 넣었으므로, 앞 단계 것과 합쳐
+        finding = attach_observed(ctx, finding, produced)
+        # `attach_observed()`가 방금 만든 근거를 `evidence_refs`에 넣었으므로, 앞 단계 것과 합쳐
         # 넘기면 `evidences_for()`가 이 Finding의 것만 골라낸다. E4는 여기서만 성립한다.
         #
         # 반환값을 쓴다(1-A 전에는 버렸다). E4의 조건인 `SANITIZER`/`CRASH`/`POC_RUN`
         # Evidence(종료 코드가 0도 `None`도 아닌 것 — #232)는 바로 위 `_call()`이 만들고,
-        # `_attach()` 이후가 `p4`를 참으로 만들 수 있는 **유일한 시점**이다. 여기서 부르지 않으면
+        # `attach_observed()` 이후가 `p4`를 참으로 만들 수 있는 **유일한 시점**이다. 여기서
+        # 부르지 않으면
         # 그 등급은 `gate_eval` trace에 영영 나타나지 않고 도구 검증 제거율의 분자가 구조적으로
         # 0이 된다(W3이 고친 것이 그것이다).
         #
@@ -191,17 +194,3 @@ def _refuse(
         finding_id=finding.finding_id,
     )
     return evidence
-
-
-def _attach(ctx: RunContext, finding: Finding, evidences: list[Evidence]) -> Finding:
-    """실행 로그를 Finding의 근거로 붙인다.
-
-    상태 변경이 아니라 데이터 보강이므로 `transition()`을 직접 쓴다(검증은 그대로 돈다).
-    이걸 하지 않으면 게이트가 8단계 산출물을 못 보고 E4가 성립하지 않는다.
-    """
-    new_refs = [ev.evidence_id for ev in evidences if ev.evidence_id not in finding.evidence_refs]
-    if not new_refs:
-        return finding
-    updated = finding.transition(evidence_refs=[*finding.evidence_refs, *new_refs])
-    ctx.store.put(updated)
-    return updated

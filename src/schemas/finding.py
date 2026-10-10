@@ -25,6 +25,11 @@ FindingStateValue = Literal[
 ]
 
 # 근거 없이 도달할 수 없는 상태. Evidence Gate E3 이상이 필요한 구간이다.
+# ⚠ **이 불변식이 보증하는 것은 「근거가 있다」가 아니다** — 「Evidence 레코드가 하나라도
+# 붙어 있다」다.
+# 붙이는 쪽(`nodes/gate_node.attach_observed`)이 `ok`를 안 보므로 실패 기록(`ok=False`)으로도
+# 충족된다 — 8단계는 처음부터 그랬고 6단계가 이슈 #552로 같아졌다. 등급 쪽은 `gate.evaluate`의
+# `usable`이 `ok=True`만 세므로 실패 기록만으로는 E1에 못 간다. 두 규칙이 다른 층에 있다.
 _EVIDENCE_BACKED_STATES = frozenset(
     {FindingState.VALIDATED, FindingState.PROVEN, FindingState.REPORTED}
 )
