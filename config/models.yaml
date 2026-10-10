@@ -669,8 +669,14 @@ models:
     # `Finding`으로 옮기고 발급 ID·`produced_by`·`missing_evidence`를 채운다(`nodes/auditor.py`의
     # `_finding_from_procedure`). v9 문장을 그 자리에서 고치지 않은 것은 판 번호 하나가 두 문장을
     # 가리키지 않게 하려는 것이다(agent-contracts §4 규칙 1). v10도 `_CONTENT_AWARE_VERSIONS`에 든다 —
-    # 프롬프트가 `FACTS.evidence[].body`를 읽으라고 시킨다. 이 판으로 돈 run은 0건이다.
-    prompt_template_version: "v10"
+    # 프롬프트가 `FACTS.evidence[].body`를 읽으라고 시킨다. 이 판으로 돈 run은 0건이다(⏵ 2026-10-08 — 1건이 됐다, 아래 ⏵).
+    # ⏵ 2026-10-09 — v10에서 **v11**로 올렸다(이슈 #525 선택지 1 · 사용자 결정). v11 = v10 + no_signal의
+    # `cwe`를 null로 내라는 서술(prefix의 `cwe` 서술 네 줄 — `prompts/auditor/v11/meta.yaml`). 봉투는 형제
+    # `AuditorProcedureNullableCweAction`이고 최종 답 `AuditProcedureNullableCwe`의 `cwe`가 no_signal에서만 null일
+    # 수 있다. v10 문장·스키마를 그 자리에서 고치지 않은 것은 같은 규칙 1이다 — v10의 요청 바이트가 그대로다.
+    # v11도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈 run은 0건이다(v10은 2026-10-08 실서빙 1건 — `checksum` 0이라
+    # 비교표 밖, `docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`).
+    prompt_template_version: "v11"
     fallback: null
     benchmark:
       measured_at: null

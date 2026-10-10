@@ -605,7 +605,8 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
 
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
-    프롬프트(⏵ 2026-10-07 v10 — 그 전 v9·v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    프롬프트(⏵ 2026-10-07 v10 — 그 전 v9·v8·v7 · ⏵ 2026-10-09 v11)가 옵션을 서술하며 켜면, v1을
+    고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -1707,6 +1708,7 @@ def run(args: argparse.Namespace) -> int:
     # 판 v7 = v6 + 옵션 넷의 서술 · meta 선언 — ⏵ 같은 날 v8 = v7 + 도구 루프가 그 서술·선언을
     # 물려받았고 ⏵ 2026-10-06 서빙 판은 v9 = v8 + `auditor_guards` 서술이었으며 ⏵ 같은 날부터
     # v10(v7을 전면 재작성 — 같은 여덟 옵션을 서술·선언한다)이다).
+    # ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 같다, 이슈 #525).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
@@ -1871,9 +1873,26 @@ def to_sarif(result: RunResult) -> dict:
     }
 
 
+# `cwe`가 `None`(v11의 `no_signal`)인 결과의 `ruleId` — CWE 꼴(`^CWE-\d+$`)이 아닌 센티넬이다.
+_SARIF_NO_CWE_RULE_ID = "no-cwe"
+
+
 def _sarif_result(finding: Finding) -> dict:
+    """SARIF 2.1.0 `result` 하나.
+
+    ⏵ 2026-10-09 (이슈 #525 선택지 1) — `cwe`가 `None`(v11의 `no_signal`)이면 `ruleId`를
+    **CWE가 아닌 센티넬 `no-cwe`**(`_SARIF_NO_CWE_RULE_ID`)로 둔다.
+    `ruleId`는 JSON 스키마상 선택(`result.required`는 `message`뿐)이지만 **규범 본문은 조건부
+    SHALL이다** — OASIS SARIF 2.1.0 §3.27.5 *"If `rule.id` is absent, `ruleId` SHALL be present"*.
+    이 result는 `rule`을 안 싣으므로 키를 빼면 규범을 어긴다. `"None"`·자리표시 CWE를 넣으면
+    소비자가
+    그것을 CWE 규칙으로 읽고 묶는다 — 없는 CWE를 지어내는 것과 같다. 그래서 CWE 꼴이 아닌 이름을
+    쓴다(no-CWE 결과끼리는 한 규칙으로 묶인다 — 그것은 참이다). CWE가 있으면 종전과 같은
+    dict다(키 순서 포함).
+    """
+    rule_id = finding.cwe if finding.cwe is not None else _SARIF_NO_CWE_RULE_ID
     return {
-        "ruleId": finding.cwe,
+        "ruleId": rule_id,
         "level": "warning",
         "message": {"text": f"{finding.title} (state={finding.state.value})"},
         "properties": {

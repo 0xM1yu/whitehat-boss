@@ -575,7 +575,10 @@ class CapsuleBudgets(HarnessModel):
 # v8·v9의 서술이다. v10은 v7을 전면 재작성한 판이라 물려받지 않고 켜진 여덟을 다시 써서 meta
 # `source_options`로 여덟을 선언한다(철자는 서빙 판 핀 `tests/test_config.py`의
 # `test_the_canonical_auditor_prompt_states_the_runner_source_contract`가 문다).
-# v10으로 돈 run은 0건이다.
+# v10으로 돈 run은 0건이다(⏵ 2026-10-08 — 1건이 됐다, `docs/experiments/harness/2026-10-08-first-
+# real-serving-run-arvo1065-vastai-remote.md` · `checksum` 0이라 비교표 밖).
+# ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, 이슈
+# #525).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -746,6 +749,7 @@ class Thresholds(HarnessModel):
     # `budgets.yaml`이 켠다(⏵ 2026-10-06 — **켠 효과는 미실측**). Auditor v9가 이 옵션을
     # 서술·선언한다. v7·v8은 안 하므로 켜고 그 둘을 고르면 `cli` run·doctor가 막는다.
     # ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다(meta `source_options` 여덟 중 하나).
+    # ⏵ 2026-10-09 — 서빙 판 v11(이슈 #525)도 같은 서술로 선언한다.
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
@@ -789,6 +793,9 @@ class Thresholds(HarnessModel):
     # **봉투는 둘이다**: v8·v9는 매 홉 `AuditorAction`, v10은 형제 `AuditorProcedureAction`을
     # 낸다. 홉 구조·상한은 같고 `answer`가 싣는 최종 답만 다르다(`Finding` ↔
     # `AuditProcedure`). 봉투 둘은 `src/schemas/auditor.py`에 있다.
+    # ⏵ 2026-10-09 — 서빙 판은 v11이고 봉투는 셋이다: v11은 셋째
+    # `AuditorProcedureNullableCweAction`(최종 답
+    # `AuditProcedureNullableCwe` — `no_signal`에서 `cwe`가 null일 수 있다, 이슈 #525)을 낸다.
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -801,7 +808,8 @@ class Thresholds(HarnessModel):
     # 몫이 196,608(계산값)이다. v4 최악 추정 입력 28,833(`config/models.yaml`의 그 좌석
     # 「기동 조건」 절 — ⏵ 2026-10-04 정본은 v8이었고 ⏵ 2026-10-06부터 v9이며 prefix가 더 길어
     # hop0가 이보다 크다. ⏵ 2026-10-07부터 v10 — prefix 56,906자(v9는 35,501자 ·
-    # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다)을
+    # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
+    # v11 — 56,872자, 이슈 #525)을
     # 넣으면 167,775가
     # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
     # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
@@ -824,6 +832,8 @@ class Thresholds(HarnessModel):
     # `AuditorProcedureAction`을 선언한다. 노드의 허용집합은 `Finding`·`AuditorAction`·
     # `AuditorProcedureAction` 셋이고 `AuditProcedure`는 봉투의 `procedure` payload라 그 집합에
     # 없다(선언하면 `resolve_output_schema`가 거절한다).
+    # ⏵ 2026-10-09 — v11은 `AuditorProcedureNullableCweAction`을 선언해 허용집합은 넷이다(이슈
+    # #525).
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:

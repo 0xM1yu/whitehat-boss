@@ -1,5 +1,7 @@
 """Auditor 역할의 홉 봉투 — 매 홉 하나. 도구를 쥐어 준 좌석의 제어 단위다.
 **봉투는 둘이다**(⏵ 2026-10-06): v8·v9가 `AuditorAction`, v10이 `AuditorProcedureAction`을 낸다.
+⏵ 2026-10-09 — **셋이다**: v11이 `AuditorProcedureNullableCweAction`을 낸다(이슈 #525 — 이 파일 맨
+아래).
 액션 셋과 조사 필드는 공통 베이스가 들고 최종 답의 필드만 갈린다(`finding` ↔ `procedure`).
 
 한 방 경로(`nodes/auditor.py`의 `OUTPUT_SCHEMA = Finding`)는 그대로 남는다. 이 봉투는
@@ -24,7 +26,9 @@
   문자열이 도구 인자로 들어가지 않고, 같은 사실의 두 번째 데이터원이 생기지 않는다.
 
 v10 판은 최종 답으로 `Finding`이 아니라 `AuditProcedure`를 싣는 형제 봉투
-(`AuditorProcedureAction`)를 쓴다. 두 봉투의 공통 필드와 액션 규율은 베이스(`_AuditorEnvelope`)가
+(`AuditorProcedureAction`)를 쓴다(⏵ 2026-10-09 v11은 셋째 `AuditorProcedureNullableCweAction`).
+봉투의
+공통 필드와 액션 규율은 베이스(`_AuditorEnvelope`)가
 들고, `answer`가 싣는 필드 하나(`finding` ↔ `procedure`)와 `rationale`만 갈린다.
 """
 
@@ -66,7 +70,9 @@ _REQUIRED_BY_ACTION: dict[str, str] = {
 }
 
 
-# 두 봉투(`AuditorAction` · `AuditorProcedureAction`)의 공통 부분. **필드 선언 순서를 지킨다** —
+# 루프 봉투(`AuditorAction` · `AuditorProcedureAction` · ⏵ 2026-10-09
+# `AuditorProcedureNullableCweAction`)의
+# 공통 부분. **필드 선언 순서를 지킨다** —
 # pydantic은 베이스의 필드를 먼저 놓으므로 여기서 `rationale`을 선언하면 `finding`이 그 **뒤로**
 # 밀려 `AuditorAction`의 JSON 스키마(property 순서)가 바뀌고, 그것이 v8·v9 루프의 요청 바이트다
 # (evaluation §2.3). 그래서 베이스는 `action`·`requests`·`tool`·`spec`까지만 선언하고 `answer`의
@@ -75,7 +81,7 @@ _REQUIRED_BY_ACTION: dict[str, str] = {
 # 이 docstring은 요청 payload에 안 실린다 — 서브클래스가 각자 docstring을 든다(`description`은
 # 그 클래스 자신의 것만 나간다).
 class _AuditorEnvelope(HarnessModel):
-    """두 봉투가 공유하는 필드와 액션 규율."""
+    """루프 봉투가 공유하는 필드와 액션 규율."""
 
     # `answer`가 싣는 필드의 이름. 서브클래스가 정한다 — 아래 `__pydantic_init_subclass__`가
     # **클래스 정의 시점에** 그 이름이 실재하는 필드인지 본다. 미루면 그 위반이 첫 인스턴스화의
@@ -205,6 +211,10 @@ class AuditorAction(_AuditorEnvelope):
 # ⚠ **`cwe`는 non-null 필수다 — no_signal에서도.** `Finding.cwe`가 nullable이 아니고 그 값을 읽는
 # 자리가 여섯이라(SARIF `ruleId` 포함) 이 스키마에서 넓히지 않는다. 산문이 이 스키마에 맞아야 한다 —
 # no_signal에 `"cwe": null`을 적는 문장이 남으면 모델은 이 스키마가 거절하는 출력을 낸다.
+# ⏵ 2026-10-09 — 위 두 문장은 **v10 계약의 기록**이다. `Finding.cwe`는 이제 `no_signal`에서 `None`을
+# 받고(이슈 #525 선택지 1) 읽는 자리도 `None`을 다룬다. 그래도 이 클래스는 안 넓힌다 — JSON
+# 스키마가 v10의 요청 바이트라서다. null을 받는 쪽은 v11의 `AuditProcedureNullableCwe`(이 파일
+# 아래)다.
 # ⚠ `repro_spec`은 `ReproSpec`을 그대로 써서 스키마가 선택 필드 `origin`을 함께 내보인다 — 산문은
 # `steps`·`expected_signal`만 적는다. 하네스가 저장 전에 그 값을 덮는다
 # (`auditor._ensure_repro_origin`).
@@ -267,4 +277,59 @@ class AuditorProcedureAction(_AuditorEnvelope):
     _PAYLOAD_FIELD: ClassVar[str] = "procedure"
 
     procedure: AuditProcedure | None = None
+    rationale: NonEmptyStr
+
+
+# === v11: `cwe`가 `no_signal`에서만 null일 수 있는 최종 답 (이슈 #525 선택지 1) =================
+#
+# ⏵ 2026-10-09 — `no_signal`은 뿌리 원인을 못 세운 판정이라 참인 CWE가 없는데, v8~v10의 계약은
+# 그때도 `CWE-<number>`를 요구해 **모델이 지어낸 값**이 SARIF `ruleId`와 보고서 중복 제거 키로
+# 갈 수 있었다(CLAUDE.md §0 — 실제로 지어냈는지는 미측정, 이슈 #525 「안 쟀다」). 사용자
+# 결정(2026-10-09)으로 `no_signal`에 한해 null을 허용한다.
+#
+# **v10의 두 클래스(`AuditProcedure` · `AuditorProcedureAction`)는 고치지 않는다.** 그 JSON
+# 스키마가 v10의 요청 payload라(`AuditorProcedureAction`의 `$defs`) `cwe`를 `anyOf`로 넓히면 v10
+# 프롬프트가 안 바뀌었는데 요청 바이트가 바뀐다 — 한 판 번호가 두 요청을 가리키게 된다
+# (agent-contracts §4 규칙 1, evaluation §2.3). v10이 `AuditorAction`을 안 고치고 형제 봉투를 낸
+# 선례를 따라 형제 둘을 더한다. 그래서 「v10 계약의 한계」(`AuditProcedure` 위 ⚠ 주석)는 v10의
+# 기록으로 남는다.
+#
+# `AuditProcedure`의 **서브클래스**로 둔다 — 필드·검증기(`audit` null ⟺ `no_signal`)를 물려받고
+# 읽는 쪽(`nodes/auditor`의 `isinstance(..., AuditProcedure)`)이 v10과 v11을 같은 최종 답으로
+# 다룬다. pydantic은 재선언한 필드를 부모의 자리에 두므로 property 순서가 v10과 같다
+# (`tests/test_nullable_cwe.py`가 문다).
+#
+# 반대 방향(`no_signal`이면 null이어야 한다)은 **스키마가 안 건다** — 산문이 null을 시키고, 어기면
+# 최종 답을 통째로 재생성하는 비용을 안 치른다(`AuditProcedure` 위 주석의 「일부러 싣지 않는다」와
+# 같은 근거). 그 위반이 얼마나 나는지는 안 쟀다.
+#
+# ⚠ docstring은 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다(`AuditProcedure`와 같다).
+class AuditProcedureNullableCwe(AuditProcedure):
+    """감사 좌석의 최종 답. `audit`가 null인 것과 `trigger_status`가 `no_signal`인 것은 같다.
+
+    `cwe`는 `trigger_status`가 `no_signal`일 때에만 null일 수 있다 — 세운 뿌리 원인이 없으면
+    붙일 CWE도 없다. 다른 상태에서는 `CWE-<number>` 문자열이다.
+    """
+
+    cwe: Cwe | None
+
+    @model_validator(mode="after")
+    def _cwe_is_null_only_for_no_signal(self) -> Self:
+        if self.cwe is None and self.trigger_status != "no_signal":
+            raise ValueError(
+                "cwe는 trigger_status가 no_signal일 때에만 null일 수 있다 "
+                f"(trigger_status={self.trigger_status})"
+            )
+        return self
+
+
+# `AuditorProcedureAction`의 형제 — 최종 답만 `AuditProcedureNullableCwe`다(위 주석). docstring은
+# 같은 글을 그대로 싣는다: 액션 서술은 v10과 바뀐 것이 없고, 바뀐 것은 `procedure`의 `cwe` 하나다.
+# pydantic은 서브클래스에 docstring이 없으면 `description`을 안 내므로 명시해서 옮긴다.
+class AuditorProcedureNullableCweAction(_AuditorEnvelope):
+    __doc__ = AuditorProcedureAction.__doc__
+
+    _PAYLOAD_FIELD: ClassVar[str] = "procedure"
+
+    procedure: AuditProcedureNullableCwe | None = None
     rationale: NonEmptyStr

@@ -1,6 +1,12 @@
 """v10 프롬프트의 산문이 **코드가 쥔 값·문구와 같은 말을 하는지** 문다 (Auditor 서빙 판 ·
 2026-10-06).
 
+⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). v10 파일은 동결이라 그것만 읽는 핀은 다시 빨개질 수
+없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 넷을 빼고 **v10과 config의 서빙 판** 둘에서
+돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와 같은 장치). v10
+전용 넷(봉투 이름 · `cwe` null 금지 · 글자 수 둘)의 서빙 판 쪽은 `tests/test_nullable_cwe.py`가
+문다.
+
 v8·v9는 「앞 판과 바이트 동일」을 세는 핀 파일(`test_auditor_prompt_v8.py` · `_v9.py`)이 있고, 그
 핀의 절반은 노드 상수·러너 문구와 산문을 묶는 것이다. **그 둘은 자기 판 파일만 읽는다** — v10은
 v7에서 전면 재작성한 판이라 바이트 동일성 핀이 성립하지 않고, 산문을 코드에서 베낀
@@ -60,8 +66,54 @@ from src.schemas.need_evidence import Resolution
 from src.schemas.pov import PovSegment, PovSpec
 from src.schemas.scout_response import RequestedContext
 
-V10 = PROMPTS_DIR / "auditor" / "v10"
 SRC_DIR = Path(auditor.__file__).resolve().parents[2]
+
+
+def _served_auditor_version() -> str:
+    """서빙 프로필 둘의 Auditor 좌석이 **실제로 고르는** 판 — 살아 있는 config에서 읽는다
+    (`tests/test_pov_loop.py`의 `_served_pov_version`과 같은 장치). 판 이름을 박으면 판이 올라갈 때
+    핀이 낡은 판을 계속 문다 — ⏵ 2026-10-09 이 파일이 정확히 그랬다(서빙 판 v11 · 이슈 #525 ·
+    적대적 리뷰 H1: v10 파일은 동결이라 그 판만 읽는 핀은 다시 빨개질 수 없다)."""
+    versions = {
+        load_config(profile).model_for(Role.AUDITOR.value).prompt_template_version
+        for profile in ("harness_pool", "harness_pool_hybrid")
+    }
+    assert len(versions) == 1, f"서빙 프로필의 Auditor 좌석 판이 갈린다: {sorted(versions)}"
+    return versions.pop()
+
+
+# 이 파일의 핀이 읽는 판 — v10(동결 기록)과 **서빙 판**(config). 같으면 하나다.
+# 아래 `_V10_ONLY`에 없는 검사는 전부 두 판에서 돈다(`pytest_generate_tests`). 서빙 판이 v10과
+# 다른 문장을 의도로 든 검사(출력 봉투 이름 · `cwe` null 규칙 · 글자 수)만 v10 전용이고, 서빙 판의
+# 그 자리는 `tests/test_nullable_cwe.py`가 문다.
+SERVED = _served_auditor_version()
+_VERSIONS = tuple(sorted({"v10", SERVED}, key=lambda v: int(v.lstrip("v"))))
+_V10_ONLY = frozenset(
+    {
+        "test_the_v10_meta_declares_the_procedure_envelope_not_its_payload",
+        "test_the_v10_prose_never_lets_cwe_be_null_because_the_schema_refuses_it",
+        "test_the_v10_prefix_length_is_the_number_four_other_places_copy",
+        "test_every_place_that_copies_the_v10_prefix_length_carries_the_measured_number",
+    }
+)
+
+# 지금 읽는 판의 디렉터리와 이름 — `_prompt_under_test`가 판마다 바꾼다(기본은 v10).
+V10 = PROMPTS_DIR / "auditor" / "v10"
+_VERSION = "v10"
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """`_V10_ONLY` 밖의 검사를 `_VERSIONS`(v10 + 서빙 판)로 편다."""
+    if metafunc.function.__name__ not in _V10_ONLY:
+        metafunc.parametrize("_prompt_under_test", _VERSIONS, indirect=True)
+
+
+@pytest.fixture(autouse=True)
+def _prompt_under_test(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> str:
+    version = getattr(request, "param", "v10")
+    monkeypatch.setattr(f"{__name__}.V10", PROMPTS_DIR / "auditor" / version)
+    monkeypatch.setattr(f"{__name__}._VERSION", version)
+    return version
 
 _NUMBER_WORDS = {"one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 
@@ -80,7 +132,7 @@ def _flat() -> str:
 
 
 def _template():  # noqa: ANN202 - PromptTemplate을 import하지 않으려고 반환형을 안 적는다
-    return load_prompt(Role.AUDITOR, "v10")
+    return load_prompt(Role.AUDITOR, _VERSION)
 
 
 def _sentence(flat: str, needle: str) -> str:
@@ -152,7 +204,8 @@ def test_the_v10_meta_advertises_exactly_the_tools_the_schema_accepts() -> None:
     """meta가 광고하는 도구 = 봉투의 `tool` Literal(`AUDITOR_TOOLS`) — 스키마가 거절하는
     이름(`index`)을 광고하면 모델이 그것을 고른 홉이 파싱 실패이고, 하나를 빼먹으면 모델이 그 도구를
     영영 안 쓴다(PoV v2 ↔ gdb가 그 선례다). 그리고 서빙 설정의 홉 상한으로 `loop_problem`이 v10을
-    통과시킨다 — 이 판은 루프 판이라 상한 0이면 안 선다."""
+    통과시킨다 — 이 판은 루프 판이라 상한 0이면 안 선다. ⏵ 2026-10-10 — 이 검사는 서빙 판에서도
+    돈다(모듈 머리의 ⏵)."""
     tools = _template().tools
 
     assert len(tools) == len(set(tools)), "meta tools에 중복이 있다"
@@ -1318,14 +1371,23 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # --- 산문이 약속하는 재현 명세 ↔ 그것을 채우는 설정 · 코드 -------------------------------------
 
 
+# v10의 `repro_spec` 약속을 바이트 그대로 든 판 — ⏵ 2026-10-09 v11(이슈 #525)은 v10에서 `cwe` 서술
+# 네
+# 줄만 바꿨고 그 약속 문장은 같다(`tests/test_nullable_cwe.py`가 차이를 그 네 줄로 묶는다). 서빙
+# 판이
+# v11로 올라가도 이 약속의 「스위치가 켜져 있다」는 그대로 걸려야 한다.
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11"})
+
+
 def _profiles_serving_v10() -> list[str]:
-    """`config/profiles.yaml`에서 Auditor 좌석이 v10을 고르는 프로필 — 판 이름을 이 검사가 쥐지 않고
-    **설정에서 읽는다**(v10을 배선한 프로필이 늘면 같이 따라온다)."""
+    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11)을 고르는 프로필 —
+    판 이름을 이 검사가 쥐지 않고 **설정에서 읽는다**(배선한 프로필이 늘면 같이 따라온다)."""
     text = (CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8")
     return [
         name
         for name in sorted(yaml.safe_load(text)["profiles"])
-        if load_config(name).model_for("auditor").prompt_template_version == "v10"
+        if load_config(name).model_for("auditor").prompt_template_version
+        in _V10_REPRO_PROMISE_VERSIONS
     ]
 
 
@@ -1365,7 +1427,7 @@ def test_the_v10_repro_spec_promise_matches_the_switch_and_the_node() -> None:
         assert phrase in flat, f"산문에 {phrase!r}가 없다"
 
     serving = _profiles_serving_v10()
-    assert serving, "전제 — v10을 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
+    assert serving, "전제 — v10·v11을 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
     for profile in serving:
         assert load_config(profile).thresholds.synthesize_repro_spec == 1, profile
 

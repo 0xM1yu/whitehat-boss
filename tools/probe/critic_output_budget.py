@@ -104,7 +104,11 @@ from src.bench import check_startup  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.interfaces.model_client import Prompt  # noqa: E402
 from src.orchestrator import gate  # noqa: E402
-from src.orchestrator.nodes.critic import _describe_evidence, _describe_path  # noqa: E402
+from src.orchestrator.nodes.critic import (  # noqa: E402
+    _describe_claim,
+    _describe_evidence,
+    _describe_path,
+)
 from src.orchestrator.prompt_loader import PromptTemplate, build_facts, load_prompt  # noqa: E402
 from src.schemas.decision import Decision, DecisionDraft  # noqa: E402
 from src.schemas.enums import Role  # noqa: E402
@@ -172,7 +176,7 @@ def _reconstruct(
             ids={"finding_id": finding.finding_id, "decision_id": "dec_probe"},
             evidences=own,
         ),
-        claim=f"{finding.title} ({finding.cwe})",
+        claim=_describe_claim(finding),
         path=_describe_path(finding),
         evidence=_describe_evidence(own),
         **({"source": ""} if "{{SOURCE}}" in template.body else {}),
