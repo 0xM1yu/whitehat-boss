@@ -859,6 +859,10 @@ models:
     # 않는다」 문단이 거짓이 됐고 프롬프트 판은 불변 기록이라 **다음 판**이 고친다. 그 판의
     # 효과(poc 관측이 PoC의 함수가 된 것이 submit을 늘리는지)는 **미실측**이다 — v5로 돈 run이
     # 0건이고 위 「v4로 돈 run은 0건」도 그대로다.
+    # ⏵ 2026-10-09·10 — v5 prefix를 **제자리에서** 고쳤다(PR #574 · 불변 기록의 예외). 그 시점 v5로
+    # 돈 run 0건(`docs/experiments` grep · 로컬 확인). 경계: 옛 prefix는 `60df731`(#567 머지
+    # `a78b09f` · 10-09 19:29)부터 #574 머지 전까지. prefix.md sha256 전 `14486e57…`
+    # · 후 `e19e7e7b…`(전체는 `prompts/pov/v5/meta.yaml` 머리).
     prompt_template_version: "v5"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
