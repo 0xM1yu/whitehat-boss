@@ -42,7 +42,9 @@ from src.adapters.fake_tools import TOOL_KINDS, FakeToolRunner, SandboxUnavailab
 from src.ids import IdFactory
 from src.interfaces import tool_runner
 from src.interfaces.tool_runner import SandboxSpec, ToolArgs
+from src.orchestrator import prompt_loader
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
+from src.orchestrator.prompt_loader import evidence_summaries
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
 from tests.conftest import plant_link
@@ -683,7 +685,7 @@ def test_semgrep_tool_error_code_is_still_a_failure() -> None:
 
 
 def test_semgrep_summary_line_restores_readability() -> None:
-    """`--json`으로 잃은 가독성을 한 줄로 되돌린다."""
+    """`--json`으로 잃은 가독성을 머리 줄로 되돌린다(반쪽 파싱이면 둘째 줄이 붙는다 — 아래 검사)."""
     assert summary_line("semgrep", [Step(1, _semgrep_json(2), "")]) == "# semgrep: 2 findings"
     assert "결과 문서 없음" in summary_line("semgrep", [Step(1, "", "boom")])
     assert summary_line("clang-tidy", [Step(0, "", "")]) is None
@@ -1640,3 +1642,252 @@ def test_semgrep_own_error_exit_is_not_blamed_on_extension_mapping(tmp_path: Pat
     assert error is not None
     assert "실행 실패" in error, "semgrep 자체 오류인데 확장자 탓으로 기록한다"
     assert "확장자" not in error
+
+
+# --- semgrep 반쪽 파싱 — 이슈 #563 선행 -----------------------------------------
+#
+# 🔴 **샘플은 지어내지 않았다.** 아래 둘은 2026-10-10에 `harness-tools:v3`와
+# `/opt/semgrep-rules/c`로 **실제로 돌려** 받은 출력의 필요한 부분이다(CLAUDE.md §2.5 —
+# 「핀 샘플은 저장소에서 온다. 지어낸 샘플은 잡히는 형태만 고르게 된다」). 구문 오류를 심은
+# C 파일과 그것을 고친 대조 파일을 같은 argv로 돌렸다.
+
+# 양성 — `errors[].type`이 **리스트**이고 첫 원소가 종류 이름이다(실측 모양).
+_SEMGREP_PARTIAL = json.dumps(
+    {
+        "results": [
+            {
+                "check_id": "opt.semgrep-rules.c.lang.security.insecure-use-memset",
+                "path": "bad.c",
+                "start": {"line": 4},
+                "end": {"line": 4},
+                "extra": {"message": "memset may leave sensitive data behind"},
+            }
+        ],
+        "paths": {"scanned": ["bad.c"]},
+        "errors": [
+            {
+                "code": 3,
+                "level": "warn",
+                "type": ["PartialParsing", [{"path": "bad.c"}]],
+                "path": "bad.c",
+                "message": "Syntax error at line bad.c:3:" + chr(10) + " `int` was unexpected",
+            }
+        ],
+    }
+)
+
+# 음성 — 구문을 고친 대조. 🔴 `exit`·`results`·`paths.scanned`가 **양성과 같다.**
+_SEMGREP_CLEAN = json.dumps(
+    {
+        "results": [{"path": "good.c", "start": {"line": 2}, "end": {"line": 2}}],
+        "paths": {"scanned": ["good.c"]},
+        "errors": [],
+    }
+)
+
+
+def test_a_half_parsed_target_is_named_and_a_clean_one_is_not() -> None:
+    """🔴 **파싱 실패를 말하는 축은 `errors` 하나다** (2026-10-10 실측 · 이슈 #563 선행).
+
+    같은 argv에서 두 파일의 `exit`는 **둘 다 1**(발견 있음) · `results`는 **둘 다 1건** ·
+    그리고 **`paths.scanned`에 둘 다 들어 있다.** 그래서 `judge_semgrep`의 `paths.scanned`
+    판정(#66)은 반쪽 파싱을 **못 잡는다** — 이 검사가 그 사실을 같이 단언한다.
+    """
+    assert container_tools.semgrep_partial_parse(_SEMGREP_PARTIAL) == ("bad.c",)
+    assert container_tools.semgrep_partial_parse(_SEMGREP_CLEAN) == ()
+
+    # 🔴 기존 판정 축이 둘을 못 가른다 — 이 세 줄이 「왜 새 축이 필요한가」다.
+    assert container_tools.semgrep_scanned(_SEMGREP_PARTIAL) == ["bad.c"]
+    assert container_tools.semgrep_scanned(_SEMGREP_CLEAN) == ["good.c"]
+    assert len(container_tools.semgrep_results(_SEMGREP_PARTIAL) or []) == len(
+        container_tools.semgrep_results(_SEMGREP_CLEAN) or []
+    )
+
+
+def test_the_partial_parse_note_says_the_count_is_a_lower_bound() -> None:
+    """🔴 **뜻을 단언한다** — 철자가 아니라. `POC_AMBIGUOUS_NOTE`에서 문구의 뜻을 뒤집는
+    변이가 131건을 통과한 선례가 있다(적대적 리뷰 2026-10-09).
+
+    이 문구가 모델 관측에 실리므로, 「하한」이 「전부」로 뒤집히면 **모델이 「신호는 이것뿐」으로
+    읽는다.** 그리고 판정은 **안 바꾼다** — 반쪽 파싱의 히트도 신호이고 `ok=False`로 내리면
+    `static_ok`가 꺼져 E1이 줄어든다(방향이 거꾸로다).
+    """
+    note = container_tools.SEMGREP_PARTIAL_NOTE
+    assert "하한" in note
+    assert "단언하지 않는다" in note
+    assert "전부" not in note
+
+    steps = [container_tools.Step(1, _SEMGREP_PARTIAL, "")]
+    ok, code, error = container_tools.judge("semgrep", steps, total=1)
+    assert (ok, code, error) == (True, 1, None), "판정은 안 바꾼다 — 기록만 한다"
+
+
+def test_the_note_rides_the_summary_return_value_as_its_second_line() -> None:
+    """🔴 **떨어뜨려 두면 관측 꼬리 상한에서 잘려 수만 남는다** — `POC_AMBIGUOUS_NOTE`가
+    정확히 그렇게 잘렸다(이슈 #573). 그래서 같은 반환값에 싣는다 — 개행으로 이은 **둘째 줄**이다.
+    (모델 사본에서 이 반환값이 80자에 잘리는 문제는 아래 `evidence_summaries` 검사가 문다.)
+    """
+    partial = container_tools.summary_line(
+        "semgrep", [container_tools.Step(1, _SEMGREP_PARTIAL, "")]
+    )
+    clean = container_tools.summary_line("semgrep", [container_tools.Step(1, _SEMGREP_CLEAN, "")])
+
+    assert partial is not None and clean is not None
+    assert clean == "# semgrep: 1 findings", "깨끗한 스캔의 바이트는 종전과 같다"
+    first, second = partial.split(LF)
+    assert first == "# semgrep: 1 findings"
+    assert container_tools.SEMGREP_PARTIAL_NOTE in second
+    assert "bad.c" in second, "어느 파일이 반쪽인지 적는다 — 모르면 셀 것이 없다"
+
+
+# --- 반쪽 파싱 — 모델 사본까지 닿는가 · 거짓 양성 가드 (적대적 리뷰 2026-10-10) --------------
+#
+# 위 검사는 `summary_line` 반환값까지만 본다. 그 반환값은 `evidence_summaries`의 접기가 로그 머리를
+# 80자에서 자르는 바람에 모델 사본에서 `(Par`로 잘렸다 — 아래 검사는 **실제 러너가 쓴 로그**를
+# `evidence_summaries`에 통과시킨다. 음성·문자열 `type` 샘플은 **합성**이다: 실측한 `errors` 모양은
+# `PartialParsing` 리스트 하나뿐이고(룰 경고의 실 모양은 미실측), 코드가 `type`을 두 모양 다
+# 받으므로 두 모양이 나타날 수 있다는 근거로 골랐다.
+
+
+def _partial_item(path: str) -> dict[str, object]:
+    return {
+        "code": 3,
+        "level": "warn",
+        "type": ["PartialParsing", [{"path": path}]],
+        "path": path,
+        "message": "Syntax error at line " + path + ":3:",
+    }
+
+
+def _errors_doc(errors: list[object], *, hits: int = 1) -> str:
+    results = [
+        {
+            "check_id": f"rule.r{i}",
+            "path": "a.c",
+            "start": {"line": 3 + i},
+            "end": {"line": 3 + i},
+            "extra": {"message": "memset may leave sensitive data behind"},
+        }
+        for i in range(hits)
+    ]
+    return json.dumps({"results": results, "paths": {"scanned": ["a.c"]}, "errors": errors})
+
+
+# zlib 모양 — exit 0 · results 0 · PartialParsing 1(이슈 #563 본문의 `adler32.c` 건). 값은 합성이다.
+_SEMGREP_ZLIB = _errors_doc([_partial_item("adler32.c")], hits=0)
+_RULE_WARNING = {"code": 2, "level": "warn", "type": ["RuleWarning", []], "path": "r.yaml"}
+
+
+def _model_body(tmp_path: Path, spy: _Spy, stdout: str, code: int) -> tuple[str, Evidence]:
+    """실제 `ContainerToolRunner.run`이 쓴 로그를 `evidence_summaries`에 통과시킨 모델 사본."""
+    spy.returncode, spy.stdout, spy.stderr = code, stdout, ""
+    runner = _runner(tmp_path)
+    ev = runner.run("semgrep", ToolArgs(argv=["semgrep", "parser.c"], workdir="parser.c"), SANDBOX)
+    bodies = evidence_summaries([ev], container_tools.make_payload_reader(tmp_path))
+    return str(bodies[ev.evidence_id]["body"]), ev
+
+
+@pytest.mark.parametrize(
+    ("stdout", "code", "path"), [(_SEMGREP_PARTIAL, 1, "bad.c"), (_SEMGREP_ZLIB, 0, "adler32.c")]
+)
+def test_the_partial_parse_fact_reaches_the_model_copy_whole(
+    tmp_path: Path, spy: _Spy, stdout: str, code: int, path: str
+) -> None:
+    """🔴 노트가 모델 사본에서 `(Par`로 잘리던 결함이 되살아나면 빨개진다. 히트가 **0건**인 zlib
+    모양이 가장 위험한 자리라 같이 돈다 — 사람용 로그 파일에는 한국어 노트가 그대로 남는다."""
+    body, ev = _model_body(tmp_path, spy, stdout, code)
+
+    assert f"partial_parse: {path}" in body and "lower bound" in body
+    assert "(Par" not in body and "반쪽" not in body, f"한국어 노트 잔해가 남았다: {body!r}"
+    assert body.count("errors:") == 1, "새 줄이 아니라 기존 `errors:` 줄 안에 싣는다"
+    marker = [line for line in body.splitlines() if "partial_parse" in line]
+    assert len(marker) == 1 and marker[0].startswith("errors:"), (
+        f"표지가 `errors:` 줄 밖으로 나갔다(prefix의 줄 순서 서술이 깨진다): {marker}"
+    )
+    log = container_tools.make_payload_reader(tmp_path)(ev.payload_ref)
+    assert log is not None and container_tools.SEMGREP_PARTIAL_NOTE in log
+    assert (ev.ok, ev.exit_code, ev.error) == (True, code, None), "판정은 안 바꾼다"
+
+
+def test_a_half_parsed_scan_with_no_hits_still_judges_ok() -> None:
+    """N1 — 「반쪽이고 `results`가 비면 `ok=False`」 변이를 죽인다(zlib 모양)."""
+    steps = [container_tools.Step(0, _SEMGREP_ZLIB, "")]
+    assert judge("semgrep", steps, total=1) == (True, 0, None)
+    assert first_hit_location("semgrep", steps) is None
+
+
+def test_a_rule_warning_is_not_counted_as_a_half_parse() -> None:
+    """🔴 거짓 양성 가드 — `type`이 `PartialParsing`이 아닌 `errors` 항목(룰 경고 등)을 반쪽으로
+    세면 모델이 「히트는 하한」을 읽는다. 이름 검사·문자열 `type` 가지·`[:3]` 상한을 각각 문다."""
+    cases = {
+        "rule warning (list type)": ([_RULE_WARNING], ()),
+        "no type": ([{"code": 3, "message": "e", "path": "a.c"}], ()),
+        "string type, other kind": ([{"type": "RuleWarning", "path": "r.yaml"}], ()),
+        "string type, partial": ([{"type": "PartialParsing", "path": "x.c"}], ("x.c",)),
+        "mixed": ([_RULE_WARNING, _partial_item("b.c")], ("b.c",)),
+    }
+    for name, (errors, expected) in cases.items():
+        stdout = _errors_doc(errors)
+        assert container_tools.semgrep_partial_parse(stdout) == expected, name
+        if not expected:
+            steps = [container_tools.Step(1, stdout, "")]
+            assert container_tools.summary_line("semgrep", steps) == "# semgrep: 1 findings", name
+
+    five = _errors_doc([_partial_item(f"f{i}.c") for i in range(5)])
+    line = container_tools.summary_line("semgrep", [container_tools.Step(1, five, "")]) or ""
+    assert "(5개: f0.c, f1.c, f2.c 외)" in line and "f3.c" not in line, line
+
+
+def test_the_model_copy_counts_half_parses_the_way_the_adapter_does(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """모델 쪽 `type` 판정은 어댑터를 import할 수 없어 복제다 — 같은 입력에 같은 결론이어야 한다.
+    반쪽 파싱이 아닌 스캔의 `errors:` 줄은 종전 바이트 그대로다(표지 없음)."""
+    for errors in ([_RULE_WARNING], [{"type": "RuleWarning", "path": "r.yaml"}], []):
+        body, _ = _model_body(tmp_path, spy, _errors_doc(errors), 1)
+        size = len(json.dumps(errors))
+        assert f"errors: {len(errors)} ({size} chars dropped); other JSON fields omitted" in body
+        assert "partial_parse" not in body
+
+    string_typed = _errors_doc([{"type": "PartialParsing", "path": "x.c"}])
+    assert "partial_parse: x.c" in _model_body(tmp_path, spy, string_typed, 1)[0]
+    five = _errors_doc([_partial_item(f"f{i}.c") for i in range(5)])
+    assert "partial_parse: f0.c, f1.c, f2.c +2 more;" in _model_body(tmp_path, spy, five, 1)[0]
+
+    assert prompt_loader._SEMGREP_PARTIAL_PARSE == container_tools._SEMGREP_PARTIAL_PARSE
+    steps = [container_tools.Step(1, _SEMGREP_PARTIAL, "")]
+    note_line = (container_tools.summary_line("semgrep", steps) or "").split(LF)[1]
+    assert prompt_loader._SEMGREP_PARTIAL_NOTE_LINE.sub("", note_line + LF) == "", (
+        "모델 사본이 빼는 줄과 어댑터가 쓰는 노트가 어긋났다"
+    )
+
+
+def test_a_scan_the_fold_cannot_read_keeps_the_korean_note(tmp_path: Path, spy: _Spy) -> None:
+    """접기가 못 읽는 로그(히트에 `check_id`가 없다)는 범용 절단 경로로 가고 거기엔 영어 표지가
+    없다 — 그때는 한국어 노트를 빼지 않는다(빼면 반쪽 파싱이라는 사실이 통째로 사라진다)."""
+    unreadable = json.dumps(
+        {"results": [{"path": "bad.c", "start": {"line": 4}, "end": {"line": 4}}],
+         "errors": [_partial_item("bad.c")]}
+    )
+    body, _ = _model_body(tmp_path, spy, unreadable, 1)
+
+    assert container_tools.SEMGREP_PARTIAL_NOTE in body
+
+
+def test_long_or_multiline_paths_do_not_eat_the_hits(tmp_path: Path, spy: _Spy) -> None:
+    """경로 하나가 길어도(300자) 접힌 히트가 줄지 않는다 — 표지의 경로는 약 80자로 자르고
+    **뒤를 남긴다**(파일명이 뒤에 있다). 개행이 든 파일명도 표지 줄 하나 안에 머문다."""
+    long_dir = "/" + "d" * 290
+    errors = [_partial_item("a" + LF + "b.c")]
+    errors += [_partial_item(f"{long_dir}/file_{i}.c") for i in range(3)]
+    body, _ = _model_body(tmp_path, spy, _errors_doc(errors, hits=10), 1)
+
+    assert "10 of 10 shown" in body, f"긴 경로가 히트를 지웠다: {body[:300]!r}"
+    marker = next(line for line in body.splitlines() if "partial_parse" in line)
+    assert marker.startswith("errors:") and marker.endswith("other JSON fields omitted")
+    listed = marker.split("partial_parse: ")[1].split("; hits are")[0]
+    assert listed.endswith(" +1 more") and listed.startswith("a b.c, "), listed
+    shown = listed.removesuffix(" +1 more").split(", ")
+    assert len(shown) == 3 and all(len(path) <= 80 for path in shown), shown
+    assert shown[1].startswith("…") and shown[1].endswith("/file_0.c"), "앞이 아니라 뒤를 남긴다"
+    assert not any(line.strip() == "b.c" for line in body.splitlines()), "개행 파일명 잔해 줄"

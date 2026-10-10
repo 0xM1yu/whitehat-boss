@@ -412,6 +412,8 @@ CASE_A_CALL_LIMIT = 1
 # method survives the cap only while |listed| + |hot| fits in it -- the D90 sentence quoted in the
 # query below ("If |hot ∩ api| <= CAP ...") is the flag-off rule. It stays as is: it is query text,
 # and rewording it would change the flag-off text the measurements ran (README, Case A).
+# ⏵ 2026-10-10 (#361): the query text below says an empty-named row "voids the whole run" (#347);
+# since #361 Python drops and counts such a row (`candidates_invalid`). Left as is -- see above.
 # The stdout-overrun above is the pre-#250 mechanism; #250 moved the payload to a file, so the
 # cap now bounds the candidate count (and downstream per-candidate work), not the transport.
 # (The K=1 filter uses `.take(LIMIT+1).size` so a common name like `read` short-circuits at

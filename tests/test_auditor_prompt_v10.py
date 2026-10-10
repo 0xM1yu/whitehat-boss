@@ -532,8 +532,11 @@ def test_the_v10_prose_pairs_each_refutation_result_with_the_status_the_node_exp
     pairs = dict(re.findall(r"(\w+)→(\w+)", line))
 
     assert pairs, "산문에서 읽은 짝이 비었다"
-    assert pairs == auditor._STATUS_BY_RESULT
-    assert set(auditor._STATUS_BY_RESULT) == set(_types_of(AuditRefutation, "result"))
+    # ⏵ 2026-10-10 — 노드의 표는 v12(이슈 #578)의 `no_candidate→no_signal`을 더 든다. v10 산문과
+    # 스키마가 대는 것은 그 밖의 넷이다(v12의 짝은 `tests/test_auditor_v12.py`가 문다).
+    v10_map = {k: v for k, v in auditor._STATUS_BY_RESULT.items() if k != "no_candidate"}
+    assert pairs == v10_map
+    assert set(v10_map) == set(_types_of(AuditRefutation, "result"))
     statuses = set(_types_of(AuditProcedure, "trigger_status"))
     assert set(auditor._STATUS_BY_RESULT.values()) <= statuses
 
@@ -1378,9 +1381,11 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # 줄만 바꿨고 그 약속 문장은 같다(`tests/test_nullable_cwe.py`가 차이를 그 네 줄로 묶는다). 서빙
 # 판이
 # v11로 올라가도 이 약속의 「스위치가 켜져 있다」는 그대로 걸려야 한다.
-# ⏵ 2026-10-10 v13(이슈 #67)도 같다 — v11에서 FACTS `source` 서술 두 줄만 바꿨다
+# ⏵ 2026-10-10 — v12(이슈 #578)도 그 약속 문장(§5 CWE and reproduction의 `repro_spec` 서술)이 v11과
+# 같다(`tests/test_auditor_v12.py`가 그 줄이 안 바뀐 것을 문다). 서빙 판이 아니라 지금은 안 고른다.
+# ⏵ 같은 날 v13(이슈 #67)도 같다 — v11에서 FACTS `source` 서술 두 줄만 바꿨다
 # (`tests/test_auditor_v13_facts.py`가 차이를 그 두 줄로 묶는다).
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v13"})
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13"})
 
 
 def _profiles_serving_v10() -> list[str]:

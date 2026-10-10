@@ -51,3 +51,5 @@ v1은 SQLite로 간다. 파일 하나(`artifacts/<run_id>/state.db`)에 run 단�
     배선하지 않으니 보관할 횟수가 없다. run을 넘는 상태 중 남는 것, 곧 resume의 스키마 버전 문제(구버전
     `state.db`를 `model_validate`로 되읽으면 필수 필드 누락으로 로드가 실패한다)는
     [D86](../open-questions/D/D86.md)이 승계한다
+  - ⏵ 2026-10-10 — 여는 자리의 저장 형태 판 게이트가 섰다(이슈 #281, `src/adapters/sqlite_store.py`). 판을 적은
+    파일은 판이 다르면 로드 **전에** 거부된다. 판 0(게이트 전 파일)은 종전대로 열려 위 실패가 그대로 남는다
