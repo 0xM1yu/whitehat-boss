@@ -45,8 +45,9 @@ Singularity 3.7.3은 `cpu_limit`·`memory_mb`를 강제하지 못한다(HPC에�
 Evidence Gate E4(proven)의 조건이 `SANITIZER`/`CRASH`/`POC_RUN` Evidence다. 컴파일 성공을
 실행으로 세면 **한 번도 돌지 않은 프로그램이 재현 완료로 기록된다.** 그래서 `ok=False`로
 내리는 갈래가 셋이다 — 명령이 하나도 안 돈 경우(`not steps`), 빌드에서 끊긴 경우
-(`len(steps) < total`), **대상을 띄우지도 못한 경우**. 마지막 것을 알아내는 방법이 도구마다
-다르다.
+(`len(steps) < total`), **대상의 판정으로 읽을 수 없는 경우**(asan·gdb는 대상을 띄우지도
+못한 경우이고, `poc`는 그보다 넓다 — `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지
+않는다). 마지막 것을 알아내는 방법이 도구마다 다르다.
 
 **asan**은 마지막 명령이 대상 바이너리라 종료 코드 125·126·127(`_EXEC_FAILED`)이 곧
 「띄우지 못함」이고, 그 뒤로는 종료 코드를 보지 않는다 — 뜨기만 하면 크래시(non-zero)든
@@ -269,9 +270,10 @@ _COMPILE_ERROR_MARKER = "clang-diagnostic-error"
 _SEMGREP_OK = (0, 1)
 
 # 컨테이너가 명령을 띄우지도 못했을 때 런타임이 쓰는 코드. 크래시(=신호)와 구분해야 한다.
-# 실행류에서는 마지막 명령이 대상인 asan·poc만 쓰고(그 밖에는 clang-tidy가 쓴다), **gdb에는
-# 쓰지 않는다** — gdb는 대상의 종료 코드가 같은 숫자 공간에 실려(`--return-child-result`)
-# 판별자가 못 된다.
+# 실행류에서는 **asan만** 쓰고(그 밖에는 clang-tidy가 쓴다), `poc`·gdb에는 쓰지 않는다.
+# ⏵ 2026-10-09 — `poc`는 이 상수가 아니라 더 넓은 `_poc_is_harness_failure`(아래
+# `_POC_HARNESS_FAILURE` · `_POC_ENV_FATAL`)를 쓴다(ADR 0014 · #513). gdb는 대상의 종료 코드가
+# 같은 숫자 공간에 실려(`--return-child-result`) 판별자가 못 된다.
 _EXEC_FAILED = (125, 126, 127)
 
 # 실행 흔적을 만드는 도구. asan·poc는 마지막 명령이 "실제로 뜬 프로그램"이고, gdb는 마지막
@@ -306,6 +308,16 @@ _POC_ENV_FATAL = frozenset({137, 255})
 def _poc_is_harness_failure(code: int) -> bool:
     """그 종료 코드가 **실행 환경**의 것인가 — 대상의 판정이 아닌가."""
     return code in _POC_HARNESS_FAILURE or code in _POC_ENV_FATAL or code < 0 or code > 255
+
+
+# `_poc_is_harness_failure`가 참일 때 `judge`가 내는 사유(`{code}`에 종료 코드). 모델 관측의
+# `error=`로 실린다. 🔴 **상수로 뺀 이유**: 적대적 리뷰 2026-10-09이 이 문구를 뜻이 반대인
+# *"…읽을 수 없는 종료 코드가 아니다 — 대상이 터졌다"*로 바꿔도 관련 테스트가 통과하는 것을
+# 보였다(테스트가 구절 포함·「크래시」 부재만 봤다). 이제 테스트가 **전체 문자열**을 단언한다.
+POC_UNREADABLE_EXIT_REASON = (
+    "poc: 대상의 판정으로 읽을 수 없는 종료 코드다 (exit={code}) — 실행 환경이 "
+    "낸 값이거나 대상의 것과 갈리지 않는다"
+)
 
 # 🔴 **`1`은 가를 수 없다.** ASan의 기본 종료 코드일 수 있어 docker·셸의 일반 실패와 안 갈린다
 # (`tools/oracle_canary.py`의 같은 서술). 재 본 둘 중 하나가 정확히 이 값이다 —
@@ -834,11 +846,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                 # ⏵ 2026-10-09 (적대적 리뷰) — **「띄우지 못했다」로 단정하지 않는다.** `137`은
                 # docker SIGKILL이고 위 `_POC_ENV_FATAL` 주석이 **대상 자신의 OOM과 갈리지
                 # 않는다**고 적는다 — 그 경우 이미지는 **떴다**. 한 문구로 참인 것은 「대상의
-                # 판정으로 읽을 수 없다」까지다. 뜻은 아래 핀이 문다.
-                return False, code, (
-                    f"poc: 대상의 판정으로 읽을 수 없는 종료 코드다 (exit={code}) — 실행 환경이 "
-                    "낸 값이거나 대상의 것과 갈리지 않는다"
-                )
+                # 판정으로 읽을 수 없다」까지다. 문구는 `POC_UNREADABLE_EXIT_REASON`이고
+                # 테스트가 전체 철자를 문다.
+                return False, code, POC_UNREADABLE_EXIT_REASON.format(code=code)
             # 여기까지 오면 대상이 실제로 떴다. 비-0은 실패가 아니라 신호다.
             # `1`의 애매함은 숨기지 않고 `summary_line`이 관측에 적는다.
             return True, code, None
@@ -850,8 +860,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     if tool == "semgrep":
         return judge_semgrep(last)
     if tool == "clang-tidy":
-        # **명령을 띄우지도 못한 것은 신호가 아니다.** asan·poc가 위에서 하는 `_EXEC_FAILED`
-        # 판정과 같은 것이고, 그 상수의 주석이 이미 "크래시(=신호)와 구분해야 한다"고 적어 뒀다.
+        # **명령을 띄우지도 못한 것은 신호가 아니다.** asan이 위에서 하는 `_EXEC_FAILED`
+        # 판정과 같은 것이고(`poc`는 위에서 `_poc_is_harness_failure`를 쓴다), 그 상수의 주석이
+        # 이미 "크래시(=신호)와 구분해야 한다"고 적어 뒀다.
         # 여기에 없던 동안 **컨테이너 기동 실패가 정적 신호로 집계됐다** — 2026-08-28
         # `run_20260828_0001`에서 keyring 쿼터로 docker가 컨테이너를 못 띄워 도구 13건이
         # 전부 exit 125였는데, semgrep·build는 `ok=False`로 떨어진 반면 clang-tidy만
