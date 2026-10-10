@@ -2241,7 +2241,8 @@ def _exit_submitted_unpersisted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 def _exit_aborted(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
     """🔴 흡수되지 **않는** 예외로 루프가 끊긴다 — 적대적 리뷰가 깬 자리다.
 
-    `_run_pov_hops`의 `except`는 `(ModelGatewayError, SchemaParseError)`뿐이다. 리뷰는 설정
+    `_run_pov_hops`의 `except`는 `(ModelGatewayError, SchemaParseError)`뿐이다(⏵ 2026-10-10
+    도구 호출 둘레의 `except BudgetExhausted`는 이벤트를 낸 뒤 그대로 올린다 - #394). 리뷰는 설정
     오타가 내는 `PromptError`와 잠긴 `state.db`가 내는 `sqlite3.OperationalError` 둘로
     재현했다. **이 표의 한 행은 형을 하나(`RuntimeError`)만 골라** 「사유가 정확히 하나 남는다」를
     잰다 — 「어떤 형이든」은 이 행이 못 문다(`finally`를 그 형만 잡는 `except`로 좁히는 변이가
@@ -2483,7 +2484,8 @@ def test_every_pov_exit_records_exactly_one_result(
     늘리면 위 집합 단언이 빨개진다.
 
     실제로 조용히 0이 됐던 갈래 둘: 캡슐 미스(루프에 못 들어간다)와 흡수 안 된 예외
-    (`_run_pov_hops`의 `except`가 두 형만 잡는다).
+    (`_run_pov_hops`의 `except`가 두 형만 잡는다 - ⏵ 2026-10-10 도구 호출의 `BudgetExhausted`는
+    이벤트를 낸 뒤 올린다, #394).
 
     ⚠ `aborted` 행은 형을 하나(`RuntimeError`)만 던진다 — 「어떤 형이든」은
     `test_an_exception_of_any_type_leaves_exactly_one_aborted_reason`이 문다.
