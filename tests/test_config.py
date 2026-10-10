@@ -816,8 +816,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
     음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
     되어 열 · ⏵ 2026-10-10 critic/v7(미배선)과 미선택 판 v12가 양성으로 더해져 열둘 ·
-    ⏵ 같은 날 v13 배선으로 v11이 양성으로 옮겨가고 v13이 새 음성 통제가 되어 열셋) — 새 철자로 적은 meta는
-    목록에 넣어야 잡힌다."""
+    ⏵ 같은 날 v13 배선으로 v11이 양성으로 옮겨가고 v13이 새 음성 통제가 되어 열셋) —
+    새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
