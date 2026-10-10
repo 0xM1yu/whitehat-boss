@@ -19,7 +19,7 @@ from typing import get_args
 
 import pytest
 
-from src.adapters import fake_tools
+from src.adapters import fake_tools, sqlite_store
 from src.adapters.factory import WIRINGS, build_deps
 from src.adapters.fake_model import FakeContext, FakeModelClient, FakeModelError, risky_calls_in
 from src.adapters.fake_retriever import FakeRetriever, read_raw_source, read_symbol_source
@@ -881,6 +881,99 @@ def test_sqlite_payload_is_schema_json(tmp_path: Path) -> None:
     store.put(_candidate("cand_0001"))
     row = store._conn.execute("SELECT payload FROM objects").fetchone()  # noqa: SLF001
     assert json.loads(row[0])["candidate_id"] == "cand_0001"
+
+
+# --- state.db 저장 형태 판 게이트 (이슈 #281) --------------------------------
+
+
+def _user_version(path: Path) -> int:
+    # `with sqlite3.connect(...)`는 트랜잭션만 닫고 연결은 안 닫는다 — 명시적으로 닫는다.
+    conn = sqlite3.connect(path)
+    try:
+        return conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _legacy_db(path: Path, payload: str) -> None:
+    """게이트 전 코드가 만든 파일의 모양 — 표는 있고 판은 0이다. DDL은 그 코드의 것 그대로다."""
+    conn = sqlite3.connect(path)
+    conn.executescript(
+        "CREATE TABLE objects (kind TEXT NOT NULL, obj_id TEXT NOT NULL, run_id TEXT, "
+        "payload TEXT NOT NULL, PRIMARY KEY (kind, obj_id));"
+        "CREATE INDEX objects_by_run ON objects (kind, run_id);"
+    )
+    conn.execute("INSERT INTO objects VALUES ('candidate', 'cand_0001', ?, ?)", (RUN_ID, payload))
+    conn.commit()
+    conn.close()
+
+
+def _stamped_db(path: Path, version: int) -> None:
+    """판 `version`인 파일 — 지금 코드로 만들고 행 하나를 쓴 뒤 판만 바꾼다."""
+    with SqliteStateStore(path) as first:
+        first.put(_candidate("cand_0001"))
+    conn = sqlite3.connect(path)
+    conn.execute(f"PRAGMA user_version = {version}")
+    conn.close()
+
+
+def test_a_new_state_db_carries_the_current_schema_version(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    SqliteStateStore(path).close()
+    assert sqlite_store.STATE_DB_SCHEMA_VERSION >= 1  # 0은 「판 없음」이라 쓰면 안 된다
+    assert _user_version(path) == sqlite_store.STATE_DB_SCHEMA_VERSION
+
+
+def test_a_pre_gate_state_db_still_opens_and_is_not_restamped(tmp_path: Path) -> None:
+    """게이트 전 코드가 만든 파일(판 0)은 종전대로 연다 — 보존된 run을 프로브가 읽는다
+    (`tools/probe/critic_output_budget.py`). 판을 새로 적지 않는다: 안의 행이 어느 모양인지
+    모른다."""
+    path = tmp_path / "state.db"
+    _legacy_db(path, _candidate("cand_0001").model_dump_json())
+    with SqliteStateStore(path) as store:
+        assert store.get("candidate", "cand_0001") == _candidate("cand_0001")
+        store.put(_candidate("cand_0002"))
+    assert _user_version(path) == 0
+
+
+def test_a_state_db_of_the_current_version_reopens(tmp_path: Path) -> None:
+    path = tmp_path / "state.db"
+    _stamped_db(path, sqlite_store.STATE_DB_SCHEMA_VERSION)
+    with SqliteStateStore(path) as store:
+        assert store.get("candidate", "cand_0001") is not None
+
+
+@pytest.mark.parametrize(("delta", "says"), [(1, "더 새 코드"), (-1, "더 옛 코드")])
+def test_a_state_db_of_another_version_is_refused_before_any_row_is_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delta: int, says: str
+) -> None:
+    """판이 다르면 여는 자리에서 거부한다 — 되읽기의 `ValidationError`가 아니라 이유를 대고 멈춘다.
+
+    옛 판 쪽은 지금 판이 1이라 실파일이 없어 코드 판을 2로 올려 만든다. 저장된 행은 **지금 스키마로
+    읽히는** 행이다 — 그래서 거부가 행 검증이 아니라 판 대조에서 왔음을 가른다. 거부 뒤에 연결이
+    닫혀야 Windows에서 그 파일을 지울 수 있다(`estimate`의 임시 디렉터리, `cli.py`)."""
+    current = sqlite_store.STATE_DB_SCHEMA_VERSION
+    path = tmp_path / "state.db"
+    if delta > 0:
+        _stamped_db(path, current + 1)
+    else:
+        _stamped_db(path, current)
+        monkeypatch.setattr(sqlite_store, "STATE_DB_SCHEMA_VERSION", current + 1)
+    with pytest.raises(sqlite_store.StateDbVersionError, match=says) as raised:
+        SqliteStateStore(path)
+    assert "#281" in str(raised.value)
+    path.unlink()  # 열린 연결이 남았으면 Windows에서 PermissionError
+    assert not path.exists()
+
+
+def test_a_refused_state_db_is_left_untouched(tmp_path: Path) -> None:
+    """거부가 파일을 고치지 않는다 — 판도 행도 그대로다(그 판의 체크아웃이 다시 연다)."""
+    path = tmp_path / "state.db"
+    _stamped_db(path, sqlite_store.STATE_DB_SCHEMA_VERSION + 1)
+    before = path.read_bytes()
+    with pytest.raises(sqlite_store.StateDbVersionError):
+        SqliteStateStore(path)
+    assert path.read_bytes() == before
 
 
 # --- factory ----------------------------------------------------------------
