@@ -294,6 +294,10 @@ agent:
 `null`로 받는 `AuditProcedureNullableCwe`(`AuditProcedure`의 서브클래스)일 뿐이다([D107](open-questions/D/D107.md) · §3 「AuditProcedure」의 「v11」). 위 「두 봉투」의
 규칙은 셋째에도 그대로 걸리고 `_Hop`·`_loop_envelope`가 셋을 받는다.
 
+⏵ **2026-10-10 — 봉투가 넷이다.** v12는 넷째 `AuditorProcedureAuditAlwaysAction`을 요청한다 -> `procedure`가 `no_signal`에도 `audit`를 채우는
+`AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의 서브클래스)다(이슈 #578 · §3 「AuditProcedure」의 「v12」). 같은 규칙이 넷째에도 걸린다.
+v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 registry는 v11을 고른다.
+
 **켜는 조건은 둘이고 어긋나면 서지 않는다.** ① `thresholds.auditor_tool_hops`가 양수 ② 배선된 판의 meta가
 `output_schema`로 루프 봉투(`AuditorAction` · `AuditorProcedureAction`)를 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
 `_render_hop0`를 두 경로가 같이 쓴다) — 안 켠 run은 [evaluation.md](evaluation.md) §2.3의 재측정을 걸지 않는다.
@@ -468,6 +472,7 @@ agent:
      `Finding`(한 방) · `AuditorAction` · `AuditorProcedureAction` 셋이고 **payload 모델 `AuditProcedure`는 그 집합에 없다** — 봉투의 `procedure`로
      들어갈 뿐 최상위로 요청되지 않는다. 선언하면 `lookup`·`probe` 없이 감사 결과 하나만 받는 문법이 되어 프롬프트가 시키는 홉 봉투와 어긋난다.
      ⏵ 2026-10-09 — v11의 `AuditorProcedureNullableCweAction`이 더해져 넷이다. payload `AuditProcedureNullableCwe`도 같은 이유로 집합 밖이다.
+     ⏵ 2026-10-10 — v12의 `AuditorProcedureAuditAlwaysAction`이 더해져 다섯이다(이슈 #578). payload `AuditProcedureAuditAlways`도 집합 밖이다.
    - `tools` — 이 판의 prefix가 「쓸 수 있는 도구」로 서술하는 이름이다. **여섯의 부분집합**이어야 한다: 로더는
      `index`도 통과시키지만 봉투의 `tool`(`AuditorTool` — 루프 봉투 셋이 공유한다)이 받지 않으므로 적으면 문법이 거절하는 도구를 광고하게 된다.
      `thresholds.auditor_tool_hops`가 양수인데 배선된 판의 `tools`가 비거나 여섯 밖의 이름을 들면 `cli`의
@@ -778,6 +783,7 @@ property 순서가 되고 그 스키마가 `response_format`으로 서버에 실
 `null`이면 검증기가 거절한다. `null`을 싣는 길은 v11 응답(`AuditProcedureNullableCwe`)을 옮겨 담는 것 하나다. **요청 스키마는 그대로다** —
 `cwe` 칸의 `model_json_schema()`는 넓히기 전 모양(`pattern`·`title`·`type` 셋, `null` 없음)으로 고정했다(`WithJsonSchema`). 그래서 `Finding`을
 요청하는 판·`AuditorAction`(v8·v9)·`AuditorProcedureAction`(v10)의 요청 바이트가 안 바뀐다(`tests/test_nullable_cwe.py`가 sha256으로 문다).
+⏵ 2026-10-10 — v12 응답(`AuditProcedureAuditAlways` · v11의 서브클래스, 이슈 #578)도 같은 길로 `null`을 싣는다.
 
 `trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
 **스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
@@ -845,7 +851,7 @@ v10(`prompts/auditor/v10/`)의 `answer` 액션이 `procedure`에 싣는 **모델
 
 | 필드 | 타입 · 제약 | 비고 |
 | --- | --- | --- |
-| `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 |
+| `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 (⏵ 2026-10-10 v10·v11의 것 — v12는 모든 상태에서 non-null이다, 아래 「v12」 절) |
 | `trigger_status` | 닫힌 다섯 — `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal` | `Finding.trigger_status`(`str` 또는 `None`)와 달리 닫혀 있다 |
 | `confidence` | 0.0 이상 1.0 이하 | 상태별 구간은 산문이 쥔다 |
 | `cwe` | `CWE-<숫자>` 꼴 — **`null`이 안 된다, `no_signal`에서도** | ⚠ 아래 「한계」 · ⏵ 2026-10-09 v11의 `AuditProcedureNullableCwe`는 `no_signal`에서만 `null`이 된다(아래 「v11」) |
@@ -891,6 +897,10 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
 다음 PR이 다시 잰다). 그래서 「`Finding`에 필드가 늘었다」는 절반만 참이다 — **저장 모양만 늘고 요청 모양은 그대로다.** `Finding.audit`이 `None`인
 경우는 둘이다 — 안 낸 판(한 방 판·v8·v9)과 v10의 `no_signal` — 이 둘은 `produced_by.prompt_version`으로 가른다(`trigger_status`의 `None` 두 뜻을
 가르는 것과 같은 방식이다).
+⏵ 2026-10-10 — `Finding.audit`는 v12 블록(`AuditBlockWithNoSignal`)도 받는다 -> `SkipJsonSchema[AuditBlock | AuditBlockWithNoSignal | None]`(이슈 #578).
+요청 스키마는 그대로다(`Finding`·`AuditorAction`의 sha256을 `tests/test_auditor_v12.py`가 문다). v12 Finding은 `audit`가 `None`이 안 된다.
+블록 클래스는 값이 정한다 -> `AuditBlock`으로 서는 값이면 `AuditBlock`, `no_signal` 전용 값을 들면 v12 블록이다(저장 왕복·`transition` 앞뒤로 같다).
+판은 블록 클래스가 아니라 `produced_by.prompt_version`으로 가른다.
 
 ⚠ **한계 — 이 변경이 고치지 않았다.** `cwe`가 non-null이라 `no_signal`에도 CWE를 요구한다. v10 산문은 *no_signal이면 후보와 관련된 CWE를 두라*고
 적지만 `Candidate.suspected_cwe`는 빈 리스트일 수 있어(`src/schemas/candidate.py`) 그때 모델이 쓸 수 있는 **참인 값이 없다** — 모델이 지어 쓰면 근거
@@ -910,8 +920,27 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
   문단). 나머지 prefix·body는 v10과 바이트 동일이다(`tests/test_nullable_cwe.py`).
 - 읽는 자리 -> CWE가 있으면 렌더가 종전과 바이트 동일, `null`일 때만 다르다: SARIF는 `ruleId`를 CWE 꼴이 아닌 센티넬 `no-cwe`로 둔다(`ruleId`는 스키마상 선택, 규범 본문은 조건부 SHALL — OASIS SARIF 2.1.0 §3.27.5 *"If `rule.id` is absent, `ruleId` SHALL be present"*, 이 결과는 `rule`을 안 싣는다) · 보고서 항목 줄은
   `CWE 없음` · Critic `CLAIM`은 `<제목> (CWE 없음)` · PoV 서술은 `CWE: (없음)`. 보고서 중복 제거 키는 `null`을 그대로 쓰고 셋째 칸을 후보 ID로 둔다 — `no_signal`은 `path=[]`라 대상 함수 대신 모델이 쓴 제목이 들어가 다른 후보가 제목만 같아도 묶였을 자리다.
-- 관측 -> v11 `answer` 홉이 `no_signal`인데 `cwe`가 있으면 `cwe_present_on_no_signal` 키가 생긴다(`nodes/auditor._answer_observed` — v8~v10은 안 센다).
+- 관측 -> v11 `answer` 홉이 `no_signal`인데 `cwe`가 있으면 `cwe_present_on_no_signal` 키가 생긴다(`nodes/auditor._answer_observed` — v8~v10은 안 센다 · ⏵ 2026-10-10 v12 답도 센다: `AuditProcedureAuditAlways`가 그 서브클래스다).
 - v11로 돈 run은 0건이다 — 모델이 `no_signal`에서 실제로 `null`을 내는지는 미측정이다.
+
+#### v12 — `audit`를 모든 상태에서 채운다 (⏵ 2026-10-10)
+
+이슈 #578 · 팀 결정 2026-10-10. FT 데이터 Teacher v4가 `no_signal`에도 `audit`를 채운다 -> v10·v11 계약(`no_signal`이면 `audit` null)으로는
+그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
+
+- 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
+  서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
+- v12 블록은 v10 블록의 형제다 -> 값이 하나씩 늘었다: `category`의 `none` · `defense.status`의 `not_applicable` · `refutation.result`의 `no_candidate`.
+  v10 블록을 넓히지 않은 이유는 v11과 같다(v10·v11 요청의 `$defs`).
+- 하네스가 거는 규칙 -> `no_signal`이면 세 값 셋 다, 다른 상태면 셋 중 어느 것도 안 된다(Teacher v4 `validate_teacher_output`과 같은 쪽). 부모의
+  `audit` ↔ `no_signal` 검증기를 같은 이름으로 덮어 바꿨다.
+- 거절하지 않고 세는 것 -> `refutation.result` ↔ 나머지 네 상태의 어긋남(`status_result_mismatch` · `_STATUS_BY_RESULT`에 `no_candidate`→`no_signal`이
+  더해졌다) · 상태별 빈 경로. v10·v11과 같은 재생성 비용 근거다.
+- `Finding`으로 옮길 때 -> `no_signal`이면 `Finding.path`는 `[]`다. 그 `audit.path`는 걸러낸 후보를 따라간 기록이라 `trigger_status`를 안 읽는 게이트
+  `p2`가 세면 안 된다 -> `audit.path`에만 남는다. 다른 상태는 v10과 같다(경로를 옮기고 `reachability_unknown`이면 발급 `missing_id`).
+- prefix는 v11에서 `audit` 서술만 바꿨다(19줄 -> 20줄, `tests/test_auditor_v12.py`가 문다). 도구·FACTS·SOURCE 옵션 서술·body는 v11 그대로다.
+  Teacher 전용 규칙(`evidence_refs`는 항상 `[]` · FACTS 없음)은 옮기지 않았다.
+- v12로 돈 run은 0건이다 -> FT 모델이 이 계약대로 내는지는 미측정이다.
 
 ### MissingEvidence
 
