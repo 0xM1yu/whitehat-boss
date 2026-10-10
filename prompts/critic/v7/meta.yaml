@@ -1,4 +1,6 @@
+# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
+# 배선 선행: 게이트 `is_grounded` 결정(S10) · `cli run` 프롬프트 가드.
 role: critic
 version: v7
 output_schema: DecisionDraft
-description: Critic v6 프롬프트의 개선본입니다. Critic이 Auditor 응답 대부분을 uphold해서 오탐을 줄이지 못하는 문제를 해결했습니다.
+description: Critic v6 프롬프트의 개선본입니다. Critic이 Auditor 응답 대부분을 uphold해서 오탐을 줄이지 못하는 문제를 해결했습니다. 이 서술의 근거는 CASTLE 데이터셋에서 저자가 외부에서 잰 값(Auditor Recall 0.873/Specificity 0.693, Critic Recall 0.833/Specificity 0.803 - PR #588 저자 코멘트 2026-10-10)이며 이 저장소 run이 아니라 인용이다(ADR 0012 결정 5). 이 저장소에서 v7로 돈 run은 0건이라 미실측이다.
