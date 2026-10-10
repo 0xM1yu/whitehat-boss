@@ -2333,6 +2333,7 @@ def _run_pov_hops(
     **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
+    도구 호출에서 난 `BudgetExhausted`는 그 홉의 `pov_hop`을 낸 **뒤에** 올린다(#394).
     홉 상한은 PoV 전용 `thresholds.pov_tool_hops`다(이슈 #511) — NE 루프의 `max_hops`와 갈랐다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
@@ -2441,13 +2442,33 @@ def _run_pov_hops(
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False, in_validate_span=True
                     )
-                evidence = pov.run_tool(
-                    ctx, finding=finding, tool="poc", workdir=workdir, poc=hop_poc
-                )
+                tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
+                tool, tool_poc = action.tool, last_poc
+            try:
                 evidence = pov.run_tool(
-                    ctx, finding=finding, tool=action.tool, workdir=workdir, poc=last_poc
+                    ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
                 )
+            except BudgetExhausted as exc:
+                # 🔴 **그 홉의 이벤트를 내고 다시 던진다**(#394). `call_tool`도 `ledger.ensure`를
+                # 하므로 예산은 이 자리에서도 끊긴다 — gen PoC를 조립한 **뒤**, 홉 이벤트를 내기
+                # **전**이다. 안 내면 그 PoC는 해시조차 어디에도 없다. 내면 다음 홉에서 끊긴
+                # 경로와 같아진다(그 홉 gen 이벤트의 `poc_sha256`이 잃은 PoC를 특정한다).
+                # 원장은 안 건드린다 — `ensure`가 막은 호출은 도구를 안 돌렸고 청구도 없다.
+                # 예외는 그대로 올린다(추가형 계약 — 예산 소진은 run의 사실). 종단(`_pov_finish`)은
+                # 여전히 안 부른다 — 파일은 이 경로에서도 없다(`poc_log` 모듈 docstring 「한계」).
+                # 이벤트 쓰기가 던지면 원 예외가 가려지므로 `add_note`로 붙이고 원 예외를 올린다.
+                try:
+                    _emit_pov_hop(
+                        ctx, finding, hop=hop, action=action.action, poc=hop_poc,
+                        failed=(exc, (ctx.monotonic_ms() - started) / 1000.0),
+                        fuzz=fuzz if hop == 0 else None,
+                    )
+                except Exception as emit_exc:
+                    exc.add_note(
+                        f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
+                    )
+                raise
             if hop >= pov_hops:
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
@@ -2591,13 +2612,15 @@ def _emit_pov_hop(
     fuzz: Mapping[str, object] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
-    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다).
+    (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
+    **도구 호출**이 예산에서 끊긴 경우도 `failed`로 낸다(#394) — 그때는 응답이 있어 `action`이
+    같이 실리고 `schema_ok`가 참이다.
 
     `poc`는 **그 홉의 gen이 조립한 PoC**다 — 있으면 맨 hex sha256을 `poc_sha256`으로 싣는다(종단
     이벤트의 `poc_sha256`과 같은 형식이라 바로 대조된다). 종단을 건너뛰는 중단 경로(예산 소진·서버
-    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이지만 **이 이벤트가 나간 뒤에 끊긴 경우뿐이다**
-    — 그 홉 자신의 도구 호출에서 끊기면(토큰 예산 소진이 그 경로다) 이벤트도 해시도 없다(`poc_log`
-    모듈 docstring의 「한계」).
+    쪽 게이트웨이 오류)에서 잃은 PoC를 특정하는 흔적이다. 그 홉 자신의 도구 호출이 예산에서
+    끊겨도 루프가 이 이벤트를 내고 다시 던진다(#394). 그 밖의 형으로 도구 호출에서 끊기면 이벤트가
+    없다(`poc_log` 모듈 docstring의 「한계」).
 
     `fuzz`는 **hop0에만** 준다 — 퍼즈 진입점 조회의 결과다(`_fuzz_entrypoint`). 그것을 여기 싣는
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
