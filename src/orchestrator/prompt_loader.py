@@ -457,6 +457,35 @@ def _bound_text(text: str, cap: int) -> tuple[str, bool]:
     return f"{head}{_TRUNCATION_MARKER}{tail}", True
 
 
+# 어댑터 `container_tools`의 `SEMGREP_PARTIAL_NOTE`(한국어 노트)와 `semgrep_partial_parse`의
+# `type` 판정을 이 모듈은 import할 수 없어 복제한다 — 철자는 `tests/test_container_tools.py`가 건다.
+# 접기는 로그 머리를 80자에서 자르므로 한국어 노트는 모델 사본에서 빼고 같은 뜻을 영어로
+# `errors:` 줄 안에 싣는다(PR #577).
+_SEMGREP_PARTIAL_NOTE_LINE = re.compile(
+    r"^# semgrep: 대상을 반쪽만 파싱했다[^\n]*\n?", re.MULTILINE
+)
+_SEMGREP_PARTIAL_PARSE = "PartialParsing"
+_PARTIAL_PATHS_SHOWN = 3
+_PARTIAL_PATH_CHARS = 80  # 긴 경로가 접힌 히트의 예산을 먹지 않게 — 파일명이 뒤에 있어 뒤를 남긴다
+
+
+def _partial_parse_paths(errors: list[object]) -> list[str]:
+    """`errors` 중 반쪽 파싱 항목의 경로 — 룰 경고 등 다른 `type`은 세지 않는다."""
+    paths: list[str] = []
+    for item in errors:
+        if not isinstance(item, dict):
+            continue
+        kind = item.get("type")
+        name = kind[0] if isinstance(kind, list) and kind else kind
+        path = item.get("path")
+        if name == _SEMGREP_PARTIAL_PARSE and isinstance(path, str) and path:
+            flat = " ".join(path.split())  # 개행·CR이 든 파일명이 잔해 줄을 남기지 않게
+            if len(flat) > _PARTIAL_PATH_CHARS:
+                flat = "…" + flat[1 - _PARTIAL_PATH_CHARS :]
+            paths.append(flat)
+    return paths
+
+
 def _fold_semgrep_results(text: str, cap: int) -> tuple[str, bool] | None:
     """semgrep 결과를 히트당 한 줄로 접는다 — 이슈 #481의 선택지 1.
 
@@ -467,7 +496,8 @@ def _fold_semgrep_results(text: str, cap: int) -> tuple[str, bool] | None:
     규칙·경로·시작/끝 줄은 온전히 남기고 메시지는 최소 16자(생략 표시 포함)를 예약한다.
     그 조건으로 원래 순서의 최대 접두 건수를 계산한 뒤 남은 예산을 메시지에 나눠 쓴다.
     stdout 밖 실행 기록은 앞 80자·뒤 20자까지 예약한다(설계 상수, 작은 cap이면 더 줄인다).
-    JSON의 나머지 필드는 생략 표시하며 파싱 실패 목록은 건수와 재직렬화 길이를 남긴다.
+    JSON의 나머지 필드는 생략 표시하며 파싱 실패 목록은 건수와 재직렬화 길이를 남긴다 — 반쪽
+    파싱이 있으면 그 경로와 「히트는 하한」을 같은 괄호에 영어로 더한다(#563 선행).
     깨진 JSON·필수 필드가 없는 결과는 None으로 돌려 종전 절단 경로에 맡긴다.
     """
     lines = text.split("\n")
@@ -501,10 +531,14 @@ def _fold_semgrep_results(text: str, cap: int) -> tuple[str, bool] | None:
     errors = document.get("errors", [])
     if not isinstance(errors, list):
         return None
-    notice = (
-        f"errors: {len(errors)} ({len(json.dumps(errors))} chars dropped); "
-        "other JSON fields omitted"
-    )
+    dropped = f"{len(json.dumps(errors))} chars dropped"
+    partial = _partial_parse_paths(errors)
+    if partial:
+        shown = ", ".join(partial[:_PARTIAL_PATHS_SHOWN])
+        extra = len(partial) - _PARTIAL_PATHS_SHOWN
+        more = f" +{extra} more" if extra > 0 else ""
+        dropped += f"; partial_parse: {shown}{more}; hits are a lower bound"
+    notice = f"errors: {len(errors)} ({dropped}); other JSON fields omitted"
     context, _ = _bound_text("\n".join(lines[:start]), min(80, cap // 5))
     tail, _ = _bound_text("\n".join(lines[end:]), min(20, cap // 20))
     suffix = f"\n{tail}" if tail else ""
@@ -564,8 +598,9 @@ def evidence_summaries(
             continue
         trimmed = _HARNESS_HEADER_LINE.sub("", raw)
         cap = min(per_cap, remaining)
+        # 접기에 성공하면 한국어 노트는 접힌 `errors:` 줄이 대신한다 — 못 접으면 노트를 남긴다.
         folded = (
-            _fold_semgrep_results(trimmed, cap)
+            _fold_semgrep_results(_SEMGREP_PARTIAL_NOTE_LINE.sub("", trimmed), cap)
             if getattr(ev, "source", None) == "semgrep"
             else None
         )
