@@ -943,27 +943,95 @@ def test_a_state_db_of_the_current_version_reopens(tmp_path: Path) -> None:
         assert store.get("candidate", "cand_0001") is not None
 
 
-@pytest.mark.parametrize(("delta", "says"), [(1, "더 새 코드"), (-1, "더 옛 코드")])
+def _spy_connect(
+    monkeypatch: pytest.MonkeyPatch, authorizer: object = None
+) -> list[tuple[sqlite3.Connection, list[str]]]:
+    """`sqlite_store`가 여는 연결과 그 SQL을 모은다. `monkeypatch.context()` 안에서 쓴다."""
+    seen: list[tuple[sqlite3.Connection, list[str]]] = []
+    real = sqlite3.connect
+
+    def connect(*args: object, **kwargs: object) -> sqlite3.Connection:
+        conn = real(*args, **kwargs)
+        statements: list[str] = []
+        conn.set_trace_callback(statements.append)
+        if authorizer is not None:
+            conn.set_authorizer(authorizer)
+        seen.append((conn, statements))
+        return conn
+
+    monkeypatch.setattr(sqlite_store.sqlite3, "connect", connect)
+    return seen
+
+
+@pytest.mark.parametrize(
+    ("stored", "code_version", "says"),
+    [
+        (2, None, "더 새 코드"),
+        (5, None, "더 새 코드"),
+        (2**31 - 1, None, "더 새 코드"),
+        (-1, None, "더 옛 코드"),
+        (1, 2, "더 옛 코드"),
+    ],
+)
 def test_a_state_db_of_another_version_is_refused_before_any_row_is_read(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, delta: int, says: str
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stored: int,
+    code_version: int | None,
+    says: str,
 ) -> None:
     """판이 다르면 여는 자리에서 거부한다 — 되읽기의 `ValidationError`가 아니라 이유를 대고 멈춘다.
 
-    옛 판 쪽은 지금 판이 1이라 실파일이 없어 코드 판을 2로 올려 만든다. 저장된 행은 **지금 스키마로
-    읽히는** 행이다 — 그래서 거부가 행 검증이 아니라 판 대조에서 왔음을 가른다. 거부 뒤에 연결이
-    닫혀야 Windows에서 그 파일을 지울 수 있다(`estimate`의 임시 디렉터리, `cli.py`)."""
-    current = sqlite_store.STATE_DB_SCHEMA_VERSION
+    저장된 행은 **읽을 수 없는 행**이다 — 행을 읽고 검증한 뒤에 거부하면 `ValidationError`가 먼저
+    난다. 행을 읽는 SQL이 실행되지 않았고 파일에 쓰는 SQL도 없었음을 실행된 문장으로 직접 본다.
+    연결이 닫혔는지도 OS 파일 잠금이 아니라 그 연결에 질의해 본다(Linux는 열린 파일도 지워진다)."""
     path = tmp_path / "state.db"
-    if delta > 0:
-        _stamped_db(path, current + 1)
-    else:
-        _stamped_db(path, current)
-        monkeypatch.setattr(sqlite_store, "STATE_DB_SCHEMA_VERSION", current + 1)
-    with pytest.raises(sqlite_store.StateDbVersionError, match=says) as raised:
-        SqliteStateStore(path)
+    _stamped_db(path, stored)
+    conn = sqlite3.connect(path)
+    conn.execute("UPDATE objects SET payload = '{\"bogus\": 1}'")
+    conn.commit()
+    conn.close()
+    with monkeypatch.context() as patched:
+        if code_version is not None:
+            patched.setattr(sqlite_store, "STATE_DB_SCHEMA_VERSION", code_version)
+        seen = _spy_connect(patched)
+        with pytest.raises(sqlite_store.StateDbVersionError, match=says) as raised:
+            SqliteStateStore(path)
     assert "#281" in str(raised.value)
-    path.unlink()  # 열린 연결이 남았으면 Windows에서 PermissionError
+    [(opened, statements)] = seen
+    assert not any(
+        s.upper().startswith(("CREATE", "INSERT", "UPDATE", "DELETE")) or "payload" in s
+        for s in statements
+    ), statements
+    with pytest.raises(sqlite3.ProgrammingError):  # 닫힌 연결
+        opened.execute("select 1")
+    path.unlink()
     assert not path.exists()
+
+
+def test_a_new_state_db_is_never_left_with_a_table_but_no_version(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """표를 만들고 판을 적는 사이에 실패해도 (표 있음 · 판 0)이 남지 않는다 — 그 모양은 「게이트 전
+    파일」이라 다음에 열 때 판을 안 적고 어떤 판의 코드든 받는다(게이트가 조용히 꺼진다).
+    판 기록만 거부하는 authorizer로 그 사이의 실패를 흉내낸다."""
+
+    def deny_version_write(action: int, name: str | None, arg: str | None, *_: object) -> int:
+        denied = action == sqlite3.SQLITE_PRAGMA and name == "user_version" and arg is not None
+        return sqlite3.SQLITE_DENY if denied else sqlite3.SQLITE_OK
+
+    path = tmp_path / "state.db"
+    with monkeypatch.context() as patched:
+        _spy_connect(patched, deny_version_write)
+        with pytest.raises(sqlite3.DatabaseError):
+            SqliteStateStore(path)
+    conn = sqlite3.connect(path)
+    try:
+        tables = conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+        version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    assert (len(tables) > 0) == (version == sqlite_store.STATE_DB_SCHEMA_VERSION), (tables, version)
 
 
 def test_a_refused_state_db_is_left_untouched(tmp_path: Path) -> None:
