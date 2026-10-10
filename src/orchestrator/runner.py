@@ -310,7 +310,7 @@ _DROPPABLE_STATUS = frozenset({400, 413, 422})
 # 큰 함수가 뭉쳐 오는 것은 드문 일도 아니다.
 #
 # **번갈아 실패하는 경우는 여전히 걸린다.** 크기 거절은 카운터를 올리지도 않지만
-# **내리지도 않는다** — 리셋 조건은 오직 완주다. 그래서 스키마 → 400 → 스키마 →
+# **내리지도 않는다** — 내리는 것은 죽지 않고 끝난 시도뿐이다. 그래서 스키마 → 400 → 스키마 →
 # 400 → 스키마는 1·1·2·2·3으로 상한에 닿는다. 이 값이 잡으려는 것이 그 모양이다.
 #
 # **크기 거절만 계속 나오는 run은 중간에 멈추지 않는다.** 그래도 폭주하지 않는 것은
@@ -319,10 +319,7 @@ _DROPPABLE_STATUS = frozenset({400, 413, 422})
 # 거절이 전량이 되는데(`run_20260925_0006`), 그 run을 완주로 두면 「못 봤다」가 「없다」로
 # 읽힌다. 예전에는 여기서 *"한 번 보면 갈린다"*며 받아들였다 — 사람이 본다는 전제였다.
 #
-# **카운터가 둘이고 상한은 이 값 하나다(#197 — `_ConsecutiveDrops`).** run 카운터는 자리와 단계를
-# 안 가르고 세며 완주가 지운다 — 교차역할 전역 장애가 자리 수와 무관하게 이 값번째 시도에 선다.
-# 자리 카운터는 `_caller(단계, 자리)`를 키로 세며 그 단계를 지난 시도가 지운다 — 풀 멤버 하나의
-# 전량 실패를 형제의 완주가 못 지운다(#195). 어느 쪽이든 먼저 닿으면 멈춘다.
+# **카운터가 둘이고 상한은 이 값 하나다(#197).** 키·리셋·서는 조건은 `_ConsecutiveDrops`가 정한다.
 #
 # **잠정치다.** 실대상 run에서 후보 단위 실패가 얼마나 자주 나는지 재 본 적이 없다 —
 # 그 측정의 입력이 이 변경 뒤의 첫 실대상 run이다(`thresholds.candidate_max`와 같은 상태).
@@ -371,7 +368,8 @@ def _rejects_every_request(exc: Exception) -> bool:
     그래서 세지 않고 첫 건에서 멈춘다 — 세면 상한까지 같은 거절을 더 태울 뿐이다. 이 정지가 생길
     때(#296)는 이유가 하나 더 있었다: 카운터 키가 Scout 자리였고 Scout가 안 올린 대상의 완주가 그
     키를 지워 뒤 단계가 전부 거절해도 상한에 안 닿을 수 있었다. 키가 `_caller(단계, 자리)`가 된
-    뒤(#197)로는 Auditor 키를 Auditor를 안 거친 완주가 못 지운다.
+    뒤(#197)로는 Auditor 키를 Auditor를 안 거친 완주가 못 지운다 —
+    `test_a_scout_that_promotes_nothing_does_not_clear_the_auditors_key`가 후보 단위에서 문다.
     """
     return (
         isinstance(exc, ModelGatewayError) and exc.status == 400 and not _is_size_rejection(exc)
@@ -397,12 +395,17 @@ class _ConsecutiveDrops:
 
     | 카운터 | 키 | 지우는 것 | 막는 것 |
     | --- | --- | --- | --- |
-    | `run` | 없음 | 시도의 완주 | 전 자리 장애 — 자리 수와 무관하게 상한번째에 선다 |
+    | `run` | 없음 | 후보: 죽지 않고 끝난 시도 · 단계: 행의 성공 | 전 자리 장애(대상 둘 이상) |
     | `by_caller` | `_caller(단계, 자리)` | 그 단계를 지난 시도 | 멤버 하나의 전량 실패(#195) |
 
     **둘인 이유.** 자리 카운터 하나만 두면(#195 ~ #197) 풀 3자리 전역 장애에서 각 자리가
     따로 상한까지 올라가야 해서 3번째가 아니라 7번째 시도에 섰다. run 카운터 하나만
     두면(#195 전) 고장난 멤버의 실패를 형제의 완주가 매번 지워 영영 안 섰다(#195가 고친 맹점).
+
+    **run 카운터는 폐기가 서로 다른 대상 둘 이상에 걸쳐야 선다(PR #584 리뷰 §1).** 아니면 자리 수 ≥
+    상한일 때 한 대상의 팬아웃 전멸만으로 멀쩡한 나머지 대상까지 잃는다. 그 전멸은 전 자리 장애와
+    둘째 대상이 죽기 전까지 가를 수 없어, 전 자리 장애는 `max(상한, 자리 수 + 1)`번째 시도에 선다
+    (자리 3 · 상한 3이면 4번째 — 자리 키만으로는 7번째).
 
     **자리 카운터의 키가 실패한 단계를 따른다.** 예전 키(`item.role`)는 4단계 자리라 5단계
     Auditor 장애가 Scout 자리 수만큼의 버킷으로 갈렸고, Scout가 안 올린 대상의 완주가 그
@@ -414,6 +417,7 @@ class _ConsecutiveDrops:
     """
 
     run: int = 0
+    run_targets: set["_TargetKey"] = field(default_factory=set)
     by_caller: dict[tuple[Stage, Role | None], int] = field(default_factory=dict)
 
     def passed(self, callers: Iterable[tuple[Stage, Role | None]]) -> None:
@@ -422,8 +426,9 @@ class _ConsecutiveDrops:
             self.by_caller[key] = 0
 
     def completed(self) -> None:
-        """시도 하나가 끝까지 갔다 — run이 체계적으로 고장 난 것은 아니다."""
+        """시도 하나가 **죽지 않고 끝났다**(끝까지 갔든 승격이 안 돼 멈췄든) — run 고장이 아니다."""
         self.run = 0
+        self.run_targets.clear()
 
 
 def _stop_if_a_caller_saw_nothing(starved: set[tuple[Stage, Role | None]]) -> None:
@@ -4533,7 +4538,7 @@ def _triage_by_stage(ctx: RunContext, plan: _TargetPlan, state: _Accumulator, la
     ## 이 루프에서 뜻이 바뀌는 둘 (ADR 0009 「함께 옮겨야 하는 것」)
 
     **1. 연속 폐기 카운터가 「이 단계에서 몇 건이 연속으로 죽었나」가 된다.**
-    후보 단위에서는 카운터가 run 전체에 하나였고 리셋 조건이 「후보 하나가 3~6단계를
+    후보 단위에서는 (#197 전) 카운터가 run 전체에 하나였고 리셋 조건이 「후보 하나가 3~6단계를
     완주」였다. 여기서는 **단계마다 0에서 시작하고**, 「이 target이 이 단계를 마쳤다」가
     리셋이다. 바뀌는 이유는 뜻이 실제로 달라서다 — 단계 단위에서 4단계를 전부 통과한
     run은 「scout는 멀쩡하다」를 증명한 것이고, 그 사실을 5단계 실패가 지우면 안 된다.
@@ -4607,8 +4612,7 @@ def _run_stage_for_all(
     실패하면 그 자리 키가 형제의 성공에 지워지지 않고 쌓여 `_MAX_CONSECUTIVE_DROPS`에
     닿는다(#195) — 그래서 Scout 커버리지 1/3이 빈 run이 `stopped_after`를 채우고
     `is_complete=False`가 된다(비교표에서 빠진다, [evaluation.md](../../evaluation.md) §6).
-    **run 카운터**는 키 없이 세고 아무 성공이나 지운다 — 모든 자리가 매 target에서 실패하면
-    자리 수와 무관하게 상한번째 시도에 선다.
+    **run 카운터**는 키 없이 세고 아무 성공이나 지운다(서는 조건은 `_ConsecutiveDrops`).
 
     > **왜 둘인가.** 자리를 안 가른 카운터 하나였을 때는 고장난 멤버가 매번 죽어도 형제의
     > 성공이 그때마다 0으로 지웠다 — 상한에 영원히 안 닿았다(#195). 역할(`item.role`) 키
@@ -4619,7 +4623,7 @@ def _run_stage_for_all(
     1번)는 그대로다. 그래서 행 하나 안에서 자리 키의 단계는 늘 같다.
 
     `tests/test_pipeline_e2e.py`의 `test_a_broken_pool_member_trips_the_circuit_breaker`(자리)·
-    `test_a_pool_wide_outage_stops_at_the_cap_whatever_the_seat_count`(run)가 이 동작을 고정한다.
+    `test_a_pool_wide_outage_stops_as_soon_as_a_second_target_fails`(run)가 이 동작을 고정한다.
 
     ## 성공 0 백스톱 (#296)
 
@@ -4681,8 +4685,8 @@ def _triage_by_candidate(
     **연속 폐기 카운터는 둘이다 — run과 자리(#197).** 팬아웃 뒤 시도 단위가 `(target, role)`이다.
     자리 카운터는 시도가 죽은 단계의 `_caller(단계, 자리)`를 키로 세므로, 풀 멤버 하나가 전량
     실패하면 그 자리가 자기 카운터로 상한에 닿는다 — 형제 멤버의 완주는 그 키를 안 건드린다.
-    run 카운터는 키 없이 세고 완주가 지운다 — 전 자리 장애가 자리 수와 무관하게 상한번째 시도에
-    선다. 전문은 `_ConsecutiveDrops`와 `_run_stage_for_all`의 「둘이다」 절에 있다.
+    run 카운터는 키 없이 세고 죽지 않고 끝난 시도가 지운다. 전문은 `_ConsecutiveDrops`와
+    `_run_stage_for_all`의 「둘이다」 절에 있다.
 
     `ModelGatewayError`·`SchemaParseError`는 후보 단위 실패다. 그 후보만 버리고 계속
     간다. 다만 무조건 잡으면 안 된다:
@@ -4717,16 +4721,16 @@ def _triage_by_candidate(
     예외 처리(`_drop`·연속 카운터·`tried`/`passed`)는 **국면마다** 같은 패턴을 적용한다 —
     국면 A에서 실패한 좌석은 국면 B에 들어가지 않는다(그 시도는 거기서 끝난다). **리셋은
     시도가 끝날 때만 한다** — 국면 A에서 죽었을 때, 또는 국면 B가 끝났을 때. run 카운터는
-    완주(국면 B가 예외 없이 끝남)만 지우고, 자리 카운터는 그 시도가 **다 지난 단계**의 키만
-    지운다(죽은 단계는 빼고). 국면 A만 통과한 것은 아무것도 지우지 않는다 — 4단계 키는 개시와
-    정착이 같은 키라, 개시 통과가 지우면 정착이 매번 죽어도 키가 0과 1을 오가며 상한에 안
-    닿는다. 국면을 가르는 자리는 하드코딩하지 않고 표에서 읽는다(`_SCOUT_SETTLE_INDEX`,
+    완주(국면 B가 예외 없이 끝남 — 승격이 안 돼 멈춘 것 포함)만 지우고, 자리 카운터는 그 시도가
+    **다 지난 단계**의 키만 지운다(죽은 단계는 빼고). 국면 A만 통과한 것은 아무것도 지우지 않는다 —
+    4단계 키는 개시와 정착이 같은 키라, 개시 통과가 지우면 정착이 매번 죽어도 키가 0과 1을 오가며
+    상한에 안 닿는다. 국면을 가르는 자리는 하드코딩하지 않고 표에서 읽는다(`_SCOUT_SETTLE_INDEX`,
     `_PHASE_A_STEPS`/`_PHASE_B_STEPS`).
     """
     # 연속 폐기를 **run과 자리로** 센다(#197, `_ConsecutiveDrops`). 시도 단위가
     # `(target, role)`이고, 풀에서 한 멤버가 전량 실패해도 형제 멤버의 성공이 매번 지우던
     # 단일 카운터로는 상한에 안 닿았다(#195). 자리 카운터가 그 멤버를 `_MAX_CONSECUTIVE_DROPS`에
-    # 닿게 하고, run 카운터가 전 자리 장애를 자리 수와 무관하게 상한번째 시도에 세운다.
+    # 닿게 하고, run 카운터가 서로 다른 대상 둘 이상에 걸친 연속 폐기를 세운다.
     #
     # **국면 A·B가 같은 카운터를 공유한다** — target 여러 개, 국면 둘을 거치며 누적된다.
     drops = _ConsecutiveDrops()
@@ -4802,7 +4806,7 @@ def _triage_by_candidate(
                     stage=reached.stage, role=role,
                 )
             else:
-                # 완주했다(국면 B까지) — run이 체계적으로 고장 난 것은 아니다.
+                # 죽지 않고 끝났다(국면 B까지, 승격이 안 돼 멈춘 것도 같다) — run 고장이 아니다.
                 drops.completed()
                 finished = True
             entered = {_caller(stage, role) for stage, _ in _TRIAGE_STEPS if stage <= reached.stage}
@@ -4828,7 +4832,7 @@ def _drop(
     """시도 하나를 버리고 기록한다. 연속 상한에 닿으면 `_TooManyDrops`를 올린다.
 
     **센다면 두 카운터를 같이 올린다(#197)** — run 카운터와 `_caller(stage, role)` 자리
-    카운터. 어느 쪽이든 `_MAX_CONSECUTIVE_DROPS`에 닿으면 멈추고, 메시지가 어느 쪽인지 적는다.
+    카운터. 멈추는 조건은 `_ConsecutiveDrops`에 있고 메시지가 어느 쪽인지 적는다.
 
     ⚠ **시도는 `(target, Scout 자리)`다 — target이 아니다.** 팬아웃 뒤 `items`가 그 곱으로
     펼쳐지고 이 함수가 시도마다 불린다. 단일 `scout`에서는 자리가 하나라 둘이 같고,
@@ -4864,10 +4868,12 @@ def _drop(
         return
     key = _caller(stage, role)
     drops.run += 1
+    drops.run_targets.add(_target_key(target.location, target.slice_id))
     drops.by_caller[key] = drops.by_caller.get(key, 0) + 1
-    if drops.run >= _MAX_CONSECUTIVE_DROPS:
+    if drops.run >= _MAX_CONSECUTIVE_DROPS and len(drops.run_targets) > 1:
         raise _TooManyDrops(
-            f"후보 {_MAX_CONSECUTIVE_DROPS}건이 연속으로 실패했다(자리 무관). 마지막 사유: {exc}"
+            f"후보 {drops.run}건이 연속으로 실패했다(자리 무관, 서로 다른 대상 "
+            f"{len(drops.run_targets)}개에 걸쳐). 마지막 사유: {exc}"
         ) from exc
     if drops.by_caller[key] >= _MAX_CONSECUTIVE_DROPS:
         seat = f" {key[1].value}" if key[1] is not None else ""
