@@ -605,7 +605,7 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
 
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
-    프롬프트(⏵ 2026-10-06 v10 — 그 전 v9·v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    프롬프트(⏵ 2026-10-07 v10 — 그 전 v9·v8·v7)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -1313,8 +1313,12 @@ def _expected_calls(config: HarnessConfig, capsules: int) -> int:
 
     승격률도 NE 홉 수도 모르므로 **상한**을 낸다 — 추정치를 낙관적으로 내면 예산 계획이
     무의미해진다. Scout 쪽이 특히 그렇다 — v3 좌석이 매번 `max_hops`까지 되물으면 그
-    상한까지 GPU 시간이 실제로 든다(ADR 0012 결정 2). v1·v2(신호 없음)는 늘 1회뿐이라
-    이 상한을 안 채우지만, 예산은 **최악을 견뎌야** 하므로 여기서 낙관하지 않는다.
+    상한까지 GPU 시간이 실제로 든다(ADR 0012 결정 2). v1·v2(신호 없음)와 **v4**(신호 둘 —
+    `triage_review`·`triage_reject`, need_evidence 미사용 · 2026-10-07 서빙 판, PR #524)는 늘
+    1회뿐이라 이 상한을 안 채우지만, 예산은 **최악을 견뎌야** 하므로 여기서 낙관하지 않는다.
+    ⚠ 그래서 지금 서빙 배선에서 Scout 항은 상한의 1/4이고 전체 추정은 약 17% 과대다
+    (계산값 — `max_hops` 3 · `auditor_tool_hops` 16 · `critic_top_n` 8에서 후보 100~1,047일 때
+    비 1.166~1.167, 이슈 #530의 표).
 
     **⚠ 캡슐 수와 후보 수는 같지 않다.** 캡슐은 **target당 하나**인데(ADR 0010 §3 —
     풀 멤버 셋이 같은 캡슐을 공유한다) 4단계는 **자리마다 한 번** 돈다. 그래서 후보가
@@ -1875,6 +1879,9 @@ def _sarif_result(finding: Finding) -> dict:
         "properties": {
             "findingId": finding.finding_id,
             "confidence": finding.confidence,
+            # ⚠ 2026-10-08부터 **모델이 인용한 것이 아니라 하네스가 관측해 붙인 것**이 섞인다
+            # (이슈 #552 — 6단계 `gate_node.attach_observed`). 실패 기록(`ok=False`)도 센다.
+            # 키 이름은 외부 소비자 계약이라 유지한다.
             "evidenceRefs": list(finding.evidence_refs),
         },
     }
