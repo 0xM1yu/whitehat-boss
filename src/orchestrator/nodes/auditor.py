@@ -43,6 +43,8 @@ v10은 최종 답이 `AuditProcedure`(`audit` 블록 + 판정)이고 그 스키�
 `AuditorProcedureAction`(v10)은 `AuditProcedure`를 싣고 후자는 **`answer` 홉에서 `Finding`으로
 옮겨진다**(`_finding_from_procedure`). ⏵ 2026-10-09 — v11의 `AuditorProcedureNullableCweAction`은
 그 서브클래스(`no_signal`에서 `cwe`가 null일 수 있다 — 이슈 #525)를 싣고 같은 길로 옮겨진다.
+⏵ 2026-10-10 — v12의 `AuditorProcedureAuditAlwaysAction`도 같다(그 서브클래스 — `no_signal`에도
+`audit`를 채운다, 이슈 #578).
 그래서 루프 뒤 흐름(`_ensure_repro_origin` →
 `stamp_issued` → `create` → `_materialize_missing`)은 어느 봉투로 돌았든 같다. SOURCE·FACTS는
 hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청 system(prefix) ·
@@ -118,6 +120,7 @@ from src.schemas.auditor import (
     AUDITOR_TOOLS,
     AuditorAction,
     AuditorProcedureAction,
+    AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
     AuditProcedure,
     AuditProcedureNullableCwe,
@@ -155,11 +158,19 @@ OUTPUT_SCHEMA = Finding
 # ⏵ 2026-10-09 — 셋째 `AuditorProcedureNullableCweAction`(v11)은 `AuditProcedure`의 서브클래스
 # `AuditProcedureNullableCwe`를 싣는다 — `no_signal`에서 `cwe`가 null일 수 있다(이슈 #525). 서브
 # 클래스라 아래 `isinstance(..., AuditProcedure)` 분기가 그대로 받는다.
-_LoopEnvelope = AuditorAction | AuditorProcedureAction | AuditorProcedureNullableCweAction
+# ⏵ 2026-10-10 — 넷째 `AuditorProcedureAuditAlwaysAction`(v12)은 그 서브클래스
+# `AuditProcedureAuditAlways`를 싣는다 — `audit`가 어느 상태에서도 null이 아니다(이슈 #578).
+_LoopEnvelope = (
+    AuditorAction
+    | AuditorProcedureAction
+    | AuditorProcedureNullableCweAction
+    | AuditorProcedureAuditAlwaysAction
+)
 _LOOP_ENVELOPES: tuple[type[_LoopEnvelope], ...] = (
     AuditorAction,
     AuditorProcedureAction,
     AuditorProcedureNullableCweAction,
+    AuditorProcedureAuditAlwaysAction,
 )
 # 홉 하나가 든 값 — 루프 봉투(⏵ 2026-10-09부터 셋)는 `action`·`requests`·`tool`·`spec`을 공유하므로
 # (`schemas/auditor.py`의 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·
@@ -213,8 +224,10 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # (`cli._check_prompt_version`이 실모델 역할에서 ERROR로 막는다).
 # v11(2026-10-09 · 이슈 #525)은 v10에서 `cwe` 서술 네 자리만 바꾼 판이라 위 두 구절이 v10과 바이트
 # 동일이다(`tests/test_nullable_cwe.py`가 v10과의 차이를 그 네 줄로 묶는다).
+# v12(2026-10-10 · 이슈 #578)는 v11에서 `audit` 서술만 바꾼 판이라 위 두 구절이 v11과 바이트
+# 동일이다(`tests/test_auditor_v12.py`가 두 구절이 v12 prefix에 그대로 있는지 문다).
 _CONTENT_AWARE_VERSIONS = frozenset(
-    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11"}
+    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"}
 )
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
@@ -244,11 +257,15 @@ _PATH_REQUIRED_STATUSES = ("triggerable", "guarded", "no_reach")
 # v10 산문이 못박는 `refutation.result` ↔ `trigger_status` 대응. 🔴 **스키마는 이 대응을 안 싣는다**
 # — 싣는 일관성은 `audit is None ⟺ no_signal` 하나뿐이다(`AuditProcedure`의 검증기). 어긴 출력은
 # 그냥 통과하므로 **어긴 비율을 세지 않으면** 이 규칙을 조일지(재생성 비용) 풀지 정할 근거가 없다.
+# ⏵ 2026-10-10 — v12(이슈 #578)의 `no_candidate`가 다섯째다. v12는 그 값과 `no_signal`을 **검증기로
+# 묶어**(`AuditProcedureAuditAlways`) 이 쌍은 어길 수 없다 — 그래도 표에 두는 것은 조회가
+# `KeyError`로 죽지 않게 하려는 것이고, 나머지 네 쌍은 v12에서도 v10·v11처럼 센다.
 _STATUS_BY_RESULT = {
     "defeated": "triggerable",
     "holds": "guarded",
     "path_not_executable": "no_reach",
     "decisive_code_missing": "reachability_unknown",
+    "no_candidate": "no_signal",
 }
 
 # `callers` 사실을 뽑아 올 섹션. `index_graph.GRAPH_SECTION_KINDS`의 값과 같은 문자열인데
@@ -804,9 +821,11 @@ def _answer_observed(answer: Finding | AuditProcedure, *, cited: int) -> dict[st
       reachability_unknown의 빈 경로와 trace에서 구분되지 않아** 규칙 위반을 셀 수 없었다.
     - `cwe_present_on_no_signal` — ⏵ 2026-10-09(이슈 #525) v11 답(`AuditProcedureNullableCwe`)이
       `no_signal`인데 `cwe`가 null이 아니다. v11 산문은 null을 시키고 스키마는 안 막는다(거절하면
-      최종 답 재생성 — 같은 근거) → 그 위반을 여기서 센다. **v11로만 제한한다** — v8~v10은 계약이
-      non-null이라 `no_signal`에도 CWE를 쓰는 것이 규칙 준수다. ⚠ `no_signal`은 언제나
-      `audit is None`이라 아래 조기 반환 **앞**에 둔다 — 뒤에 두면 영영 안 생긴다.
+      최종 답 재생성 — 같은 근거) → 그 위반을 여기서 센다. **v11 이후 판(v11·v12)만 센다** —
+      v12 답은 그 서브클래스라 든다(⏵ 2026-10-10 이슈 #578). v8~v10은 계약이 non-null이라
+      `no_signal`에도 CWE를 쓰는 것이 규칙 준수다. ⚠ v10·v11의 `no_signal`은 `audit is None`이라
+      아래 조기 반환 **앞**에 둔다 — 뒤에 두면 영영 안 생긴다(v12는 `audit`가 non-null이라 어느
+      자리든 서지만 같은 자리를 쓴다).
     """
     observed: dict[str, TraceValue] = {"cited_probe_evidence": cited}
     if answer.trigger_status:
@@ -872,7 +891,12 @@ def _finding_from_procedure(
     없다 (`AuditProcedure`에 그 필드가 없다).
 
     - `audit.path` → `path` (**게이트 `p2`가 경로 양 끝을 요구한다** — 비면 Critic은 「경로 없음」,
-      PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. `audit`가 `None`(no_signal)이면 `[]`) ·
+      PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. v10·v11은 `audit`가 `None`(no_signal)이면
+      `[]`.
+      ⏵ 2026-10-10 — **`trigger_status`가 `no_signal`이면 `audit`가 있어도 `[]`다**(v12, 이슈 #578).
+      그 경로는 걸러낸 후보를 따라간 기록이지 source→sink 주장이 아니다 — 옮기면 `trigger_status`를
+      안 읽는 게이트 `p2`가 「세운 것이 없다」는 Finding의 경로 양 끝을 세어 v11까지와 다른 등급을
+      줄 수 있다. 그 경로는 `audit.path`에 그대로 남는다) ·
       `audit` → `audit`(안 실으면 블록이 버려진다) · `trigger_status`·`confidence`·`cwe`·`title`·
       `rca_draft`·`evidence_refs`·`repro_spec` → 같은 이름 그대로.
     - `finding_id`·`candidate_id`(발급 `ids`) · `run_id` · `state`(F-1 생성 행인 `hypothesized`) ·
@@ -882,8 +906,9 @@ def _finding_from_procedure(
     - `missing_evidence` — **`result`가 `decisive_code_missing`이거나 `trigger_status`가
       `reachability_unknown`이면** 발급 `missing_id` 하나다. 산문도 둘 다 약속한다 — 넓은 쪽인
       이유는 위 모듈 docstring이 든다. 뒤 `_materialize_missing`이 그 ID마다 blocking
-      `MissingEvidence`를 만들어 E2를 막는다. `audit`가 `None`(`no_signal`)이면 비어 있다 —
-      그 판정은 「모르겠다」가 아니라 「세운 것이 없다」다.
+      `MissingEvidence`를 만들어 E2를 막는다. `no_signal`이면 비어 있다(`no_candidate`는
+      `decisive_code_missing`이 아니고 상태도 `reachability_unknown`이 아니다 — v10·v11은 `audit`가
+      `None`이어서, v12는 `path`가 비어서) — 그 판정은 「모르겠다」가 아니라 「세운 것이 없다」다.
 
     `repro_spec.origin`은 여기서 안 건드린다 — `run()`이 이 함수 **뒤에** `_ensure_repro_origin`을
     부르므로 모델이 쓴 `harness`는 그대로 `model`로 덮인다.
@@ -896,12 +921,13 @@ def _finding_from_procedure(
     # §Identifiers and evidence references) — 모순 자체는 홉 관측 `status_result_mismatch`가 센다.
     unknown = procedure.trigger_status == "reachability_unknown"
     decisive_code_missing = audit is not None and audit.refutation.result == "decisive_code_missing"
+    no_signal = procedure.trigger_status == "no_signal"
     return Finding(
         finding_id=ids["finding_id"],
         run_id=run_id,
         candidate_id=ids["candidate_id"],
         state=FindingState.HYPOTHESIZED,
-        path=list(audit.path) if audit is not None else [],
+        path=list(audit.path) if audit is not None and not no_signal else [],
         audit=audit,
         trigger_status=procedure.trigger_status,
         confidence=procedure.confidence,

@@ -24,8 +24,10 @@ from src.interfaces.model_client import AttemptRecord, ChatTurn, ModelResult, Pr
 from src.schemas.auditor import (
     AuditorAction,
     AuditorProcedureAction,
+    AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
     AuditProcedure,
+    AuditProcedureAuditAlways,
     AuditProcedureNullableCwe,
 )
 from src.schemas.candidate import Candidate
@@ -591,11 +593,32 @@ def _build_auditor_procedure_nullable_cwe_action(
     )
 
 
+def _build_auditor_procedure_audit_always_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorProcedureAuditAlwaysAction:
+    """v12 봉투(⏵ 2026-10-10 — 이슈 #578)의 fake 액션. v10·v11과 **같은 판정**을 낸다 — 최종 답의
+    클래스만 `AuditProcedureAuditAlways`다. fake 판정은 `triggerable`·`reachability_unknown`뿐이라
+    `no_signal`의 `audit`(`category` `none` 등)는 여기서 안 선다.
+
+    **이 항목이 빌더 표에 없으면** Fake가 v12를 고르는 run이 `FakeModelError`로 죽는다.
+    """
+    hop = _auditor_investigation(context, history)
+    if hop is not None:
+        return AuditorProcedureAuditAlwaysAction(**hop)
+    procedure = _build_audit_procedure(context, produced_by, history)
+    return AuditorProcedureAuditAlwaysAction(
+        action="answer",
+        procedure=AuditProcedureAuditAlways.model_validate(procedure.model_dump()),
+        rationale=_AUDITOR_ANSWER_RATIONALE,
+    )
+
+
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
 # fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).
-# Auditor 루프 봉투는 **셋이고 셋 다 든다**(⏵ 2026-10-09 — v11 봉투가 더해졌다. 그 전은 둘)
+# Auditor 루프 봉투는 **넷이고 넷 다 든다**(⏵ 2026-10-09 — v11 봉투가 더해져 셋 · ⏵ 2026-10-10 —
+# v12 봉투가 더해져 넷. 그 전은 둘)
 # — 빠지면 그 봉투를 고르는 판의 Fake run이 죽는다
 # (`tests/test_auditor_loop.py`가 `nodes/auditor`의 루프 봉투 집합과 대조한다).
 _BUILDERS = {
@@ -608,4 +631,5 @@ _BUILDERS = {
     AuditorAction: _build_auditor_action,
     AuditorProcedureAction: _build_auditor_procedure_action,
     AuditorProcedureNullableCweAction: _build_auditor_procedure_nullable_cwe_action,
+    AuditorProcedureAuditAlwaysAction: _build_auditor_procedure_audit_always_action,
 }
