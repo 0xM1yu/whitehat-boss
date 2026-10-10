@@ -13,7 +13,7 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 `ValidationError`로 죽인다. 그래서 파일에 저장 형태 판(`PRAGMA user_version`)을 적고 **여는
 자리에서** 대조한다.
 
-- 새 파일(아직 `objects` 표가 없다) -> 표를 만들고 `STATE_DB_SCHEMA_VERSION`을 적는다.
+- 새 파일(아직 `objects` 표가 없다) -> 표를 만들고 `STATE_DB_SCHEMA_VERSION`을 적는다(한 트랜잭션).
 - 판이 같다 -> 연다.
 - 판이 0이고 표가 있다 -> 게이트 **전** 코드가 만든 파일이다. 연다(종전 동작 그대로).
   판을 새로 적지 않는다 — 그 안의 행이 어느 모양인지 모르므로 지금 판이라 적으면 거짓이다.
@@ -22,10 +22,11 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
   옛 판을 옮기는 변환은 없다 — 생기면 그 판에서만 받는다.
 
 **판을 올리는 것은 사람이다.** `store_common.KIND_MAP`의 모델이 **한쪽 방향이라도** 못 읽는
-행을 만들게 바뀌면 올린다 — 필드 추가(기본값 없음)·삭제(`extra="forbid"`)·값 집합을 넓히거나
-좁히기·뜻만 바뀐 필드. docstring만 바뀐 것은 아니다. 올리지 않고 바꾸면 게이트는 공회전한다 —
-그것을 잡는 테스트는 없다(JSON 스키마 지문은 못 문다: `Finding.cwe`는 검증이 `None`을 받는데
-JSON 스키마는 종전 그대로다 — `src/schemas/finding.py`의 `_FindingCwe`).
+행을 만들게 바뀌면 올린다 — 필드 추가(기본값이 있어도: `extra="forbid"`라 옛 코드가 새 행을 못
+읽는다)·삭제·값 집합을 넓히거나 좁히기·뜻만 바뀐 필드. docstring만 바뀐 것은 아니다.
+올리지 않고 바꾸면 게이트는 공회전한다 — 그것을 잡는 테스트는 없다(JSON 스키마 지문은 못
+문다: `Finding.cwe`는 검증이 `None`을 받는데 JSON 스키마는 종전 그대로다 —
+`src/schemas/finding.py`의 `_FindingCwe`).
 
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
@@ -82,10 +83,10 @@ class SqliteStateStore:
             is not None
         )
         if not has_table and version == 0:
-            self._conn.executescript(_SCHEMA)
+            # 표·인덱스·판을 한 트랜잭션으로 — 사이에서 죽어도 (표 있음 · 판 0)이 안 남는다.
             # PRAGMA는 자리표시자를 안 받는다 — 값은 모듈 상수 int다.
-            self._conn.execute(f"PRAGMA user_version = {int(STATE_DB_SCHEMA_VERSION)}")
-            self._conn.commit()
+            version_pragma = f"PRAGMA user_version = {int(STATE_DB_SCHEMA_VERSION)};"
+            self._conn.executescript(f"BEGIN;{_SCHEMA}{version_pragma}COMMIT;")
             return
         if version == 0 or version == STATE_DB_SCHEMA_VERSION:
             # 판 0 = 게이트 전 파일(모듈 docstring). 표가 없으면 만든다 — 종전 동작.
