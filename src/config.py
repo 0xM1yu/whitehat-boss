@@ -1229,6 +1229,46 @@ def _check_real_serving_limits_are_positive(config: HarnessConfig) -> None:
         )
 
 
+def _check_role_output_caps_fit_context(config: HarnessConfig) -> None:
+    """실서빙 역할의 출력 상한이 그 역할이 앉은 모델의 registry `context_limit`보다 작아야 한다
+    (이슈 #214의 선택지 (a)).
+
+    vLLM은 `prompt_tokens + max_tokens > max_model_len`이면 요청을 400으로 거절한다. 프롬프트는
+    최소 1토큰이므로 상한이 창 **이상**이면 그 역할의 **모든** 호출이 400이다 — 입력 길이와
+    무관하게 성립하는 유일한 경계라 이것만 막는다. 「입력 몫이 얼마 남아야 하는가」는 입력 크기에
+    달려 로드 때 정할 수 없고, 임의 상수로 막으면 그 상수가 근거 없는 수가 된다(이슈 #214
+    「닫히는 조건」의 ⚠).
+
+    **대조 대상이 registry인 이유.** 서버 창(`--max-model-len`)은 로드 시점에 없다. 대신 **교대를
+    선언한 프로필**의 run은 `check_serving`이 창 = `context_limit`을 강제하므로, 이 검사를 통과한
+    상한은 그 창에서도 「창 이상」이 아니다. 교대를 선언할 수 없는 hybrid 실서빙 프로필
+    (`harness_pool_hybrid`)은 이 밖이다 — 로드의 registry 대조만 서고 서버 창은 아무도 안 본다
+    (#331).
+
+    **실서빙 역할만 본다**(`served_models()`). Fake는 서버로 요청을 안 보내 400이 날 자리가 없다 —
+    `_check_real_serving_limits_are_positive`와 같은 판정이다. 프롬프트를 안 받는 역할(embedding·
+    reranker)은 출력 상한을 실을 경로가 없어 뺀다(`Thresholds.output_max_by_role` 주석).
+
+    ⚠ `thresholds`는 프로필과 무관하게 공통이지만(`config/budgets.yaml`) 판정은 프로필마다
+    갈린다 — 같은 상한이 창이 큰 모델에 앉은 프로필에서는 통과하고 작은 모델에 앉은 프로필에서는
+    로드가 실패한다. 그 프로필에서 그 역할이 전량 400이라는 사실이 프로필마다 갈리기 때문이다.
+    """
+    over = [
+        f"{role}({key}): 출력 상한 {config.thresholds.output_max_for(role)} ≥ context_limit "
+        f"{config.models[key].context_limit}"
+        for role, key in sorted(config.served_models().items())
+        if role in PROMPTED_ROLES
+        and config.thresholds.output_max_for(role) >= config.models[key].context_limit
+    ]
+    if over:
+        raise ConfigError(
+            f"프로필 {config.profile_name!r}에서 출력 상한이 모델 창 이상인 역할이 있다: "
+            f"{'; '.join(over)} — vLLM은 입력 + max_tokens가 창을 넘으면 400을 내므로 그 역할의 "
+            "호출이 전부 거절된다. `thresholds.output_max_by_role`(없으면 `output_max`)을 창보다 "
+            "작게 적거나 창이 큰 모델을 앉힌다"
+        )
+
+
 def check_container_runtime_caps_tool_time(config: HarnessConfig) -> None:
     """`tool_runner`가 `fake`가 아니면 도구 시간 상한(`tool_seconds`)이 양수여야 한다 (이슈 #436).
 
@@ -1295,6 +1335,7 @@ def load_config(profile: str, config_dir: Path = CONFIG_DIR) -> HarnessConfig:
     )
     _check_swap_lists_every_served_role(config)
     _check_real_serving_limits_are_positive(config)
+    _check_role_output_caps_fit_context(config)
     check_container_runtime_caps_tool_time(config)
     return config
 
