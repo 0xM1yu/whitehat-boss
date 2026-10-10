@@ -1,6 +1,7 @@
 """Auditor 역할의 홉 봉투 — 매 홉 하나. 도구를 쥐어 준 좌석의 제어 단위다.
 **봉투는 둘이다**(⏵ 2026-10-06): v8·v9가 `AuditorAction`, v10이 `AuditorProcedureAction`을 낸다.
-⏵ 2026-10-09 — **셋이다**: v11이 `AuditorProcedureNullableCweAction`을 낸다(이슈 #525 — 이 파일 맨
+⏵ 2026-10-09 — **셋이다**: v11이 `AuditorProcedureNullableCweAction`을 낸다(이슈 #525).
+⏵ 2026-10-10 — **넷이다**: v12가 `AuditorProcedureAuditAlwaysAction`을 낸다(이슈 #578 — 이 파일 맨
 아래).
 액션 셋과 조사 필드는 공통 베이스가 들고 최종 답의 필드만 갈린다(`finding` ↔ `procedure`).
 
@@ -35,7 +36,14 @@ from typing import ClassVar, Literal, Self, get_args
 from pydantic import Field, model_validator
 
 from src.schemas.common import Cwe, HarnessModel, Identifier, NonEmptyStr
-from src.schemas.finding import AuditBlock, Finding, ReproSpec
+from src.schemas.finding import (
+    NO_SIGNAL_ONLY_AUDIT_VALUES,
+    AuditBlock,
+    AuditBlockWithNoSignal,
+    Finding,
+    ReproSpec,
+    no_signal_only_values_in,
+)
 from src.schemas.pov import PovSpec
 from src.schemas.scout_response import RequestedContext
 
@@ -327,4 +335,65 @@ class AuditorProcedureNullableCweAction(_AuditorEnvelope):
     _PAYLOAD_FIELD: ClassVar[str] = "procedure"
 
     procedure: AuditProcedureNullableCwe | None = None
+    rationale: NonEmptyStr
+
+
+# === v12: `audit`를 모든 상태에서 채우는 최종 답 (이슈 #578) ======================================
+#
+# ⏵ 2026-10-10 — FT 데이터(Teacher v4)가 `no_signal`에도 `audit`를 채운다(팀 결정 2026-10-10).
+# v10·v11의 계약은 `no_signal`이면 `audit`가 정확히 null이라
+# (`_audit_is_null_exactly_when_no_signal`) 그 데이터로 학습한 Auditor를 서빙하면 구조화 출력이
+# 학습한 출력을 막는다.
+#
+# **v10·v11의 클래스는 고치지 않는다** — 그 JSON 스키마가 그 판들의 요청 payload라서다(v11 머리
+# 주석과 같은 근거). v11의 **서브클래스**로 둔다: `cwe` 규칙(null은 `no_signal`에서만)을 그대로
+# 물려받고, 읽는 쪽(`nodes/auditor`의 `isinstance(..., AuditProcedure)`)이 같은 최종 답으로 다룬다.
+# `audit`만 다시 선언한다 — non-null · v12 블록. pydantic은 재선언한 필드를 부모 자리에 두므로
+# property 순서가 v10·v11과 같다(`tests/test_auditor_v12.py`가 문다).
+#
+# 검증기는 Teacher v4의 `validate_teacher_output`과 같은 쪽으로 **세 값만** 건다 — `no_signal`이면
+# `category` `none` · `defense.status` `not_applicable` · `refutation.result` `no_candidate` 셋 다,
+# 다른 상태면 셋 중 어느 것도 안 된다. 부모의 `_audit_is_null_exactly_when_no_signal`을 **같은
+# 이름으로 덮어** 이 규칙으로 바꾼다(pydantic은 같은 이름의 검증기를 서브클래스 것으로 바꾼다) —
+# 안 덮으면 「`no_signal`이면 null」이 남아 v12의 `no_signal` 답이 전부 거절된다.
+# 나머지 쌍(`refutation.result` ↔ 다른 네 상태)은 v10·v11처럼 **거절하지 않고 센다**
+# (`nodes/auditor._answer_observed`의 `status_result_mismatch`) — 같은 재생성 비용 근거다. 빈 경로도
+# 같다(`no_signal`·`reachability_unknown`은 빈 경로가 합법).
+#
+# ⚠ docstring은 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다.
+class AuditProcedureAuditAlways(AuditProcedureNullableCwe):
+    """감사 좌석의 최종 답. `audit`는 어느 `trigger_status`에서도 null이 아니다.
+
+    `no_signal`이면 `audit`는 가장 가까웠던 후보를 다섯 점검으로 걸러낸 기록이고, `category`는
+    `none`, `defense.status`는 `not_applicable`, `refutation.result`는 `no_candidate`다. 이 세 값은
+    `no_signal`에서만 쓴다. `cwe`는 `trigger_status`가 `no_signal`일 때에만 null일 수 있다.
+    """
+
+    audit: AuditBlockWithNoSignal
+
+    @model_validator(mode="after")
+    def _audit_is_null_exactly_when_no_signal(self) -> Self:
+        used = no_signal_only_values_in(self.audit)
+        if self.trigger_status == "no_signal":
+            missing = sorted(set(NO_SIGNAL_ONLY_AUDIT_VALUES) - set(used))
+            if missing:
+                wanted = ", ".join(f"{key}={NO_SIGNAL_ONLY_AUDIT_VALUES[key]}" for key in missing)
+                raise ValueError(f"trigger_status가 no_signal이면 audit의 {wanted}여야 한다")
+        elif used:
+            values = ", ".join(f"{key}={value}" for key, value in sorted(used.items()))
+            raise ValueError(
+                f"{values}는 trigger_status가 no_signal일 때에만 쓴다 "
+                f"(trigger_status={self.trigger_status})"
+            )
+        return self
+
+
+# `AuditorProcedureNullableCweAction`의 형제 — 최종 답만 `AuditProcedureAuditAlways`다(위 주석).
+# docstring은 v10·v11과 같은 글을 싣는다: 액션 서술은 바뀐 것이 없다.
+class AuditorProcedureAuditAlwaysAction(_AuditorEnvelope):
+    __doc__ = AuditorProcedureAction.__doc__
+
+    _PAYLOAD_FIELD: ClassVar[str] = "procedure"
+
+    procedure: AuditProcedureAuditAlways | None = None
     rationale: NonEmptyStr
