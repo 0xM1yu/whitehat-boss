@@ -2497,6 +2497,68 @@ def test_dedupe_does_not_merge_across_files() -> None:
     assert {f.finding_id for f in kept} == {"find_0001", "find_0002"}
 
 
+def test_report_records_which_representative_each_dropped_finding_merged_into(
+    ctx: RunContext,
+) -> None:
+    """버린 Finding마다 **무엇과 합쳐졌는지**를 남긴다 (이슈 #101 잔여). 예전엔 `중복 제거: N건`이
+    전부라 실측 `run_20260827_0004`에서 사라진 `find_0005`(E2·`upheld`)를 추적할 수 없었다.
+
+    대표는 등급 우선이다 — id가 가장 큰 E3가 E0·E2를 흡수한다. 다른 파일의 같은 키는 안 묶이고
+    행도 안 남는다. 행 수는 `duplicates`와 같다.
+    """
+    low, mid, high = _finding("find_0001"), _finding("find_0005"), _finding("find_0009")
+    elsewhere = _finding("find_0002")  # 같은 (CWE, 대상 함수)지만 다른 파일
+    grades = {"find_0001": "E0", "find_0005": "E2", "find_0009": "E3", "find_0002": "E1"}
+    files = {"find_0001": "a.c", "find_0005": "a.c", "find_0009": "a.c", "find_0002": "b.c"}
+
+    result = report.run(ctx, findings=[mid, high, elsewhere, low], grades=grades, files=files)
+
+    assert result.merged_into == {"find_0001": "find_0009", "find_0005": "find_0009"}
+    events = [e for e in ctx.trace.events if e.kind is EventKind.FINDING_DEDUPED]
+    assert len(events) == result.duplicates == 2
+    assert [e.subject_id for e in events] == ["find_0001", "find_0005"]  # finding_id 순
+    assert all(e.stage == int(Stage.REPORT) and e.subject_kind == "finding" for e in events)
+    assert events[0].data == {
+        "representative": "find_0009",
+        "grade": "E0",
+        "representative_grade": "E3",
+        "cwe": "CWE-787",
+        "file": "a.c",
+        "target": "memcpy",  # PROPAGATE 없음 → sink(`_target_symbol`)
+    }
+    assert events[1].data["representative"] == "find_0009"
+    assert events[1].data["grade"] == "E2"
+    assert "중복 제거: 2건 (무엇과 합쳤는지는 trace의 `finding_deduped`)" in result.render()
+
+
+def test_dedupe_with_merges_ties_go_to_the_smallest_finding_id() -> None:
+    """동급이면 대표는 가장 작은 `finding_id`이고 버린 쪽이 그것을 가리킨다 — 입력 순서와 무관.
+    등급이 없는 것은 등급 있는 것에 흡수된다(`_GRADE_RANK_UNKNOWN`)."""
+    kept, merged = report.dedupe_with_merges(
+        [_finding("find_0009"), _finding("find_0003"), _finding("find_0001")],
+        {"find_0009": "E3", "find_0003": "E3"},  # find_0001은 등급 없음
+    )
+
+    assert [f.finding_id for f in kept] == ["find_0003"]
+    assert merged == {"find_0009": "find_0003", "find_0001": "find_0003"}
+
+
+def test_report_without_duplicates_records_nothing(ctx: RunContext) -> None:
+    """중복이 없으면 대응을 하나도 안 남긴다 — 이벤트 부재가 「안 합쳤다」이고, 리포트 바이트도
+    종전과 같다(중복 줄 자체가 없다)."""
+    a = _finding("find_0001")
+    b = _finding("find_0002")
+
+    result = report.run(ctx, findings=[a, b], files={"find_0001": "a.c", "find_0002": "b.c"})
+
+    assert result.duplicates == 0
+    assert result.merged_into == {}
+    assert not [e for e in ctx.trace.events if e.kind is EventKind.FINDING_DEDUPED]
+    rendered = result.render()
+    assert "중복 제거" not in rendered
+    assert "finding_deduped" not in rendered
+
+
 def test_render_shows_grade_and_distribution(ctx: RunContext) -> None:
     """리포트가 등급을 싣는다 (D36). 예전엔 state만 찍어 E3에 도달한 Finding도 `queued`로
     보였고, run의 성과(E3 건수)를 보려면 trace를 파야 했다."""
