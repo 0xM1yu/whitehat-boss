@@ -123,7 +123,7 @@
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
 | D71 | ~~공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다~~ (갈림 실측 후 예산 마진 0.90 — 옵션 A) | 닫힘 | [본문](open-questions/D/D71.md) |
-| D72 | **역할별 출력 상한에 위쪽 한계가 없다 — `2**31`이 로드를 통과하고, 그 run은 전량 400인데 bench가 「못 잼」으로 적는다** | 열림 | [본문](open-questions/D/D72.md) |
+| D72 | ~~역할별 출력 상한에 위쪽 한계가 없다~~ (로드가 실서빙 역할의 상한 ≥ 그 모델 registry 창을 거부해 해소 — 선택지 (a)) | 닫힘 | [본문](open-questions/D/D72.md) |
 | D73 | 역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다 | 열림 | [본문](open-questions/D/D73.md) |
 | D74 | ~~Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다~~ ((a) 후보 열거에만 → ADR 0012가 대체) | 닫힘 | [본문](open-questions/D/D74.md) |
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 닫힘 | [본문](open-questions/D/D75.md) |

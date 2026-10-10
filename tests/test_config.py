@@ -1410,6 +1410,79 @@ def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None
         load_config("dev_fake", config_dir=tmp_path)
 
 
+def _harness_pool_with_role_caps(dest: Path, **caps: int) -> None:
+    """`harness_pool`을 그대로 두고 저장소의 `output_max_by_role`에 `caps`만 덮어 쓴다."""
+    declared = load_config("harness_pool").thresholds.output_max_by_role
+    _copy_config(
+        dest,
+        profile="harness_pool",
+        profile_patch={},
+        thresholds_patch={"output_max_by_role": {**declared, **caps}},
+    )
+
+
+# 999,999 · 2**31은 이슈 #214 본문의 관측값이다(`load_config` 실측 — 둘 다 로드를 통과했다).
+# 131,072는 `gpt-oss-20b`의 registry `context_limit` 그 자체 — 입력 몫이 0이라 모든 호출이 400이다.
+@pytest.mark.parametrize("cap", [131072, 999999, 2**31])
+def test_a_role_cap_at_or_above_its_model_window_fails_at_load(tmp_path: Path, cap: int) -> None:
+    """출력 상한이 그 역할이 앉은 모델의 창 이상이면 **로드에서** 죽는다 (이슈 #214 (a)).
+
+    vLLM은 `prompt_tokens + max_tokens > max_model_len`이면 400이다. 프롬프트는 최소 1토큰이라
+    상한 ≥ 창이면 그 역할은 입력과 무관하게 전량 400이다 — 전엔 그 설정이 로드를 통과했다.
+    """
+    _harness_pool_with_role_caps(tmp_path, critic=cap)
+
+    with pytest.raises(ConfigError, match=r"critic\(gpt-oss-20b\)"):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_role_cap_one_below_the_window_still_loads(tmp_path: Path) -> None:
+    """경계는 「창 이상」뿐이다 — 창보다 1 작으면 통과한다.
+
+    입력 몫을 얼마 남겨야 하는지는 입력 크기에 달려 로드 때 정할 수 없고, 임의 여유를 두면 그
+    수가 근거 없는 상수가 된다(이슈 #214 「닫히는 조건」의 ⚠). 이 검사가 더 엄격해지면 여기서 깬다.
+    """
+    _harness_pool_with_role_caps(tmp_path, critic=131072 - 1)
+
+    config = load_config("harness_pool", config_dir=tmp_path)
+
+    assert config.thresholds.output_max_for("critic") == 131071
+
+
+def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: Path) -> None:
+    """역할별 선언이 없는 역할은 전역 `output_max`가 실효 상한이다 — 그 값도 같은 대조를 받는다.
+
+    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b`·`seccoderx-8b`)에 앉는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile="harness_pool",
+        profile_patch={},
+        thresholds_patch={"output_max": 40960},
+    )
+
+    with pytest.raises(ConfigError, match=r"scout_memory\(qwen3-14b\)"):
+        load_config("harness_pool", config_dir=tmp_path)
+
+
+def test_a_fake_role_is_not_held_to_the_window(tmp_path: Path) -> None:
+    """Fake 좌석은 서버로 요청을 안 보내므로 400이 날 자리가 없다 — 대조하지 않는다.
+
+    `dev_fake`의 Fake registry 창은 32,768이고 저장소 상한은 `critic` 32,768(동률)·`auditor`
+    65,536(초과)이라, Fake까지 대조하면 저장소 그대로의 `dev_fake`가 로드에서 죽는다.
+    """
+    _copy_config(
+        tmp_path,
+        profile_patch={},
+        thresholds_patch={"output_max_by_role": {"critic": 2**31}},
+    )
+
+    config = load_config("dev_fake", config_dir=tmp_path)
+
+    assert config.served_models() == {}
+    assert config.thresholds.output_max_for("critic") == 2**31
+
+
 def test_asking_the_cap_for_a_role_that_is_not_a_role_fails_loudly() -> None:
     """모르는 문자열에 **조용히 전역값을 주지 않는다**.
 
