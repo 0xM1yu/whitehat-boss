@@ -596,10 +596,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
-  게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — 잃은 PoC의 해시가 trace에 남는 것은
-  **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
-  이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
-  경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
+  게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — 잃은 PoC의 해시는 그 gen 홉의
+  `pov_hop`(`poc_sha256`)에 남는다. 다음 홉의 모델 호출이 서버 오류로 실패한 경우도, 그 홉 자신의
+  도구 호출이 예산에서 끊긴 경우도 같다 — 뒤의 것은 루프가 그 홉의 `pov_hop`(`error=BudgetExhausted`)을
+  내고 다시 던진다(#394, `tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
 - 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
   다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
   이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
