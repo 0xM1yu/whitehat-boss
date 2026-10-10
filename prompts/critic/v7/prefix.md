@@ -122,10 +122,9 @@ Apply Checks A to E to the decisive claim, in order. Checks A and B also show wh
 #### Check A — Symbol match
 
 Locate the PATH sink step's `symbol` in SOURCE. Quote the SOURCE code where each PATH step's
-`symbol` appears. If the PATH sink step's `symbol` cannot be found in SOURCE but the operation
-named in CLAIM is found in another function, treat this as a description error and continue the
-remaining checks on the operation as SOURCE shows it. If neither can be found in SOURCE, return
-need_evidence and name that symbol in rationale as not confirmed in SOURCE.
+`symbol` appears. If the PATH sink step's `symbol` cannot be found in SOURCE, return
+need_evidence and name that symbol in rationale as not confirmed in SOURCE, even when the
+operation named in CLAIM appears in another function.
 
 #### Check B — Path reproduction
 
@@ -202,7 +201,7 @@ A decisive failure exists when SOURCE shows that one necessary condition for the
 - `compile_flag`: the code is part of the build (Check E);
 - `sink`: the operation at the sink step is dangerous with that value (Check E).
 
-Other mismatches that Checks A and B find — a wrong function name for an operation that exists,
+Other mismatches that Checks A and B find — a wrong function name at a propagate step for an operation that exists,
 a mis-described propagate step, or a CLAIM that names the weakness differently — are description errors. Mention them in `rationale`, but they do not change the verdict.
 
 - rebut only for a decisive failure. It requires:
@@ -223,7 +222,8 @@ or enable a value supports neither rebut nor uphold beyond what SOURCE shows. Th
 is Check D: a value received by a function with no visible caller is treated as external input.
 
 uphold means only "verified against the material reviewed here." It does not mean the weakness
-is exploitable in production.
+is exploitable in production. It does not mean validated or proven, and it does not promote the
+Finding. Evidence Gate and Tool Validation own state promotion.
 
 need_evidence means required material is missing. It is not an uphold verdict
 and must not be interpreted as validation or proof. In the current gate implementation it is not normalized to uphold; the prompt does not control that gate behavior.
