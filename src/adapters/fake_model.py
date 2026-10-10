@@ -21,7 +21,13 @@ from collections.abc import Sequence
 from pydantic import BaseModel, Field
 
 from src.interfaces.model_client import AttemptRecord, ChatTurn, ModelResult, Prompt, Usage
-from src.schemas.auditor import AuditorAction, AuditorProcedureAction, AuditProcedure
+from src.schemas.auditor import (
+    AuditorAction,
+    AuditorProcedureAction,
+    AuditorProcedureNullableCweAction,
+    AuditProcedure,
+    AuditProcedureNullableCwe,
+)
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
@@ -475,8 +481,9 @@ def _build_pov_action(
 def _auditor_investigation(
     context: FakeContext, history: Sequence[ChatTurn]
 ) -> dict[str, object] | None:
-    """Auditor 툴 루프의 fake **조사 홉** (#419) — 두 봉투(`AuditorAction` ·
-    `AuditorProcedureAction`)가 같은 액션을 낸다. 홉을 `history` 길이로 가르고, `answer` 홉이면
+    """Auditor 툴 루프의 fake **조사 홉** (#419) — 루프 봉투 셋(`AuditorAction` ·
+    `AuditorProcedureAction` · ⏵ 2026-10-09 `AuditorProcedureNullableCweAction`)이 같은 액션을
+    낸다. 홉을 `history` 길이로 가르고, `answer` 홉이면
     `None`이다(그 홉의 최종 답은 봉투마다 다르다 — 호출한 빌더가 싣는다).
 
     hop0(history 빔)은 `lookup` — 대상 함수를 부르는 쪽(없으면 대상 자신)의 본문을 이름으로
@@ -564,11 +571,32 @@ def _build_auditor_procedure_action(
     )
 
 
+def _build_auditor_procedure_nullable_cwe_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorProcedureNullableCweAction:
+    """v11 봉투(⏵ 2026-10-09 — 이슈 #525)의 fake 액션. v10과 **같은 판정**을 낸다 — 최종 답의
+    클래스만 `AuditProcedureNullableCwe`다. fake 판정은 `triggerable`·`reachability_unknown`뿐이라
+    `cwe`가 null인 길(`no_signal`)은 여기서 안 선다.
+
+    **이 항목이 빌더 표에 없으면** Fake가 v11을 고르는 run이 `FakeModelError`로 죽는다.
+    """
+    hop = _auditor_investigation(context, history)
+    if hop is not None:
+        return AuditorProcedureNullableCweAction(**hop)
+    procedure = _build_audit_procedure(context, produced_by, history)
+    return AuditorProcedureNullableCweAction(
+        action="answer",
+        procedure=AuditProcedureNullableCwe.model_validate(procedure.model_dump()),
+        rationale=_AUDITOR_ANSWER_RATIONALE,
+    )
+
+
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
 # fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).
-# Auditor 루프 봉투는 **둘이고 둘 다 든다** — 빠지면 그 봉투를 고르는 판의 Fake run이 죽는다
+# Auditor 루프 봉투는 **셋이고 셋 다 든다**(⏵ 2026-10-09 — v11 봉투가 더해졌다. 그 전은 둘)
+# — 빠지면 그 봉투를 고르는 판의 Fake run이 죽는다
 # (`tests/test_auditor_loop.py`가 `nodes/auditor`의 루프 봉투 집합과 대조한다).
 _BUILDERS = {
     Candidate: _build_candidate,
@@ -579,4 +607,5 @@ _BUILDERS = {
     PovAction: _build_pov_action,
     AuditorAction: _build_auditor_action,
     AuditorProcedureAction: _build_auditor_procedure_action,
+    AuditorProcedureNullableCweAction: _build_auditor_procedure_nullable_cwe_action,
 }

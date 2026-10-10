@@ -1,0 +1,28 @@
+# 도구 루프 판. 배선 조건은 v10과 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
+# `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
+#
+# v11 = v10 + **`cwe`가 no_signal에서 null** (이슈 #525 선택지 1 · 사용자 결정 2026-10-09).
+# no_signal은 뿌리 원인을 못 세운 판정이라 참인 CWE가 없다. v10(과 v8·v9)은 그때도 `CWE-<number>`를 요구해
+# 후보 CWE가 비면(`Candidate.suspected_cwe`의 기본값은 빈 리스트) 모델이 지어낼 수밖에 없었고, 그 값이
+# SARIF `ruleId`와 보고서 묶음(중복 제거) 키로 갈 수 있었다(실제로 지어냈는지는 미측정 — D107 「관측」).
+# - prefix는 v10에서 `cwe` 서술 네 자리만 바꿨다 — §5 CWE and reproduction의 괄호 · 출력 계약 예시의 `cwe` 값 ·
+#   그 아래 no_signal 문장 · 「Every field shown」 문단의 `cwe` 문장. 그 밖은 v10과 바이트 동일이고 body도 같다
+#   (`tests/test_nullable_cwe.py`가 차이를 그 네 줄로 묶는다).
+# - 봉투는 v10의 형제 `AuditorProcedureNullableCweAction`이고 최종 답은 `AuditProcedureNullableCwe`다 — `cwe`가
+#   `no_signal`에서만 null일 수 있다(그 밖의 상태에서 null이면 거절). v10의 `AuditorProcedureAction`을 고치지 않은
+#   것은 그 JSON 스키마가 v10의 요청 바이트라서다(`docs/agent-contracts.md` 규칙 1, `docs/evaluation.md` §2.3).
+# - no_signal에 CWE 문자열을 내는 것은 스키마가 **안 막는다** — 산문만 null을 시킨다. 그 위반 비율은 안 쟀다 —
+#   `answer` 홉 관측 `cwe_present_on_no_signal`이 센다(`nodes/auditor._answer_observed`).
+# - 하네스 쪽에서 null `cwe`를 읽는 자리(SARIF `ruleId` · 보고서 묶음(중복 제거) 키와 출력 줄 · Critic `claim` ·
+#   PoV 서술 · Critic 주장을 되만드는 프로브)는
+#   같은 변경에서 `None`을 따로 다룬다 — CWE가 있는 Finding의 렌더는 바이트 그대로다.
+# ⚠ 이 판은 어느 run에도 안 쓰였다(v10은 2026-10-08 실서빙 1건 — 그 보고서는 no_signal 1건의 `cwe`를 안 적었다).
+# 서술이 모델에게 어떻게 읽히는지, no_signal에서 실제로 null을 내는지는 미실측이다.
+# 글자 수는 여기 적지 않는다 — 적은 자리는 셋(`config/budgets.yaml` · `src/config.py` · `nodes/auditor.py`)이고
+#   `tests/test_nullable_cwe.py`가 그 셋과 실측을 묶는다(CLAUDE.md 2.3).
+role: auditor
+version: v11
+output_schema: AuditorProcedureNullableCweAction
+description: v10에서 no_signal의 cwe를 null로 바꾼 판입니다(이슈 #525). 세운 뿌리 원인이 없으면 CWE도 없으므로 지어내지 않게 합니다. 봉투는 cwe가 no_signal에서만 null일 수 있는 형제 봉투(AuditorProcedureNullableCweAction)이고, 그 밖의 서술·도구·SOURCE 옵션은 v10과 같습니다.
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]

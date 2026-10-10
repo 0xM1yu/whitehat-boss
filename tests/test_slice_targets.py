@@ -96,6 +96,8 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     그 서술을 **바이트 그대로 물려받은 것이 아니다**(다시 썼다). v10이 그 옵션들을 서술하는지는
     `test_config.py`의 서빙 판 핀이 문다 — 판 번호가 아니라 `prompt_template_version`으로 서빙
     판을 골라 서술이 러너 상수와 같은지 본다. 이 목록의 v4~v6이 아니다.
+    ⏵ 2026-10-09 — 서빙 판은 v11이다(v10 + `cwe` 서술 네 줄, 이슈 #525) — 옵션 서술은 v10과 바이트
+    동일이고 같은 서빙 판 핀이 문다.
     """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 

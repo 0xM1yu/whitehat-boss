@@ -146,7 +146,7 @@ def _ask_model(
             evidence_locations=aware,
             source=source_text,
         ),
-        claim=f"{finding.title} ({finding.cwe})",
+        claim=_describe_claim(finding),
         path=_describe_path(finding),
         evidence=_describe_evidence(evidences, bodies, with_location=aware),
         **({"source": source_text} if version in _SOURCE_INPUT_VERSIONS else {}),
@@ -183,6 +183,19 @@ def _ask_model(
         finding_id=finding.finding_id,
         produced_by=produced_by,
     )
+
+
+def _describe_claim(finding: Finding) -> str:
+    """반박 요청의 `CLAIM` — 제목과 CWE.
+
+    ⏵ 2026-10-09 (이슈 #525 선택지 1) — `cwe`가 `None`(v11의 `no_signal`)이면 `CWE 없음`으로 적는다.
+    `f"{None}"`은 `None`이라는 글자를 CWE 자리에 찍는다(`_location_text`와 같은 규율 — 없는 값을
+    `None`이라 적지 않는다). CWE가 있으면 종전과 **같은 바이트**다 — 그 렌더가 Critic 요청의 일부다.
+    `tools/probe/critic_output_budget.py`가 같은 조립을 되만들므로 이 함수를 같이 쓴다.
+    """
+    if finding.cwe is None:
+        return f"{finding.title} (CWE 없음)"
+    return f"{finding.title} ({finding.cwe})"
 
 
 def _describe_path(finding: Finding) -> str:

@@ -561,8 +561,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v10(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v10`을 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v11(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v11`을 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -581,10 +581,13 @@ def test_the_canonical_auditor_selects_prompt_v10(profile: str) -> None:
     하나 + 바깥 필드는 `Finding`과 거의 1:1). 발급 ID 셋과 `state`·`missing_evidence`·
     `produced_by`를 **모델에게 묻지 않고** 하네스가 붙인다. v8·v9를 그 자리에서 고치지
     않은 것은 그 둘이
-    `output_schema: AuditorAction`으로 선 판이기 때문이다(같은 규칙 1)."""
+    `output_schema: AuditorAction`으로 선 판이기 때문이다(같은 규칙 1). ⏵ **v11**(2026-10-09 ·
+    이슈 #525 선택지 1) = v10 + no_signal의 `cwe`를 null로 내라는 서술 — 봉투는 형제
+    `AuditorProcedureNullableCweAction`이다. v10을 그 자리에서 고치지 않은 것은 v10의 요청 바이트가
+    `AuditorProcedureAction`의 JSON 스키마라서다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v10"
+    assert config.model_for("auditor").prompt_template_version == "v11"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -772,10 +775,14 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 엔트리도 이 버전을 / 고르지 않는다」. v10 배선(2026-10-07)으로 미선택이 되며
         # 달았고, 그 전에는 이 행이 음성 통제였다. v8처럼 구절이 주석 줄바꿈으로 갈린다.
         ("auditor", "qwen3.8-27b", "v9", ["auditor/v9"]),
-        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다.
-        # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v9도 그날까지 서빙 판이었다) —
+        # 실물 형제 문형 — prompts/auditor/v10/meta.yaml의 ⏵ 「… 지금은 어느 registry 엔트리도
+        # 이 버전을 고르지 않는다」. v11 배선(2026-10-09 · 이슈 #525)으로 미선택이 되며 달았고, 그
+        # 전에는 이 행이 음성 통제였다. 구절이 한 줄에 든다.
+        ("auditor", "qwen3.8-27b", "v10", ["auditor/v10"]),
+        # 음성 통제 — prompts/auditor/v11/meta.yaml:1은 배선된 판의 문형으로 적는다.
+        # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v10도 그날까지 서빙 판이었다) —
         # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v10", []),
+        ("auditor", "qwen3.8-27b", "v11", []),
         # 실물 형제 문형 — prompts/pov/v3/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry 엔트리도 이
         # 버전을 고르지 않는다」. pov v4 배선(2026-10-08)으로 미선택이 되며 달았고, 그 전에는
         # 이 판이 서빙 판이었다. 구절이 한 줄에 든다(주석 줄바꿈이 가르지 않는다).
@@ -794,7 +801,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     meta 여덟만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
     새 음성 통제가 되어 일곱 · ⏵ 2026-10-07 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
     음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
-    음성 통제가 되어 아홉) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
+    음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
+    되어 열) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -832,8 +840,11 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v9/meta.yaml 머리의 ⏵ — v10 배선으로 미선택이 되어 v8과 같은 철자를
         # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「이 버전을」이다).
         ("auditor", "v9", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
-        ("auditor", "v10", set()),
+        # prompts/auditor/v10/meta.yaml의 ⏵ — v11 배선(2026-10-09)으로 미선택이 되어 v9와 같은
+        # 철자를 쓴다. 구절이 한 줄에 든다.
+        ("auditor", "v10", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v11/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v11", set()),
         # prompts/pov/v3/meta.yaml 머리의 ⏵ — pov v4 배선으로 미선택이 되어 셋째 철자를 쓴다.
         ("pov", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형이다(실재하는 문형).
@@ -846,8 +857,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 아홉 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
-    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 열 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
