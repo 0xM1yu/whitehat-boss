@@ -50,6 +50,8 @@
 | B3 | Multi-Agent Orchestration(Scout, Auditor, Critic) 적용 | 역할 분리·모델 협업 효과 검증 |
 | B3' | B3 + Evidence Gate + Tool Validation | 오탐 감소 및 근거 품질 향상 검증 |
 
+> 하네스의 `single`(`prompts/single/v2/`)은 단일 패스 프롬프트 이름이지 이 표의 B1이 아니다 -> `roles`에 `single`을 둔 프로필이 없어 `cli run`에 배선되지 않는다(2026-10-10 `config/profiles.yaml` 확인). 조건 B1의 뜻은 실험팀 몫이다.
+
 > ~~2.1의 2×2와 2.2의 파이프라인 조건은 같은 라벨을 쓰지만 축이 다르다. 실행 시 `RunRecord.condition`에 **어느 정의를 쓴 조건인지** 명시한다(`B1@2x2` / `B1@pipeline`). 라벨 통합 여부는 [open-questions.md](open-questions.md)에서 확정한다.~~
 >
 > **2026-09-20 — 축이 하나가 됐다.** 2×2가 폐기되어(§2.1) 이 표의 조건이 **유일한 정의**다.
