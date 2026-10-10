@@ -289,5 +289,5 @@ def _entry(finding: Finding, grade: str | None) -> str:
     return (
         f"- **[{grade or _GRADE_UNKNOWN}] {finding.title}** "
         f"({finding.cwe}, confidence {finding.confidence:.2f})\n"
-        f"  - id: `{finding.finding_id}` · 근거 {len(finding.evidence_refs)}건"
+        f"  - id: `{finding.finding_id}` · 근거 {len(finding.evidence_refs)}건(하네스 관측)"
     )
