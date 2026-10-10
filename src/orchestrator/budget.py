@@ -107,8 +107,9 @@ class BudgetLedger:
 
         **실서빙 프로필의 0은 여기서 안 막는다 — 로드에서 막는다.** 이 원장은 자기 모델이 실서빙인지
         모르므로, 실모델을 서빙하는 프로필의 예산에 0이 있으면 `load_config`가 거부한다
-        (`config._check_real_serving_limits_are_positive`). 그래서 `load_config`를 지나 여기 오는
-        0은 Fake 전용 프로필의 것이다.
+        (`config._check_real_serving_limits_are_positive`). 도구 시간 0은 `tool_runner`가 `fake`가
+        아닌 프로필을 같은 방식으로 막는다(`config.check_container_runtime_caps_tool_time` - CLI
+        오버라이드 뒤에도 돈다). 그래서 이 검사를 지나 여기 오는 0은 Fake 전용 프로필의 것이다.
         """
         # **비교는 밀리초로, 보고는 초로.** 파생값(초)으로 비교하면 상한 직전의 999 ms가
         # 반복해서 버려져 상한이 실제보다 늦게 걸린다. 반대로 메시지에 ms를 그대로 내면
@@ -168,8 +169,8 @@ class BudgetLedger:
         # `tool_ms`도 같은 규칙이다. Fake 런타임의 도구 시간이 `None`으로 오는데, 그것은
         # GPU도 컨테이너도 아니라 **하네스가 자기를 잰 값**이라 장부에 넣을 대상이 아니다
         # (`RunContext.call_tool`에 그 판단과 근거가 있다). 미측정 개수는 따로 세지 않는다 —
-        # 도구 시간은 재현성 기록이 아니라 상한이고, `tool_images`가 이미 "컨테이너 없이
-        # 돌았다"를 판정한다(`incomplete_fields`).
+        # 도구 시간은 재현성 기록이 아니라 상한이고, Fake 런타임이면 `tool_images`가 이미
+        # "컨테이너 없이 돌았다"를 판정한다(`incomplete_fields`).
         if tool_ms is not None:
             self.tool_ms += tool_ms
         overrun = self._overrun()
@@ -187,14 +188,25 @@ class BudgetLedger:
             item=overrun[0] if overrun else None,
         )
 
-    def remaining(self) -> dict[str, int]:
-        """항목별 잔량. 음수가 되지 않게 자른다 — 리포트에서 읽는 값이다."""
-        return {
-            "input_tokens": max(0, self._budget.input_tokens - self.input_tokens),
-            "output_tokens": max(0, self._budget.output_tokens - self.output_tokens),
+    def remaining(self) -> dict[str, int | None]:
+        """항목별 잔량. 음수가 되지 않게 자른다 — 리포트에서 읽는 값이다.
+
+        **상한 0인 항목은 `None`이다** -> 0은 `_overrun`이 검사하지 않는 값(상한 없음)인데
+        잔량 0으로 내면 「소진」으로 읽힌다(#483 · `estimate` 출력의 같은 오독이 #435).
+        `0`은 상한이 있고 다 쓴 경우에만 나온다.
+        """
+
+        def left(limit: int, spent: int, per_unit: int) -> int | None:
+            if limit == 0:
+                return None
             # 잔량도 ms로 뺀 뒤 내림한다. 초끼리 빼면 소비 쪽이 먼저 내림되어 **잔량이
             # 실제보다 최대 1초 많게** 나온다 — 리포트에서 읽는 값이라 낙관적으로 틀리는
             # 방향이다.
-            "gpu_seconds": max(0, self._budget.gpu_seconds * 1000 - self.gpu_ms) // 1000,
-            "tool_seconds": max(0, self._budget.tool_seconds * 1000 - self.tool_ms) // 1000,
+            return max(0, limit * per_unit - spent) // per_unit
+
+        return {
+            "input_tokens": left(self._budget.input_tokens, self.input_tokens, 1),
+            "output_tokens": left(self._budget.output_tokens, self.output_tokens, 1),
+            "gpu_seconds": left(self._budget.gpu_seconds, self.gpu_ms, 1000),
+            "tool_seconds": left(self._budget.tool_seconds, self.tool_ms, 1000),
         }

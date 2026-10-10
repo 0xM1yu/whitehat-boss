@@ -333,6 +333,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⇒ **run 전에 `cli bench`를 그날의 프로필로 한 번 돌리는 것이 이 함정의 프리플라이트다.**
 >
+> (`cli preflight`(#534)는 이름이 겹치지만 다른 명령이다 — run 전 선결조건(터널·원격 커밋·채점기·카나리·도구 이미지)을 보고 모델 서버에 요청은 안 보낸다. 이 함정의 프리플라이트는 여전히 `cli bench`다.)
+>
 > ⏵ **2026-09-29 — 교대 프로필은 run이 스스로 본다.** 교대마다 올린 키를 `check_startup()`으로 다시 읽어 이름이 없거나 `max_model_len`이 registry `context_limit`과 다르면 run을 멈춘다(`src/adapters/model_swap.py` — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절, 제안). **교대를 선언하지 않은 프로필(서버를 사람이 띄운다)은 그대로 위 프리플라이트가 유일하다** — 교대를 선언한 프로필은 `harness_pool` 하나다(`harness_pool_hybrid`는 검색 역할 때문에 선언할 수 없다).
 >
 > ⚠ **`doctor`로는 안 된다** — 접속을 하지 않는다(`src/cli.py`의 `doctor()` docstring).
@@ -374,7 +376,34 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   다음 기동이 「STOP_GUARD가 있다」로 거부돼 run이 `model_swap_failed`로 멈춘다 — 그때까지 떠 있던 서버는 그
   단계가 끝나 run 끝 내림이 내릴 때까지 감시 없이 돈다.
 - ⚠ vast.ai 컨테이너에는 docker·podman이 없다(2026-09-29) — 도구 단계를 어디서 돌릴지 정하기 전에는 vast로
-  끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이고 원격 실행 경로는 짓지 않았다.
+  끝까지 도는 run이 없다. `vastai.yaml`의 `command`는 로컬 실행이다. ⏵ 2026-10-03 — 원격 경로가 생겼다 ->
+  `--device vastai-remote`(하네스·도구는 로컬, 서빙만 vast). 교대는 `tools/serve/swap-remote.sh`가 ssh로 원격
+  `swap.sh`를 부르고, 원격 사본은 `vast-bootstrap.sh`, 모델 호출은 `vast-tunnel.sh` 터널을 지난다. 순서 ->
+  ① bootstrap ② 원격에 감시자 ③ 터널 ④ WSL·Linux에서 `SWAP_SSH_HOST`·`SWAP_REMOTE_ROOT`·`SWAP_REMOTE_PYTHON`을
+  주고 run. 이 경로로 끝까지 돈 run은 아직 없다(가짜 ssh 테스트만 — `tests/test_remote_swap.py`).
+  ⏵ 2026-10-04 — 끝까지 돈 run이 생겼다(WSL `run_20261003_0002` · Windows `run_20261003_0003` —
+  [보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)). Windows 쪽 서술의 사유는 #477에서 정정했다(아래).
+  ⏵ 2026-10-04 — #477: Windows 네이티브에서 교대가 깨진 원인은 `bash`가 `System32` 아래의 WSL 런처로 풀린 것이었다.
+  `model_swap`이 `command[0]`을 `shutil.which`로 먼저 푼다. Windows에서는 세 변수를 Git Bash `export`로 세우지
+  않는다 — MSYS가 `/root/…` 값을 Windows 경로로 바꾼다.
+  교대가 실패하면 하네스 경고·`model_swap` 이벤트의 상세 맨 앞에 교대 스크립트의 사유(`error`)가 온다(#476) ->
+  원격 `swap.log`를 열지 않아도 된다.
+  ⏵ 2026-10-05 (#495 리뷰) — `which`는 PATH를 **앞에서부터** 본다. ④는 「WSL·Linux에서」말고도 **`Git\usr\bin`이
+  `System32`보다 앞에 있는 PATH**(Git Bash로 띄운 셸)에서 돌 수 있다. 그보다 앞에 없는 PATH(레지스트리 PATH —
+  PowerShell·cmd)에서는 which도 같은 런처를 골라, **교대를 시도할 때** 하네스가 띄우지 않고 `ModelSwapError`로
+  실패한다 — 교대면 run이 `model_swap_failed`로 멈추고 run 끝 내림이면 경고이며, 교대하지 않는 run(`--dry-run`·낮은
+  `--stop-after`)은 영향이 없다(그 run의 run 끝 내림이 경고 한 줄과 `model_swap ok=false` 이벤트 한 줄을 남긴다).
+  `SWAP_SSH_HOST`이 비었다 같은 엉뚱한
+  사유로 실패하는 대신 원인을 바로 말한다. Git Bash로 띄우거나 PATH 앞에 `Git\usr\bin`을 두거나 장비 파일
+  `command[0]`에 bash 절대경로를 쓴다 — 단 장비 파일은 추적 파일이라 고치면 `repo_dirty`로 그 run은 비교표에서
+  빠진다(실험 run에서는 앞의 둘을 쓴다). 막는 것은 `System32`의 `bash.exe`뿐이고(`WindowsApps` 별칭은 안 막고,
+  PATH에서 `bash`를 못 찾아 `which`가 못 풀면 못 막는다 — `CreateProcess`는 `System32`를 먼저 본다)
+  `doctor --device`는 이 판정을 안 한다 — doctor가 OK여도 교대를 시도하면 막힐 수 있다. 이 변경 뒤에 Windows
+  네이티브로 원격 교대를 끝까지 돌린 run은 없다 — **미실측**(위 Windows `run_20261003_0003`은 `command`를 Git Bash
+  절대경로로 고친 미커밋 우회로 돌았다 — 보고서 3.2).
+  ⏵ 2026-10-08 (#538) — 위 ①~④와 풀이는 셸 조건이 반쪽이다: Git Bash `export`는 환경변수, PowerShell은 bash
+  해소에서 preflight ERROR(2026-10-07 실 박스). 실 박스에서 통과한 조합은 PowerShell `$env:` + `Git\usr\bin`을 PATH 앞에 하나다.
+  Windows 순서·명령의 정본은 [portability.md](portability.md) §1 「Windows에서 원격 교대 run 절차」다.
 
 Scout를 역할 셋으로 쪼갠 근거는 [ADR 0010](decisions/0010-harness-structure-and-model-roster.md)
 §3이고, **기존 `scout` 한 역할 프로필도 그대로 유효하다**(둘 중 하나가 있어야 한다).

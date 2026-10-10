@@ -26,14 +26,17 @@ import pytest
 
 from slicer_source import assemble
 from src import cli, console
+from src.adapters import fake_model
 from src.adapters.container_tools import index_output_path
 from src.adapters.cybergym_oracle import TaskOracle
 from src.adapters.factory import build_deps, describe_wiring
 from src.adapters.fake_model import FakeModelClient
+from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.sqlite_store import SqliteStateStore
 from src.config import PROMPTED_ROLES, SCOUT_POOL_ROLES, load_config
 from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import runner, task_loader, trace
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
@@ -217,6 +220,33 @@ def test_run_pipeline_wires_resolve_requests_from_deps(
     )
 
 
+def test_run_pipeline_hands_the_raw_source_reader_to_the_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`cli.execute` → `run_pipeline` → `RunContext`까지 `read_raw`가 **실제로** 닿고 대상 파일의
+    원본 바이트를 돌려준다. GUARDS의 줄 정렬 검사(`bare_cr`)는 `read_source`가 접기 전의 `\\r`을
+    봐야 하므로 이 배선이 있어야 한다 — 단위 검사(`test_source_guards`)는 `ctx.read_raw`를 직접
+    꽂아 이 배선이 끊겨도 초록이다. `src/cli.py`의 `read_raw=` 줄이나 `run_pipeline`의
+    `RunContext(...)` 안 `read_raw=` 줄을 지우면 기본값(`lambda _file: None`)으로 떨어져
+    빨개진다."""
+    from src.orchestrator import context as context_mod
+
+    captured: dict[str, object] = {}
+    original_init = context_mod.RunContext.__init__
+
+    def spy_init(self: object, *args: object, **kwargs: object) -> None:
+        captured["read_raw"] = kwargs.get("read_raw")
+        original_init(self, *args, **kwargs)
+
+    monkeypatch.setattr(context_mod.RunContext, "__init__", spy_init)
+
+    _run(tmp_path)
+
+    reader = captured.get("read_raw")
+    assert callable(reader), f"RunContext가 read_raw를 못 받았다: {reader!r}"
+    assert reader("parser.c") == (TARGET / "parser.c").read_bytes()
+
+
 def _canonical(trace_path: Path) -> bytes:
     """재현성 비교 표현: `ts`·`wall_ms`만 제거한 JSONL."""
     lines = []
@@ -299,6 +329,9 @@ def test_pov_generates_a_poc_at_the_validate_stage_for_dev_fake(tmp_path: Path) 
     """dev_fake는 `pov: fake_v2`를 선언하므로 러너가 8단계(VALIDATE)에서 pov를 **추가로** 부른다
     (PoV 배선 — 추가형). `validate.run`은 그대로 돌고(유일한 결정론 E4 게이트), pov는 나란히
     PoC를 만들어 `pov_generated`로 바이트 크기를 기록한다. 실행·게이트는 호스트 후속이다.
+    ⏵ 2026-10-08 — 「호스트 후속」만이 아니다. 채점기 제출은 #408(`--oracle-submit`)로 들어왔고
+    `./poc` materialize는 #513(열림)이 든다. ⏵ 2026-10-09 — #386의 두 명제는
+    `run_20261007_0001`에서 반증됐다: 남은 것은 #513 하나다.
 
     이 검사가 「pov가 죽은 코드가 아니다」를 실증한다 — 러너 라우팅을 끊으면 8단계 pov_generated가
     0건이 되어 빨개진다."""
@@ -1019,6 +1052,11 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         monkeypatch.setattr(
             cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
         )
+    # ⏵ 2026-10-07 — 슬라이스 입력 가드도 검출을 갈아끼워 세운다. v4 배선 뒤 저장소 설정으로는
+    # 그 조건을 못 만든다(`cli._slice_input_prompts`의 ⏵) — Auditor 케이스와 같은 논법이고,
+    # 이 테스트가 보는 것은 검출이 아니라 **해제가 게이트 뒤에 있는가**다.
+    if defect == "no-slices":
+        monkeypatch.setattr(cli, "_slice_input_prompts", lambda config: ["scout_memory/v3"])
 
     rc = cli.main(first)
 
@@ -1557,6 +1595,32 @@ def test_incomplete_manifest_fields_are_reported_not_faked(tmp_path: Path) -> No
 
     assert result.record.tool_images == {}
     assert any("tool_images" in warning for warning in result.warnings)
+
+
+def test_the_empty_tool_images_warning_names_the_runtime_not_a_missing_container(
+    tmp_path: Path,
+) -> None:
+    """이슈 #479 (e) - 컨테이너 런타임 run에 「컨테이너 없이 실행」이라 쓰면 설정 오류로 읽힌다.
+
+    `tool_images`는 run 시작 전(`build_deps`)에 채워져 도구 단계에 닿았는지와 무관하다 - 비는 뜻은
+    「이미지 digest를 못 기록했다」(이미지 없음 · 런타임에 못 닿음)다. Fake 런타임이면 컨테이너가
+    정말 없으므로 옛 문구가 맞다. 런타임 이름은 셋 다 문구에 든다."""
+    result, _ = _run(tmp_path)
+    record = result.record
+
+    def tool_images_warnings(runtime: str) -> list[str]:
+        found = runner.incomplete_fields(record.transition(tool_runner=runtime))
+        return [w for w in found if "tool_images" in w]
+
+    (fake,) = tool_images_warnings("fake")
+    assert "컨테이너 없이 실행" in fake
+    for runtime in ("docker", "singularity", "podman"):
+        (warning,) = tool_images_warnings(runtime)
+        assert "컨테이너 없이" not in warning, runtime
+        assert runtime in warning and "모델 비교표에서 제외한다" in warning, runtime
+        assert "도구 단계" not in warning, "무관하다(`build_deps`가 run 시작 전에 채운다)"
+        # 조작자가 볼 곳을 알려 준다 - 이미지가 없거나 런타임에 못 닿은 것이다(철자 pin).
+        assert "이미지가 없거나 런타임에 닿지 못했다" in warning, runtime
 
 
 def test_the_record_carries_the_compile_condition(tmp_path: Path) -> None:
@@ -2175,6 +2239,11 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
 
     `execute`를 막아 둔다. 가드가 사라지면 이 run은 실서빙 프로필로 도구 컨테이너와
     엔드포인트에 나간다 — 빨간 불이 느린 테스트로 보이면 안 된다(`_refuse_sockets`와 같은 뜻).
+
+    ⏵ **2026-10-07 — 검출을 갈아끼운다.** Scout가 v4(`input: source`)로 배선되며 저장소의 어느
+    프로필도 `input: slice`를 고르지 않아, **설정만으로는 이 가드를 세울 수 없다.** 보는 것은
+    검출이 아니라 **게이트가 서는 자리와 거부 줄**이다 — 아래 `_slice_input_prompts` 교체가
+    그것이고, 같은 파일의 `undescribed-option` 케이스가 같은 논법을 먼저 썼다.
     """
 
     class _Started(RuntimeError):
@@ -2184,6 +2253,7 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
         raise _Started
 
     monkeypatch.setattr(cli, "execute", _boom)
+    monkeypatch.setattr(cli, "_slice_input_prompts", lambda config: ["scout_memory/v3"])
     code = cli.main(
         [
             "run", "--profile", "harness_pool", "--target", str(TARGET),
@@ -2196,6 +2266,37 @@ def test_a_slice_input_profile_refuses_to_start_without_slices(
     assert code == 2, "슬라이스 입력 프롬프트를 부르는 run이 --slices 없이 시작한다"
     assert [line for line in _errors(err) if "--slices" in line], "거부 줄이 --slices를 안 댄다"
     assert not list(tmp_path.iterdir()), "거부된 run이 디렉터리를 남겼다"
+
+
+def test_the_slice_input_detector_reads_the_meta_of_the_wired_version() -> None:
+    """`_slice_input_prompts`가 **배선된 판의 meta**를 읽어 `input: slice`만 고른다.
+
+    🔴 이 검사가 있는 이유. 2026-10-07에 Scout가 v4(`input: source`)로 배선되며 **저장소의 어느
+    프로필도 이 검출을 발화시키지 않게 됐다.** 게이트가 서는 자리는 검출을 갈아끼운 테스트들이
+    보지만, 그러면 **검출 자체를 아무도 안 본다.** 실제로 돌려 본 변이 둘이 이 검사 없이는 전부
+    초록이다 — 비교를 `== "source"`로 뒤집기(고르는 쪽이 반대가 된다), 담는 문자열에서 버전을
+    빼기(`f"{role}"`). 둘 다 이 검사에서는 빨개진다(실측). ⚠ **`!= "source"`는 변이가 아니다** —
+    `input`이 닫힌 두 값이라 `== "slice"`와 등가다. 그래서 그것으로는 이 검사를 시험할 수 없다.
+
+    설정 파일을 만들지 않고 `prompt_versions()`만 흉내낸다 — 검출이 보는 것이 그 맵과
+    프롬프트 meta 둘뿐이고, registry를 끌어오면 배선이 바뀔 때 이 검사도 같이 낡는다.
+    """
+
+    class _Config:
+        def __init__(self, versions: dict[str, str]) -> None:
+            self._versions = versions
+
+        def prompt_versions(self) -> dict[str, str]:
+            return self._versions
+
+    # v3 Scout는 디스크에 있고 `input: slice`를 선언한다 — 고르는 설정이면 검출이 찬다.
+    assert cli._slice_input_prompts(_Config({"scout_memory": "v3"})) == ["scout_memory/v3"]
+    # v4는 `input: source`라 안 찬다. 지금 배선이 이쪽이다.
+    assert cli._slice_input_prompts(_Config({"scout_memory": "v4"})) == []
+    # 섞이면 슬라이스 쪽만 나오고 역할/버전 모양이 그대로 실린다.
+    assert cli._slice_input_prompts(
+        _Config({"scout_memory": "v4", "scout_boundary": "v3", "auditor": "v9"})
+    ) == ["scout_boundary/v3"]
 
 
 def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> None:
@@ -2270,19 +2371,32 @@ def test_trace_actually_carries_the_volatile_fields(tmp_path: Path) -> None:
 # `tests/test_oracle_wiring.py`는 `ctx.oracle`을 직접 꽂아 러너 함수를 보므로 그 배선이 끊겨도
 # 초록이다. 후보 수가 갈림길이다(후보 N개 ≠ 최종 1개를 가르는 것이 이 PR의 차단 결함이다):
 # 기본 타깃은 8단계에 **후보가 하나** 오고(그 하나가 최종이다), `_with_index()`로 심볼 타깃을
-# 만들면 **후보가 둘** 온다(고르는 규칙이 없어 지정하지 않는다).
+# 만들면 **후보가 둘** 온다.
+#
+# ⏵ **2026-10-04 — `dev_fake`의 후보 둘은 PoC 바이트가 같다**(Fake PoV는 결정론이라 finding이
+# 달라도 같은 68바이트를 낸다 — 실측 run이 제출 8건에 고유 PoC 1개였던 것과 같은 모양이다).
+# 그래서 지정이 **접어** `sole_poc`을 내고 `fix` 다리가 한 번 돈다 — 앞 판은 그것을 `grade_tie`로
+# 거부해 왕복이 0번이었다. 🔴 **그 접기 때문에 이 파일은 `top_grade`를 끝까지 못 보인다** —
+# 바이트가 같으면 어느 후보를 지정해도 제출이 같아 라벨이 `sole_poc`이다. 등급이 실제로
+# **읽히는지**는 아래 둘째 검사의 `candidate_grades`·리포트 등급이 묶고, 사슬의 단계별 라벨은
+# `tests/test_oracle_wiring.py` 끝 절이 직접 호출로 묶는다.
 
 
 def _oracle_events(events: list[dict]) -> list[dict]:
     return [e for e in events if e["kind"].startswith("oracle")]
 
 
-def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
+def test_several_candidates_with_the_same_bytes_are_folded_and_the_fix_leg_runs_once(
     tmp_path: Path,
 ) -> None:
     """운영 배선을 지나 대역이 불린다. 후보 둘 모두 vul로 나가고(바이트는 run이 남긴 PoC
-    사이드카 `pov_poc/NNNN.poc`와 **내용으로** 견준다) 지정은 안 된다 - fix 다리·판정 조회는
-    0번이고 기록·경고·매니페스트가 그 이유를 말한다."""
+    사이드카 `pov_poc/NNNN.poc`와 **내용으로** 견준다), **두 PoC가 바이트까지 같아** 지정이
+    접어 `sole_poc`을 낸다 - fix 다리·판정 조회가 정확히 한 번 돈다.
+
+    ⏵ **2026-10-04 - 이 검사가 뒤집힌 자리다.** 앞 판은 「지정 안 함 · fix 0번 ·
+    `grade_tie`」를 물었다. 어느 후보를 지정해도 **제출될 바이트가 같은데** 거부한 것이고,
+    그것이 실측 run(제출 8 = 고유 PoC 1)의 점수를 0으로 만든 규칙이다. 접기의 **전제**를 이
+    검사가 직접 센다 - 두 사이드카 바이트가 같지 않으면 아래 단언이 전부 다른 사건이다."""
     oracle = FakeOracle()
 
     result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
@@ -2290,20 +2404,98 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_never_runs(
     events = _events(trace_path)
     generated = _of(events, "pov_generated", stage=int(Stage.VALIDATE))
     assert len(generated) == 2, "8단계에 finding이 둘 안 왔다 - 이 검사의 전제가 깨졌다"
+    # 동점의 **원인**을 문다: Fake `_run_repro`는 소스 존재만 봐 재현이 둘 다 성공하고, 8단계가
+    # 둘 다 E4로 올린다 - 그래서 최댓값이 동점이다. (전 판은 지정이 그 E4를 못 봐 E3 동점이었다.)
+    grades = {e["data"]["grade"] for e in _of(events, "gate_eval", stage=int(Stage.VALIDATE))}
+    assert grades == {"E4"}, "동점의 전제(8단계 등급이 둘 다 E4)가 깨졌다"
     sidecars = sorted((trace_path.parent / "pov_poc").glob("*.poc"))
-    assert [p.read_bytes() for p in sidecars] == oracle.vul_calls
+    bodies = [p.read_bytes() for p in sidecars]
+    assert bodies == oracle.vul_calls
+    assert len(set(bodies)) == 1, "접기의 전제(두 PoC가 같은 바이트)가 깨졌다"
     assert len(_of(events, "oracle_submitted")) == 2
-    assert oracle.final_calls == [], "후보가 둘인데 fix 다리가 돌았다"
+    assert oracle.final_calls == [(bodies[0], oracle.vul_results[0])]
     (final,) = _of(events, "oracle_final")
-    assert final["subject_id"] is None
-    assert (final["data"]["status"], final["data"]["reason"]) == ("none", "policy_undecided")
-    assert final["data"]["designation"] is None
+    assert final["subject_id"] == "find_0001"
+    assert (final["data"]["status"], final["data"]["reason"]) == ("scored", None)
+    assert final["data"]["designation"] == "sole_poc"
     assert result.record.oracle == {
-        "vul_submitted": 2, "vul_failed": 0, "final": "none",
-        "final_reason": "policy_undecided", "record": "oracle/verdict.json",
+        "vul_submitted": 2, "vul_failed": 0, "final": "scored",
+        "final_reason": None, "record": "oracle/verdict.json",
     }  # fmt: skip
-    assert any("고르는 규칙이 정해지지 않았다" in w for w in result.warnings)
+    assert not any("동점" in w for w in result.warnings)
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert sidecar["final"]["candidate_grades"] == {"find_0001": "E4", "find_0002": "E4"}
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
+
+
+class _OracleThatRatesTheLoserHigher(FakeOracle):
+    """둘째 `vul` 제출에만 크래시 코드를 돌려주는 대역 - 채점기 값으로 고르면 **둘째**가 이긴다.
+
+    규칙이 내부 등급이면 채점기가 둘째를 더 좋게 말해도 지정은 안 흔들린다. 지정이 그 값을 읽는
+    변이(`response_exit_code`가 큰 쪽 · 크래시인 쪽)는 이 대역에서 첫째 대신 둘째를 고른다.
+    """
+
+    def submit_vul(self, poc: bytes):  # noqa: ANN201
+        self._vul_exit_code = 0 if not self.vul_calls else 139
+        return super().submit_vul(poc)
+
+
+def test_the_designation_sees_the_e4_the_validate_stage_gave(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽(E4)을 고른다.
+
+    전 판은 지정이 보는 등급이 8단계 `validate.run`의 런타임 Evidence(`produced`)를 버려 E4를
+    못 봤다 - 후보가 둘 이상이면 어느 run에서나 **E3 동점**이라 `top_grade`가 도달 불가였다
+    (적대적 리뷰 2026-10-04, `dev_fake` 실측: 8단계 `gate_eval`은 find_0001 E4 · find_0002 E3인데
+    지정이 받은 `grades`는 E3 · E3).
+
+    이 검사의 전제는 **8단계 `gate_eval`이 둘을 가른다**는 것이다 - 안 갈라지면 아래 단언이 전부
+    공허하다. 지정 근거는 그 `gate_eval`과 **같은 등급**에서 나와야 한다. 그리고 지정은 채점기
+    값을 안 읽는다 - 대역이 진 쪽(find_0002)에 더 센 크래시 코드를 돌려줘도 이긴 쪽이 안 바뀐다.
+
+    ⚠ **`designation`은 `top_grade`가 아니라 `sole_poc`이다**(⏵ 2026-10-04) - `dev_fake`의 두
+    PoC가 **바이트까지 같아** 지정이 먼저 접고, 접어서 하나면 「고를 것이 없었다」가 더 센
+    사실이다(어느 후보를 지정해도 제출이 같다). 그래서 **이 검사는 라벨로 등급을 묶지 못한다**
+    — 묶는 것은 아래 `candidate_grades`와 리포트 등급이고, 라벨 쪽은
+    `tests/test_oracle_wiring.py`가 직접 호출로 묶는다. ⚠ 같은 이유로 이긴 쪽이 `find_0001`인
+    것은 등급 때문인지 `finding_id` 꼬리 때문인지 **이 검사만으로는 안 갈린다**.
+    """
+    real_repro = FakeToolRunner._run_repro
+    asan_calls: list[str] = []
+
+    def second_asan_fails(self, tool, kind, args, workdir):  # noqa: ANN001, ANN202
+        if tool == "asan":
+            asan_calls.append(tool)
+            if len(asan_calls) == 2:
+                return self.make_evidence(
+                    tool, kind, args, ok=False, exit_code=2, error="재현 실패(검사가 심었다)"
+                )
+        return real_repro(self, tool, kind, args, workdir)
+
+    monkeypatch.setattr(FakeToolRunner, "_run_repro", second_asan_fails)
+    oracle = _OracleThatRatesTheLoserHigher()
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+    events = _events(trace_path)
+    validate_grades = {
+        e["subject_id"]: e["data"]["grade"] for e in _of(events, "gate_eval", stage=Stage.VALIDATE)
+    }
+    assert validate_grades == {"find_0001": "E4", "find_0002": "E3"}, "8단계가 안 갈랐다(전제)"
+    assert len(oracle.vul_calls) == 2
+    assert len(oracle.vul_results) == 2
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == "find_0001"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "sole_poc")
+    assert oracle.final_calls == [(oracle.vul_calls[0], oracle.vul_results[0])]
+    # 지정이 **읽은** 등급이 장부에 남고 8단계 `gate_eval`과 같다 - 어긋나면 이 줄이 빨개진다.
+    sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
+    assert sidecar["final"]["candidate_grades"] == validate_grades
+    # 리포트도 같은 `_grades_by_finding`을 부르므로 8단계 등급을 보인다 - 재현에 성공한 Finding이
+    # `[E3]`이 아니라 `[E4]`다(그 전에는 `proven`인데 E3으로 찍혔다).
+    assert sorted(re.findall(r"\*\*\[(E\d)\]", result.report.render())) == ["E3", "E4"]
+    assert result.record.is_complete
 
 
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
@@ -2468,22 +2660,30 @@ def _task_oracle() -> TaskOracle:
     return TaskOracle(server=_SERVER, task_id=_TASK_ID, agent_id=_AGENT_ID, api_key=_API_KEY)
 
 
-def test_the_real_client_never_runs_the_fix_container_when_there_are_several_candidates(
+def test_the_real_client_runs_the_fix_container_once_even_with_several_candidates(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **0번**이다 -
-    비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고 고르는 규칙은 없다. 같은 바이트의 둘째
-    제출은 이 run이 만든 행의 캐시라 컨테이너가 안 돈다 - 그것을 옛 판정이라 경고하지 않는다."""
+    """차단 결함을 HTTP에서 본다: 후보 둘이면 `/submit-vul`은 둘이고 `/submit-fix`는 **정확히
+    한 번**이다 - 비최종 PoC에 `-fix` 이미지가 도는 것이 차단 결함이었고, N건 전부에 도는 것과
+    0번 도는 것 사이의 **하나**가 맞다. 같은 바이트의 둘째 제출은 이 run이 만든 행의 캐시라
+    컨테이너가 안 돈다 - 그것을 옛 판정이라 경고하지 않는다.
+
+    ⏵ **2026-10-04 - 이 검사가 뒤집힌 자리다.** 앞 판은 `/submit-fix` **0번**과 `grade_tie`를
+    물었다. 두 후보의 PoC가 바이트까지 같아(둘째가 캐시 적중인 것이 그 증거다) 지정이 접고
+    왕복이 돈다 - **실 HTTP 경로에서 왕복이 0번이던 것을 깨는 자리**가 여기다.
+    """
     server = _http_server(monkeypatch)
 
     result, trace_path = _run(tmp_path, before=_with_index(), oracle=_task_oracle())
 
     paths = [call.url.path for call in server.calls]
-    assert paths.count("/submit-vul") == 2 and paths.count("/submit-fix") == 0
-    assert server.containers == 1  # vul 한 번뿐 (둘째 vul은 이 run의 캐시)
+    assert paths.count("/submit-vul") == 2 and paths.count("/submit-fix") == 1
+    assert server.containers == 2  # vul 한 번 + fix 한 번 (둘째 vul은 이 run의 캐시)
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
     assert [c["cached"] for c in sidecar["candidates"]] == [False, True]
-    assert (sidecar["final"]["status"], sidecar["final"]["reason"]) == ("none", "policy_undecided")
+    # `scored`인 final에는 `reason` 키가 없다 - `None`이 아니라 **없다**(사유가 안 났다).
+    assert sidecar["final"]["status"] == "scored" and "reason" not in sidecar["final"]
+    assert sidecar["final"]["designation"] == "sole_poc"
     assert not any("캐시" in warning for warning in result.warnings)
 
 
@@ -2562,7 +2762,38 @@ def _oracle_task(root: Path, **script: object) -> Path:
         tf.add(src, arcname="src-vul")
     fields = {"server": _SERVER, "task_id": _TASK_ID, "agent_id": _AGENT_ID, **script}
     (task / "submit.sh").write_text(submit_script(**fields), encoding="utf-8")
+    _oracle_canary(root, fields["task_id"])
     return task
+
+
+def _oracle_canary(root: Path, task_id: object) -> Path:
+    """통과하는 카나리 보고서 - 채점 run은 이것 없이 서지 않는다(이슈 #383).
+
+    거절 규칙은 `tests/test_canary_report.py`·`tests/test_oracle_cli.py`가 든다. 여기서는 사슬이
+    서버까지 이어지는지만 보므로 통과하는 보고서 하나로 족하다. **합성값이다.**
+    """
+    path = root / "canary.json"
+    path.write_text(
+        json.dumps(
+            {
+                "task": task_id,
+                "verdict": "pass",
+                "ok": True,
+                "repeat": 10,
+                "below_measured_repeat": False,
+                "mmap_rnd_bits": "28",
+                "rnd_bits_above_28": False,
+                "rnd_bits_unmeasured": False,
+                "measured_at": "2026-10-03T17:42:07+00:00",
+                # 게이트가 요약만 믿지 않게 보는 관측 칸 셋(§2.2).
+                "completed": True,
+                "segv_count": 0,
+                "problems": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _oracle_run(  # noqa: ANN202
@@ -2573,6 +2804,7 @@ def _oracle_run(  # noqa: ANN202
         "--artifacts-root", str(tmp_path / "arts"),
         "--task-dir", str(task or _oracle_task(tmp_path)),
         "--task-work-dir", str(tmp_path / "w"),
+        "--oracle-canary", str(tmp_path / "canary.json"),
         "--oracle-submit", *extra,
     ]  # fmt: skip
     if server is not None:
@@ -2719,6 +2951,34 @@ def test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools(tmp_path: Pat
     assert e4, "E4가 한 번도 안 나오면 8단계 게이트가 배선되지 않았다"
     assert {e["stage"] for e in e4} == {int(Stage.VALIDATE)}
     assert all(e["data"]["p4"] for e in e4)
+
+
+def test_a_repro_step_equal_to_the_input_placeholder_does_not_stop_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 8단계는 모델이 쓴 `repro_spec.steps`를 `[tool, *steps]`로 argv에 넣는다(`validate._call`).
+    원소가 **예약 자리표와 같으면** `ToolArgs`가 `ValidationError`를 던졌고 그 루프에는 try가 없어
+    최후 방어선을 지나 run 전체가 `stopped_after: 8`로 멈췄다(독립 검토가 실증). 이제는 그 호출만
+    `ok=False`로 남고 run은 끝까지 간다. 운영 배선(`cli.execute`)으로 돈다 — 노드 단위 검사는
+    `tests/test_nodes.py`가 맡는다."""
+    real = fake_model._repro_spec
+
+    def colliding(target, sink):  # noqa: ANN001, ANN202
+        spec = real(target, sink)
+        return spec.transition(steps=[*spec.steps, INPUT_PLACEHOLDER])
+
+    monkeypatch.setattr(fake_model, "_repro_spec", colliding)
+
+    result, trace_path = _run(tmp_path)
+
+    assert result.record.stopped_after is None, "예약 자리표와 같은 step이 run 전체를 멈췄다"
+    refused = [
+        e
+        for e in _of(_events(trace_path), "tool_call")
+        if e["data"]["ok"] is False and INPUT_PLACEHOLDER in (e["data"]["error"] or "")
+    ]
+    assert refused, "전제 — 그 step이 8단계까지 가서 거절됐다"
+    assert {e["stage"] for e in refused} == {int(Stage.VALIDATE)}
 
 
 def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
@@ -2991,13 +3251,25 @@ def test_doctor_output_differs_between_profiles(tmp_path: Path) -> None:
     assert "HybridRetriever" not in fake
 
 
-def test_doctor_warns_that_a_slice_input_profile_needs_slices(tmp_path: Path) -> None:
+def test_doctor_warns_that_a_slice_input_profile_needs_slices(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """`run`이 `--slices` 없이 거부할 프로필을 doctor가 미리 말한다 — **WARN이지 ERROR가 아니다.**
 
     doctor는 `--slices`를 받지 않으니 막을 대상이 없다. ERROR로 두면 설정이 멀쩡한 풀 프로필의
     `doctor`가 exit 1이 된다. 슬라이스 입력 프롬프트가 없는 프로필(`dev_fake` — scout v1)에는
     그 줄이 없어야 한다 — 전 프로필에 뜨는 경고는 아무도 안 읽는다.
+
+    ⏵ **2026-10-07 — 검출을 갈아끼운다**(v4 배선 뒤 어느 프로필도 `input: slice`를 안 고른다 —
+    `cli._slice_input_prompts`의 ⏵). **교체가 프로필을 가른다** — 풀을 선언한 프로필에만 목록을
+    돌려주므로 「없는 프로필에는 그 줄이 없다」는 뒤쪽 단언이 교체에 먹히지 않고 산다.
+    doctor와 run이 **같은 함수**로 판정하는 것도 여기서 선다(그 전에는 두 벌이었다).
     """
+    monkeypatch.setattr(
+        cli,
+        "_slice_input_prompts",
+        lambda config: ["scout_memory/v3"] if "scout_memory" in config.profile.roles else [],
+    )
 
     def slice_lines(profile: str) -> list[str]:
         return [line for line in _doctor_text(profile, tmp_path).splitlines() if "--slices" in line]
@@ -3106,6 +3378,126 @@ def test_estimate_reports_gpu_seconds_as_unknown(
     assert code == 0
     assert "추정 불가" in out
     assert "예상 모델 호출" in out
+
+
+def _estimate_input_line(budget: Budget) -> str:
+    """`estimate`가 입력 토큰 예산을 말하는 줄. 저장소 값이 아니라 **주입한** 예산으로 돈다."""
+    config = load_config("dev_fake").transition(budget=budget)
+    return next(line for line in cli.estimate(config, TARGET) if line.startswith("예상 input 토큰"))
+
+
+def _sqlite_dev_fake():  # noqa: ANN202
+    """`dev_fake`(메모리 저장소)를 sqlite 저장소로 바꾼 config — 모델·도구는 그대로 Fake다."""
+    config = load_config("dev_fake")
+    adapters = config.profile.adapters.transition(state_store="sqlite")
+    return config.transition(profile=config.profile.model_copy(update={"adapters": adapters}))
+
+
+def _spy_close(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    closed: list[str] = []
+    original = SqliteStateStore.close
+
+    def close(self: SqliteStateStore) -> None:
+        closed.append(self.path)
+        original(self)
+
+    monkeypatch.setattr(SqliteStateStore, "close", close)
+    return closed
+
+
+def test_estimate_closes_the_state_store_before_its_temp_dir_goes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`estimate`는 임시 디렉터리 안에 `state.db`를 연다 — 지우기 전에 닫아야 Windows에서 정리가
+    안 죽는다(#156). 수정 전 main에서 Windows는 정리가 실패했다 — Python 3.11.0에서
+    `[WinError 267]`, 3.14.5에서 `PermissionError [WinError 32]`(2026-10-08 실측 둘).
+    Linux는 열린 파일도 지워져 그 증상이 안 보이므로 **닫았는지**를 직접 센다."""
+    closed = _spy_close(monkeypatch)
+
+    cli.estimate(_sqlite_dev_fake(), TARGET)
+
+    assert len(closed) == 1 and closed[0].endswith("state.db"), closed
+
+
+def test_estimate_closes_the_store_even_when_the_count_lookup_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """캡슐 조회가 실패해도 `finally`가 닫고 원 예외가 그대로 나간다(#156). 닫기를 `finally`에서
+    꺼내 정상 경로로만 옮기는 변이를 이 검사가 잡는다(#540 리뷰가 그 변이로 9건 전부 통과를
+    보였다)."""
+    closed = _spy_close(monkeypatch)
+
+    def lookup_fails(_config: object) -> str:
+        raise RuntimeError("count lookup boom")
+
+    monkeypatch.setattr(cli, "_capsule_counter_role", lookup_fails)
+
+    with pytest.raises(RuntimeError, match="count lookup boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
+
+
+def test_execute_closes_the_store_when_the_pipeline_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """러너가 예외로 끝나면 `execute`가 `deps`를 돌려줄 수 없다 — 그래서 `execute`가 닫고 원
+    예외를 올린다(#156). 안 닫으면 `estimate`의 임시 디렉터리 정리가 열린 `state.db`에서 죽어
+    원 예외를 덮는다(#540 리뷰 · Windows 3.14.5에서 `PermissionError [WinError 32]` 재현)."""
+    closed = _spy_close(monkeypatch)
+
+    def pipeline_fails(*_a: object, **_k: object) -> None:
+        raise RuntimeError("pipeline boom")
+
+    monkeypatch.setattr(cli, "run_pipeline", pipeline_fails)
+
+    with pytest.raises(RuntimeError, match="pipeline boom"):
+        cli.estimate(_sqlite_dev_fake(), TARGET)
+    assert len(closed) == 1, closed
+
+
+def test_run_closes_the_state_store_it_opened(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`run`도 결과를 다 받은 뒤 저장소를 닫는다 — 안 닫으면 프로세스가 끝날 때까지 열려
+    있다(#156)."""
+    closed = _spy_close(monkeypatch)
+    monkeypatch.setattr(cli, "load_config", lambda *_a, **_k: _sqlite_dev_fake())
+
+    cli.main([
+        "run", "--profile", "dev_fake", "--target", str(TARGET),
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    assert [Path(p).name for p in closed] == ["state.db"], closed
+
+
+def test_estimate_labels_a_zero_token_budget_as_no_limit() -> None:
+    """`estimate`는 토큰 상한 0을 「예산이 0」이 아니라 「상한 없음」으로 찍는다.
+
+    상한 0은 「검사 안 함」이다(`BudgetLedger._overrun`). `dev_fake`의 토큰 상한이 0이 된 뒤(#427)
+    이 줄이 「약 N / 예산 0 (예산 0)」을 내 0을 두 번 되풀이했고 「못 돈다」로 읽힐 수 있었다
+    (#435 — 실제 오판 사건은 0건). 그 분기는 `aae1f7f`(2026-08-08)가 넣은 뒤 #427 전까지
+    `config/budgets.yaml`의 어느 판도 입력 토큰 0을 든 적이 없어(`git log -p`로 확인) 한 번도 안
+    타던 자리였고, 이 줄을 무는 검사도 0건이었다.
+
+    값을 저장소 `dev_fake`에서 읽지 않고 직접 세운다 — 저장소 값이 바뀌어도 이 경계는 같아야 한다.
+    **필드마다 값을 다르게 둔다** — 입력·출력·시간 상한이 같은 값이면 `estimate`가 틀린 필드를
+    읽어도 핀이 초록이다. 입력 토큰 상한만 호출마다 0과 양수로 갈리고 나머지 셋은 반대쪽 값이다.
+    양수 쪽은 `10**9`(실질 무한)와 `1`(가장 작은 양수)을 둘 다 둔다 — 문턱을 `if budget > 1`처럼
+    올려 읽는 변이를 잡는다.
+    ⚠ **문구 핀이다** — 철자를 단언하지 성질을 단언하지 않는다. 문구를 바꾸면 이 핀도 같이 바꾼다.
+    """
+    no_limit = _estimate_input_line(
+        Budget(input_tokens=0, output_tokens=10**9, gpu_seconds=10**9, tool_seconds=10**9)
+    )
+    capped = _estimate_input_line(Budget(input_tokens=10**9, output_tokens=0, gpu_seconds=0))
+    smallest = _estimate_input_line(Budget(input_tokens=1, output_tokens=0, gpu_seconds=0))
+
+    assert "상한 없음" in no_limit
+    assert "(예산 0)" not in no_limit
+    assert "%" in capped, "양수 상한이면 예산 대비 비율이 나온다"
+    assert "상한 없음" not in smallest, "가장 작은 양수 상한은 「상한 없음」이 아니다"
+    assert "%" in smallest
 
 
 def test_cli_run_writes_trace_manifest_and_report(
@@ -3389,7 +3781,10 @@ def test_expected_calls_counts_one_scout_call_per_pool_member() -> None:
     capsules = 4
     top_n = base.thresholds.critic_top_n
     max_hops = base.thresholds.max_hops
-    per_candidate = 1 + max_hops + 1  # scout(1 + max_hops) + auditor(1)
+    # scout(1 + max_hops) + auditor(1 + auditor_tool_hops). ⏵ 2026-10-04 — auditor 쪽이 1에서
+    # 늘었다: 도구 루프가 켜지면 후보당 `1 + auditor_tool_hops`회다(이슈 #419 ·
+    # `nodes/auditor._run_hops`). 저장소 기본이 16이라 **상수로 적으면 끈 run의 값이 된다.**
+    per_candidate = (1 + max_hops) + (1 + base.thresholds.auditor_tool_hops)
 
     assert _expected_calls(base, capsules) == capsules * per_candidate + min(capsules, top_n), (
         "단일 scout 프로필의 값이 바뀌었다 — 회귀다"
@@ -3833,7 +4228,8 @@ def test_a_hit_symbol_in_a_later_file_beats_a_non_hit_symbol_in_an_earlier_one(
     #248이 채운 위치를 순서가 안 쓰게 해도(`signal_lines = []`) 전체 pytest가 초록이었다(#257
     본문의 두 변이). 여기서는 두 변이 모두 `[a1, a2]`를 낸다.
 
-    **위치 없는 신호를 넣지 않는다** — 그 심볼의 순위는 #257 2가 아직 정하지 않았다.
+    **위치 없는 신호를 넣지 않는다** — 그 artifact의 심볼은 rank 1이라 다른 파일의 히트 뒤로
+    간다(#257 2, 러너 모듈 docstring). 이 검사는 그 순서를 물지 않는다.
     """
     target = tmp_path / "src"
     target.mkdir()
@@ -3923,11 +4319,11 @@ def test_a_full_run_says_nothing_about_deferral(tmp_path: Path) -> None:
     assert "잘린 Finding" not in result.report.render()
 
 
-def _max_hops_zero(config):  # noqa: ANN001, ANN202
-    """`max_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
-    (`test_pov_loop_with_max_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
+def _pov_hops_zero(config):  # noqa: ANN001, ANN202
+    """`pov_tool_hops=0`으로 내린 config — PoV가 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다
+    (`test_pov_loop_with_pov_tool_hops_zero_stops_before_submitting`이 그 경로를 단위로 고정한다).
     최종 PoC 0건 run을 **monkeypatch 없이 설정 축으로** 만드는 자리다."""
-    return config.transition(thresholds=config.thresholds.transition(max_hops=0))
+    return config.transition(thresholds=config.thresholds.transition(pov_tool_hops=0))
 
 
 def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
@@ -3945,7 +4341,7 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     낸다. 범위는 `runner._pov_shortfall_warning` docstring이 든다.
     """
     result, trace_path = _run(
-        tmp_path, name="pov_zero", before=_with_index(), configure=_max_hops_zero
+        tmp_path, name="pov_zero", before=_with_index(), configure=_pov_hops_zero
     )
 
     events = _events(trace_path)

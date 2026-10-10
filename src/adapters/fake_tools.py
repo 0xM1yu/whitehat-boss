@@ -8,7 +8,11 @@ engineering-guide.md §8.3과 architecture.md §3 2단계("실패해도 진행")
 샌드박스 자체를 띄우지 못하는 경우에만 예외다 — Fake에는 그 경로가 없다.
 """
 
+import contextlib
+import errno
+import hashlib
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -44,6 +48,42 @@ _STATIC_PATTERNS = (
 # 그래서 `.inc`가 여기 있다고 clang에 넘어가지는 않는다. 반대로 여기서 빠지면 좁히는
 # 쪽이 고를 후보 자체가 없어져, 인덱서가 볼 수 없는 파일이 조용히 생긴다.
 _SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".inc", ".py")
+
+# 도구 요청에 데이터로 싣는 입력 파일(`ToolArgs.input_bytes`)의 확장자. **분류되는 확장자가
+# 아니어야 한다**(`preprocess._KIND_BY_SUFFIX`에 없다) — `--target`이 저장소 루트라
+# `artifacts/`가 대상 트리 안에 있으면 `.bin`(→ BINARY) 같은 확장자는 이전 run의 입력이 다음
+# run의 분석 대상이 된다(`orchestrator/poc_log.py` 모듈 docstring의 「이름」 절 — 같은 이유로
+# `.poc`다).
+INPUT_SUFFIX = ".poc"
+
+
+def write_input(directory: Path, data: bytes) -> Path:
+    """`data`를 `directory/input-<sha256 앞 16자>.poc`에 **새 파일로, 바이트로** 쓰고 경로를 준다.
+
+    텍스트로 쓰면 Windows에서 개행이 번역된다(`poc_log` 모듈 docstring) — 되읽어 대조하고, 다르면
+    파일을 지우고 `OSError`다(틀린 입력 파일은 없는 파일보다 나쁘다). **말단 링크를 따라가지
+    않는다** — scratch는 RW 마운트이고 대상 코드가 거기서 돈다: 예측되는 이름에 링크를 심으면
+    `write_bytes`가 마운트 밖 파일을 덮는다. 그래서 있던 항목을 `unlink`하고 `xb`(`O_EXCL`)로
+    만든다 — 그사이 심긴 것은 남의 것이라 안 지우고 `FileExistsError`다(상위 디렉터리 링크는 못
+    막는다). ⚠ `poc_log.PocLog.write`는 같은 선례가 **아니다** — 그쪽은 `unlink`를 앞세우지 않고
+    연 뒤 신원 대조로 막는다(#565). 여기서 Windows의 끊어진 링크가 안 걸리는 것은 `O_EXCL` 덕이
+    아니라 `unlink` 선행 덕이다. 예외 문구에 경로를 싣지 않는다 — 어댑터가 Evidence로
+    올리고 관측으로 모델에 간다. 컨테이너 어댑터도 이 함수를 쓴다 — 쓰기 규칙이 갈라지지 않게.
+    """
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"input-{hashlib.sha256(data).hexdigest()[:16]}{INPUT_SUFFIX}"
+    path.unlink(missing_ok=True)
+    handle = open(path, "xb")  # 그새 심겼으면 FileExistsError — 남의 것이라 안 지우고 올린다
+    try:
+        with handle:
+            handle.write(data)
+        if path.read_bytes() != data:
+            raise OSError(errno.EIO, "되읽은 바이트가 쓴 입력과 다르다")
+    except BaseException:
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+        raise
+    return path
 
 
 class SandboxUnavailable(RuntimeError):
@@ -93,6 +133,26 @@ class FakeToolRunner:
             workdir = safe_join(self.root, args.workdir)
         except PathEscape as exc:
             return self.make_evidence(tool, kind, args, ok=False, exit_code=1, error=str(exc))
+        if args.input_bytes is not None:
+            # 쓰고 바로 지운다 — Fake는 아무것도 실행하지 않아 이 파일을 읽는 것이 없다.
+            # 컨테이너와 같은 쓰기(`write_input` — 바이트 보존, 실패는 Evidence)를 dev_fake도
+            # 지나게 하려는 것이다. **대상 트리에 쓰지 않는다**: 읽기 전용 마운트 정책이고, 쓰면
+            # 다음 run의 `preprocess`가 그 파일을 대상으로 센다. 자리표는 안 바꾼다 — Evidence
+            # 본문이 argv를 쓰는데 임시 경로가 들어가면 같은 요청이 같은 digest를 내지 못한다.
+            try:
+                with tempfile.TemporaryDirectory(
+                    prefix="harness-input-", ignore_cleanup_errors=True
+                ) as scratch:
+                    write_input(Path(scratch), args.input_bytes)
+            except OSError as exc:
+                return self.make_evidence(
+                    tool,
+                    kind,
+                    args,
+                    ok=False,
+                    exit_code=2,
+                    error=f"입력을 쓰지 못했다: {exc.strerror or type(exc).__name__}",
+                )
         if tool in _STATIC_TOOLS:
             return self._run_static(tool, kind, args, workdir)
         if tool in _REPRO_TOOLS:
@@ -171,7 +231,13 @@ class FakeToolRunner:
         하는 일은 도구 이름을 고르는 것뿐이다(`validate.tool_for()`). 게이트는 런타임 Evidence의
         종료 코드가 0도 `None`도 아닐 것을 요구하는데(#232) **여기서 내는 `exit_code=1`은 측정이
         아니라 상수다** — 그래서 `ok=True`가 그대로 E4가 된다.
-        **「소스가 있다」가 `proven`이 된다.**
+        **「소스가 있다」가 `proven`이 된다.** 🔴 **fake는 입력 바이트를 대상에 안 먹인다** —
+        `ok`·`exit_code`는 입력과 무관한 상수다(이 입력 배선은 관측만 바꾼다. 움직이면 E4의 뜻이
+        움직인다). ⏵ **2026-10-09 (ADR 0014) — 컨테이너와 갈렸다**: 컨테이너의 `poc`는 과제
+        `-vul` 이미지에 PoC를 먹여 **관측이 PoC의 함수**인데 fake는 Docker를 안 띄우므로 그럴 수
+        없다. **그래서 `dev_fake` e2e는 그 사실을 재지 못한다** — 재는 것은
+        `tests/test_poc_tool_feeds_the_input.py`이고, 이 비대칭 자체를 무는 것은 그 파일의
+        `test_the_fake_runner_makes_the_same_claim_as_the_container`다.
         """
         if not sources(workdir):
             return self.make_evidence(

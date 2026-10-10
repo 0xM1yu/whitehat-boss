@@ -85,7 +85,7 @@ profiles:
       retriever: hybrid
       tool_runner: docker
       state_store: memory
-    budget: dev_fake
+    budget: dev_container
 
   dev_docker:
     description: "GPU 없이 실제 도구를 Docker 컨테이너에서 실행. 전 역할 Fake 모델."
@@ -104,7 +104,7 @@ profiles:
       retriever: fake
       tool_runner: docker
       state_store: sqlite
-    budget: dev_fake
+    budget: dev_container
 
   dev_singularity:
     description: "Docker 데몬 접근이 없는 환경(Slurm 등). 도구는 Singularity로 실행."
@@ -123,7 +123,7 @@ profiles:
       retriever: fake
       tool_runner: singularity
       state_store: sqlite
-    budget: dev_fake
+    budget: dev_container
 
   # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
   harness_pool:
@@ -136,20 +136,25 @@ profiles:
     #   scout_memory/v3=옛 v14s), boundary = `seccoderx-8b`(v3, scout_boundary/v3=옛 v15s).
     #   injection은 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서,
     #   memory는 2026-09-25 실험팀 최종 권고로 `seccoderx-8b`에서 옮겼다(PROJECT-CONTEXT.md §1).
-    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v1이다 — v3로 올리는 것은
-    #   검증 run 뒤의 별도 단계다(`prompts/critic/v3/meta.yaml`).
+    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v6이다(#497, 2026-10-05).
+    #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
     # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
     #   registry가 근거 본문 배선과 함께 `v3`를 골랐다(auditor/v3는 2026-09-22 #237로 디스크에 있었고,
     #   올린 것은 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS` 배선과 같은 PR이다). 같은 날 #328 머지 뒤
     #   `v4`로 다시 올렸다(v4도 그 집합에 든다). ⏵ **2026-10-03 — v6로 올렸다**(프롬프트 #418 ·
     #   배선 #421 · 사용자 결정 — **v5는 건너뛰었다**). v6도 그 집합에 든다. ⏵ 2026-10-04 — v7로 올렸다
-    #   (v6 + Auditor SOURCE 옵션 넷의 서술, #349 — v7도 그 집합에 든다). critic gpt-oss와
+    #   (v6 + Auditor SOURCE 옵션 넷의 서술, #349 — v7도 그 집합에 든다). ⏵ 같은 날 — **v8로
+    #   올렸다**(도구 루프 · #419 — v8도 그 집합에 든다. `thresholds.auditor_tool_hops`가
+    #   양수여야 돈다). ⏵ 2026-10-06 — v9로 올렸다(v8 + `auditor_guards` 서술 — v9도 그 집합에 든다).
+    #   ⏵ 2026-10-07 — **v10으로 올렸다**(v7 전면 재작성 · 매 홉 봉투가 `AuditorProcedureAction`이고
+    #   최종 답이 `AuditProcedure` — v10도 그 집합에 든다. v10으로 돈 run은 0건이다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.
     # - **PoV = §1의 `feyospace-v1-small`**(8단계 · Qwen3.8-27B 사이버 post-train, Auditor와 같은 계열).
     #   pov 노드가 8단계에 들어온(진입 시 `VALIDATED`인) Finding에서 PoC를 만든다 — `validate.run`이 `QUEUED`로
-    #   내린 것도 포함한다(추가형 — 대상 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). 사고를 켠다 —
+    #   내린 것도 포함한다(추가형 — 그 목록은 `validate.run` 전에 잡히고 러너가 그 뒤에 부른다). `pov_attempt_top_n`이
+    #   양수면 그 밖의 Finding도 상위 몇 건 더한다(저장소 설정 8 — `config/budgets.yaml`). 사고를 켠다 —
     #   Auditor의 손잡이 넷(`reasoning_effort` `xhigh` · `sampling` · `thinking_token_budget` ·
     #   `request_timeout_s`)을 물려받아 선언하고 출력 상한은 `output_max_by_role.pov`(`config/budgets.yaml`)다
     #   (계획값 · feyospace 미실측 — `config/models.yaml`). `--reasoning-parser qwen3` 필요 ·
@@ -163,6 +168,9 @@ profiles:
     # 그 단계의 모델만 떠 있으면 된다 — 다섯 서버를 한 장비에 다 올리면 util 합이 2.60으로 1을 넘는다
     # (0.30 + 0.40 + 0.80 + 0.30 + 0.80(pov) — `config/serving/atom.yaml`의 util, 계획값). 2026-09-24 판은 1.44였다
     # (Scout 0.20·0.30 · 옛 Auditor `qwen3.6-35b-a3b` 0.64 · Critic 0.30 — 그날 ATOM에서 뜬 util).
+    # ⏵ 2026-10-08 — 위 두 합은 ATOM 값이다(ATOM 사용 종료 2026-09-29, #340 · docs/portability.md §6). 지금 vast 장비
+    #   파일 `config/serving/vastai-remote.yaml`로 세면 0.35 + 0.55 + 0.90 + 0.90 + 0.90(pov) = 3.60(계산값)이라
+    #   「1을 넘는다」는 그대로 선다.
     #
     # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
     #
@@ -172,14 +180,23 @@ profiles:
     # 없이 모델에 닿는 run은 run 디렉터리를 잡기 전에 거부된다. **실장비 종단은 미실측이다**(ATOM 먼저).
     # ⏵ 2026-09-29 — ATOM에서 한 번 돌았다(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md` — 교대 네 번
     #   전부 `ok=true`, 슬라이스 1개·n=1). vast는 미실측이다.
+    # ⏵ 2026-10-08 — 같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6) -> 「ATOM 먼저」는 지난 계획이다. vast 쪽은
+    #   `vastai-remote`로 교대 종단이 처음 성립했다(WSL `run_20261003_0002`가 먼저 완주했으나 도구 4개 전부 실패,
+    #   도구까지 돈 완주는 Windows `run_20261003_0003` — `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`
+    #   §1 — 둘 다 Scout·Auditor만 모델을 불렀고 7·8단계는 안 불렀다). 8단계까지 모델을 부른 첫 완주는
+    #   `run_20261007_0001`이다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` §1·§3 —
+    #   게이트가 Finding 5건을 전부 `E0`로 보내 7단계 Critic은 0회). `--device vastai`로 돈 run은 `docs/experiments/`에 없다.
     # hybrid 짝은 교대를 선언하지 않는다 — 검색 역할을 어느 단계에 띄울지가 ADR 0012 결정 3 뒤다.
     #
     # ⚠ `production: false`는 **안전장치가 아니다.** `served_models()`가 이 프로필에서 6역할
     #   (scout 셋+auditor+critic+pov)을 돌려주므로 러너는 이것을 **실서빙 프로필로 취급**하고
     #   `--device`·`--condition`을 요구한다(`runner.py`의 그 주석 — dev/실서빙을 가르는 것은
-    #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). `--slices`도 요구한다 — 이쪽은
-    #   실서빙 여부와 무관하게 Scout 세 자리의 v3 프롬프트가 슬라이스 입력(meta `input: slice`)이라서다
-    #   (`cli.run` — ADR 0012 결정 1). `production: false`가 실제로
+    #   `production`이 아니라 `served_models()`다, 2026-09-02 실측). ~~`--slices`도 요구한다~~ —
+    #   ⏵ **2026-10-07: 더 이상 안 요구한다.** Scout 셋이 v4(meta `input: source`)로 배선되며
+    #   `cli._slice_input_prompts`가 빈 목록을 돌려준다(PR #524). 그 전에는 v3가 슬라이스 입력이라
+    #   실서빙 여부와 무관하게 요구했다(ADR 0012 결정 1). ⚠ 지금은 `--slices`를 **주는** 쪽이
+    #   어긋난다 — 노드가 슬라이스 렌더를 싣는데 v4 산문은 함수 본문이라 적는다(이슈 #529).
+    #   `production: false`가 실제로
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 네 키
     #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
     #   돈 run은 비교표에서 제외된다(CLAUDE.md §0).
@@ -212,6 +229,12 @@ profiles:
         # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
         # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
         # 두 장비 파일의 모든 교대에 대해 이 식을 잠근다.
+        # ⏵ 2026-10-08 — 「두 장비 파일」은 낡았다: 지금 셋이다(`config/serving/` atom·vastai·vastai-remote —
+        #   `tests/test_serve_scripts.py`의 `DEVICES`). ATOM 종료 때문이 아니라 `vastai-remote` 추가(#417) 때문이다.
+        #   4,200 s의 근거는 ATOM Auditor 교대다(ATOM 사용 종료 2026-09-29, #340) — 이 값을 vast로 다시 계산하지 않았다.
+        #   vast에서 잰 교대 벽시계는 최대 145.1 s다(`model_swap` `wall_ms`, WSL `run_20261003_0002` 5단계 —
+        #   `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §3, n=2 run). PoV 좌석은
+        #   손으로 돌린 교대 명령에서 준비 319 s였다(`2026-10-06-pov-seat-probe-vastai.md` §0 — 가중치 캐시가 찬 상태).
         settle_timeout_s: 4200
 
   harness_pool_hybrid:
@@ -230,7 +253,9 @@ profiles:
     #
     # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout seccoderx·qwen3-14b(v3),
     #   Auditor `qwen3.8-27b`(⏵ 2026-09-29 — 근거 본문 배선과 함께 v3, 같은 날 v4로 올렸다 ·
-    #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술), Critic gpt-oss.
+    #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술 · 같은 날 v8 —
+    #   #419 도구 루프 · ⏵ 2026-10-06 v9 — `auditor_guards` 서술 · ⏵ 2026-10-07 v10 — v7 전면 재작성),
+    #   Critic gpt-oss.
     #   checksum·검증 전. **reranker는 2026-09-20에 §1 정본대로 `qwen3-reranker-4b`로
     #   올렸다** — 두 풀 프로필을 같은 diff에서 고친다(`tests/test_config.py`가 쌍의 roles 동일을
     #   기계로 고정하므로 한쪽만 고치면 red다).

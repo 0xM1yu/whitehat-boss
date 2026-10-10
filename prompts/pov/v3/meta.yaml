@@ -1,6 +1,9 @@
-# ⚠ **미배선(disk-only)** — `config/models.yaml`의 pov 키는 아직 `prompt_template_version: "v2"`다.
-# 배선은 별 PR이고 정본 변경이라 @sumin0218 리뷰 뒤다(critic/v4·auditor/v5와 같은 관례).
+# ⏵ 2026-10-08 — v4로 올려 지금은 어느 registry 엔트리도 이 버전을 고르지 않는다. 2026-10-05부터
+# 그날까지는 `config/models.yaml`의 feyospace-v1-small이 이 버전을 골랐다(#354/#386①). 이 판의
+# prefix·body는 그대로고 `nodes/pov._WIDE_INPUT_VERSIONS`에도 남는다. 불변 기록이라 고치지 않는다 —
+# 아래 설명이 말하는 도구 한계 문단의 「(그 배선이 아직 없다)」는 그날 하네스를 서술한 것이고, v4가
+# 고쳤다. 이 판은 `hop_header`를 안 켠다(followup에 홉 줄이 없다).
 role: pov
 version: v3
 output_schema: PovAction
-description: v2 + gdb + 진입점. 매 홉 PovAction(gen/inspect/submit)을 내고 gen은 PovSpec을 싣는다 — 도구는 대상을 빌드·실행할 뿐 PoC를 입력으로 받지 않는다(한계를 prefix에 적는다). v2와 다른 다섯 — ① inspect 도구가 asan/build/poc에서 asan/build/gdb/poc 넷으로(이슈 #360 · 사용자 결정 2026-10-02 · PR #327이 TOOL_KINDS에 gdb를 넣음, D92에 따라 gdb 사용 규칙은 안 둔다) ② FACTS.fuzz_entrypoint 절 신설(libFuzzer 진입점의 최소 길이 검사·첫 파서 호출·입력 쪼개기 규약을 읽게 한다 — 단 found=true도 resolver가 고른 후보 하나일 뿐이다) ③ FINDING의 경로 심볼을 쓰게 함 ④ 관측 꼬리(도구 출력)가 붙음 ⑤ 「막혔을 때」 절이 도구 한계에 맞춰 재현·관측 의존 지시 대신 SOURCE·FACTS로 돌아가라고 함. CyberGym Level 1 최적화(작게 시작·매직 먼저·같은 spec 반복 금지)는 v2 그대로
+description: v2 + gdb + 진입점 + 중간 gen의 vul 판정 관측. 매 홉 PovAction(gen/inspect/submit)을 내고 gen은 PovSpec을 싣는다 — 도구는 대상을 빌드·실행할 뿐 PoC를 입력으로 받지 않는다(한계를 prefix에 적는다). v2와 다른 여섯 — ① inspect 도구가 asan/build/poc에서 asan/build/gdb/poc 넷으로(이슈 #360 · 사용자 결정 2026-10-02 · PR #327이 TOOL_KINDS에 gdb를 넣음, D92에 따라 gdb 사용 규칙은 안 둔다) ② FACTS.fuzz_entrypoint 절 신설(libFuzzer 진입점의 최소 길이 검사·첫 파서 호출·입력 쪼개기 규약을 읽게 한다 — 단 found=true도 resolver가 고른 후보 하나일 뿐이다) ③ FINDING의 경로 심볼을 쓰게 함 ④ 관측 꼬리(도구 출력)가 붙음 ⑤ 「막혔을 때」 절이 도구 한계에 맞춰 재현·관측 의존 지시 대신 SOURCE·FACTS로 돌아가라고 함 ⑥ 중간 gen을 vul 다리에 내고 원시 종료 코드를 다음 홉에 싣되, 모델의 submit만 최종 지정 후보로 삼음. CyberGym Level 1 최적화(작게 시작·매직 먼저·같은 spec 반복 금지)는 v2 그대로

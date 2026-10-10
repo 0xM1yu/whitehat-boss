@@ -238,7 +238,15 @@ def test_a_window_other_than_the_context_limit_is_rejected() -> None:
 # --- 커밋된 장비 파일 ------------------------------------------------------------
 
 # `run --device <label>`로 고를 수 있는 장비. ATOM이 첫 검증 대상이다(2026-09-29 사용자).
-DEVICES = ("atom", "vastai")
+# ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340 · D81). `atom`은 기록용 장비 파일로 든다.
+DEVICES = ("atom", "vastai", "vastai-remote")
+# 장비마다 교대 명령. `vastai-remote`만 ssh 래퍼다 — 하네스는 로컬, 서빙만 vast
+# (ADR 0009 「2026-09-29 제안」 절 6의 2026-10-03 노트). 래퍼의 성질은 `tests/test_remote_swap.py`.
+COMMANDS = {
+    "atom": ("bash", "tools/serve/swap.sh"),
+    "vastai": ("bash", "tools/serve/swap.sh"),
+    "vastai-remote": ("bash", "tools/serve/swap-remote.sh"),
+}
 
 
 @pytest.mark.parametrize("device", DEVICES)
@@ -255,7 +263,7 @@ def test_the_committed_device_file_serves_every_model_the_canonical_pool_swaps(
 
     assert config.swap is not None
     check_serving(config, serving)
-    assert serving.command == ("bash", "tools/serve/swap.sh")
+    assert serving.command == COMMANDS[device]
 
 
 @pytest.mark.parametrize("device", DEVICES)

@@ -21,7 +21,11 @@ import pytest
 from pydantic import BaseModel, ValidationError
 
 from src.adapters import openai_compat
-from src.adapters.openai_compat import RETRY_ERROR_MAX_CHARS, OpenAICompatModelClient
+from src.adapters.openai_compat import (
+    RETRY_ERROR_MAX_CHARS,
+    OpenAICompatModelClient,
+    PostedResponse,
+)
 from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
     ChatTurn,
@@ -36,6 +40,17 @@ from src.schemas.enums import Role
 from src.schemas.finding import Finding
 
 PROMPT = Prompt(prefix="공통 지시", body="후보 본문", prompt_version="v1")
+
+
+def _posted(raw: str, usage: Usage) -> PostedResponse:
+    """`_post`가 서버에서 받은 것의 흉내. 이 파일은 합산 회계를 재므로 사유·보고 여부는 고정이다.
+
+    시도별 내역(`finish_reason`·`completion_tokens` 미보고)은
+    `test_model_call_instrumentation.py`가 잰다."""
+    return PostedResponse(
+        content=raw, usage=usage, finish_reason="stop", output_tokens_reported=True
+    )
+
 
 # 시도 n회차가 쓰는 (input, output, cached). 회차마다 값이 달라야 "마지막 것만 반환"과
 # "전부 합산"이 구별된다.
@@ -78,13 +93,13 @@ def _stub(monkeypatch: pytest.MonkeyPatch, succeed_on: int) -> list[int]:
     """`succeed_on` 회차에 처음 성공하는 서버. 호출 회차 목록을 돌려준다."""
     attempts: list[int] = []
 
-    def fake_post(self, payload: dict) -> tuple[str, Usage]:  # noqa: ANN001, ARG001
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
         attempts.append(len(attempts) + 1)
         n = attempts[-1]
         inp, out, cached = _PER_ATTEMPT[n - 1]
         raw = '{"ok": true}' if n == succeed_on else '{"nope": 1}'
         time.sleep(0.02)  # 각 시도가 wall-clock을 태운다 — gpu_ms 단언에 판별력을 준다
-        return raw, Usage(input_tokens=inp, output_tokens=out, cached_tokens=cached)
+        return _posted(raw, Usage(input_tokens=inp, output_tokens=out, cached_tokens=cached))
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
     return attempts
@@ -231,9 +246,9 @@ def _capture(monkeypatch: pytest.MonkeyPatch, raw: str) -> list[dict]:
     """항상 `raw`를 돌려주는 서버. 보낸 payload를 순서대로 모아 돌려준다."""
     payloads: list[dict] = []
 
-    def fake_post(self, payload: dict) -> tuple[str, Usage]:  # noqa: ANN001, ARG001
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
         payloads.append(payload)
-        return raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+        return _posted(raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0))
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
     return payloads
@@ -443,10 +458,10 @@ def _capture_until(monkeypatch: pytest.MonkeyPatch, succeed_on: int) -> list[dic
     """`succeed_on` 회차에 성공하는 서버. 보낸 payload를 순서대로 모아 돌려준다."""
     payloads: list[dict] = []
 
-    def fake_post(self, payload: dict) -> tuple[str, Usage]:  # noqa: ANN001, ARG001
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
         payloads.append(payload)
         raw = '{"ok": true}' if len(payloads) == succeed_on else '{"nope": 1}'
-        return raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+        return _posted(raw, Usage(input_tokens=1, output_tokens=1, cached_tokens=0))
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
     return payloads
@@ -491,6 +506,9 @@ def test_the_retry_still_carries_why_the_parse_failed(
     "EOF while parsing an object"가 스키마 위반과 출력 절단을 가르는 유일한 단서다(D46).
     없으면 재시도하는 모델이 무엇을 고쳐야 하는지 모르고, trace의 `error_detail`도 두
     원인을 못 가른다.
+
+    ⏵ 2026-10-08 — trace에서는 이제 `attempt_finish_reasons`(#550)도 절단을 가른다. 재시도하는
+    모델은 그것을 못 보므로(재시도 본문에 안 실린다) 모델에게는 이 문장이 여전히 유일하다.
     """
     payloads = _capture(monkeypatch, _RUNAWAY)
 
@@ -910,7 +928,8 @@ def test_gateway_failure_carries_the_spend_and_its_own_wall_clock(
         calls.append(1)
         time.sleep(0.02)
         if len(calls) == 1:  # 1차는 파싱 실패 → 재시도
-            return '{"nope": 1}', Usage(input_tokens=100, output_tokens=10, cached_tokens=40)
+            usage = Usage(input_tokens=100, output_tokens=10, cached_tokens=40)
+            return _posted('{"nope": 1}', usage)
         raise ModelGatewayError("400", status=400, detail="maximum context length")
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)

@@ -16,10 +16,14 @@
 질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다. 그러므로 이 파일이 초록인 것을
 「질의가 맞다」로 읽지 않는다 — CLAUDE.md §5 의
 *"테스트가 통과했으니 맞겠지 → 테스트는 주석 문장이 옳은지 검증하지 않는다"* 가 이 자리다.
+⏵ 2026-10-08 — ATOM 은 2026-09-29 사용 종료(#340). 그 뒤 실 Joern 슬라이싱은 vast 인스턴스에서
+돌았다(`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §2).
+CI 가 아니라는 점은 그대로다.
 """
 
 import base64
 import copy
+import difflib
 import json
 import re
 import threading
@@ -486,6 +490,100 @@ def test_case_a_drops_empty_named_methods_from_both_lists():
     assert "ujson.Arr.from((api ++ readers).distinct.map(m => ujson.Obj(" in code
 
 
+CASE_A_BODY_FILTER = ".filter(_.astChildren.isBlock.astChildren.nonEmpty)"
+
+
+def test_case_a_takes_only_methods_with_a_body():
+    """A prototype (header declaration, forward declaration) and an empty definition `{}` are
+    internal METHODs whose body block holds no statement; none can yield a slice, and in the
+    capped repos they spent cap slots. The 10-repo C2 measurement (`slicer_c2/C2-report.md` 6b)
+    found 18% of Case A candidates body-less (3,906 of 21,478) and counted the body block's
+    children with `m.astChildren.isBlock.astChildren.size`; this is that predicate as a filter.
+
+    ⚠ Spelling pin (CLAUDE.md §2.5): it fails when the filter is dropped or moved off the lines
+    pinned here, it does not prove the Scala keeps only methods with a body -- the Scala is not
+    executed here. The live counts are in the PR, not in CI."""
+    code = _scala_code(queries.candidates_a_query())
+    lines = [line.strip() for line in code.splitlines()]
+    # api: straight after the name guard, so the cheap AST test runs before the per-method
+    # `cpg.call.nameExact` scan it saves (a body-less method costs no call search)
+    api = lines.index(
+        'val api = cpg.method.internal.filterNot(m => m.name.isEmpty || m.name.startsWith("<"))'
+    )
+    assert lines[api + 1] == CASE_A_BODY_FILTER
+    # readers: a method that calls a reader has a body, so this is a no-op by construction -- the
+    # line is there so "Case A never takes a body-less method" holds on both lists, not only api
+    readers = lines.index("val readers = cpg.method.internal.filter(_.name.nonEmpty)")
+    assert lines[readers + 2] == CASE_A_BODY_FILTER
+    assert code.count(CASE_A_BODY_FILTER) == 2
+
+
+def test_case_a_query_without_a_priority_list_is_the_default_text():
+    """`--priority-case-a` off must leave discovery untouched, byte for byte: every way of saying
+    "no list" yields the very text `candidates_a_query()` always produced, and none of the
+    priority spellings appear in it."""
+    default = queries.candidates_a_query()
+    for absent in (None, [], (), set()):
+        assert queries.candidates_a_query(absent) == default
+        assert queries.candidates_a_query(absent, "/work/repo") == default
+    assert "isPrio" not in default and "prioFiles" not in default
+    assert ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)" in default
+
+
+def test_priority_case_a_changes_exactly_two_lines_and_adds_the_list():
+    """A line diff against the default text: of the default, only the call-limit line and the
+    sort key may change; everything else of the default stays where it was."""
+    default = queries.candidates_a_query()
+    on = queries.candidates_a_query(["b.c", "a.c"], "/work/repo")
+    changed = [x for x in difflib.ndiff(default.splitlines(), on.splitlines()) if x[0] in "+-"]
+    limit = queries.CASE_A_CALL_LIMIT
+    assert [x[2:].strip() for x in changed if x[0] == "-"] == [
+        f"cpg.call.nameExact(m.name).take({limit} + 1).size <= {limit})",
+        ".sortBy(m => if (hotIds.contains(m.id)) 0 else 1)",
+    ]
+    assert len([x for x in changed if x[0] == "+"]) > 2  # the list and `isPrio` come with them
+
+
+def test_priority_case_a_ranks_the_listed_files_first_and_exempts_them_from_the_call_limit():
+    """F1+F2 of the C2 report: a method defined in a listed file sorts ahead of the "hot" layer
+    before `CASE_A_CANDIDATE_CAP`, and skips `CASE_A_CALL_LIMIT`. It still needs a parameter (and,
+    from F0, a body). ⚠ Spelling pins (CLAUDE.md §2.5) -- the Scala is not executed here."""
+    cap, limit = queries.CASE_A_CANDIDATE_CAP, queries.CASE_A_CALL_LIMIT
+    code = _scala_code(queries.candidates_a_query(["b.c", "a.c"], "/work/repo"))
+    lines = [line.strip() for line in code.splitlines()]
+    # the list: sorted (so the text does not depend on set order), rebuilt at run time, and an
+    # exact set -- `prioritize()` matches the normalized file string exactly, not a suffix
+    assert 'val prioFiles = List("a.c\\nb.c").mkString.split("\\n").toSet' in lines
+    # c2cpg may name a file absolute or `./`-led: strip the repo prefix the way context_query does.
+    # The two lines are pinned as ONE definition -- `prioFiles.contains(<the normalized name>)` and
+    # nothing else -- so a looser test (suffix, basename) next to the exact one is not a survivor
+    # (a mutant that added `|| prioFiles.exists(p => m.filename.endsWith(p))` passed the first pin).
+    define = lines.index("def isPrio(m: nodes.Method): Boolean = prioFiles.contains(")
+    assert lines[define + 1] == (
+        "m.filename.replace('\\\\', '/').stripPrefix(\"/work/repo/\").stripPrefix(\"./\"))"
+    )
+    assert lines[define + 2].startswith("val api = ")  # nothing continues the definition
+    # admission: the priority test comes first so a listed method never pays the call search
+    first = lines.index(".filter(m =>")
+    assert lines[first + 1] == (
+        f"isPrio(m) || cpg.call.nameExact(m.name).take({limit} + 1).size <= {limit})"
+    )
+    assert lines[first - 1] == CASE_A_BODY_FILTER  # F0 stays in front of it
+    # rank: listed, then hot, then the rest -- before the cap, which still bounds both lists
+    api = code[code.index("val api =") : code.index(f".take({cap})", code.index("val api ="))]
+    assert ".filter(_.parameter.size > 0).l" in api
+    assert ".sortBy(m => if (isPrio(m)) 0 else if (hotIds.contains(m.id)) 1 else 2)" in api
+    assert code.count(f".take({cap})") == 2
+    # readers do not change: the list steers the api layer only
+    readers = code[code.index("val readers =") :]
+    assert "isPrio" not in readers.split("ujson.Arr.from(")[0]
+
+
+def test_priority_case_a_needs_the_repo_to_normalize_file_names():
+    with pytest.raises(ValueError, match="repo"):
+        queries.candidates_a_query(["a.c"])
+
+
 def test_case_b_query_carries_the_payload_through_a_file_not_the_repl():
     """case_b has the same overrun risk as case_a and must use the same file transport.
 
@@ -639,20 +737,26 @@ def test_flow_cap_records_observed_truncation(monkeypatch, repo, tmp_path, trunc
     assert ".take(4)" in library and "observed.take(3)" in library
 
 
-def test_deterministic_slices_under_reordered_candidates(monkeypatch, repo, tmp_path):
+@pytest.mark.parametrize(("order", "cases", "absorbed"), [
+    ("ab", ["A", "B"], ["slice_0002"]),  # the order before `ba` became the default
+    ("ba", ["B", "A"], ["slice_0003"]),  # the default: B is numbered first, A's pair follows it
+])
+def test_deterministic_slices_under_reordered_candidates(
+    monkeypatch, repo, tmp_path, order, cases, absorbed
+):
     data = payloads(
         case_a=[candidate("z"), candidate("a")], case_b=[candidate("sprintf", 5)], flow_count=2
     )
-    _, first, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    _, first, _ = run_cli(monkeypatch, repo, tmp_path, data, "--case-order", order)
     data["case_a"] = response("case_a", [candidate("a"), candidate("z")])
-    _, second, _ = run_cli(monkeypatch, repo, tmp_path, data)
+    _, second, _ = run_cli(monkeypatch, repo, tmp_path, data, "--case-order", order)
     assert (
         json.dumps(first["slices"], ensure_ascii=False).encode()
         == json.dumps(second["slices"], ensure_ascii=False).encode()
     )
+    assert [item["case"] for item in first["slices"]] == cases
     assert first["slices"][0]["id"] == "slice_0001"
-    assert first["slices"][0]["absorbed"] == ["slice_0002"]
-    assert first["slices"][1]["case"] == "B"
+    assert first["slices"][cases.index("A")]["absorbed"] == absorbed
 
 
 def test_original_line_numbers_and_multifile_assembly(repo):
@@ -1050,6 +1154,32 @@ def test_broken_compile_commands_falls_back_to_importing_all_sources(
     assert result["counters"]["files_missing_from_cpg"] == 0
 
 
+def test_import_include_root_passes_the_repo_to_the_import(monkeypatch, repo, tmp_path):
+    _, plain, transport = run_cli(monkeypatch, repo, tmp_path, payloads())
+    query = _import_query(transport)
+    assert "--include" not in query and "args=List" not in query
+    assert plain["settings"]["import_include_root"] is False
+    _, rooted, transport = run_cli(
+        monkeypatch, repo, tmp_path, payloads(), "--import-include-root"
+    )
+    # the repo as this run resolved it, absolute -- c2cpg turns each include path into
+    # `Paths.get(_).toAbsolutePath`, so a relative one would resolve against ITS working directory
+    absolute = json.dumps(repo.resolve().as_posix())
+    assert f'args=List("--include", {absolute}))' in _import_query(transport)
+    assert rooted["settings"]["import_include_root"] is True
+
+
+def test_import_include_root_is_refused_with_compile_commands(repo, tmp_path, capsys):
+    """The database already carries the include paths and the pair was not measured."""
+    cc = _write_compile_commands(tmp_path / "compile_commands.json", [])
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"),
+                     "--import-include-root", "--compile-commands", str(cc)])
+    assert "--import-include-root cannot be combined with --compile-commands" in (
+        capsys.readouterr().err
+    )
+
+
 def test_query_deadline_does_not_wait_for_blocked_transport(monkeypatch, repo, tmp_path):
     released = threading.Event()
 
@@ -1201,6 +1331,7 @@ def test_same_named_methods_in_different_files_keep_separate_selectors():
 # 파일 docstring 대로 mock 은 HTTP 경계에 있고 Scala 는 여기서 실행되지 않는다 —
 # **질의 정합의 유일한 검증은 별도 ATOM run 이고 CI 가 아니다.** 이 파일은 그 경계를
 # 뒤집지 않는다.
+# ⏵ 2026-10-08 — ATOM 은 사용 종료다(파일 docstring 의 같은 ⏵). 실 run 은 이제 vast 다.
 #
 # ⚠ **「전부 문자 pin 이라 뜻이 같은 재작성에도 걸린다」로 뭉치지 않는다.** 그것은 **양성**
 # 단언에만 맞다 — 음성 단언(`".l.flatten" not in …`)은 없어야 할 문자열을 막는 것이라

@@ -402,6 +402,8 @@ def test_ne_nothing_resolved_when_the_hook_is_none(
     candidate_id = _candidate_id_for_seat(trace_path)
     hops = _scout_hops(trace_path, candidate_id)
     assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    # 훅이 없으면 조회가 안 돌았다 — `index_available`을 값으로 적지 않는다(#315 · `trace.py`).
+    assert "index_available" not in hops[0]
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
 
@@ -433,6 +435,41 @@ def test_ne_resolver_that_finds_nothing_stops_the_loop(
     assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
     assert hops[0]["resolved"] == 0
     assert hops[0]["fixable_count"] == 0
+    assert hops[0]["index_available"] is True
+
+
+def _no_index(query: ResolveQuery) -> Resolution:
+    return Resolution(
+        followup_text="",
+        blocks=(),
+        unfilled=(),
+        already=(),
+        truncated=(),
+        index_available=False,
+    )
+
+
+@_MODES
+def test_ne_stop_without_an_index_says_so_in_the_hop_event(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """색인이 없어 조회를 **안 한** 홉도 `nothing_resolved`로 서지만, 홉 이벤트가
+    `index_available=False`로 「못 찾음」과 가른다(#315). 2026-09-27 ATOM 스모크 sample_07이 이
+    꼴이었다 — 인덱서가 시간 초과로 `index.json`을 못 만들었는데 기록은 `unfilled=""`뿐이었다."""
+    _script_ne_client(
+        monkeypatch,
+        {
+            _SEAT: [_ne_response(ScoutSignal.NEED_EVIDENCE, requested=_request())],
+            **_other_seats_script(),
+        },
+    )
+    _wire_resolver(monkeypatch, _no_index)
+
+    _, trace_path = _run_ne(tmp_path, mode=mode)
+
+    hops = _scout_hops(trace_path, _candidate_id_for_seat(trace_path))
+    assert hops[0]["stop_reason"] == NeStopReason.NOTHING_RESOLVED.value
+    assert hops[0]["index_available"] is False
 
 
 @_MODES
@@ -511,21 +548,26 @@ def test_ne_context_overflow_without_a_call_when_max_chars_is_non_positive(
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
 
 
-@_MODES
-def test_ne_max_hop_exhausts_the_budget_and_queues(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
-) -> None:
-    """`max_hops`(config 3) 홉을 다 쓰고도 NE면 `max_hop`으로 선다 — 호출은 `1 + max_hops`회."""
-    max_hops = load_config("dev_fake").thresholds.max_hops
-    script = [
+def _endless_ne_script(hops: int) -> list[object]:
+    """`hops`번 되묻는 NE 스크립트 — 매번 다른 요청이라 `repeat_request`로는 안 선다."""
+    return [
         _ne_response(
             ScoutSignal.NEED_EVIDENCE,
             requested=(
                 RequestedContext(kind="function", target=f"doit{i}", purpose="p", request_code="c"),
             ),
         )
-        for i in range(max_hops + 1)
+        for i in range(hops)
     ]
+
+
+@_MODES
+def test_ne_max_hop_exhausts_the_budget_and_queues(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None
+) -> None:
+    """`max_hops`(config 3) 홉을 다 쓰고도 NE면 `max_hop`으로 선다 — 호출은 `1 + max_hops`회."""
+    max_hops = load_config("dev_fake").thresholds.max_hops
+    script = _endless_ne_script(max_hops + 1)
     calls = _script_ne_client(monkeypatch, {_SEAT: script, **_other_seats_script()})
     _wire_resolver(monkeypatch, _always_resolves())
 
@@ -539,6 +581,38 @@ def test_ne_max_hop_exhausts_the_budget_and_queues(
     assert [h["hop"] for h in hops] == list(range(max_hops + 1))
     assert hops[-1]["stop_reason"] == NeStopReason.MAX_HOP.value
     assert _scout_transitions(trace_path, candidate_id) == ["C-1", "C-3"]
+
+
+@_MODES
+@pytest.mark.parametrize("pov_hops", [0, 9])
+def test_pov_tool_hops_does_not_move_the_ne_hop_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mode: str | None, pov_hops: int
+) -> None:
+    """음성 통제 — PoV 상한(`pov_tool_hops`)을 0으로 내리든 9로 올리든 Scout NE 홉 수는 그대로다.
+
+    위 `test_ne_max_hop_exhausts_the_budget_and_queues`와 같은 시나리오다(#511):
+    호출은 `1 + max_hops`회."""
+    max_hops = load_config("dev_fake").thresholds.max_hops
+    calls = _script_ne_client(
+        monkeypatch, {_SEAT: _endless_ne_script(max_hops + 1), **_other_seats_script()}
+    )
+    _wire_resolver(monkeypatch, _always_resolves())
+
+    def configure(config):  # noqa: ANN001, ANN202
+        base = _v3_pool(mode)(config)
+        return base.transition(thresholds=base.thresholds.transition(pov_tool_hops=pov_hops))
+
+    _, trace_path = _run(
+        tmp_path,
+        configure=configure,
+        target=_single_target(tmp_path),
+        stop_after=int(Stage.SCOUT),
+    )
+
+    assert len(_seat_calls(calls)) == max_hops + 1
+    hops = _scout_hops(trace_path, _candidate_id_for_seat(trace_path))
+    assert [h["hop"] for h in hops] == list(range(max_hops + 1))
+    assert hops[-1]["stop_reason"] == NeStopReason.MAX_HOP.value
 
 
 @_MODES

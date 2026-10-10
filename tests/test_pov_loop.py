@@ -13,9 +13,11 @@ council(적대적 3인) + 사용자 확정 = Option C(2026-09-30): 모델은 매
 한다(조용히 무시하면 오타·혼동이 통과한다).
 """
 
+import base64
 import dataclasses
 import hashlib
 import json
+import re
 from functools import partial
 from pathlib import Path
 from typing import get_args
@@ -26,12 +28,15 @@ from pydantic import ValidationError
 from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
+from src.config import load_config
+from src.interfaces import tool_runner
 from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
 from src.orchestrator import poc_log, runner
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
@@ -298,12 +303,12 @@ def test_pov_loop_threads_history_across_hops(ctx: RunContext) -> None:  # noqa:
 
 
 def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
-    """모델이 매 홉 다른 gen만 내면(submit 없음) `max_hops`에서 선다 — 무한 gen을 막는다.
+    """모델이 매 홉 다른 gen만 내면(submit 없음) `pov_tool_hops`에서 선다 — 무한 gen을 막는다.
 
-    홉 수는 정확히 `max_hops + 1`(hop0..max_hops)이고, submit이 아니므로 종단은 POV_SKIPPED
-    (부분 PoC를 실어)다 — GENERATED가 아니다."""
-    max_hops = ctx.config.thresholds.max_hops
-    scripted = _scripted(ctx, [_gen(count=n) for n in range(1, max_hops + 5)])
+    홉 수는 정확히 `pov_tool_hops + 1`(hop0..pov_tool_hops)이고, submit이 아니므로 종단은
+    POV_SKIPPED(부분 PoC를 실어)다 — GENERATED가 아니다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted = _scripted(ctx, [_gen(count=n) for n in range(1, pov_hops + 5)])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
 
@@ -312,7 +317,7 @@ def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
     assert reason is PovStopReason.MAX_HOP
     assert isinstance(poc, bytes) and len(poc) > 0  # 마지막 gen의 PoC는 남는다
     hops = _hops(scripted)
-    assert [h.data["hop"] for h in hops] == list(range(max_hops + 1))
+    assert [h.data["hop"] for h in hops] == list(range(pov_hops + 1))
     assert hops[-1].data["stop_reason"] == PovStopReason.MAX_HOP.value
     skipped = [e for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
     assert skipped and skipped[-1].data["reason"] == PovStopReason.MAX_HOP.value
@@ -321,7 +326,7 @@ def test_pov_loop_stops_at_max_hop(ctx: RunContext) -> None:  # noqa: F811
 
 
 def test_pov_loop_stops_on_a_repeated_poc(ctx: RunContext) -> None:  # noqa: F811
-    """직전 gen과 같은 PoC 바이트를 또 내면 REPEAT_SPEC으로 선다."""
+    """A→A — 방금 낸 gen과 같은 PoC 바이트를 또 내면 REPEAT_SPEC으로 선다."""
     scripted = _scripted(ctx, [_gen(count=8), _gen(count=8)])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
@@ -535,8 +540,9 @@ def test_pov_loop_repeat_needs_the_same_bytes_not_just_the_same_length(
 ) -> None:
     """같은 **길이**·다른 바이트인 두 gen은 REPEAT가 아니다 — 판정은 바이트 내용이지 길이가 아니다.
 
-    반복 판정을 `len(poc)==len(last_poc)`로 바꾸는 변이가 여기서 죽는다: 실 모델이 같은 길이로 값만
-    바꿔 가며 시도하는 흔한 경우를 길이 비교면 REPEAT로 오판한다. 한계: 8바이트 두 gen만 본다."""
+    반복 판정을 digest 대신 길이(`len(poc)`를 집합에 넣는다)로 바꾸는 변이가 여기서 죽는다: 실
+    모델이 같은 길이로 값만 바꿔 가며 시도하는 흔한 경우를 길이 비교면 REPEAT로 오판한다. 한계:
+    8바이트 두 gen만 본다."""
     scripted = _scripted(
         ctx,
         [_gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8),
@@ -550,31 +556,57 @@ def test_pov_loop_repeat_needs_the_same_bytes_not_just_the_same_length(
     assert reason is PovStopReason.SUBMITTED  # 길이만 같아선 REPEAT가 아니다
 
 
-def test_pov_loop_repeat_compares_only_the_immediately_previous_gen(
+def test_pov_loop_stops_on_a_poc_it_saw_before_even_when_the_previous_gen_differed(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """A→B→A(진동)는 REPEAT가 아니다 — 판정은 **직전** gen과만 비교한다(「직전 gen」 계약).
+    """A→B→A→B(진동)는 hop2에서 REPEAT_SPEC이다 — 판정은 직전 gen이 아니라 **본 적 있는 모든** PoC와
+    견준다.
 
-    직전이 아니라 이전 모든 gen과 비교하는 변이가 여기서 죽는다: 세 번째 A가 첫 A와 같아도 직전(B)과
-    다르므로 반복이 아니다. 한계: A-B-A 한 패턴만 본다."""
+    직전(B)만 보면 세 번째 A가 안 걸려 진동이 **홉 상한까지** 간다 — 상한이 클수록 그만큼 더 돈다.
+    집합 조회를 직전 비교로 되돌리는 변이가 여기서 죽는다(MAX_HOP으로 끝난다). 한계: A-B 두 PoC의
+    진동만 본다."""
     a = _gen_byte(byte=0x41, count=8)
     b = _gen_byte(byte=0x42, count=8)
-    scripted = _scripted(ctx, [a, b, a, PovAction(action="submit", rationale="done")])
+    scripted = _scripted(ctx, [a, b, a, b, a, b])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
 
     _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
 
-    assert reason is PovStopReason.SUBMITTED  # 직전과만 비교 — A-B-A는 반복 아님
+    assert reason is PovStopReason.REPEAT_SPEC
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]  # 세 번째 gen(A)에서 선다
+    assert hops[-1].data["stop_reason"] == PovStopReason.REPEAT_SPEC.value
+
+
+def test_pov_loop_keeps_going_while_every_gen_is_a_new_poc(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """A→B→C는 안 선다 — 서로 다른 PoC면 집합 조회가 아무것도 안 잡고 submit까지 간다.
+
+    셋이 **같은 길이**(8)라 digest 대신 길이를 집합에 넣는 변이는 hop1에서 오판해 여기서 죽는다.
+    한계: 세 gen만 본다."""
+    scripted = _scripted(
+        ctx,
+        [_gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8),
+         _gen_byte(byte=0x43, count=8), PovAction(action="submit", rationale="done")],
+    )
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+
+    _, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+
+    assert reason is PovStopReason.SUBMITTED  # 새 PoC뿐이면 반복이 아니다
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2, 3]
 
 
 def test_pov_loop_repeat_survives_an_inspect_between_two_identical_gens(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """gen(A) → inspect → gen(A)는 REPEAT다 — inspect 홉이 직전 gen의 `last_poc`를 안 지운다.
+    """gen(A) → inspect → gen(A)는 REPEAT다 — inspect 홉이 본 적 있는 PoC의 집합을 안 비운다.
 
-    inspect 분기가 `last_poc`를 지우는 변이가 여기서 죽는다: 지우면 두 번째 A가 반복으로 안 잡혀
-    루프가 이어진다. inspect는 새 PoC를 안 만들므로 「직전 gen」은 그대로 첫 A다."""
+    inspect 분기가 그 집합을 비우는 변이가 여기서 죽는다: 비우면 두 번째 A가 반복으로 안 잡혀
+    루프가 이어진다. inspect는 새 PoC를 안 만드므로 첫 A는 그대로 집합에 있다."""
     a = _gen_byte(byte=0x41, count=8)
     scripted = _scripted(
         ctx,
@@ -661,8 +693,15 @@ def _resolution(*, name: str = "LLVMFuzzerTestOneInput", file: str = "") -> obje
     from src.schemas.need_evidence import Resolution, RetrievedBlock
 
     if not name:
-        # 통째로 빈 `Resolution` = 인덱스가 없거나 v1이다(`unfilled`조차 빈 것이 그 서명).
-        return Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=())
+        # 인덱스가 없거나 v1 — resolver가 실제로 내는 모양(`index_available=False`, #315).
+        return Resolution(
+            followup_text="",
+            blocks=(),
+            unfilled=(),
+            already=(),
+            truncated=(),
+            index_available=False,
+        )
     return Resolution(
         followup_text="",
         blocks=(RetrievedBlock(name=name, label="function", file=file, lines=(1, 2)),),
@@ -682,7 +721,8 @@ def test_pov_facts_carry_the_fuzz_entrypoint(ctx: RunContext) -> None:  # noqa: 
 
     조회는 **이미 있는 resolver**(`ctx.resolve_requests`)로 **위치만** 받고, 원문은
     `ctx.read_source`가 읽는다 — 새 훅·새 어댑터 배선 없이 이름으로 함수를 찾는 수단이 resolver
-    뿐이다(`definitions_of`는 macros·types·file_vars만 본다 — `index_graph.DEFINITION_TABLES`)."""
+    뿐이다(`definitions_of`는 macros·types·file_vars·enum_constants만 본다 —
+    `index_graph.DEFINITION_TABLES`)."""
     scripted = _scripted(
         _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
     )
@@ -1196,6 +1236,94 @@ def test_pov_observation_stays_one_line_under_v2() -> None:
     assert "SUMMARY" not in text, "v2 관측에 도구 로그 꼬리가 실렸다"
 
 
+_POC = bytes.fromhex("000d0a0d0aff") + b"AB"  # NUL·CRLF·비-UTF-8 — 글자로 못 싣는 바이트
+
+
+def _observe(**kwargs: object) -> str:
+    return runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: None, **kwargs
+    )
+
+
+def test_pov_observation_carries_the_size_and_digest_of_the_input() -> None:
+    """🔴 #386 ①의 목적 — 관측이 **자기 PoC의 함수**다. 도구 요청에 실은 PoC의 크기와 sha256이
+    첫 줄(스칼라 줄)에 실린다. 도구 결과(`ok`·`exit`·`kind`)는 PoC와 무관해도 이 두 값은 PoC에서
+    나온다. digest를 빼는 변이가 여기서 죽는다."""
+    kind = _asan_evidence().kind.value
+
+    text = _observe(poc=_POC)
+
+    assert text == (
+        f"tool=asan action=gen ok=True exit=1 kind={kind} "
+        f"last_gen_bytes={len(_POC)} last_gen_sha256={_digest(_POC)}"
+    )
+
+
+def test_pov_observation_names_do_not_claim_the_tool_took_the_bytes() -> None:
+    """🔴 독립 검토 HIGH-1 — 필드 이름이 `input_*`이면 「도구의 입력」으로 읽히는데 같은 요청의
+    v3·v4 prefix는 **그 바이트는 도구의 입력이 아니다**라고 적는다. 모델이 이름을 따르면
+    「내 입력으로 asan이 터졌다」고 쓰고, 그 문장은 이 저장소가 막으려던 것이다(D99 「선행 둘」 ②).
+    그래서 이름은 `last_gen_*`다. ⚠ 철자 핀이다: 소비를 암시하는 다른 이름(`fed_*`)은 못 막는다 —
+    prefix가 한계를 걷는 판(이슈 #515)에서 이 검사와 이름을 같이 본다."""
+    head = _observe(poc=_POC)
+
+    assert "input" not in head
+    assert " last_gen_bytes=" in head and " last_gen_sha256=" in head
+
+
+def test_pov_observation_digest_follows_the_bytes_not_the_length() -> None:
+    same_length = bytes(len(_POC))
+
+    assert _observe(poc=_POC) != _observe(poc=same_length)
+    assert f"last_gen_bytes={len(_POC)}" in _observe(poc=same_length)
+
+
+def test_pov_observation_without_an_input_is_the_old_head() -> None:
+    """입력이 없으면(hop0 inspect) **전 판과 바이트가 같다** — 지어낸 `last_gen_*`가 없다."""
+    kind = _asan_evidence().kind.value
+    old = f"tool=asan action=gen ok=True exit=1 kind={kind}"
+
+    assert _observe() == old
+    assert _observe(poc=None) == old
+
+
+def test_pov_observation_reports_an_empty_poc_as_an_input() -> None:
+    """`b""`는 입력이다 — 참·거짓으로 판정하면 0바이트 PoC가 「입력 없음」으로 둔갑한다."""
+    assert f" last_gen_bytes=0 last_gen_sha256={_digest(b'')}" in _observe(poc=b"")
+
+
+def test_pov_observation_under_v2_is_byte_identical_whatever_the_input_is() -> None:
+    """🔴 v2는 이 PR 전과 **바이트가 같다** — v2 prefix가 서술하는 「관측 한 줄」 계약이고 이
+    입력 필드는 이 PR의 새 입력이다(`wide=False`가 그 경계, MEDIUM-4와 같은 결정)."""
+    old = _observe(wide=False)
+
+    assert _observe(wide=False, poc=_POC) == old
+    assert "last_gen_" not in old
+
+
+def test_pov_observation_puts_the_input_fields_before_the_error_text() -> None:
+    """`error=`는 자유 문구라 **맨 끝**이다 — 뒤에 키를 더하면 그 문구에 먹힌다."""
+    failed = _asan_evidence().transition(ok=False, exit_code=2, error="boom: free text")
+
+    text = runner._pov_observation(
+        "gen", failed, read_payload=lambda _ref: None, poc=_POC
+    )
+
+    assert text.endswith(f" last_gen_sha256={_digest(_POC)} error=boom: free text")
+
+
+def test_pov_observation_keeps_the_input_on_the_first_line_above_the_tail() -> None:
+    log = "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018" + chr(10)
+
+    text = runner._pov_observation(
+        "gen", _asan_evidence(), read_payload=lambda _ref: log, poc=_POC
+    )
+
+    first, _, rest = text.partition(chr(10))
+    assert f"last_gen_sha256={_digest(_POC)}" in first
+    assert "SUMMARY: AddressSanitizer" in rest
+
+
 def test_pov_once_wrapper_calls_the_inner_callable_only_once() -> None:
     """`runner._Once`는 감싼 콜러블을 한 번만 부르고 같은 문자열을 돌려준다.
 
@@ -1327,23 +1455,44 @@ def test_pov_loop_can_inspect_with_gdb(ctx: RunContext) -> None:  # noqa: F811
     assert hop0.data["evidence_kind"] == TOOL_KINDS["gdb"].value
 
 
-def _v3_prefix() -> str:
-    return (PROMPTS_DIR / "pov" / "v3" / "prefix.md").read_text(encoding="utf-8")
+def _served_pov_version() -> str:
+    """서빙 프로필 둘의 PoV 좌석이 **실제로 고르는** 프롬프트 판 — 살아 있는 config에서 읽는다.
+
+    판 이름을 테스트에 박으면 판이 올라갈 때 그 핀이 **낡은 판을 계속 문다**(서빙 판은 핀 없이
+    돈다) — `prompt_loader` docstring의 「버전 이름으로 분기하지 않는 이유」가 코드에서 경고한
+    함정과 같다. 그래서 서빙 판을 따라 움직이게 읽는다. 두 프로필이 갈리면 어느 쪽을 핀할지
+    모호하므로 실패한다."""
+    versions = {
+        load_config(profile).model_for(Role.POV.value).prompt_template_version
+        for profile in ("harness_pool", "harness_pool_hybrid")
+    }
+    assert len(versions) == 1, f"서빙 프로필의 PoV 좌석 판이 갈린다: {sorted(versions)}"
+    return versions.pop()
+
+
+# prefix 핀은 v3(불변 기록)와 **서빙 판** 둘에 건다. 서빙 판은 이름이 아니라 config에서 읽는다 —
+# 판이 올라가면(v5…) 이 핀이 자동으로 새 판을 물고, 낡은 판(v4)만 달고 있는 일이 없다.
+# ⏵ 2026-10-09 (ADR 0014) — **판 목록이 둘로 갈렸다.** v3·v4는 「도구 넷 모두 PoC를 안 받는다」를
+# 적고 그것은 **불변 기록**이다. 서빙 판(v5~)은 `poc`가 받는다고 적으므로 같은 핀으로
+# 물면 빨개진다 —
+# 그 판의 한계 문단은 `tests/test_pov_prompt_v4.py`의
+# `test_the_limit_paragraph_is_exact_and_promises_no_more`가 **갈라서** 문다(그쪽이
+# 배선된 판을 읽는다).
+# 🔴 서빙 판을 이 목록에서 뺀 것이 **구멍이 되지 않는 이유**는 그 핀이 서빙 판을 읽기 때문이다.
+_POV_PREFIX_VERSIONS = ("v3", "v4")
+_POV_SERVED_VERSION = _served_pov_version()
+
+
+def _pov_prefix(version: str) -> str:
+    return (PROMPTS_DIR / "pov" / version / "prefix.md").read_text(encoding="utf-8")
 
 
 def _paragraphs(text: str) -> list[str]:
     return [p for p in text.split("\n\n") if p.strip()]
 
 
-def test_no_pov_tool_receives_the_poc_bytes_today(ctx: RunContext) -> None:  # noqa: F811
-    """🔴 **서술을 사실에 묶는 경보기다.** v3 prefix·`docs/agent-contracts.md`·`PovAction`
-    docstring이 「지금 도구는 PoC 바이트를 입력으로 받지 않는다」고 쓴다 — 그 사실을 **코드로**
-    잰다: 러너를 돌려 `gen`(→`poc`)과 `inspect`(asan·gdb·build)가 `ToolRunner`에 넘긴 요청 전부를
-    기록하고, 어느 요청의 argv·workdir·env에도 PoC 바이트가 없고 argv가 `[tool]` 하나뿐임을 본다.
-
-    이 검사가 빨개지면 PoC가 도구 입력으로 들어간 것이다 — 그때는 위 세 곳의 한계 서술을 **같이**
-    고친다(독립 검토가 `poc`·`asan`도 PoC와 무관한데 문구가 gdb에서 그쪽으로 모델을 돌린다고
-    짚었다). 한계: 이 PR 시점의 `ToolArgs`(argv·workdir·env) 세 필드만 본다."""
+def _recording_tools(ctx: RunContext) -> tuple[RunContext, list[tuple[str, object]]]:  # noqa: F811
+    """`ToolRunner`에 간 요청을 전부 기록하는 ctx — 실제 fake 러너에 그대로 위임한다."""
     recorded: list[tuple[str, object]] = []
     real = ctx.tools
 
@@ -1355,39 +1504,231 @@ def test_no_pov_tool_receives_the_poc_bytes_today(ctx: RunContext) -> None:  # n
         def __getattr__(self, name):  # noqa: ANN001, ANN202
             return getattr(real, name)
 
-    scripted = _scripted(
-        ctx,
-        [_gen(),  # PoC 바이트 0x41 x 8 — `poc`가 돈다
-         PovAction(action="inspect", tool="asan", rationale="a"),
-         PovAction(action="inspect", tool="gdb", rationale="g"),
-         PovAction(action="inspect", tool="build", rationale="b"),
-         PovAction(action="submit", rationale="done")],
-    )
-    scripted = dataclasses.replace(scripted, tools=Recorder())
+    return dataclasses.replace(ctx, tools=Recorder()), recorded
+
+
+def _drive(ctx: RunContext, actions: list[object], *, version: str | None = None):  # noqa: ANN202, F811
+    """스크립트한 액션으로 8단계 루프를 돌린다. 반환은 (ctx, 도구 요청 기록, 모델이 홉마다 받은
+    user 본문). `version`이 없으면 기본 `dev_fake`의 pov 좌석(v2)이다."""
+    base = ctx if version is None else _with_pov_version(ctx, version)
+    scripted, recorded = _recording_tools(_scripted(base, actions))
     state, finding = _pov_state(ctx)
-    before = len(recorded)  # `_pov_state`가 앞 단계 도구를 이미 돌렸을 수 있다
-
     runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+    bodies = [p.body for role, p in scripted.models.prompts if role is Role.POV]
+    return scripted, recorded, bodies
 
-    pov_calls = recorded[before:]
-    assert [tool for tool, _ in pov_calls] == ["poc", "asan", "gdb", "build"]
-    for tool, args in pov_calls:
-        assert args.argv == [tool], f"{tool}: argv가 [tool] 하나가 아니다 — {args.argv}"
+
+def _digest(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+_SUBMIT = PovAction(action="submit", rationale="done")
+
+
+def _inspect(tool: str) -> PovAction:
+    return PovAction(action="inspect", tool=tool, rationale=tool)
+
+
+def test_pov_tool_requests_carry_the_poc_as_input_bytes(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 #386 ① — `gen`이 조립한 PoC가 도구 요청에 **데이터로** 실린다: `ToolArgs.input_bytes`가 그
+    바이트이고 argv가 자리표를 든다. `inspect` 홉은 **직전 gen의** PoC를 싣는다. 바이트는 argv·
+    workdir·env 어디에도 글자로 안 들어간다. 출처는 모델 spec에서 `assemble_poc`이 조립한
+    바이트뿐이다(참조 PoC가 아니다 — 테스트가 그 출처를 단언한다).
+
+    전 판의 경보기가 「argv가 `[tool]` 하나뿐」을 재던 자리다 — 도구는 PoC를 입력으로 **받지
+    않는다**는 서술이 아직 참인 이유(어느 도구 명령도 그 바이트를 안 읽는다)는
+    `tests/test_container_tools.py`가 실행된 argv로 잰다."""
+    gen = _gen()  # 0x41 x 8
+    _, recorded, _ = _drive(
+        ctx, [gen, _inspect("asan"), _inspect("gdb"), _inspect("build"), _SUBMIT]
+    )
+
+    poc = assemble_poc(gen.spec)
+    assert [tool for tool, _ in recorded] == ["poc", "asan", "gdb", "build"]
+    for tool, args in recorded:
+        assert args.argv == [tool, tool_runner.INPUT_PLACEHOLDER], f"{tool}: argv가 어긋났다"
+        assert args.input_bytes == poc, f"{tool}: 직전 gen의 PoC가 도구 요청에 안 실렸다"
         assert not args.env, f"{tool}: env가 채워졌다"
-        assert "AAAAAAAA" not in " ".join([*args.argv, args.workdir, *args.env.values()])
+        assert poc.decode() not in " ".join([*args.argv, args.workdir])
 
 
-def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
-    """v3 prefix의 한계 문단이 **도구 넷 모두**를 이름으로 들고 「PoC가 안 들어간다」를 적는다.
+def test_pov_hop0_inspect_has_no_poc_to_carry_and_a_later_inspect_does(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """아직 gen이 없으면 안 싣는다 — 자리표도 없다(`argv == [tool]`). 지어낸 빈 입력이 없다."""
+    gen = _gen()
+    _, recorded, _ = _drive(ctx, [_inspect("asan"), gen, _inspect("build"), _SUBMIT])
+
+    poc = assemble_poc(gen.spec)
+    assert [(tool, args.argv, args.input_bytes) for tool, args in recorded] == [
+        ("asan", ["asan"], None),
+        ("poc", ["poc", tool_runner.INPUT_PLACEHOLDER], poc),
+        ("build", ["build", tool_runner.INPUT_PLACEHOLDER], poc),
+    ]
+
+
+def test_pov_inspect_carries_the_latest_gen_not_the_first(ctx: RunContext) -> None:  # noqa: F811
+    """「직전 gen」이다 — 첫 gen에 굳지 않는다."""
+    _, recorded, _ = _drive(ctx, [_gen(count=8), _gen(count=9), _inspect("asan"), _SUBMIT])
+
+    assert [(tool, args.input_bytes) for tool, args in recorded] == [
+        ("poc", b"A" * 8),
+        ("poc", b"A" * 9),
+        ("asan", b"A" * 9),
+    ]
+
+
+def test_pov_loop_hands_an_empty_poc_to_the_tool_as_an_input(ctx: RunContext) -> None:  # noqa: F811
+    """0바이트 PoC(`repeat` `count=0`)도 입력이다 — 참·거짓으로 판정해 조용히 「없음」으로 만들지
+    않는다. 관측은 `last_gen_bytes=0`과 빈 입력의 digest를 싣고, trace의 `tool_call`도 그렇다
+    (`input_bytes=0`·sha `e3b0c442…` — `context.call_tool`이 `is not None`을 진리값 판정으로
+    바꾸는 변이가 여기서 죽는다)."""
+    scripted, recorded, bodies = _drive(ctx, [_gen(count=0), _SUBMIT], version="v3")
+
+    [(tool, args)] = recorded
+    assert (tool, args.argv) == ("poc", [tool, tool_runner.INPUT_PLACEHOLDER])
+    assert args.input_bytes == b""
+    assert f" last_gen_bytes=0 last_gen_sha256={_digest(b'')}" in bodies[1]
+    [call] = [
+        e for e in scripted.trace.events
+        if e.kind is EventKind.TOOL_CALL and e.data["tool"] == "poc"
+    ]
+    assert (call.data["input_bytes"], call.data["input_sha256"]) == (0, _digest(b""))
+    assert _digest(b"").startswith("e3b0c442")
+
+
+def test_pov_v3_observation_after_a_gen_carries_the_size_and_digest_of_that_poc(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    gen = _gen()
+    scripted, _, bodies = _drive(ctx, [gen, _SUBMIT], version="v3")
+
+    poc = assemble_poc(gen.spec)
+    first_line = bodies[1].splitlines()[0]
+    assert f" last_gen_bytes={len(poc)} last_gen_sha256={_digest(poc)}" in first_line
+    # 맨 hex라 같은 홉의 `pov_hop.poc_sha256`과 바로 대조된다(`sha256:` 접두를 안 붙인다).
+    assert f"last_gen_sha256={_hops(scripted)[0].data['poc_sha256']}" in first_line
+
+
+def test_pov_v3_observation_is_a_function_of_the_poc(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 같은 길이·다른 바이트 — 되먹임이 **어느 PoC에 대한 것인지**를 가른다. 도구 결과(fake
+    상수)는 둘이 같으므로 관측이 갈리는 곳은 digest 하나뿐이어야 한다. 관측에서 digest를 빼는
+    변이와 입력을 안 싣는 변이가 여기서 죽는다."""
+    a, b = _gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8)
+    _, _, bodies = _drive(ctx, [a, b, _SUBMIT], version="v3")
+
+    digest_a, digest_b = _digest(assemble_poc(a.spec)), _digest(assemble_poc(b.spec))
+    assert bodies[1] != bodies[2]
+    assert bodies[1].replace(digest_a, "<d>") == bodies[2].replace(digest_b, "<d>")
+
+
+def test_pov_v3_observation_after_an_inspect_names_the_gen_it_ran_on(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    gen = _gen()
+    _, _, bodies = _drive(ctx, [gen, _inspect("asan"), _SUBMIT], version="v3")
+
+    assert f"last_gen_sha256={_digest(assemble_poc(gen.spec))}" in bodies[2].splitlines()[0]
+
+
+def test_pov_v3_observation_after_an_inspect_without_a_gen_has_no_input_fields(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    _, _, bodies = _drive(ctx, [_inspect("asan"), _SUBMIT], version="v3")
+
+    assert "last_gen_" not in bodies[1]
+
+
+def test_pov_v2_observation_gains_no_input_fields_through_the_loop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """🔴 v2는 같은 요청(PoC가 도구 요청에 실린다)에도 관측이 **전 판과 바이트가 같은 한 줄**이다.
+    `_run_pov_hops`가 `wide=pov_wide` 대신 `True`를 넘기는 변이가 여기서 죽는다."""
+    _, recorded, bodies = _drive(ctx, [_gen(), _inspect("asan"), _SUBMIT])  # 기본 pov 좌석은 v2
+
+    assert [tool for tool, _ in recorded] == ["poc", "asan"], "전제: 도구에 PoC가 갔다"
+    for body in bodies[1:]:
+        assert "last_gen_" not in body
+        assert chr(10) not in body
+
+
+def test_fake_tool_results_in_the_loop_do_not_depend_on_the_poc(ctx: RunContext) -> None:  # noqa: F811
+    """🔴 입력 배선은 **관측만** 바꾼다 — 도구 결과(`tool_ok`·`exit_code`)는 PoC가 달라도 같다
+    (`fake_tools._run_repro`의 상수, 이슈 #232)."""
+    a, b = _gen_byte(byte=0x41, count=8), _gen_byte(byte=0x42, count=8)
+    scripted, _, _ = _drive(ctx, [a, b, _SUBMIT])
+
+    gens = [h for h in _hops(scripted) if h.data["action"] == "gen"]
+    assert [(h.data["tool_ok"], h.data["exit_code"]) for h in gens] == [(True, 1), (True, 1)]
+
+
+# `tool_call` 이벤트가 가질 수 있는 키 — 허용목록이다. 입력 키 둘은 **입력을 실었을 때만** 붙는다.
+_TOOL_CALL_KEYS = frozenset({"tool", "argv", "ok", "exit_code", "error", "finding_id"})
+_TOOL_CALL_INPUT_KEYS = frozenset({"input_bytes", "input_sha256"})
+
+
+def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """원바이트는 trace에 안 들어간다 — 크기와 digest만(맨 hex, `pov_hop`의 `poc_sha256`과 같은
+    형식이라 바로 대조된다). `ToolArgs`는 trace로 직렬화되지 않는다(`call_tool`이 `argv` 문자열만
+    싣는다).
+
+    핀 셋이 **서로 다른 것을** 문다. ① **키 집합** — 트레이스의 모든 `tool_call`이 허용목록과 `==`다
+    (입력 키는 입력을 실은 호출에만). 원바이트를 인코딩해 **새 키**에 싣는 변경은 인코딩이 뭐든
+    (base32·zlib…) 키가 늘어 죽는다. ② **값** — 이 루프의 `tool_call` 셋은 정확한 dict와 `==`다.
+    허용된 키의 값 자리(`argv`·`error`)에 인코딩해 넣는 변경도 죽는다. ③ **철자** — 글자·hex·HEX·
+    base64를 트레이스 **전체**에서 찾는다(① ② 밖의 이벤트 종류까지). ⚠ 한계: ① ②는 `tool_call`만
+    본다 — 다른 이벤트 종류(`pov_hop`·`model_call`…)에 그 네 꼴이 **아닌** 인코딩으로 싣는 변경은
+    ③이 못 막는다."""
+    canary = b"POC-CANARY-7f3a91"
+    gen = PovAction(
+        action="gen",
+        spec=PovSpec(segments=[PovSegment(kind="literal", hex=canary.hex())], rationale="c"),
+        rationale="canary",
+    )
+    scripted, _, _ = _drive(ctx, [_inspect("build"), gen, _inspect("asan"), _SUBMIT])
+
+    events = scripted.trace.events
+    calls = [e for e in events if e.kind is EventKind.TOOL_CALL]
+    for event in calls:  # 설정 단계(index·semgrep…)의 호출까지 본다
+        has_input = "input_sha256" in event.data
+        allowed = _TOOL_CALL_KEYS | (_TOOL_CALL_INPUT_KEYS if has_input else frozenset())
+        assert set(event.data) == allowed, f"{event.data['tool']}: tool_call 키가 허용목록과 다르다"
+    carrying = [e for e in calls if "input_sha256" in e.data]
+    assert [e.data["tool"] for e in carrying] == ["poc", "asan"]
+    for event in carrying:
+        assert event.data["input_bytes"] == len(canary)
+        assert event.data["input_sha256"] == _digest(canary)
+    gen_hop = next(h for h in _hops(scripted) if h.data["action"] == "gen")
+    assert carrying[0].data["input_sha256"] == gen_hop.data["poc_sha256"]  # 같은 형식 — 바로 대조
+    placeholder = tool_runner.INPUT_PLACEHOLDER
+    base = {"error": None, "finding_id": gen_hop.subject_id, "ok": True}
+    request = {"input_bytes": len(canary), "input_sha256": _digest(canary)}
+    assert [e.data for e in calls if e.data["finding_id"] == gen_hop.subject_id] == [
+        {**base, "tool": "build", "argv": "build", "exit_code": 0},
+        {**base, "tool": "poc", "argv": f"poc {placeholder}", "exit_code": 1, **request},
+        {**base, "tool": "asan", "argv": f"asan {placeholder}", "exit_code": 1, **request},
+    ]
+    blob = chr(10).join(e.model_dump_json() for e in events)
+    forms = (canary.decode(), canary.hex(), canary.hex().upper(), base64.b64encode(canary).decode())
+    for form in forms:
+        assert form not in blob, f"원바이트가 trace에 실렸다: {form[:10]}…"
+
+
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_states_that_no_tool_receives_the_poc(version: str) -> None:
+    """pov prefix(v3·v4)의 한계 문단이 **도구 넷 모두**를 이름으로 들고 「PoC가 안 들어간다」를
+    적는다.
 
     독립 검토 지적: 전 판은 gdb만 한계를 달고 `poc`는 「현 후보를 그대로 돌린다」,
     `asan`은 「터졌는데 원인이 모호할 때」로 적어
     모델을 gdb에서 그쪽으로 돌렸다. 둘 다 PoC와 무관하다
-    (`test_no_pov_tool_receives_the_poc_bytes_today`가 코드로 잰다).
+    (`test_no_executed_container_command_receives_the_input_today`가 코드로 잰다).
 
     ⚠ **문자열 핀이다** — 뜻을 뒤집되 철자를 남긴 문장에는 초록이다. 지키는 것은 「한계 문단이
     사라지거나 도구 하나를 빼먹지 않는다」뿐이고, 문장이 참인지는 위 코드 경보기가 따로 본다."""
-    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "지금 하네스의 한계" in p)
+    paragraph = next(p for p in _paragraphs(_pov_prefix(version)) if "지금 하네스의 한계" in p)
 
     for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
         assert tool in paragraph, f"한계 문단이 {tool}을 안 든다"
@@ -1396,10 +1737,34 @@ def test_v3_prefix_states_that_no_tool_receives_the_poc() -> None:
     assert any(phrase in paragraph for phrase in no_input)
 
 
-def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
+def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
+    """🔴 **위 핀의 짝 — 서빙 판은 다른 명제를 적는다**(ADR 0014 · 이슈 #513).
+
+    위 검사는 v3·v4(불변 기록)만 본다. 서빙 판에서 「넷 모두 안 받는다」는 **거짓**이므로 같은
+    핀을 걸 수 없고, 대신 **갈려 있는지**를 문다 — 도구 넷을 다 이름으로 들고, `poc`가 받는다고
+    적고, 나머지 셋은 안 받는다고 적는다.
+
+    ⚠ **철자 핀이다.** 문장이 참인지는 코드 경보기가 따로 본다
+    (`test_no_executed_container_command_receives_the_input_today`가 셋을 ·
+    `tests/test_poc_tool_feeds_the_input.py`가 `poc`를). 통째 핀은
+    `tests/test_pov_prompt_v4.py`의 `_PINNED_BLOCKS`다.
+    """
+    prefix = _pov_prefix(_POV_SERVED_VERSION)
+
+    assert "지금 하네스의 한계" not in prefix, (
+        f"{_POV_SERVED_VERSION}가 옛 한계 문단을 그대로 든다 — 그 문장은 거짓이 됐다"
+    )
+    for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
+        assert tool in prefix, f"서빙 prefix가 {tool}을 안 든다"
+    assert "`poc`는 받는다" in prefix
+    assert "셋은 안 받는다" in prefix
+
+
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_does_not_say_the_tools_run_the_candidate(version: str) -> None:
     """독립 검토 지적의 거짓 서술이 다시 들어오지 않는다 — 도구가 PoC(「후보」)를 돌리거나
     검증한다는 문형. 한계: **철자 핀**이다(같은 뜻의 다른 문형은 못 막는다)."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     banned = (
         "현 후보를 그대로", "현재 후보를 진단", "도구로 대상을 검증해", "「경로에 닿았나」를 가르",
@@ -1408,33 +1773,37 @@ def test_v3_prefix_does_not_say_the_tools_run_the_candidate() -> None:
         assert phrase not in prefix, f"거짓 서술이 남았다: {phrase!r}"
 
 
-def test_v3_prefix_has_no_gdb_usage_rule() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_has_no_gdb_usage_rule(version: str) -> None:
     """🔴 D92(`docs/open-questions/D/D92.md`): *"프롬프트에 gdb 사용 규칙을 넣는 일에는 ASAN
-    수리·실행 검증이 선행한다"*(#326 열림). v3 prefix는 gdb를 **도구 목록의 사실**로만 쓰고 언제
-    쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다(D92 본문).
+    수리·실행 검증이 선행한다"*(#326 열림). pov prefix(v3·v4)는 gdb를 **도구 목록의 사실**로만 쓰고
+    언제 쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다
+    (D92 본문).
 
     **철자 핀이다** — 지시의 모든 문형을 막지 못한다. 막는 것은 독립 검토가 짚은 문형들(
     `inspect(gdb)` 처방, 「gdb로 확인한 뒤」, 「가르는 수단」)이다."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     for phrase in ("inspect(gdb)", "gdb로", "가르는 수단", "가르는 데 쓸"):
         assert phrase not in prefix, f"gdb 사용 규칙이 남았다: {phrase!r}"
 
 
-def test_v3_prefix_reads_reason_whether_or_not_found() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_reads_reason_whether_or_not_found(version: str) -> None:
     """`found=true`여도 원문이 4,000자에서 잘렸으면 알림이 `reason`에만 있다 —
     prefix가 `found=false`일 때만 `reason`을 읽으라 했던 것을 맞춘다. 한계: 철자 핀."""
-    paragraph = next(p for p in _paragraphs(_v3_prefix()) if "`reason`" in p)
+    paragraph = next(p for p in _paragraphs(_pov_prefix(version)) if "`reason`" in p)
 
     assert "`found`와 무관" in paragraph
 
 
-def test_v3_prefix_does_not_overstate_the_fuzz_entrypoint() -> None:
+@pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
+def test_pov_prefix_does_not_overstate_the_fuzz_entrypoint(version: str) -> None:
     """독립 검토: prefix가 「이 대상은 libFuzzer 하네스다 — 바이트는 그 진입점 인자로 **그대로**
     들어간다」고 **단정**했다. resolver가 후보 여럿 중 하나를 고른 `found=true`일 수 있고(oss-fuzz·
     arvo에 퍼저가 여럿인 프로젝트가 흔하다) 후보 수는 FACTS에 없다(스키마 확장 필요 — 접었다).
     §0: 모르는 것을 아는 것처럼 쓰지 않는다. 한계: 철자 핀."""
-    prefix = _v3_prefix()
+    prefix = _pov_prefix(version)
 
     assert "이 대상은 **libFuzzer 하네스**다" not in prefix, "단정이 남았다"
     assert "후보 중 하나를 고른" in prefix, "resolver가 하나를 고른 것이라는 고지가 없다"
@@ -1447,7 +1816,10 @@ def test_contract_doc_states_the_tool_limit_and_the_ambiguous_entrypoint() -> No
         encoding="utf-8"
     )
 
-    assert "도구 넷 모두" in text
+    # ⏵ 2026-10-09 (ADR 0014) — 「도구 넷 모두」가 **갈렸다**. 넷을 한 묶음으로 적는 문장은
+    # 거짓이 됐으므로 갈려 있는지를 문다.
+    assert "도구 넷이 둘로 갈린다" in text or "넷이 둘로 갈렸다" in text
+    assert "`asan`·`gdb`·`build` 셋은 그대로다" in text
     assert "후보 중 하나를 고른" in text
     assert "gdb뿐이라" not in text, "PoC 없이는 gdb가 경로 도달을 못 가른다 — 근거 서술이 낡았다"
 
@@ -1464,11 +1836,35 @@ def test_v3_meta_lists_every_difference_from_v2() -> None:
 def test_pov_action_description_in_the_request_has_no_repo_internal_references() -> None:
     """`PovAction`의 docstring은 `response_format.json_schema.schema.description`으로 **모든 pov
     요청에 실린다**(v2 포함 — `openai_compat`). 커밋 SHA·PR 번호·소스 줄 번호 같은 저장소 내부
-    참조와 gdb 사용 근거 서술이 모델 입력에 들어가면 안 된다(D92). 그런 이력은 `#` 주석에 둔다."""
+    참조와 gdb 사용 근거 서술이 모델 입력에 들어가면 안 된다(D92). 그런 이력은 `#` 주석에 둔다.
+
+    ⏵ **2026-10-09 — 고정 문자열 여섯에서 형(形)으로 바꿨다.** 전 판은 `5cf5c20`·`#327` 같은
+    **이미 아는 여섯 개**만 봐서, 이 PR이 docstring에 **새로** 넣은 `ADR 0014`·`이슈 #507`·`A안`을
+    통째로 놓쳤다(적대적 리뷰 2026-10-09 H4가 payload를 직접 출력해 잡았다). 이름을 열거하는 축은
+    **다음 참조를 못 막는다** — 그래서 **모양**을 막는다: 이슈·PR 번호 · 커밋 SHA · ADR 번호 ·
+    소스 파일 이름 · 날짜. 여섯은 그 모양에 전부 걸리므로 따로 안 적는다.
+
+    ⚠ **못 막는 것**: 번호 없이 쓴 내부 서술(「기각된 A안」처럼 이 저장소만 아는 말)은 모양이
+    없어 안 걸린다. 그 축은 리뷰가 본다."""
     description = PovAction.model_json_schema().get("description", "")
 
-    for fragment in ("5cf5c20", "#327", "#360", "container_tools", "fake_tools", "눈으로 볼 수단"):
-        assert fragment not in description, f"요청 payload에 내부 참조가 실린다: {fragment!r}"
+    patterns = {
+        "이슈·PR 번호": r"#\d+",
+        "커밋 SHA": r"\b[0-9a-f]{7,40}\b",
+        "ADR 번호": r"ADR\s*\d+",
+        "소스 파일": r"[A-Za-z_][A-Za-z0-9_]*\.(?:py|md|yaml)",
+        "날짜": r"20\d\d-\d\d-\d\d",
+    }
+    leaks = [
+        f"{label}: {hit!r}"
+        for label, pattern in patterns.items()
+        for hit in re.findall(pattern, description)
+    ]
+
+    assert leaks == [], (
+        "요청 payload에 저장소 내부 참조가 실린다 — 그 이력은 클래스 **밖** `#` 주석에 둔다:\n"
+        + "\n".join(f"  {leak}" for leak in leaks)
+    )
 
 
 def test_every_pov_prompt_version_but_v2_gets_the_wide_inputs() -> None:
@@ -1523,14 +1919,15 @@ def test_pov_hop_join_key_matches_across_more_than_two_hops(
     )
 
 
-def test_pov_loop_with_max_hops_zero_stops_before_submitting(
+def test_pov_loop_with_pov_tool_hops_zero_stops_before_submitting(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """현재 동작 고정 — `max_hops=0`이면 pov는 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다:
-    `pov_generated` 0, 종단은 `POV_SKIPPED`. NE 루프를 끄는 설정(`max_hops=0`)이 PoV 산출을 조용히
-    0으로 만드는 결합을 못 박는다 — pov 전용 상한 분리는 설정 결정(지금은 미결)이다."""
+    """`pov_tool_hops=0`이면 pov는 hop0(gen) 뒤 곧장 MAX_HOP이라 submit에 못 닿는다:
+    `pov_generated` 0, 종단은 `POV_SKIPPED`. 전 판은 이 동작을 NE 루프의 `max_hops=0`에 걸어
+    고정했다 — 그 결합은 #511에서 갈렸다(`max_hops` 쪽은
+    `test_max_hops_does_not_move_the_pov_hop_count`)."""
     ctx.config = ctx.config.transition(
-        thresholds=ctx.config.thresholds.transition(max_hops=0)
+        thresholds=ctx.config.thresholds.transition(pov_tool_hops=0)
     )
     scripted = _scripted(ctx, [_gen(count=8), PovAction(action="submit", rationale="done")])
     state, finding = _pov_state(ctx)
@@ -1541,6 +1938,44 @@ def test_pov_loop_with_max_hops_zero_stops_before_submitting(
     assert reason is PovStopReason.MAX_HOP
     assert [h.data["hop"] for h in _hops(scripted)] == [0]  # hop0에서 멈춘다
     assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
+
+
+def _pov_run(ctx: RunContext, actions: list[object], **thresholds: int):  # noqa: ANN202, F811
+    """`thresholds`만 바꿔 8단계 PoV 루프를 돌린다 → (스크립트한 ctx, `_run_pov_hops`의 반환).
+
+    state는 **원래 설정으로** 짓는다 — 앞 단계(Scout NE·Auditor)가 바꾼 값에 흔들리지 않게."""
+    state, finding = _pov_state(ctx)
+    scripted = _scripted(ctx, actions)
+    scripted.config = scripted.config.transition(
+        thresholds=scripted.config.thresholds.transition(**thresholds)
+    )
+    capsule = state.finding_capsules[finding.finding_id]
+    return scripted, runner._run_pov_hops(scripted, state, finding, capsule)
+
+
+@pytest.mark.parametrize("pov_hops", [1, 5])
+def test_the_pov_hop_count_follows_pov_tool_hops(ctx: RunContext, pov_hops: int) -> None:  # noqa: F811
+    """PoV 홉 수는 `pov_tool_hops`가 정한다 — 매 홉 다른 gen이면 hop0..값(값 + 1홉)에서 MAX_HOP."""
+    scripted, (_, reason) = _pov_run(
+        ctx, [_gen(count=n) for n in range(1, pov_hops + 5)], pov_tool_hops=pov_hops
+    )
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
+
+
+@pytest.mark.parametrize("max_hops", [0, 9])
+def test_max_hops_does_not_move_the_pov_hop_count(ctx: RunContext, max_hops: int) -> None:  # noqa: F811
+    """음성 통제 — Scout NE 루프의 `max_hops`를 0으로 내리든 9로 올리든 PoV 홉 수는 그대로다(#511).
+
+    0도 본다: 전 판에서는 `max_hops=0`이 PoV를 hop0 뒤에서 세워 submit이 0건이었다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    # 스크립트는 어느 상한에서도 안 마르게 길다 — 마르면 `repeat_spec`이 가로채 사유가 달라진다.
+    gens = [_gen(count=n) for n in range(1, max(pov_hops, max_hops) + 5)]
+    scripted, (_, reason) = _pov_run(ctx, gens, max_hops=max_hops)
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
 
 
 def test_pov_action_rejects_an_unknown_action() -> None:
@@ -1657,7 +2092,7 @@ def test_fuzz_entrypoint_reasons_are_pairwise_distinct_by_cause(
         reason=UnfilledReason.NOT_FOUND, text="Not resolved: SAME_TARGET",
     )
     cases = {
-        "no_index": (resolution(), "인덱스가 없거나 v1"),
+        "no_index": (resolution(index_available=False), "인덱스가 없거나 v1"),
         "name_missing": (resolution(unfilled=(other,)), "함수 표에 LLVMFuzzerTestOneInput가 없다"),
         "truncated": (
             resolution(truncated=("LLVMFuzzerTestOneInput",)), "resolver 조회 상한"
@@ -1809,9 +2244,9 @@ def _exit_repeat_spec(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa
 def _exit_max_hop(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
     state, finding = _pov_state(ctx)
     scripted = _scripted(ctx, [_gen(count=8)])
-    # state를 먼저 만든 뒤 내린다 — auditor가 max_hops=0으로 돌지 않게.
+    # PoV 상한만 0으로 내린다 — hop0(gen) 뒤 곧장 MAX_HOP이다.
     scripted.config = scripted.config.transition(
-        thresholds=scripted.config.thresholds.transition(max_hops=0)
+        thresholds=scripted.config.thresholds.transition(pov_tool_hops=0)
     )
     return scripted, state, finding
 

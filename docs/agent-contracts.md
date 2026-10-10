@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(v10)는 meta가 봉투 AuditorProcedureAction을 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -59,14 +59,18 @@ agent:
 > **PoV 좌석은 32,768 그대로다** — 자기 속도를 안 쟀다.
 >
 > **2026-09-12 — 값을 안 정하기로 했고 그것이 실측의 결론이다.** 실제 Critic 프롬프트로
-> 재니 `prompt_tokens`가 **646~654**이고(캡슐도 원문도 안 실린다) `gpt-oss-20b`의 출력은
+> 당시 v1 metadata-only 경로에서 재니 `prompt_tokens`가 **646~654**였고(캡슐·원문 없음) `gpt-oss-20b`의 출력은
 > 추론과 본문으로 갈려 **본문이 76~126토큰**이다 — 위 2,863 같은 수는 그 둘의 합이지
 > 답변 길이가 아니다. 하네스 실제 설정 16콜에서 `finish=length`가 0건이라
-> **전역 4,096이 이미 충분하다.** 근거는
+> **당시 조건에서 전역 4,096에 닿지 않았다.** v6의 입력이나 출력 충분성으로 일반화하지 않는다. 근거는
 > [2026-09-12 보고서](experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md)
 > §3.3·§3.4이고, 같은 정정이 `config/budgets.yaml`의 `output_max` 주석에도 들어갔다.
 > 타임아웃(`_TIMEOUT_S = 300`)은 **시도 하나당**이라 `wall_ms`(재시도 포함)와 직접 비교하면
 > 안 된다 — 자세한 계산은 `config/budgets.yaml`의 `output_max` 주석에 있다.
+>
+> ⏵ **2026-10-05 — Critic v1 → v6**(#497). SOURCE·근거 본문·위치가 더해져 위 v1 입력 수는
+> 현행 크기가 아니다. Critic 출력 상한은 `config/budgets.yaml`의 32,768, 타임아웃은 registry의
+> 3,600초다(설정값). v6 입력 토큰·실모델 판정은 0(미실측).
 >
 > ⏵ **2026-09-24 — 두 가지가 움직였다**([스모크 보고서](experiments/harness/2026-09-24-roster-smoke-atom.md) · 비교표 밖).
 > ① 비교표 밖 스모크(`checksum` 0)에서 한 번에 성공한 출력으로 **2,878**이 관측됐다(`seccoderx-8b` `scout_boundary`,
@@ -111,6 +115,10 @@ agent:
   ⏵ 2026-09-25 — `run --slices`로 돈 run은 이제 그 모양이다(Phase 3a PR #283 · 3b PR #284 · 3c): `{{SOURCE}}`가
   슬라이스 렌더이고 FACTS에 `slice_criterion`(`given_end`와, 슬라이서 entry의 file·line·symbol인 `given`)이
   붙는다. `--slices` 없는 run은 앞 문장 그대로라, 풀 프로필을 슬라이스 없이 돌리면 그 어긋남도 그대로다.
+  ⏵ **2026-10-07 — 서빙 판이 v4다**(PR #524 배선). v4 meta가 `input: source`라 위 슬라이스 서술은
+  서빙 경로가 아니고, `--slices` 없는 run을 막던 가드는 **더 이상 차지 않는다**(`cli._slice_input_prompts`).
+  ⚠ 어긋남이 뒤집혔다 — `--slices` run에서는 노드가 렌더를 싣는데 v4는 함수 본문이라 적는다.
+  아래 NE 루프도 v4에서는 신호가 둘이라 서빙 경로에서 돌지 않는다.
 - 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
   (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012 결정 2 —
   `reason_codes[0]`이 `triage_need_evidence`이면 하네스가 `requested_context`의 target을 심볼 인덱스에서
@@ -135,33 +143,86 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 지금 배선된 v7(body는 v6와 같다)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일), ⏵ 2026-10-07 지금 배선된 **v10**(v7 전면 재작성 · body는 v6·v9와 바이트 동일)은
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
   나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`) 안에서 함수째 붙는다(`runner._auditor_source`). 상한에 빠진
   함수 수와 어느 함수에도 안 든 줄 수는 trace `auditor_source`가 든다.
+  ⚠ **Auditor는 슬라이스 기준(`FACTS.slice_criterion` — 슬라이서가 경로의 어느 끝을 쥐여 줬는가)을 받지 않는다.** Scout 전용 opt-in 키이고
+  (`prompt_loader.FACT_KEYS` 주석) `build_facts`에 그 인자를 넘기는 곳은 Scout 노드 하나뿐이다(`nodes/scout.py`의 `slice_criterion=`). `SOURCE`에도
+  슬라이스의 앵커 줄을 알리는 문장이 없다 — 있는 것은 배너뿐이다. Auditor 프롬프트 v5~v10이 *"does not receive the slice criterion"*라 적는다.
+  그 입력을 배달할지는 미결이다 — 이 변경은 정하지 않았다([D101](open-questions/D/D101.md)이 같은 사실의 한 면을 든다).
   ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯(`config.AUDITOR_SOURCE_OPTIONS` — 피호출 본문·정의·호출자 창·토큰 상한·
   entry 줄이기). ~~전부 기본 꺼짐이라 위 서술 그대로.~~ 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 같은 날 **지금 배선된 판은 v10**이다(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS` 아홉 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
-  함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7이 서술 · v4_t1은 서술 안 함).
+  함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다
+  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 ⏵ 2026-10-06 **켜져 있다** —
+  `budgets.yaml`이 키를 `1`로 둔다. **v9·v10이 이 옵션을 서술하고 meta `source_options`로 선언한다.** v7·v8은 선언하지 않아 켜고 그
+  둘을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다. 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
+  `GUARDS (syntactic — may not dominate)` 머리줄과 `파일:줄 | 조건 [exit: …]` 행이 붙는다 — sink 호출의 인자 이름을 언급하는
+  `if`·`while`·`for`·삼항·assert 계열 조건이고 지배를 주장하지 않는다. 하나도 없으면 「없음」이 아니라 맞춰 본 이름과 못 보는 것을
+  적은 한 줄이다. 가드 목록은 창 앵커·줄이 어긋날 수 있는 파일(폼피드 등 #259 · `\n`을 안 단 `\r`)에는 안 붙고 사유를 trace
+  `guards_skipped`가 든다. 행이 12를 넘으면 조건이 인자 이름을 **직접** 말하는 행이 먼저 남고, 대입 한 걸음으로만
+  이어진 별칭 행은 뒤이며 `[alias: m←n]`(좌변←우변)이 붙는다. 크기는 총 상한에서 먼저 빠지고(entry 함수 몫이라 밀려 빠지지는
+  않는다) `functions`에는 안 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 켠 효과는 미실측이다.
+  ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
+  `pov._WIDE_INPUT_VERSIONS`인 판에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
   **이 자리가 「지금 `v3`·`v4`·`v5`」라 적고 있었다**: `v4_t1`을 두 판 동안 빠뜨린 채였고 v4→v6(#418·#421)도
-  안 따라왔다. 손으로 베낀 목록은 CI가 못 묶는다)에서는 근거 본문까지 싣는다. 본문은 도구 로그에서 하네스의 실행 기록
+  안 따라왔다. 손으로 베낀 목록은 CI가 못 묶는다)에서는 근거 본문과 `location`(Evidence 위치 — 없으면 `null`)까지 싣는다
+  (`location` 조건은 아래 ⏵ 2026-10-04). 본문은 도구 로그에서 하네스의 실행 기록
   머리줄(`# node argv:`·`# runtime:`·`$ <런타임> …` 명령줄 — 명령줄은 호스트 절대경로를 싣는다)을 뺀 뒤
   **결정론적으로 절단**한 것이다(`evidence_summaries` — 증거당 800자 · 합 4,000자, 증거마다 head 2/3 + tail 1/3).
   요약이 아니라 절단이라 semgrep JSON은 가운데(`message` 등)가 잘릴 수 있다 — 구조 추출은 #256 항목 3의
   선택지 (a)로 남는다.
+  ⏵ **2026-10-04 — 자르기 전에 빼는 것이 하나 늘었다**(이슈 #481): 구조화 출력의 **잡음 키**
+  (`prompt_loader._JSON_NOISE_KEYS` — 지금 semgrep `--json`의 `errors` 하나)다. 그 키가 head를 먹어
+  `results`(히트의 `check_id`·줄번호)가 통째로 잘렸다 — 운영 run 실측에서 `errors`가 stdout의 **70.5%**였고
+  모델이 받은 본문에 `check_id`가 **0건**이었다. 뺀 자리에는 **뺀 값을 다시 직렬화한 글자 수**가 남는다
+  (원문 글자 수가 아니다 — §0, 조용히 사라지면 「없었다」와 구별되지 않는다). ⚠ 뺀 뒤에도
+  **절단이지 요약이 아니다** — 같은 로그에서 보이게 된 히트는 **10건 중 1건**이고, 결과를 한 줄씩 접는 것은
+  도구를 아는 파서가 필요해 그 이슈에 선택지로 남아 있다.
+  ⚠ **한계 둘 — 둘 다 고치지 않았다.** ① 이 목록은 semgrep을 **파일 하나씩** 돌린 run 한 건에서 쟀다.
+  `paths`(51자)가 head를 안 먹는다는 것도 그 한 건의 값이다 — `paths.scanned`는 스캔한 파일 수만큼 자라
+  알파벳 순으로 `results`보다 앞이라, 픽스처의 `scanned`를 27자 경로 40개(원소당 직렬화 폭 31자)로 늘려
+  실행하면 `errors`를 뺀 뒤에도 `results`가 head 밖이다. 그 head는 증거당 800자 경로의 530자이고 규칙 이름이
+  보이는 최대 파일 수가 10개다 — Auditor `probe`(2,000자 — head 1,330자)는 문턱이 달라 35개다(둘 다 실행한
+  값). 현재 호출부는 파일 경로만 넘기지만(코드 읽기) **그 불변식은 코드가 보장하지 않는다** —
+  [D16](open-questions/D/D16.md)이 같은 경고를 적는다(배선이 배치 스캔으로 바뀌면 조용히 낡는다). 디렉터리 대상
+  실행의 실측은 그 항목의 2파일 디렉터리 한 건(2026-08-20, `paths.scanned`에 `target.c`만)뿐이고 **운영 규모
+  디렉터리 run에서 `paths`가 head를 얼마나 먹는지는 미실측**이다. 같은 문서의 도구 표(`semgrep` · 「대상 디렉터리
+  정적 스캔」)는 호출부와 어긋나 읽힌다 — 이 PR이 안 고쳤다.
+  ② 로그 리더의 읽기 상한(`PAYLOAD_READ_CAP` 200,000자)이 JSON 줄을 중간에서 자르면 `json.loads`가 실패해
+  **이 제거가 꺼지고** 종전처럼 `errors`가 head를 먹는다 — **이 경우만 가르는 표시는 없다**(`truncated`는 정상
+  경로에서도 True라 두 경우 모두 True다). 실측 로그 한 건의 스팬당 약 286.5자로 환산하면 스팬 약 630개 초과에서
+  줄이 잘린다(**계산값이고 실측이 아니다**). 고치는 길은 둘이고 닿는 구간이 다르다 — 이 함수에서 `"errors": [`의
+  괄호 짝을 스캔하는 수정은 `errors`의 끝이 읽기 상한 안에 드는 약 60스팬 폭(약 633~698, 계산값)에서만 돕는다.
+  그 위는 `results`의 글자가 안 읽혀 파싱으로 되살릴 것이 없고, 어댑터가 읽기 상한 **앞에서** `errors`를 빼야
+  닿는다(상한을 올리면 문턱이 옮겨질 뿐이다).
+  ⏵ 2026-10-04 — `location`도 **판**이 정한다(이슈 #475 · `prompt_loader.build_facts`의 `evidence_locations` —
+  본문과 달리 payload 유무와 무관하다). Critic도 자기 `_CONTENT_AWARE_VERSIONS`의 판이면 위치가 있는 Evidence의
+  EVIDENCE 줄에 `file:줄` 한 토막을 붙인다(판 목록은 여기 적지 않는다 — 두 노드의 상수가 정본이다).
+  **이 위치는 판단 보조이고 게이트 등급 근거가 아니다** — `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이
+  semgrep(STATIC) 하나라 인용하면 `static_ok`가 이미 참이다(`container_tools.first_hit_location` docstring). 그 값은
+  semgrep `results[0]`(첫 히트) 하나라 Finding이 주장한 줄과 다를 수 있다. 2026-10-05 Critic v6 prefix는
+  `FACTS.evidence[].location`과 EVIDENCE 줄의 위치를 서술한다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(이슈 #563).
+  ⏵ **2026-10-09 — 「싣고 돈 run 0건」은 더 이상 참이 아니다**: `run_20261007_0001`이 위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를 싣는 판으로 돌았다)
+  인용은 **0/5**였다. 단 그 run의 semgrep 히트(`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를
+  보여 주면 인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
+  항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-05 서빙 프로필(`harness_pool`·
+  `harness_pool_hybrid`)의 Auditor와 Critic 모두 content-aware 판이다. 서빙 Critic
+  (`gpt-oss-20b`)은 v6으로 바뀌어 본문·위치·SOURCE를 받는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
   ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
@@ -172,49 +233,85 @@ agent:
   **그래도 모델이 그 본문을 쓰는지는 여전히 미측정이다** — 이름을 부르는 것과 쓰는 것은 다르고, v6로 돈
   run이 이 저장소에 0건이다.
   ⏵ 2026-10-04 — v7로 올렸다(v6 + SOURCE 옵션 넷의 서술, #349). 그 절은 v6와 같고 v7도 그 집합에 든다.
-  v7로 돈 run도 0건이다.
+  ⏵ 같은 날 — **v8로 올렸다**(도구 루프, #419). 그 절은 v7에서 바이트 그대로 물려받은 뒤 도구 관측의
+  절단 서술을 한 단락 더 들었고, v8도 그 집합에 든다. **v7로 돈 run도 v8로 돈 run도 0건이다.**
+  ⏵ 2026-10-08 — 그 뒤 v9(v8 + `auditor_guards` 서술 · PR #508, 2026-10-06 01:54 KST 머지) · v10(v7 전면 재작성 · PR #521, 2026-10-07 16:12 KST 머지)으로 올랐다. 둘 다 그 집합에 들고(`nodes/auditor.py`의
+  `_CONTENT_AWARE_VERSIONS`), v10 prefix도 `FACTS.evidence[].body`를 이름으로 불러 「a bounded excerpt of a tool log,
+  not a generated summary」로 적는다. v9로 돈 run은 0건이고 v10으로 돈 run은 1건이다([10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) — `checksum` 0이라 비교표 밖 · `docs/experiments/` grep, 2026-10-08).
+  지금 판은 이 사슬이 아니라 `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
-  내는 것이 `AuditorAction`**이고 `Finding`은 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
+  내는 것이 봉투(`AuditorAction` — v8·v9)**이고 `Finding`은 그 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
+  ⏵ 2026-10-06 — **v10은 최종 답도 `Finding`이 아니다.** 봉투가 `AuditorProcedureAction`이고 `answer`가 `procedure`에 `AuditProcedure`
+  (`audit` 블록 + 판정 일곱 — §3 「AuditProcedure」)를 싣는다. 노드가 그것을 `Finding`으로 옮기므로 `run()`은 어느 판이든
+  `(Finding, MissingEvidence[])`를 돌려준다(`_finding_from_procedure`). 5단계 산출은 그대로이고 갈리는 것은 **모델이 쓴 것과 저장된 것**이다 —
+  바깥 필드는 거의 1:1이고 `audit` 블록은 `Finding.audit`에 실린다.
 - **하네스가 덮는 필드** — `finding_id`·`run_id`·`candidate_id`와 `state`(=`hypothesized`)는 발급값으로 저장한다.
   `missing_evidence`는 비어 있지 않으면 발급 `missing_id` 하나로 정규화한다 — 모델이 어떤 ID를 썼든 「확인 불가」
   요청은 blocking `MissingEvidence` 하나로 남고, 비어 있으면 그대로 비어 blocking이 없다
   (`RunContext.stamp_issued` — [D83](open-questions/D/D83.md)). 이 다섯 필드는 모델 값이 달랐으면 덮기 전에 trace
   `issued_override`에 남긴다. `produced_by`도 하네스가 덮지만(`call_model`) **기록 없이** 덮는다 — 그 이탈은
   `issued_override`가 없으니 「모델이 맞게 썼다」가 아니라 「안 쟀다」다.
+  ⏵ 2026-10-06 — **v10은 이 여섯(`finding_id`·`run_id`·`candidate_id`·`state`·`missing_evidence`·`produced_by`)을 모델에게 묻지 않는다.**
+  `AuditProcedure`에 그 필드가 없어 모델이 쓸 수 없고(프롬프트도 「Do not output …」로 적는다 — prefix의 「Identifiers and evidence
+  references」), `_finding_from_procedure`가 발급값으로 채운다 — 발급 ID 셋 · `run_id` · `state`(F-1 생성 행인 `hypothesized`) ·
+  `produced_by`. **`missing_evidence`는 `audit.refutation.result`가 `decisive_code_missing`이거나 `trigger_status`가 `reachability_unknown`일 때 발급 `missing_id` 하나이고 그 밖에는 비어
+  있다**(`audit`가 `null`이어도 비어 있다) — 「확인 불가」의 신호가 모델이 적은 ID 유무에서 그 결과값으로 옮겨갔고, 뒤 `_materialize_missing`이
+  같은 blocking `MissingEvidence`를 만든다. 이미 발급값으로 채워 나오므로 뒤 `stamp_issued`는 **`issued_override`를 내지 않는다** — 모델이 사실
+  블록을 안 따른 것이 아니라 쓸 수 없는 값이라 그 관측이 성립하지 않는다.
+  `produced_by`의 도장 자리는 둘이 됐다. 한 방 경로는 `call_model`이 응답 **루트**에 `produced_by`가 있을 때만 덮는데(`RunContext.call_model`)
+  루프 봉투는 루트에 그 필드가 없다 — **루프 경로는 `_finding_from`이 따로 찍는다**(어느 봉투든, `AuditorAction`의 `answer`가 든 `Finding`도
+  같다). ⚠ **그 전에는 v8·v9의 루프 경로에서 모델이 쓴 `produced_by`가 그대로 저장됐다** — `call_model`의 도장이 안 돌고 `stamp_issued`의
+  발급 키에도 없다(코드를 읽고 적었다). v8·v9 prefix는 *"the harness overwrites the complete object"*라 적었으니 그 문장은 루프 경로에서
+  거짓이었다. 그 판들로 돈 run은 0건이라 저장된 오염 값은 없다(§3 `trigger_status` 절의 ⏵ 2026-10-06).
 - 분석 축: source→sink 경로, memory lifetime/ownership, boundary check, 정수 연산, config·환경 조건 영향
 - 규칙: 코드에서 확인 불가한 사실은 주장하지 말고 `MissingEvidence`로 요청한다. "확인 불가"가 유효한 출력이다.
-  (한 방 판의 규칙이다. 도구 루프 판에서도 `answer`가 싣는 `Finding`에 그대로 걸린다.)
+  (한 방 판의 규칙이다. 도구 루프 판에서도 `answer`가 싣는 `Finding`에 그대로 걸린다 — v10은 `procedure`에 걸리고 「확인 불가」가
+  `audit.refutation.result`의 `decisive_code_missing`으로 나온다. 하네스는 그 값이거나 `trigger_status`가 `reachability_unknown`이면 발급 `missing_id`를 붙인다: 아래 「하네스가 덮는 필드」.)
 
-#### 도구 루프 — Auditor가 홉마다 조회·진단을 부른다 (이슈 #419 · [D99](open-questions/D/D99.md) · 기본 꺼짐)
+#### 도구 루프 — Auditor가 홉마다 조회·진단을 부른다 (이슈 #419 · [D99](open-questions/D/D99.md) · ⏵ 2026-10-04 **켰다**)
 
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
-main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
-그 다음 번호다). 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
-`src/schemas/auditor.py`(`AuditorAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
+~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
+그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**(`prompts/auditor/v8/` ·
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06 v9(v8 + `auditor_guards` 서술)를 거쳐 같은 날부터 **지금 배선된 판은 v10**이다(v7 전면 재작성 · 봉투가 다르다 — 아래 「봉투가 둘이다」). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
+`src/schemas/auditor.py`(`AuditorAction` · `AuditorProcedureAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
 
+⏵ **2026-10-06 — 봉투가 둘이다.** 아래 1~8번의 「`AuditorAction`」은 **v8·v9의 봉투**이고 v10은 형제 봉투 `AuditorProcedureAction`을 매 홉
+요청한다(meta `output_schema`). 둘은 공통 베이스(`src/schemas/auditor.py`의 `_AuditorEnvelope`)로 `action`·`requests`·`tool`·`spec`과 액션
+검증기를 공유하고, **갈리는 것은 `answer`가 싣는 필드 하나와 그 뒤 `rationale`뿐이다** — `AuditorAction`은 `finding`(최종 `Finding`),
+`AuditorProcedureAction`은 `procedure`(최종 `AuditProcedure` — §3). `AuditorAction`을 고치지 않고 형제를 둔 까닭은 요청 바이트다: 그 JSON
+스키마가 v8·v9 루프의 `response_format`으로 그대로 나가므로 필드를 더하면 그 판들의 요청이 바뀐다([evaluation.md](evaluation.md) §2.3).
+**조사 홉의 규칙은 두 봉투가 같다** — 액션 셋 · `rationale` 필수 · `lookup` 요청 형식 · `probe` 도구 여섯 · 관측 형식 · 반복 판정 · 마지막 홉
+안내 · 상한 · 정지 사유. 조사 쪽 함수(`_observe`·`_request_key`·`_emit_hop`)가 `_Hop = AuditorAction | AuditorProcedureAction`을 받고 정지
+판정(`_stop_without_finding`)은 그 키만 본다. 다른 것은 `answer`를 받은 뒤 한 단계다 — `procedure`면 `Finding`으로 옮긴다
+(`_finding_from_procedure`, §3 「AuditProcedure」의 「`Finding`과의 관계」). 「이 판은 루프 판인가」는 `_loop_envelope` 하나가 묻는다(meta 선언을
+`resolve_output_schema`로 푼 것이 두 봉투 중 하나인가).
+
 **켜는 조건은 둘이고 어긋나면 서지 않는다.** ① `thresholds.auditor_tool_hops`가 양수 ② 배선된 판의 meta가
-`output_schema: AuditorAction`을 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
+`output_schema`로 루프 봉투(`AuditorAction` · `AuditorProcedureAction`)를 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
 `_render_hop0`를 두 경로가 같이 쓴다) — 안 켠 run은 [evaluation.md](evaluation.md) §2.3의 재측정을 걸지 않는다.
-판은 `AuditorAction`인데 상한이 0이거나 그 반대면, 또 루프 판의 meta `tools`가 비었거나 `AuditorAction.tool`이
+판이 루프 봉투를 선언하는데 상한이 0이거나 그 반대면, 또 루프 판의 meta `tools`가 비었거나 봉투의 `tool`이
 안 받는 이름(`index`)을 들면 조용히 한쪽으로 넘기지 않고 `PromptError`다(`nodes/auditor.loop_problem`) —
 넘기면 「도구 호출 0건」이 「모델이 안 골랐다」로 읽힌다. **`cli`의 run(종료 코드 2)·doctor(ERROR)가 같은
 함수를 부른다** — 따로 판정하면 한쪽만 통과하는 설정이 첫 Auditor 호출(그 앞 단계에 쓴 GPU 시간 뒤)에서야
 선다.
 
-1. **액션 셋.** 모델은 매 홉 `AuditorAction` 하나를 낸다. `rationale`(비지 않은 문자열)은 셋 공통이다.
+1. **액션 셋.** 모델은 매 홉 봉투 하나를 낸다 — v8·v9는 `AuditorAction`, v10은 `AuditorProcedureAction`. `rationale`(비지 않은 문자열)은 셋
+   공통이고 두 봉투가 같다.
 
    | `action` | 싣는 필드 (이것만) | 하네스가 하는 일 |
    | --- | --- | --- |
    | `lookup` | `requests` — 비지 않은 목록 | 이름으로 코드를 조회해 관측으로 되먹인다 |
    | `probe` | `tool`(필수) · `spec`(선택, `PovSpec`) | 도구 하나를 돌려 관측으로 되먹인다 |
-   | `answer` | `finding` — 최종 `Finding` | 루프를 끝낸다. 이 `Finding`이 5단계 산출이다 |
+   | `answer` | `finding` — 최종 `Finding`(v8·v9) · `procedure` — 최종 `AuditProcedure`(v10) | 루프를 끝낸다. v8·v9는 이 `Finding`이, v10은 `procedure`를 옮긴 `Finding`이 5단계 산출이다 |
 
    필수 필드가 비었거나 **다른 액션의 필드가 실리면 스키마가 거절한다**(`answer`에 `tool`을 같이 싣는 식 —
    `extra="forbid"`는 없는 이름만 막지 선언된 필드를 엉뚱한 액션에 채운 것은 못 잡아 검증기가 따로 본다).
    거절은 파싱 실패로 올라가 후보가 `queued`(C-6 `schema_parse_failed`)에 남는다 — 루프가 흡수하지 않는다.
-   `Finding`은 `answer`에서만 나온다.
+   5단계 산출 `Finding`은 `answer`에서만 나온다(v10은 `procedure`를 옮겨서 — §3 「AuditProcedure」).
 
 2. **`lookup` 요청 형식.** `requests`의 항목은 Scout 되묻기와 같은 `RequestedContext`다 — `kind`·`target`·
    `purpose`·`request_code` 넷이 전부 필수 문자열이다. **`target`은 심볼 이름이고 경로·검색 패턴·정규식이
@@ -230,7 +327,9 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
    **`SOURCE`와 겹치는 조각이 올 수 있다**. 훅이 없는 run(resolver 미배선)은 정지하지 않고 「조회가 없다」는
    관측을 받는다.
 
-3. **`probe` 도구 여섯, 그리고 ⚠ 지금은 입력을 안 받는다.** `tool`은 닫힌 `Literal`이라 모델 문자열이 아니라
+3. **`probe` 도구 여섯, 그리고 ⚠ 이 경로는 입력을 안 싣는다**(⏵ 2026-10-09 — 컨테이너 `poc`는 받을 수
+   **있게** 됐지만 `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를 안 싣는다. 싣게 하는 것은 이슈 #419).
+   `tool`은 닫힌 `Literal`이라 모델 문자열이 아니라
    **이 여섯 이름 중 하나만** argv에 들어간다. `index`는 화이트리스트에 있으나 일부러 뺐다 — 코드 열람은
    `lookup`의 일이다.
 
@@ -241,14 +340,21 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
    | `build` | `build` | `clang -c`로 컴파일만(링크 없음) |
    | `asan` | `sanitizer` | ASan+UBSan으로 새로 빌드한 `asan.bin`을 **인자·stdin 없이** 1회 실행 |
    | `gdb` | `crash` | 새로 빌드한 `gdb.bin`을 고정 `gdb.batch`로 실행 |
-   | `poc` | `poc_run` | `{SCRATCH}/poc`를 실행 — **그 파일을 만드는 주체가 아직 없다** |
+   | `poc` | `poc_run` | ⏵ 2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 과제 `-vul` 이미지를 돌리고 PoC를 `/tmp/poc`로 바인드한다 |
 
-   ⚠ **여섯 모두 모델이 준 바이트를 입력으로 받지 않는다.** `probe`가 `spec`을 싣더라도 노드는 `assemble_poc`으로
-   조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘긴다 — 관측은 `spec`과 무관하다(저장소 코드만의
-   함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was recorded but NOT given to the tool"* 줄이
-   붙는다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가 구성한 입력으로 돌렸더니」라고 쓴다** — 그
-   문장은 거짓이고 학습 궤적에 거짓이 들어간다([D99](open-questions/D/D99.md) 「선행 둘」 ②). 입력 바이트를
-   대상에 먹이는 길은 이슈 #386 ①이고 그것이 서면 이 경고와 관측의 그 줄을 같이 고친다.
+   ⚠ **이 경로(Auditor `probe`)는 모델이 준 바이트를 도구에 안 싣는다.** `probe`가 `spec`을 싣더라도 노드는
+   `assemble_poc`으로 조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘긴다 — 관측은 `spec`의 함수가
+   아니다(저장소 코드만의 함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was recorded but NOT
+   given to the tool"* 줄이 붙는다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가 구성한 입력으로
+   돌렸더니」라고 쓴다** — 그 문장은 거짓이고 학습 궤적에 거짓이 들어간다
+   ([D99](open-questions/D/D99.md) 「선행 둘」 ②).
+
+   ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 이유가 바뀌었다.** 컨테이너
+   `poc`는 이제 입력을 **먹일 수 있고**(과제 `-vul` 이미지의 `/tmp/poc`) 8단계 PoV 경로가 그것을 쓴다.
+   이 경고가 Auditor 경로에서 여전히 참인 이유는 **도구의 능력이 아니라 이 노드가 안 싣는다는 것**이다
+   (`nodes/auditor._probe`의 `ToolArgs`에 `input_bytes`가 없다). 그래서 `probe(poc)`는 입력 없는 호출이라
+   실패 Evidence다 — 싣게 하는 것은 이슈 #419다. 🔴 **`asan`·`gdb`·`build`는 8단계에서도 안 받는다**:
+   셋을 바꾸려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다(이슈 #507).
    ⚠ 관측 헤더의 `exit`는 크래시의 **대용 지표일 뿐**이다 — 비-0이 곧 「그 위치에서 터졌다」가 아니다
    (`src/orchestrator/gate.py` 모듈 docstring, 이슈 #232). 프롬프트가 `exit`≠0을 근거 문장으로 승격시키지
    않게 한다.
@@ -279,7 +385,10 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
    규칙이 한 갈래 늘어난다 — **`probe` 관측이 실어 준 `evidence_id`는 그 관측을 받은 홉 뒤에만 인용할 수 있다.** `lookup`은
    Evidence를 만들지 않아 ID가 없다(코드는 `path[]`의 위치로 가리킨다). `FACTS`는 hop0에서 고정이라 새 ID가
    거기 들어가지 않는다. `candidate_id`·`finding_id`·`missing_id`는 hop0의 `FACTS.ids`이고 `answer`의
-   `Finding`도 종전과 같이 `stamp_issued`가 발급값으로 덮는다([D83](open-questions/D/D83.md)).
+   `Finding`도 종전과 같이 `stamp_issued`가 발급값으로 덮는다([D83](open-questions/D/D83.md)). ⏵ 2026-10-06 — v10의 `answer`는 그 ID들을 싣지
+   않는다(`procedure`에 필드가 없다) — 하네스가 발급값으로 채운다(위 「하네스가 덮는 필드」). `procedure.evidence_refs`에는 이 항목의 규칙(FACTS의
+   ID + `probe` 관측이 실어 준 ID)이 그대로 걸리고 v10 prefix의 「Identifiers and evidence references」가 같은 규칙을 적는다.
+   `cited_probe_evidence`는 두 봉투 모두 답의 `evidence_refs`로 센다.
    ⚠ **인용했다고 등급이 오르는 것은 아니다.** `probe`의 Evidence는 증거 저장소에는 들어가지만(`ctx.call_tool`)
    노드의 반환 계약 `(Finding, MissingEvidence[])`이 불변이라 러너가 게이트에 넘기는 `state.evidences`에는 안
    실린다 — 이 절을 쓴 시점에 `runner.py`의 그 대입은 2단계가 모은 근거 그대로다. 연결은 별 결정이다
@@ -290,10 +399,12 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
 6. **홉 예산.** 조사 홉은 `thresholds.auditor_tool_hops`번까지이고, hop 0..N-1이 `lookup`·`probe`를 내도 되며
    **hop N은 `answer`여야 한다**(모델 호출은 최대 N+1회). 다음 홉이 마지막 허용 홉이면 하네스가 관측 뒤에
    *"This is the last hop the host allows: do not request another lookup or probe. Output an `answer` action with
-   your final Finding."*을 붙인다. 정지는 셋이다.
-   - `answer` → `ANSWERED`. `Finding`을 돌려준다.
+   your final Finding."*을 붙인다. ⏵ 2026-10-06 — 그 문구는 두 봉투가 같이 쓰는 한 문장이라 v10에서도 *final Finding*이라 적는다(`_LAST_HOP_NOTE`) —
+   그 홉의 `answer`가 싣는 것은 `procedure`다. v10 prefix가 「Tool use」에서 그 Finding을 `procedure`로 읽으라고 직접 메운다. 문구를 봉투별로
+   가르는 것은 이 변경이 안 했다. 정지는 셋이다.
+   - `answer` → `ANSWERED`. 최종 답을 `Finding`으로 돌려준다 — `Finding`을 싣는 봉투(`AuditorAction`)면 그대로, v10이면 `procedure`를 옮긴 것이다.
    - **직전 홉과 같은 요청**을 또 냄 → `REPEAT_REQUEST`. `lookup`은 `(kind, target)` 집합이 같으면, `probe`는
-     **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 입력을 안 받으니 같은 관측이 온다). 직전
+     **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 그 값을 안 받는다 — ⏵ 2026-10-07 「그래서 같은 관측이 온다」는 **과장이라 뺐다**: 나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다). 직전
      홉하고만 비교한다 — A,B,A는 안 잡히고 상한이 막는다.
    - 상한까지 조사만 함(hop N이 `answer`가 아님) → `MAX_HOP`.
 
@@ -321,42 +432,66 @@ main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이
    output, execution logs, or tools."*를 명시한다 — 도구를 쥐어 준 판이 그 문장을 그대로 두면 광고한 도구와
    충돌하고, 모델이 도구를 영영 안 쓴다(스키마가 허용해도 프롬프트가 광고하지 않으면 안 쓰는 것은 PoV v2 ↔ `gdb`
    가 그 선례다). 같이 고칠 문장이 둘 더 있다 — *"Return only the final Finding JSON object"*(prefix 서두)와
-   출력 계약의 *"content must contain only the Finding JSON object"*는 루프 판에서 **홉마다 `AuditorAction`
-   하나**여야 하고 `Finding`은 `answer` 안에 든다. 서두의 *"Do not invent … sanitizer results, or execution
+   출력 계약의 *"content must contain only the Finding JSON object"*는 루프 판에서 **홉마다 봉투(`AuditorAction`, v10은
+   `AuditorProcedureAction`) 하나**여야 하고 최종 답(`Finding`, v10은 `AuditProcedure`)은 `answer` 안에 든다. 서두의 *"Do not invent … sanitizer results, or execution
    logs"*는 지어내기 금지라 관측과 충돌하지 않는다. 다만 repro_spec 문장을 지우기만 하면 「지어내도 된다」로
    읽힐 수 있으니 「관측이 받쳐 주는 것만 쓴다」를 한 문장 더한다.
+   ⏵ 2026-10-04 — **v8은 이 항목의 첫째(repro_spec의 금지 문장을 지운다)를 지키지 않았다.** 그 문장이
+   `prompts/auditor/v8/prefix.md:300`에 그대로 있고(`git grep -c "Do not invent build options" prompts/auditor`
+   → v4~v9 각 1) v8이 고친 것은 그 앞 구절(「or by an observation you received on an earlier hop of this
+   call」을 더함)뿐이다. 나머지 둘(「Return only the final Finding JSON object」·「content must contain only the
+   Finding JSON object」)은 v8이 다시 썼다. 남긴 문장이 `probe` 사용을 막는지는 v8로 돈 run이 0건이라 **미측정**이다 —
+   이 항목을 그대로 두고 v8을 고칠지, 「지어내기 금지라 남겨도 된다」로 항목을 고칠지는 결정이 필요하다.
+   ⏵ 2026-10-06 — **v10은 첫째 문장을 줄여서 남겼고 나머지 둘은 없다.** *"Return only the final Finding JSON object"*·*"content must contain only the
+   Finding JSON object"*는 v10에 없다(`git grep -c`가 세는 판은 v4~v7이다 — v8·v9는 위에서 다시 썼다고 했고 v10도 매 홉 봉투 하나·최종 답은
+   `procedure`라 적는다). repro_spec의 금지 문장은 `git grep -c "Do not invent build options" prompts/auditor`에 v10이 안 잡히지만 **지워진 것이
+   아니다** — 「5. CWE and reproduction」에 *"do not invent build options, sanitizer output, logs, or tools"*가 소문자로, 「execution」 없이
+   남았다(`git grep -n -i "invent build options" prompts/auditor/v10`). 그 문장이 `probe` 사용을 막는지는 v10으로 돈 run이 0건이라 **미측정**이고,
+   위 결정(남겨도 되는지)은 열린 채다.
 
 8. **meta 선언 — 선언 없이 상한만 켜면 cli가 막는다.** 루프 판의 `meta.yaml`은 둘을 든다.
 
    ```yaml
-   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 그 판은 아직 이 저장소에 없다
+   # 루프 판의 prompts/auditor/<버전>/meta.yaml 모양 예시 — 실물은 prompts/auditor/v8/meta.yaml이다(⏵ 2026-10-04 · ⏵ 2026-10-06 v10은 output_schema가 AuditorProcedureAction이다)
    output_schema: AuditorAction
    tools: [semgrep, clang-tidy, build, asan, gdb, poc]   # prefix가 광고하는 만큼만
    ```
 
-   - `output_schema: AuditorAction` — 노드가 이 선언으로 루프 여부를 정한다(`resolve_output_schema` — 집합 밖
-     이름은 거절).
+   - `output_schema: AuditorAction`(v8·v9) 또는 `AuditorProcedureAction`(v10) — 노드가 이 선언으로 루프 여부를 정한다(`_loop_envelope`가 meta
+     선언을 `resolve_output_schema`로 푼 것이 두 봉투 중 하나인가 — 집합 밖 이름은 거절). **선언이 곧 모델에게 보내는 스키마다** —
+     `output_schema`가 부르는 이름은 호출하는 코드가 **실제로 보내는** 스키마여야 한다(`tests/test_config.py`의
+     `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 문다). 그래서 허용집합(`nodes/auditor.ALLOWED_OUTPUT_SCHEMAS`)은
+     `Finding`(한 방) · `AuditorAction` · `AuditorProcedureAction` 셋이고 **payload 모델 `AuditProcedure`는 그 집합에 없다** — 봉투의 `procedure`로
+     들어갈 뿐 최상위로 요청되지 않는다. 선언하면 `lookup`·`probe` 없이 감사 결과 하나만 받는 문법이 되어 프롬프트가 시키는 홉 봉투와 어긋난다.
    - `tools` — 이 판의 prefix가 「쓸 수 있는 도구」로 서술하는 이름이다. **여섯의 부분집합**이어야 한다: 로더는
-     `index`도 통과시키지만 `AuditorAction.tool`이 받지 않으므로 적으면 문법이 거절하는 도구를 광고하게 된다.
+     `index`도 통과시키지만 봉투의 `tool`(`AuditorTool` — 두 봉투가 공유한다)이 받지 않으므로 적으면 문법이 거절하는 도구를 광고하게 된다.
      `thresholds.auditor_tool_hops`가 양수인데 배선된 판의 `tools`가 비거나 여섯 밖의 이름을 들면 `cli`의
      run·doctor(ERROR)와 노드가 같은 함수(`loop_problem`)로 막는다(WARN이면 「도구 호출 0건」으로 정상
      종료하기 때문이다).
    - ⚠ **버전 이름으로 분기하지 않는다.** `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS`는 이름 목록이라 판이 늘
      때마다 코드를 고쳐야 하고 잊으면 그 기능이 조용히 꺼진다. 루프도 도구도 **meta 선언**으로 가른다 —
      판을 한 번호에서 다음 번호로 올려도 코드 변경 없이 돈다. (근거 본문 싣기는 아직 이름 목록이다 — 새 판이 본문을 전제로 쓰였으면 거기에는
-     이름을 더해야 한다.)
-   - 이 선언을 디스크에 두면 `tests/test_config.py`의
+     이름을 더해야 한다. ⏵ 2026-10-07 — v10도 그 목록에 들었다(`21b9513`): prefix가 `FACTS.evidence[].body`·`truncated`를 읽으라고 시키는데 목록 밖이면 본문이
+     FACTS에 안 실린다.)
+   - ~~이 선언을 디스크에 두면 `tests/test_config.py`의
      `test_the_prompt_output_schema_is_what_the_caller_actually_requests`가 Auditor를 `Finding` 하나와 등치로
      단언해 빨개진다(`bench.ROLE_SPEC`도 `Finding`을 요청한다) — scout처럼 허용집합 소속으로 넓히는 것은 그
-     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**
+     테스트를 쥔 레인의 몫이다. 같은 이유로 **루프 판은 bench의 한 방 호출로 못 잰다.**~~ ⏵ 2026-10-04 — 둘 다
+     고쳤다(#419): 그 테스트는 Auditor를 허용집합(`Finding`·`AuditorAction` — ⏵ 2026-10-06부터 `AuditorProcedureAction`까지 셋) 소속으로 묻고
+     (`AUDITOR_ALLOWED_SCHEMA_NAMES`), bench는 판의 meta 선언을 풀어 요청한다(`bench_report.schema_for` —
+     scout 자리와 같다). `bench.ROLE_SPEC`의 auditor 항목은 여전히 `Finding`(한 방 판의 이름)이고 루프 판에는
+     쓰이지 않는다(`tests/test_auditor_loop.py`의 `test_bench_requests_the_schema_the_auditor_prompt_declares`).
 
-§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. 기본(꺼짐)에서
-Auditor는 `ctx.call_tool`을 부르지 않는다.
+§1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
+Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
+명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거 ID를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)까지 싣는다 — #237/#247). ⚠ **2026-09-24 현재 그 본문 싣기는 꺼져 있다** — ~~11~~ 7 프로필(같은 날 로스터 밖 정리 뒤)의 critic이 전부 `v1`이고 v3를 켜는 것은 확인 run(#237 HIGH-1) 뒤다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v3 · 근거 본문」).
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). **2026-10-05 — 서빙 Critic은 v6으로 본문·위치·SOURCE를 받는다**(#497). `dev_*`의 공유 fake v1은 metadata 계약을 유지한다. SOURCE는 Auditor의 최초 읽기 캐시이며 원문 블록과 FACTS에 함께 실린다. v3 확인 run 선행은 유지하지 않는다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v6 · 근거 본문·SOURCE」).
 - 출력: `Decision`
 - **요청은 `verdict`를 자유 문자열로 받고(`DecisionDraft`), `Verdict.from_text`로 표준값에 매핑해 `Decision`을 만든다.** `Decision.verdict`(열거형)를 구조화 출력 스키마에 `enum`으로 강제하면 grammar 마스크가 모델의 맞는 추론을 틀린 토큰으로 덮는다 — gpt-oss-20b 실측(2026-09-12): `enum` 강제 verdict 2/5, `enum` 제거 5/5, rationale은 둘 다 정답. ⚠ **원천은 PR #182 본문이고 그 run의 원문은 저장소에 없다** — 같은 날 커밋된 [`DecisionDraft` 예산 보고서](experiments/harness/2026-09-12-critic-decisiondraft-budget-atom.md)는 **다른 실험**이다(§5가 그 사실의 자리다).
 - **매핑은 추측하지 않는다.** 표준값(`uphold`/`rebut`/`need_evidence`)이 **맨 앞 단어일 때**(`uphold: no guard…`, `**uphold**`, 이름표를 첫 구분자까지 한 번 걷어 — `verdict: uphold`·`final verdict = uphold`·`verdict:uphold`)와 짧은 명백한 단독 동의어만 읽는다. 표준값이 둘 이상 나오거나(`uphold or rebut`, 머리 단어가 표준값이어도 — `rebut: …not an uphold case`) 문장 속에 묻히면(`upholding is not warranted…`) 읽지 않는다 — **단어 경계 없는 접두어 매칭은 거부를 지지로 읽었다**(#182 리뷰 H1). 못 읽은 것은 **`need_evidence`(보류)** 로 보내며 원문을 `critic_verdict_unmapped` trace에 남긴다 — 미해석을 `uphold`(지지)로 소비하지 않는다(그러면 임의 문자열이 경로·근거 있는 Finding을 `validated`로 통과시킨다).
@@ -376,7 +511,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 규칙 3의 `truncation alone is not a reason to defer`가 이미 서빙에 있다. **그런데 위 둘(근거 보충 정책·과보류 비용 · 고정 표본 회귀)을
 켜기 전에 했다는 기록이 없다** — 정책은 `git grep` 「근거 보충」·「과보류」·「보류 비용」에 이 문단뿐이었고(2026-10-03, 이 노트 전 — 테스트 docstring 한 줄은 정책이 아니다), 규칙 5·재측정은
 이번에도 돌지 않았다(§4의 ⏵ 2026-10-03). v6로 돈 run도 `docs/experiments/`에 0건이다(grep, 2026-10-03 — 커밋된 보고서만 센 것).
-**Critic은 여전히 `v1`이다** — Critic v5(`prompts/critic/v5/`)는 안 켜졌으니 위 문장은 Critic 쪽에서는 그대로 전이다.
+**2026-10-05 — Critic v1 → v6**(#497, 사용자 지시). v5는 배선하지 않았다. 위 근거 보충 정책·과보류 비용 결정과 고정 표본 회귀를 수행했다는 기록은 없다. 측정 전에 입력 배선 결함을 먼저 고쳤으며, 보류 자동 수집 경로는 여전히 없다. 실모델 판정 관측 0회(미실측).
 
 ### 2.4 Evidence Judge (Evidence Gate)
 
@@ -387,8 +522,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
 러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
-`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. **남은 것은 PoC 바이트를
-도구 입력(`./poc`)으로 materialize하는 것+E4 게이트**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
+`PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. ⏵ **2026-10-09 — 「PoC 바이트를 도구 입력으로 먹인다」가 섰다**(ADR 0014 · 이슈 #513).
+**남은 것은 E4 게이트 전이**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
 신뢰면·리뷰. `src/schemas/pov.py` docstring). 외부 oracle 제출은 `run --oracle-submit`으로 들어왔다 —
 아래 「채점기 제출」. ⚠ 하네스 run으로 실서버 왕복을 잰 것은 0건이다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
@@ -397,7 +532,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
-- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임).
+- 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3 이상은 직전 `gen`의 PoC가 있으면
+  도구 요약 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
+  일부러다: 도구가 그 바이트를 받았다고 읽히지 않게. **meta가 `hop_header`를 켠 판(v4~)은 followup 맨
+  앞에 홉 줄이 하나 더 붙는다** — `hop=<k> last_hop=<N> remaining=<N-k>`, `runner._pov_hop_line`, #511.
+  그래서 그 판에서 도구 요약은 둘째 줄이다) + (v3 이상이고 `--oracle-submit`일 때) 직전
+  `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
@@ -407,19 +547,38 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
-  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx)·예산 소진
-  (`BudgetExhausted`)은 흡수하지 않고 run으로 올린다. 도구는 `asan`·`build`·`poc`·`gdb`
+  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx·버릴 수
+  없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
+  `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
+  `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
+  run은, 오라클에 이미 낸 최종 후보가 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
+  지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
+  ⚠ **그 두 예외 밖의 예외는 안 덮는다**(예외 종류) — 낸 PoC가 있든 추가 대상이든 최종 지정이 안
+  돌고 `oracle.final`이 `not_reached`다.
+  ⚠ **그 두 예외라도 낸 PoC 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무).
+  추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
+  「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다. 도구는
+  `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
-  (배선은 별 PR). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
+  (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
-  아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3 prefix에는 "언제 쓰라"는 지시를
-  두지 않고 "도구 넷 모두 PoC를 입력으로 안 받는다"는 사실만 적는다.
-  ⚠ **도구 넷 모두 PoC 바이트를 입력으로 안 받는다**(`run_tool`이 `ToolArgs(argv=[tool], workdir)`만
-  넘긴다) — `poc`·`asan`도 gdb와 다르지 않다. 호스트 후속 전에는 실서빙 pov 루프의 관측이 PoC와
-  무관하므로 `harness_pool`의 8단계를 돌리지 않는다.
+  아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3·v4 prefix에는 "언제 쓰라"는 지시를
+  두지 않고 도구의 입력 한계만 적는다.
+
+  ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 넷이 둘로 갈렸다.**
+  **`poc`는 PoC를 먹인다** — 과제 자신의 `-vul` 이미지를 돌리고 쓴 파일을 `/tmp/poc`로 읽기 전용
+  바인드하므로 **그 도구의 관측은 PoC의 함수다**. 🔴 **`asan`·`gdb`·`build` 셋은 그대로다** —
+  셋도 받게 하려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다(우리 clang이 CyberGym 번들을
+  컴파일하지 못한다 · 이슈 #507 · 과제 1,507건의 빌드 규칙이 제각각). 셋을 재는 핀은
+  `test_no_executed_container_command_receives_the_input_today`(그 parametrize에서 `poc`가 빠졌다)이고
+  `poc`는 `test_the_poc_command_feeds_the_input_now`와
+  `tests/test_poc_tool_feeds_the_input.py`가 든다.
+  🔴 **전 판은 넷 전부를 한 묶음으로 서술했다** — 「도구의 능력」을 근거로 들었고 **그 사실이
+  뒤집혔다** — 서빙 prefix(v3·v4)는 불변 기록이라
+  고치지 않고 **v5**가 바뀐 사실을 적는다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
@@ -431,29 +590,62 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **그 gen 홉의 `pov_hop`이 이미 나간 경우뿐**이다(예: 다음 홉의 모델 호출이 서버 오류로 실패 — 그
   이벤트의 `poc_sha256`). **그 홉 자신의 도구 호출에서 끊기면 해시도 없다** — 토큰 예산 소진이 그
   경로로 난다(`tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
-- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): 후보(finding)마다 PoC를 채점기의 **`vul` 다리에만**
-  내보내고(`runner._submit_vul_to_oracle`), `fix` 다리와 판정 조회는 8단계 끝에서 **run당 한 번, 최종으로
-  지정한 PoC 하나에만** 돈다(`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
+- 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
+  다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
+  이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
+  `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
+  (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정은 vul 제출이 성공한 후보가 하나뿐일 때만 한다**(`sole_candidate` — 고를 것이
-  없어서이고 위치 규칙이 아니다). 후보가 둘 이상이면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다
-  (`oracle_final`은 `status=none` · `reason=policy_undecided`): 같은 연구 문서 1.3절이 「best-of도
-  last-attempt도 아니다」라고 결론내려 마지막·처음·점수로 고르는 기본값을 둘 수 없고, 합의된 방식
-  (모델에게 묻기)은 프롬프트 버전과 좌석이 필요한 별도 조각이다(`runner._designate_final`). 서버 주소는 조작자가
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여섯이다** — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
+  갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ①내부 근거 등급 ②`confidence`
+  ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급 또는 `confidence`를
+  모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
+  `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 둘을 같이 본다. 현
+  러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가
+  council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
+  1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
+  값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
+  `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
+  바이트가 대상에 닿기 전에는 그 도구 실행이 PoC의 함수가 아니어서(⏵ 2026-10-09 ADR 0014가 `poc`
+  쪽을 세웠다 — 그 전 run의 기록이다) 후보가 같은
+  등급으로 동점일 수 있다 — ⏵ **2026-10-04에 그 동점이 더 이상 점수를 막지 않는다.** 2026-10-03
+  동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
+  (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
+  위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
+  (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
+  `response_exit_code`와 중간 gen의 `query_vul` 관측이 지정 시점에 손에 있는데도다
+  (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
+  오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
+  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
+  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
   `--mask-map`으로 줄 때만 받는다 — 제출은 번들의 마스킹된 id로, 판정 조회와 제출 전 캐시 판별은 맵이 준 실
-  id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). ⚠ 마스킹 서버
-  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. 판정은 **Evidence가 아니고 내부 등급(E4)을
+  id(`TaskOracle.query_task_id`)로 가고, 맵 없이 마스킹된 id가 오면 제출 전에 거절한다(exit 2). 조회에 쓰는 실 id가 `oss-fuzz-latest:` 계열이면
+  저자 서버가 `vul` 제출부터 400으로 거부하므로 그것도 제출 전에 거절한다(이슈 #431, 소스 판독). ⚠ 마스킹 서버
+  경로는 저자 소스 판독이고 실제 마스킹 서버로는 재지 않았다. ⏵ **2026-10-04 — 필수 입력이 하나 늘었다**:
+  `--oracle-canary`가 가리키는 **카나리 보고서**(`tools/oracle_canary.py <task-id> --out <경로>`가 쓴 JSON)
+  없이는 제출이 서지 않는다(이슈 #383). 호스트 `vm.mmap_rnd_bits`가 28보다 크면 무해한 입력도
+  「크래시」로 집계된 것을 쟀기 때문이고, 보고서가 이 과제의 것이 아니거나 통과가 아니면 거부한다(exit 2).
+  마스킹 run에서는 보고서의 `task`가 **실 id**다(도구가 과제 id로 이미지 이름을 만든다). ⚠ 하네스가 그
+  도구를 직접 돌리지는 않고, 보고서가 **지금 이 부팅**의 것인지와 **채점 컨테이너를 돌리는 장비**의 것인지는
+  게이트가 못 가린다. 기댄 보고서의 **경로(풀어 쓴 것)와 검사한 바이트의 sha256**은 매니페스트 `oracle`의
+  `canary_path`·`canary_sha256`에 남는다(이슈 #487). 판정은 **Evidence가 아니고 내부 등급(E4)을
   올리지 않는다**(#232). 값(서버가 만드는 `poc_id`·장비에 달린 종료 코드)은 trace의 재현성 기준을 깨서
-  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(후보마다)와
+  `{run_dir}/oracle/verdict.json`에 두고, trace에는 `oracle_submitted`·`oracle_failed`(모든 `vul` 시도마다)와
   `oracle_final`(run당 1건)이 남는다. 실패는 흡수하고 run 경고와 매니페스트의 `oracle`에 올린다. ⚠ 같은 번들로 run을 반복하면
   서버가 판정을 캐시한다(이슈 #385) — 사이드카의 `cached`와 경고가 알린다. ⚠ **이 경로는 대역으로만
   검증했다** — 하네스 run으로 실서버 왕복을 잰 것은 0건이다.
-  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200, `run_20261003_0003`) — 「대역으로만」은
-  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이고, `cached`가 서버 응답 필드가
-  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이라는 것도 그 run에서 확인했다(8건 호출).
+  ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(제출 8건 200 · **고유 PoC 1개** — `cached` 미적중 1·적중 7 ·
+  `win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`),
+  [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)) — 「대역으로만」은
+  그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
+  아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
+  접근 로그에도 제출마다 앞선 읽기 8건이 있다).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
@@ -533,9 +725,26 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "candidate_id": "cand_0001",
   "state": "hypothesized",
   "path": [
+    {"step": "source", "symbol": "recv_request", "note": "len을 인자로 넘긴다"},
     {"step": "propagate", "symbol": "parse_header", "note": "len이 검증 없이 전달"},
     {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
   ],
+  "audit": {
+    "category": "spatial_bounds",
+    "point": {"symbol": "parse_header", "expression": "memcpy(buf, src, len)"},
+    "origin": {"kind": "param", "fact": "len은 recv_request가 넘기는 인자다"},
+    "path": [
+      {"step": "source", "symbol": "recv_request", "note": "len을 인자로 넘긴다"},
+      {"step": "propagate", "symbol": "parse_header", "note": "len이 검증 없이 전달"},
+      {"step": "sink", "symbol": "memcpy", "note": "고정 크기 스택 버퍼"}
+    ],
+    "defense": {"expression": "none on visible path", "status": "absent", "gap": null, "fact": "보이는 경로에 len을 거르는 검사가 없다"},
+    "refutation": {
+      "result": "decisive_code_missing",
+      "witness": "recv_request 호출부가 SOURCE에 없다",
+      "missing_information": ["recv_request 호출부에서 len 상한이 강제되는지"]
+    }
+  },
   "trigger_status": "reachability_unknown",
   "confidence": 0.6,
   "rca_draft": "…",
@@ -544,7 +753,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v7"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v10"}
 }
 ```
 
@@ -557,9 +766,15 @@ property 순서가 되고 그 스키마가 `response_format`으로 서버에 실
 **그 순서가 생성까지 강제되는지는 아직 안 쟀다** — xgrammar에 달렸고 v2 프롬프트로 도는
 첫 run이 답한다.
 
+⚠ **`audit`는 이 순서 계약 밖이다** — 위 예시에는 있고 선언도 `path` 바로 뒤지만 `model_json_schema()`에서 **빠진다**(`SkipJsonSchema`). 요청
+스키마에는 안 실리고 저장·검증·`model_dump`에는 선다. 이유와 요청 바이트가 안 바뀐다는 확인은 아래 「AuditProcedure」의 「`Finding`과의 관계」.
+
 `trigger_status` 열거값: `triggerable` | `guarded` | `no_reach` | `reachability_unknown` | `no_signal`.
 **스키마 타입은 `str | None`이고 열거형이 아니다** — 실제 emit 분포를 보기 전에 좁히면 못 본 값이
 finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py](../src/schemas/finding.py) 주석).
+⏵ 2026-10-06 — **v10의 응답 스키마(`AuditProcedure.trigger_status`)는 닫힌 `Literal` 다섯이다**: v10이 그 밖의 값을 내면 파싱 실패이고
+`Finding`에는 다섯만 들어온다. `Finding.trigger_status`의 타입은 그대로 `str` 또는 `None`이다 — 한 방 판·v8·v9가 같은 `Finding`을 쓰므로 안
+좁혔다. 값 집합을 닫은 쪽은 v10의 응답 스키마다.
 
 > **출처 주의 — 위 다섯 중 넷만 이 저장소에서 확인된다 (D51·D52).**
 > [single/v2 prefix](../prompts/single/v2/prefix.md) 규칙 4가 `triggerable`·`guarded`·`no_reach`·
@@ -581,7 +796,12 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > (`prompts/auditor/v6/prefix.md`의 「Set trigger_status to exactly one of」). **v4로 돈 run은 끝까지
 > 0건이었고 v6로 돈 run도 이 저장소에 0건이다**(`docs/experiments/` grep, 2026-10-03 — `artifacts/`는
 > gitignore라 커밋된 보고서만 센 것이다). ⏵ 2026-10-04 — **v7을 고른다**(v6 + SOURCE 옵션 넷의 서술, #349).
-> 위 Finding 예시의 `prompt_version`도 v7로 고쳤다. `trigger_status` 문장은 v6와 같다. v7로 돈 run도 0건이다.
+> 위 Finding 예시의 `prompt_version`도 고쳤다. `trigger_status` 문장은 v6와 같다.
+> ⏵ 같은 날 — 그때 고른 것은 v8이었다(도구 루프, #419 · v7 + 홉 프로토콜). ⏵ 2026-10-06 — v9(v8 + `auditor_guards` 서술)를 거쳐 **지금 고르는 것은
+> v10**이다(v7 전면 재작성 — `trigger_status` 다섯 값과 그 일관성 규칙은 prefix의 「Exact output contract」·「4. Keep fields consistent」가 적고,
+> 그 값 집합은 이 판에서 응답 스키마가 닫는다 — 아래 「AuditProcedure」). v7로 돈 run도 v8·v9·v10으로 돈 run도 0건이다(v10은 `git grep -i v10 -- docs/experiments`가
+> 0건, 2026-10-06 — v8·v9의 0건은 위 ⏵가 적은 그대로다). 위 Finding 예시의 `prompt_version`은 v10이고
+> v10 응답의 `audit` 블록도 든다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -595,6 +815,72 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "expected_signal": "AddressSanitizer: heap-buffer-overflow at parse_header"
 }
 ```
+
+### AuditProcedure (Auditor v10의 최종 답)
+
+v10(`prompts/auditor/v10/`)의 `answer` 액션이 `procedure`에 싣는 **모델 응답**이다(`src/schemas/auditor.py`의 `AuditProcedure` · 봉투는
+`AuditorProcedureAction` — §2.2 「도구 루프」). 필드·값 집합의 원천은 prefix의 「Exact output contract」이고 스키마가 그것을 옮겼다 — 산문을 직접
+읽어 스키마와 대조하는 테스트가 있다(`tests/test_auditor_procedure_schema.py`). 새 JSON 예시 블록은 두지 않았다: 위 `Finding` 예시가 같은 값을
+`audit`와 바깥 필드로 보인다(`tests/test_doc_examples.py`가 이 문서의 JSON 블록을 `EXPECTED`에 등록된 모델로 검증하므로 새 블록은 거기에도
+등록해야 한다).
+
+**바깥 필드는 여덟이고 전부 required다** — 기본값이 있는 필드가 없고 nullable인 `audit`·`repro_spec`도 생략할 수 없다. 선언 순서가 그대로 요청
+스키마의 property 순서다: `audit`가 `trigger_status`·`confidence`·`rca_draft`보다 먼저 — 범주·근거를 먼저 확정해야 뒤 판정이 그것을 거스르지
+못한다는 `Finding`의 근거(#102)와 같다.
+
+| 필드 | 타입 · 제약 | 비고 |
+| --- | --- | --- |
+| `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 |
+| `trigger_status` | 닫힌 다섯 — `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal` | `Finding.trigger_status`(`str` 또는 `None`)와 달리 닫혀 있다 |
+| `confidence` | 0.0 이상 1.0 이하 | 상태별 구간은 산문이 쥔다 |
+| `cwe` | `CWE-<숫자>` 꼴 — **`null`이 안 된다, `no_signal`에서도** | ⚠ 아래 「한계」 |
+| `title` | 비지 않은 문자열 | — |
+| `rca_draft` | 비지 않은 문자열 | `Finding.rca_draft`는 기본값 `""`이 있지만 v10 응답에서는 비면 거절한다 |
+| `evidence_refs` | 식별자 목록 — 빈 목록은 정당하다 | 인용 규칙은 §2.2 5번 |
+| `repro_spec` | `ReproSpec` 또는 `null` | 스키마가 선택 필드 `origin`도 보이나 산문은 `steps`·`expected_signal`만 적는다 — 하네스가 저장 전에 덮는다(`_ensure_repro_origin`) |
+
+`audit` 블록(`AuditBlock`)의 여섯 필드도 전부 required다.
+
+| 필드 | 구조 · 값 집합 |
+| --- | --- |
+| `category` | 열다섯 — `spatial_bounds` · `lifetime_null` · `initialization` · `resource` · `integer` · `type` · `control_flow` · `input_validation` · `format_string` · `injection` · `path_traversal` · `info_exposure` · `concurrency` · `authorization` · `crypto_config` |
+| `point` | `symbol`(위험 지점을 담은 함수) · `expression`(SOURCE에서 그대로 옮긴 결함 식) |
+| `origin` | `kind`(`input` · `param` · `local` · `const`) · `fact` |
+| `path` | `PathStep` 목록 — `step`(`source` · `propagate` · `sink`) · `symbol` · `note`. **빈 목록도 스키마는 받는다** |
+| `defense` | `expression` · `status`(`absent` · `fails` · `covers`) · `gap`(`width` · `operands` · `both_bounds` · `off_by_one` · `order` · `other` 또는 `null`) · `fact` |
+| `refutation` | `result`(`defeated` · `holds` · `path_not_executable` · `decisive_code_missing`) · `witness` · `missing_information`(문자열 목록) |
+
+**스키마가 싣는 일관성 규칙은 하나다 — `audit` ↔ `no_signal`.** 나머지는 일부러 안 싣고 산문이 의미 규칙으로 쥔다(「4. Keep fields
+consistent」): `refutation.result` ↔ `trigger_status`(`defeated`→`triggerable` · `holds`→`guarded` · `path_not_executable`→`no_reach` ·
+`decisive_code_missing`→`reachability_unknown`), `defense.status`가 `covers`인 것과 `holds`는 동치, 상태별 신뢰도 구간, 상태별 `audit.path`의
+비움 여부(`reachability_unknown`이면 `[]`일 수 있고 `triggerable`·`guarded`·`no_reach`이면 비지 않는다). **그 규칙을 어긴 응답도 파싱을 통과해
+`Finding`으로 저장된다**(`holds`인데 `triggerable`인 응답으로 확인했다) — 얼마나 어기는지는 v10으로 돈 run이 0건이라 안 쟀다. `audit.path`에
+`min_length`를 안 건 것도 같은 이유다: 그 규칙은 형제 필드 `trigger_status`에 달려 이 블록이 모르는 상태에 걸린다.
+
+**`Finding`과의 관계 — 하네스가 `procedure`를 `Finding`으로 옮긴다**(`nodes/auditor._finding_from_procedure`). 바깥 필드는 거의 1:1이다 —
+`trigger_status`·`confidence`·`cwe`·`title`·`rca_draft`·`evidence_refs`·`repro_spec`이 같은 이름으로 간다. 나머지는 셋이다.
+
+- `audit.path` → `Finding.path`(`audit`가 `null`이면 `[]`). 게이트 `p2`·Critic·PoV·보고서가 읽는 경로가 `Finding.path`라 `audit` 안에만 두면
+  아무도 못 읽는다. 같은 경로가 `audit.path`에도 남는다.
+- `audit` → `Finding.audit`(블록째).
+- **발급 ID 셋(`finding_id`·`run_id`·`candidate_id`)과 `state`·`missing_evidence`·`produced_by`는 모델에게 묻지 않는다** — `AuditProcedure`에 그 필드가
+  없고 하네스가 채운다(§2.2 「하네스가 덮는 필드」의 ⏵ 2026-10-06). `state`는 `hypothesized`이고 `missing_evidence`는 `refutation.result`가
+  `decisive_code_missing`이거나 `trigger_status`가 `reachability_unknown`일 때 발급 `missing_id` 하나다 — 산문과 하네스가 같은 둘을 든다. 넓은 쪽인 이유는 `gate.evaluate`가 `trigger_status`를 안 읽어서 「모르겠다」가 E2로 열리는 것을 막아야 하기 때문이다. 어긋남은 `answer` 홉 관측 `status_result_mismatch`가 센다.
+
+**`Finding.audit`은 저장되지만 요청 스키마에는 안 실린다.** `audit: SkipJsonSchema[AuditBlock | None] = None`으로 선언돼 검증·직렬화(`model_dump`)에는
+서지만 `model_json_schema()`에서 **빠진다**(`test_finding_stores_audit_but_does_not_request_it`). 이유는 `Finding`의 스키마가 요청 payload에 실리는
+판이 많아서다 — meta `output_schema`가 `Finding`인 아홉(Auditor v1~v7 — `v4_t1` 포함 — 과 single/v2)은 직접, `AuditorAction`을 선언한 둘(v8·v9)은
+`$defs`로 싣는다. 보이는 필드를 더하면 **프롬프트가 안 바뀐 그 열한 판의 요청 바이트가 바뀐다**([evaluation.md](evaluation.md) §2.3의 재측정이
+걸린다). 모델이 채울 값이 아닌 필드를 그 판들에 보여 주는 일이기도 하다. **변경 전후 `Finding`·`AuditorAction`의 `model_json_schema()`는 같다** —
+HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sha256을 대조했다(2026-10-06 — 이 값은 스냅샷이라 `Finding`·`AuditorAction`을 고치는
+다음 PR이 다시 잰다). 그래서 「`Finding`에 필드가 늘었다」는 절반만 참이다 — **저장 모양만 늘고 요청 모양은 그대로다.** `Finding.audit`이 `None`인
+경우는 둘이다 — 안 낸 판(한 방 판·v8·v9)과 v10의 `no_signal` — 이 둘은 `produced_by.prompt_version`으로 가른다(`trigger_status`의 `None` 두 뜻을
+가르는 것과 같은 방식이다).
+
+⚠ **한계 — 이 변경이 고치지 않았다.** `cwe`가 non-null이라 `no_signal`에도 CWE를 요구한다. v10 산문은 *no_signal이면 후보와 관련된 CWE를 두라*고
+적지만 `Candidate.suspected_cwe`는 빈 리스트일 수 있어(`src/schemas/candidate.py`) 그때 모델이 쓸 수 있는 **참인 값이 없다** — 모델이 지어 쓰면 근거
+없는 CWE가 `Finding`에 저장된다. 그 값을 읽는 자리는 여섯이다: SARIF `ruleId`(`src/cli.py`) · Critic의 주장 문장(`nodes/critic.py`) · PoV 입력
+둘(`nodes/pov.py`) · 보고서의 묶음 키와 항목 줄(`nodes/report.py`). 후보의 `suspected_cwe`가 비는 비율도, v10이 그때 무엇을 쓰는지도 안 쟀다.
 
 ### MissingEvidence
 
@@ -620,7 +906,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
   "rebuttal_axis": ["guard", "reachability"],
   "rationale": "상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
   "evidence_refs": ["ev_graph_0012"],
-  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v1"}
+  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v6"}
 }
 ```
 
@@ -640,13 +926,13 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v3", "scout_boundary": "v3", "scout_injection": "v3", "auditor": "v7", "critic": "v1"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v10", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
   "tool_runner": "docker",
   "device": "atom",
-  "budget": {"input_tokens": 4000000, "output_tokens": 400000, "gpu_seconds": 7200},
+  "budget": {"input_tokens": 400000000, "output_tokens": 40000000, "gpu_seconds": 7200000},
   "thresholds": {"scout_threshold": 0.5},
   "seed": 20260901,
   "sampling": {"temperature": 0.2, "top_p": 0.95},
@@ -709,12 +995,17 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > **7개에서 critic 엔트리가 scout·auditor와 공유된다** — `fake`(dev 5개 + `single_gpu_12g`)와
 > `qwen3-coder-30b-a3b`(`b1_single`). critic만 v3로 올리면 그 둘이 없는 `prompts/scout/v3`·
 > `prompts/auditor/v3`를 찾는다. 역할별 `prompt_version`([D67](open-questions/D/D67.md) ·
-> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다. 되돌리지 않은 이유는
+> 이슈 #172의 선택지 (c))이 들어오면 그때 v3로 가른다는 당시 계획이었다. 되돌리지 않은 이유는
 > `prompts/critic/v1/meta.yaml` 머리 주석에 있다.
 >
 > ⚠ **2026-09-24 — 위 「9개 중 7개」는 그때의 수다.** 지금 커밋된 프로필은 7개이고 critic 엔트리를
 > 다른 역할과 공유하는 것은 `dev_*` 다섯(`fake`)뿐이다 — `single_gpu_12g`·`b1_single`은 지웠고
 > `harness_pool`·`_hybrid`의 critic `gpt-oss-20b`는 scout·auditor와 안 겹친다.
+>
+> ⏵ **2026-10-05 — Critic v1 → v6**(#497). 실 Critic의 모델 엔트리는 다른 역할과 공유하지
+> 않아 역할별 판 필드를 기다리지 않는다. `dev_*`의 공유 fake는 v1 그대로다.
+> 위 2026-09-29·10-03의 Critic v1 서술은 각 날짜의 이력이고 현재 판은 v6이다.
+> 규칙 5·재측정은 이번에도 돌지 않았다(실모델 v6 관측 0회). 입력 누락을 먼저 해소했다.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
@@ -753,9 +1044,15 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > v6 prefix의 「Original-source input contract」만 `config/budgets.yaml`이 켠 옵션 넷(20,000토큰 상한 · 정의 ·
 > 피호출 본문 1단 · 호출자 창 10줄)에 맞추고 meta `source_options`로 선언했다(prefix 21,398 -> 23,448자, 나머지
 > 지시·body는 v6와 같다). PR #443의 첫 판은 이것을 **v6 그 자리에서** 고쳤다 — 이 규칙 1이 막는 것이다.
-> **#418의 수(Recall 0.637→0.966 · Precision 0.939→0.821)는 v6 문장의 것이다** — v7에 옮겨 읽지 않는다.
+> **#418의 수(Recall 0.637→0.966 · Precision 0.939→0.821)는 v6 문장의 것이다** — v7에도 v8에도 옮겨 읽지 않는다.
+> ⏵ 같은 날 — **v7 → v8**(도구 루프, #419). v8은 v7의 지시를 더한 판이고 「한 방」 단언 자리만 다시 썼다.
 > v7 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다(v6로 돈 run이 이 저장소에 0건). 규칙 5·재측정은
 > 이번에도 돌지 않았다.
+> ⏵ **2026-10-08 — 그 뒤 두 번 더 바뀌었다**(이 사슬이 v8에서 멈춰 있었다 — 이슈 #528). **v8 → v9**(PR #508, 2026-10-06 01:54 KST 머지 ·
+> v8 + `auditor_guards` 서술 한 줄) · **v9 → v10**(PR #521, 2026-10-07 16:12 KST 머지 · v7 전면 재작성, 매 홉 봉투가 `AuditorProcedureAction`).
+> 각 판 뒤 run은 그 전 run과 직접 비교하지 않는다. 잃는 측정은 없다 — v7·v8·v9로 돈 run이 `docs/experiments/`에 0건이다
+> (grep, 2026-10-08). v10으로 돈 run은 [10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) 1건이다(`checksum` 0이라 비교표 밖). 규칙 5의 고정 표본 회귀를 돌린 기록도 그 디렉터리에 없다. 지금 판은 이 사슬이 아니라
+> `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

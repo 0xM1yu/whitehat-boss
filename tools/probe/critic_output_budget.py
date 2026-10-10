@@ -24,8 +24,12 @@ E2 미만은 7단계에 못 간다.
 
 ## 프롬프트는 작다 — 21,021은 이 경로의 수가 아니다
 
-`nodes/critic.py`의 `_ask_model`이 `build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences`
-**셋뿐**이다. `capsule=`도 `source=`도 `target=`도 안 넘긴다. 그래서 Critic의 사실 블록은
+**이 probe의 metadata-only 재구성 한정이다**(`_reconstruct` — v1 입력 모양):
+프롬프트 판은 registry에서 읽어 기록하지만 v6의 SOURCE·근거 본문·위치는 재구성하지 않는다.
+그 판의 실 입력 토큰으로 읽지 않는다. SOURCE 자리표시자가 있으면 빈 문자열로 채운다.
+`build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences` **셋뿐**이다(content-aware 판은
+`evidence_bodies`·`evidence_locations`를 더 넘긴다 — 이 probe의 경로가 아니다). `capsule=`도
+`source=`도 `target=`도 안 넘긴다. 그래서 Critic의 사실 블록은
 `capsule_sections: []` · `source: ""` · `target: null`이고, **대상 원문도 캡슐도 안 실린다**
 (agent-contracts.md §2.3이 `rca_draft`를 빼는 것과 같은 설계다 — Critic은 앞 단계의 서술이
 아니라 주장·경로·근거만 받는다).
@@ -152,10 +156,11 @@ class Reconstructed:
 def _reconstruct(
     finding: Finding, evidences: list[Evidence], *, template: PromptTemplate, run_id: str
 ) -> Reconstructed:
-    """`nodes/critic._ask_model`의 **metadata-only 조립**(v1)으로 프롬프트를 되만든다.
+    """v1 입력 모양의 metadata-only 조립. 프롬프트 판은 호출자가 고른 대로 기록한다.
 
     content-aware 버전은 `evidence_summaries`로 근거 본문을 더 실으므로 이 되만듦과
-    달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다.
+    달라진다 — 이 프로브는 본문 없는 조립의 토큰 예산을 재는 자리다. SOURCE를 받는
+    판의 원문 블록도 빈 문자열이며 현재 실 입력을 재구성했다는 뜻이 아니다.
 
     `decision_id`를 하네스가 발급한 값이 아니라 자리표시자로 채운다 — 그 run은 Critic을
     안 불렀으므로 발급된 적이 없다. 길이에 미치는 영향이 상수 한 줄이라 분포를 안 움직인다.
@@ -170,6 +175,7 @@ def _reconstruct(
         claim=f"{finding.title} ({finding.cwe})",
         path=_describe_path(finding),
         evidence=_describe_evidence(own),
+        **({"source": ""} if "{{SOURCE}}" in template.body else {}),
     )
     return Reconstructed(
         finding_id=finding.finding_id,
@@ -203,18 +209,41 @@ def _measure_one(client: Any, payload: dict, max_tokens: int) -> dict[str, Any]:
     꼬리가 이 결정의 전부이므로 재시도가 그것을 삼키면 안 된다.
     """
     try:
-        raw, usage = client._post(payload)  # noqa: SLF001
+        posted = client._post(payload)  # noqa: SLF001
     except Exception as exc:  # noqa: BLE001 - 실패도 관측이다. 삼키지 않고 센다
         return {"error": f"{type(exc).__name__}: {exc}"[:300]}
+    # **이름으로 읽는다.** `_post`가 튜플일 때 `raw, usage = …`로 풀면 필드가 하나 늘 때 전 호출에서
+    # `ValueError`를 맞고 위 `except`로 떨어져 GPU가 쓴 생성을 버린다 — #550 작업 중 테스트로
+    # 재현(`tests/test_probe.py`), 실서빙 관측 아님.
+    #
+    # **`content`는 `None`일 수 있다**(`PostedResponse`). 아래 `.rstrip()`이 `AttributeError`로
+    # 죽으면 `main`이 행을 루프 뒤에야 쓰므로 그때까지 쓴 생성이 전부 버려진다 — 위 `except`와
+    # 같은 모양의 `error` 행으로 남기고 계속 간다. 서버가 준 사유·토큰은 문구에 싣는다(GPU가
+    # 이미 쓴 값이다).
+    if posted.content is None:
+        tokens = posted.usage.output_tokens if posted.output_tokens_reported else "미보고"
+        return {
+            "error": f"content가 null이다 (finish_reason={posted.finish_reason}, "
+            f"output_tokens={tokens})"
+        }
+    raw, usage = posted.content, posted.usage
+    # **서버가 `completion_tokens`를 안 실었으면 `usage.output_tokens`의 0은 잰 값이 아니다**
+    # (CLAUDE.md §0). 그 0이 `hit_cap`과 `cap_sample`로 가서 `output_max`를 정하는 분포에 들어가면
+    # 이 프로브가 재려던 값을 지어낸 0이 채운다 — `None`으로 남기고 `_summarize`가 표본에서 뺀다.
+    reported = posted.output_tokens_reported
     stripped = raw.rstrip()
     record: dict[str, Any] = {
         # **서버가 센 입력이다.** `est_tokens`(len//4)와 나란히 남겨 실제 Critic
         # 프롬프트에서 그 추정의 오차를 처음으로 잰다(D21과 같은 축).
         "input_tokens": usage.input_tokens,
         "cached_tokens": usage.cached_tokens,
-        "output_tokens": usage.output_tokens,
+        "output_tokens": usage.output_tokens if reported else None,
         "max_tokens_sent": max_tokens,
-        "hit_cap": usage.output_tokens >= max_tokens,
+        # **서버가 말한 종료 사유다**(`length`·`stop`·`abort` …, 못 읽으면 `null`). 아래 `hit_cap`은
+        # 토큰 수를 상한과 비교한 **추정**이라 상한과 같은 값에서 난 `stop`과 `length`를 못
+        # 가른다. 이 필드가 그 둘을 가른다 — 이 프로브가 상한을 정하려고 재는 물음이 바로 그것이다.
+        "finish_reason": posted.finish_reason,
+        "hit_cap": usage.output_tokens >= max_tokens if reported else None,
         "chars": len(raw),
         # 꼬리가 공백뿐이면 #79의 공백 폭주다. 그 응답의 출력 토큰을 상한 근거로 쓰면
         # 버그를 config에 적는 것이라 `summary.cap_sample`에서 뺀다.
@@ -311,6 +340,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[출처]     {args.state_db}  run_id={source_run_id}")
     print(f"[모델]     {model_key} @ {entry.endpoint}  prompt={ROLE.value}/{template.version}")
+    print("[입력 범위] metadata-only 재구성: SOURCE·근거 본문·위치는 빠져 있다")
     print(f"[Finding]  {len(built)}건 · Evidence {len(evidences)}건")
     print(f"[근거 붙은 Finding] {grounded}/{len(built)}  ← 0이면 D67이 살아 있다는 뜻이다")
     print(f"[프롬프트 추정토큰] {_distribution([r.est_tokens for r in built])}")
@@ -329,6 +359,7 @@ def main(argv: list[str] | None = None) -> int:
             "note": (
                 "하네스 run이 아니다 — 조건 비교표 밖이다(evaluation.md §6). "
                 "근거 블록이 비어 있으면 프롬프트 크기는 하한이다(D67/#172)."
+                " SOURCE·근거 본문·위치는 재구성하지 않아 content-aware 실 입력이 아니다."
             ),
         },
         "source_state_db": str(args.state_db),
@@ -400,7 +431,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"  {item.finding_id}[{trial}] json={row['json_valid']} "
                 f"in={row['input_tokens']}(est {item.est_tokens}) "
                 f"out={row['output_tokens']}/{max_tokens} cap={row['hit_cap']} "
-                f"ws_tail={row['trailing_whitespace']}"
+                f"finish={row['finish_reason']} ws_tail={row['trailing_whitespace']}"
             )
 
     payload |= {
@@ -413,7 +444,8 @@ def main(argv: list[str] | None = None) -> int:
     s = payload["summary"]
     print(
         f"\n[요약] ok {s['ok']}/{s['calls']} · json {s['json_valid']} · "
-        f"상한도달 {s['hit_cap']} · 공백폭주 {s['whitespace_runaway']}"
+        f"상한도달 {s['hit_cap']} · 공백폭주 {s['whitespace_runaway']} · "
+        f"토큰미보고 {s['output_tokens_unreported']}"
     )
     print(f"[상한 표본] {s['cap_sample']}   ← 공백 폭주를 뺀 출력 분포")
     print(f"[입력 실측] {s['input_tokens_measured']} · 추정 대비 {s['est_over_measured']}배")
@@ -428,7 +460,9 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
     정하면 #79를 config에 적는 것이고, 그 뒤 모든 폭주가 그 값에 비례해 비싸진다.
     """
     ok = [r for r in rows if "error" not in r and "misconfigured" not in r]
-    cap_sample = [r for r in ok if not _is_whitespace_runaway(r)]
+    # 서버가 출력 토큰을 안 실은 행(`output_tokens is None`)은 분포에 못 들어간다 — 0으로 안 센다.
+    measured = [r for r in ok if r["output_tokens"] is not None]
+    cap_sample = [r for r in measured if not _is_whitespace_runaway(r)]
     ratios = [r["input_tokens"] / r["est_tokens"] for r in ok if r["est_tokens"]]
     return {
         "calls": len(rows),
@@ -436,6 +470,7 @@ def _summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "errors": sum(1 for r in rows if "error" in r),
         "misconfigured": sum(1 for r in rows if "misconfigured" in r),
         "json_valid": sum(1 for r in ok if r.get("json_valid")),
+        "output_tokens_unreported": len(ok) - len(measured),
         "hit_cap": sum(1 for r in ok if r["hit_cap"]),
         "whitespace_runaway": sum(1 for r in ok if _is_whitespace_runaway(r)),
         "cap_sample": _distribution([r["output_tokens"] for r in cap_sample]),

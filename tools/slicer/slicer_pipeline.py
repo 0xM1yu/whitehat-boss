@@ -53,8 +53,13 @@ def file_identity(path: Path) -> dict | None:
 class SlicingStages:
     def collect_candidates(self) -> None:
         rows = {}
+        # --priority-case-a: the list goes to the Case A discovery query itself (rank and call
+        # limit); without the flag --priority-files only orders the candidates found below.
+        listed = None
+        if self.priority_case_a and self.priority_files:
+            listed = sorted(self.priority_files)
         for case, query in (
-            ("A", queries.candidates_a_query()),
+            ("A", queries.candidates_a_query(listed, self.repo.as_posix())),
             ("B", queries.candidates_b_query(self.engine_limits)),
         ):
             rows[case], _ = self.query("case_" + case.lower(), query)
@@ -65,11 +70,16 @@ class SlicingStages:
         # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
         # popped any prior note). Below the cap it cannot have been truncated, so no note.
         if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
+            order_note = (
+                "priority-file methods first, then write-context methods" if listed
+                else "write-context methods first"
+            )
             self.result["measurement_notes"]["candidates_case_a"] = (
                 f"reached the cap ({queries.CASE_A_CANDIDATE_CAP}); api and/or readers may be "
-                "truncated to an unspecified first-N in CPG traversal order (api: write-context "
-                "methods first, then traversal order within each layer; slicer_queries)"
+                "truncated to an unspecified first-N in CPG traversal order "
+                f"(api: {order_note}, then traversal order within each layer; slicer_queries)"
             )
+        # No key = a contract from before --case-order (#441): that run sliced Case A first.
         order = self.settings.get("case_order", "ab")
         self.candidates = collect(rows, self.repo, order)
         if self.priority_files is not None:
@@ -247,13 +257,15 @@ class SlicingStages:
             if old == points:
                 return
 
-    def degraded_slice(self, candidate: dict) -> dict:
-        """Server-free fallback for a candidate whose flow/backward query failed or was skipped
-        after a poison streak. The candidate was already captured (that capture is the recall
-        unit -- source/sink is labelled), so keep it in the output with its own coordinates and
-        the source at them instead of DROPPING it. Builds nothing from the CPG, so it works even
-        when the server is unresponsive. `degraded` marks that the dataflow context is absent:
-        a consumer sees the anchor, not a traced slice, and can `--resume` for the full slice.
+    def degraded_slice(self, candidate: dict, why: str = "poison streak") -> dict:
+        """Server-free fallback for a candidate whose flow/backward query failed or that was left
+        unsliced: after a poison streak (`why`, the default) or by `--skip-candidates`; `why` is
+        named in the slice's `measurement_notes.degraded`. The candidate was already captured
+        (that capture is the recall unit -- source/sink is labelled), so keep it in the output
+        with its own coordinates and the source at them instead of DROPPING it. Builds nothing
+        from the CPG, so it works even when the server is unresponsive. `degraded` marks that
+        the dataflow context is absent: a consumer sees the anchor, not a traced slice, and can
+        `--resume` for the full slice.
         """
         entry = candidate["entry"]
         # Normalize WITHOUT counting (#307 review LOW): in the except-QueryError path
@@ -278,7 +290,7 @@ class SlicingStages:
             "analysis_kind": "degraded_anchor_only",
             "analysis": {"lines": [], "flow_count": 0, "truncated": False, "degraded": True},
             "measurement_notes": {
-                "degraded": "flow/backward query failed or was skipped (poison streak); "
+                "degraded": f"flow/backward query failed or was skipped ({why}); "
                 "anchor-only slice, no dataflow context -- --resume re-attempts a full slice"
             },
             "source_sink": source_sink(candidate["case"], entry, None, self.sources, self.repo),
@@ -465,6 +477,7 @@ class SlicingStages:
                 # unprocessed) -- switch to emitting anchor-only degraded slices without querying
                 # the server, so no captured candidate is lost from slices.json.
                 degrade_only = False
+                skipped = 0
                 if self.claims is not None and not self.prepare_only:
                     # A leftover claim file from another run would make every shard find all
                     # candidates taken and slice nothing; refuse it instead (#372 review).
@@ -481,7 +494,10 @@ class SlicingStages:
                             continue
                     elif self.shard and position % self.shard[1] != self.shard[0]:
                         continue
-                    if degrade_only:
+                    # --skip-candidates names candidates this process must not query (a restarted
+                    # shard whose earlier incarnation hit the query deadline on them): the same
+                    # server-free degrade as after a poison streak, for those candidates only.
+                    if degrade_only or candidate["candidate_key"] in self.skip_keys:
                         # A prior run may have already completed this candidate's full slice (a
                         # "complete" checkpoint). That reuse needs NO server, so restore it rather
                         # than degrading a slice we already have -- degrading it would drop the full
@@ -497,9 +513,18 @@ class SlicingStages:
                             self.increment("candidates_unmapped")
                             self.processed += 1
                             continue
-                        self.completed.append(self.degraded_slice(candidate))
+                        self.completed.append(
+                            self.degraded_slice(
+                                candidate, "poison streak" if degrade_only else "--skip-candidates"
+                            )
+                        )
                         self.increment("candidates_degraded")
                         self.processed += 1
+                        if not degrade_only:
+                            skipped += 1
+                            self.event(
+                                "candidate_skipped", candidate_key=candidate["candidate_key"]
+                            )
                         continue
                     try:
                         item = self.slice_candidate(candidate)
@@ -545,6 +570,12 @@ class SlicingStages:
                     self.processed += 1
                     if item is not None:
                         self.completed.append(item)
+                if skipped:
+                    # The degraded slices must not read as a complete (`ok`) result.
+                    self.errors.append(
+                        f"--skip-candidates: {skipped} candidate{'s' if skipped != 1 else ''} "
+                        "not sliced (anchor-only degraded slices); --resume slices them"
+                    )
         except Exception as exc:
             self.errors.append(f"{type(exc).__name__}: {exc}")
         except KeyboardInterrupt:

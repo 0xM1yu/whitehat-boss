@@ -304,6 +304,30 @@ def test_indirect_calls_are_counted_not_invented(tmp_path: Path) -> None:
     assert all(c["caller"] == "run" for c in _edges(index))
 
 
+def test_deeply_nested_code_does_not_hit_the_recursion_limit(tmp_path: Path) -> None:
+    """긴 `else if` 사슬과 길게 이은 식은 트리가 수천 단으로 깊다 — 노드마다 재귀하던 호출 수집이
+    `RecursionError`로 인덱스 전체를 잃었다(2026-10-04 GT 직접 모드 FT 데이터 생성 6,745표본에서
+    인덱스 실패 147개 — 이슈 #492 본문이 밝힌 수이고 run ID가 없어 여기서는 재현할 수 없다). 두
+    꼴 다 끝까지 돌고 호출을 하나도 안 잃는다. 호출 목록의 순서는 이 테스트가 고정하지 않는다."""
+    chain = "".join(f" else if (x == {i}) g({i});" for i in range(1, 5000))
+    (tmp_path / "chain.c").write_text(
+        "void g(int v);\nint f(int x) { if (x == 0) g(0);" + chain + " return 0; }\n",
+        encoding="utf-8",
+    )
+    terms = " + ".join(f"k({i})" for i in range(3000))
+    (tmp_path / "sum.c").write_text(
+        "int k(int v);\nint h(void) { return " + terms + "; }\n", encoding="utf-8"
+    )
+    assert sys.getrecursionlimit() < 3000  # 이 깊이는 재귀로는 못 간다
+
+    index = _index(tmp_path, "chain.c", "sum.c")
+
+    assert len(index["calls"]["g"]) == 5000
+    assert len(index["calls"]["k"]) == 3000
+    # 하나도 안 잃는다 — 인자가 0..2999 전부
+    assert sorted(int(site["args"][0]) for site in index["calls"]["k"]) == list(range(3000))
+
+
 def test_unnamed_definitions_are_counted_not_silently_dropped(tmp_path: Path) -> None:
     """정의는 찾았는데 이름을 못 뽑는 경우가 실제로 남아 있다.
 
@@ -447,7 +471,7 @@ def test_index_no_longer_shells_out_to_clang() -> None:
 
 
 def test_version_is_stamped_so_readers_can_reject_unknown_formats() -> None:
-    assert indexer.INDEX_VERSION == "index-v3"
+    assert indexer.INDEX_VERSION == "index-v4"
 
 
 def test_the_reader_knows_the_version_this_script_writes() -> None:
@@ -979,3 +1003,630 @@ def test_the_reader_resolves_indirect_calls_from_this_scripts_v3_output(
     assert graph.field_writes_of("n", "impl.c") == [
         Location(file="ops.c", symbol="setup", line_start=12, line_end=12)
     ]
+
+
+# --- index-v4: include 지시문 · enum 상수 · 앞선 선언 typedef -------------------------------
+#
+# 노드 모양은 실파싱으로 확인했다(호스트 · tree-sitter 0.26.0 · tree-sitter-c 0.24.2 ·
+# tree-sitter-cpp 0.23.4, 2026-10-04). 추측했으면 틀렸을 셋이 아래에 핀으로 있다: 따옴표 경로의
+# 역슬래시가 `escape_sequence`로 쪼개진다는 것, enum 상수가 `#ifdef` 안에도 있다는 것,
+# `typedef struct Z {…} Z;`가 범위가 같은 행 둘을 낸다는 것.
+#
+# 줄 번호가 단언에 들어가므로 이 픽스처는 **한 줄도 옮기지 않는다.** 오른쪽 숫자가 줄 번호다.
+_V4_C = (
+    '#include "sub/a.h"\n'                          # 1
+    "#include <stdio.h>\n"                          # 2
+    "#include MACRO_H\n"                            # 3
+    "#ifdef WIN\n"                                  # 4
+    '#include "win\\x.h"\n'                         # 5
+    "#endif\n"                                      # 6
+    "typedef struct X X;\n"                         # 7
+    "struct X {\n"                                  # 8
+    "    int v;\n"                                  # 9
+    "};\n"                                          # 10
+    "typedef struct Z {\n"                          # 11
+    "    int w;\n"                                  # 12
+    "} Z;\n"                                        # 13
+    "struct Y;\n"                                   # 14
+    "int proto(int a);\n"                           # 15
+    "typedef enum {\n"                              # 16
+    "    PseudoClass,\n"                            # 17
+    "#ifdef HAVE_DIRECT\n"                          # 18
+    "    DirectClass = 3,\n"                        # 19
+    "#endif\n"                                      # 20
+    "} ClassType;\n"                                # 21
+    "enum color { RED, GREEN };\n"                  # 22
+    "enum { ANON };\n"                              # 23
+)
+
+
+@pytest.fixture
+def v4(tmp_path: Path) -> dict:
+    (tmp_path / "v4.c").write_text(_V4_C, encoding="utf-8")
+    return _index(tmp_path, "v4.c")
+
+
+def test_includes_table_keeps_each_directive_path_as_written(v4: dict) -> None:
+    """따옴표·꺾쇠 안 원문 그대로다. 역슬래시 경로(5행)는 `string_content`를 이으면 `\\`가
+    `escape_sequence`로 빠져 `winx.h`가 된다(실파싱) — 원문을 쓴다. 매크로 경로(3행)는 안 싣는다.
+    `#ifdef` 안 지시문(5행)도 싣는다 — 양쪽 가지를 다 내는 것이 심볼과 같은 원칙이다."""
+    assert v4["includes"] == {
+        "v4.c": [
+            {"line": 1, "path": "sub/a.h", "system": False},
+            {"line": 2, "path": "stdio.h", "system": True},
+            {"line": 5, "path": "win\\x.h", "system": False},
+        ]
+    }
+
+
+def test_a_file_without_include_directives_has_no_key(tables: dict) -> None:
+    """지시문이 없는 파일은 키가 없다 — `_TABLES_C`에는 `#include`가 없다."""
+    assert tables["includes"] == {}
+
+
+def test_enum_constants_span_their_whole_enum_definition(v4: dict) -> None:
+    """상수 하나가 아니라 **그 enum 정의 전체**다 — 값(`= 3`)과 이웃 상수가 같이 보인다. 익명
+    enum의 typedef(16~21행)는 typedef 문 전체이고 `enum`은 typedef 이름이다. `#ifdef` 안 상수
+    (19행)도 든다. 태그도 typedef도 없으면 `enum`은 `null`이다."""
+    class_type = {"file": "v4.c", "line_start": 16, "line_end": 21, "enum": "ClassType"}
+    color = {"file": "v4.c", "line_start": 22, "line_end": 22, "enum": "color"}
+
+    assert v4["enum_constants"] == {
+        "PseudoClass": [class_type],
+        "DirectClass": [class_type],
+        "RED": [color],
+        "GREEN": [color],
+        "ANON": [{"file": "v4.c", "line_start": 23, "line_end": 23, "enum": None}],
+    }
+
+
+def test_types_marks_a_forward_typedef_and_keeps_both_rows_of_a_typedef_struct(v4: dict) -> None:
+    """같은 파일 중복의 원인 둘(실파싱): `typedef struct X X;`(7행) + `struct X {…}`(8~10행)은 행이
+    둘이고 앞의 것이 `forward`다. `typedef struct Z {…} Z;`(11~13행)는 **범위가 같은**
+    struct·typedef 두 행이다(읽는 쪽이 범위로 합친다). 본문 없는 `struct Y;`(14행)와
+    프로토타입(15행)은 어느 표에도 안 든다."""
+    assert v4["types"]["X"] == [
+        {"file": "v4.c", "line_start": 7, "line_end": 7, "kind": "typedef", "forward": True},
+        {"file": "v4.c", "line_start": 8, "line_end": 10, "kind": "struct"},
+    ]
+    assert v4["types"]["Z"] == [
+        {"file": "v4.c", "line_start": 11, "line_end": 13, "kind": "struct"},
+        {"file": "v4.c", "line_start": 11, "line_end": 13, "kind": "typedef"},
+    ]
+    assert "Y" not in v4["types"]
+    assert "proto" not in v4["functions"]
+
+
+def test_the_reader_resolves_definitions_through_this_scripts_v4_includes(tmp_path: Path) -> None:
+    """**경계를 건너는 대조(v4).** 이 스크립트가 쓴 index-v4를 읽는 쪽이 받아 정의를 고른다.
+
+    `TRUE`는 `lib/defs.h`와 `win/defs.h` 둘에 있지만 `app/main.c`는 앞의 것만 include한다 — v3까지는
+    안 붙던 이름이다. enum 상수는 enum 전체로, `typedef struct S S;` + `struct S {…}`는 본문으로
+    붙는다. 기대값은 아래 원문에서 손으로 셌다."""
+    src = tmp_path / "src"
+    for name, text in {
+        "app/main.c": '#include "../lib/defs.h"\nint main(void) { return TRUE; }\n',
+        "lib/defs.h": (
+            "#define TRUE 1\n"                      # 1
+            "typedef struct S S;\n"                 # 2
+            "struct S {\n"                          # 3
+            "    int n;\n"                          # 4
+            "};\n"                                  # 5
+            "enum mode { M_A, M_B };\n"             # 6
+        ),
+        "win/defs.h": "#define TRUE 1\n",
+    }.items():
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(text, encoding="utf-8")
+    out = tmp_path / "out" / INDEX_FILE
+    files = [str(src / name) for name in ("app/main.c", "lib/defs.h", "win/defs.h")]
+    assert indexer.main(["--out", str(out), "--root", str(src), *files]) == 0
+    graph = index_graph.GraphIndex(out)
+
+    assert graph.definitions_of(["TRUE", "S", "M_B"], "app/main.c") == [
+        Location(file="lib/defs.h", symbol="TRUE", line_start=1, line_end=1),
+        Location(file="lib/defs.h", symbol="S", line_start=3, line_end=5),
+        Location(file="lib/defs.h", symbol="M_B", line_start=6, line_end=6),
+    ]
+
+
+# --- #485 리뷰: 앞선 선언 표시의 전제 · 함수 안 enum 상수 -----------------------------------
+#
+# 입력은 리뷰가 실파싱으로 재현한 반례(`main.c`·`a.h`·`b.h`·`limits.h`)와 위 v4 픽스처의 정상형
+# (`typedef struct X X;` + `struct X {…}`)이다. 배열·`const`·다중 선언자 행은 같은 전제(맨
+# 별칭인가)를 깨는 꼴을 실파싱으로 확인해 더한 변형이다.
+
+
+def _graph_of(tmp_path: Path, files: dict[str, str]) -> tuple[dict, index_graph.GraphIndex]:
+    """`files`를 한 트리로 인덱싱해 (인덱스 문서, 그것을 읽는 `GraphIndex`)를 낸다."""
+    src = tmp_path / "src"
+    for name, text in files.items():
+        (src / name).parent.mkdir(parents=True, exist_ok=True)
+        (src / name).write_text(text, encoding="utf-8")
+    out = tmp_path / "out" / INDEX_FILE
+    argv = ["--out", str(out), "--root", str(src), *(str(src / name) for name in files)]
+    assert indexer.main(argv) == 0
+    return json.loads(out.read_text(encoding="utf-8")), index_graph.GraphIndex(out)
+
+
+def _forward_flags(index: dict, name: str) -> list[bool]:
+    return [bool(row.get("forward")) for row in index["types"][name] if row["kind"] == "typedef"]
+
+
+@pytest.mark.parametrize(
+    ("source", "name", "flags"),
+    [
+        pytest.param(
+            "typedef struct X X;\nstruct X { int v; };\n", "X", [True], id="own-tag-body-in-file"
+        ),
+        pytest.param(  # 리뷰 (b) — 태그와 이름이 다르면 별칭이 가리키는 것은 다른 태그다
+            "typedef struct Private Public;\n"
+            "struct Public { int unrelated; };\n"
+            "struct Private { char buf[64]; };\n",
+            "Public",
+            [False],
+            id="tag-differs-from-name",
+        ),
+        pytest.param(  # 리뷰 (c) — 포인터 별칭은 본문 행이 대신할 수 없다
+            "typedef struct X *X;\nstruct X { int len; };\n", "X", [False], id="pointer-alias"
+        ),
+        pytest.param(
+            "typedef struct X X[2];\nstruct X { int len; };\n", "X", [False], id="array-alias"
+        ),
+        pytest.param(
+            "typedef const struct X X;\nstruct X { int len; };\n", "X", [False], id="qualified"
+        ),
+        pytest.param(  # 한 문장의 두 선언자 — 맨 별칭(X)만 앞선 선언이다
+            "typedef struct X X, *PX;\nstruct X { int len; };\n", "PX", [False], id="pointer-peer"
+        ),
+        pytest.param(
+            "typedef struct X X, *PX;\nstruct X { int len; };\n", "X", [True], id="bare-peer"
+        ),
+        pytest.param(  # 본문이 이 파일에 없으면 앞선 선언인지 알 수 없다
+            "typedef struct Opaque Opaque;\n", "Opaque", [False], id="no-body-in-file"
+        ),
+    ],
+)
+def test_a_typedef_row_is_forward_only_for_a_bare_alias_of_its_own_tag_with_a_body_in_the_file(
+    source: str, name: str, flags: list[bool], tmp_path: Path
+) -> None:
+    """`forward`는 「이 행은 같은 파일의 `struct X {…}`가 이미 말한 것이다」라는 표시다 — 그 전제가
+    서려면 별칭 이름이 태그와 같고, 선언자가 맨 이름이고, 본문이 **같은 파일에** 있어야 한다. 아니면
+    읽는 쪽이 이 행을 지울 근거가 없다(의심스러우면 행을 남긴다)."""
+    index, _ = _graph_of(tmp_path, {"t.c": source})
+
+    assert _forward_flags(index, name) == flags
+
+
+def test_a_forward_typedef_is_not_marked_when_the_body_lives_in_another_file(
+    tmp_path: Path,
+) -> None:
+    """불투명 타입의 흔한 꼴 — `api.h`는 `typedef struct Y Y;`만, 본문은 `impl.c`. 어느 파일이
+    어느 파일을 include하는지 모르는 채 행을 지우면 안 된다: 두 행이 다 남는다."""
+    index, _ = _graph_of(
+        tmp_path,
+        {"api.h": "typedef struct Y Y;\n", "impl.c": "struct Y {\n    int n;\n};\n"},
+    )
+
+    assert _forward_flags(index, "Y") == [False]
+
+
+def test_a_definition_lookup_never_swaps_a_foreign_typedef_for_an_unrelated_one(
+    tmp_path: Path,
+) -> None:
+    """**경계를 건너는 대조.** 리뷰 (a): `main.c`가 include하는 `a.h`는 `typedef struct Foo X;`이고,
+    include되지 않는 `b.h`에 `typedef int X;`가 있다. 인덱서가 `a.h` 행에 `forward`를 달고 읽는
+    쪽이 지우던 때는 후보가 `b.h` 하나로 줄어 include 검사를 건너뛰고 **엉뚱한
+    `typedef int X;`**가 붙었다."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "main.c": '#include "a.h"\nint target(X *p) { return 0; }\n',
+            "a.h": "typedef struct Foo X;\n",
+            "b.h": "typedef int X;\n",
+        },
+    )
+
+    assert graph.definitions_of(["X"], "main.c", demote_nonproduct=True) == [
+        Location(file="a.h", symbol="X", line_start=1, line_end=1)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("source", "name"),
+    [
+        pytest.param(  # 리뷰 (b) — `Public`은 `Private`의 별칭인데 2행은 무관한 `struct Public`이다
+            "typedef struct Private Public;\n"
+            "struct Public { int unrelated; };\n"
+            "struct Private { char buf[64]; };\n",
+            "Public",
+            id="alias-of-another-tag",
+        ),
+        pytest.param(  # 리뷰 (c) — 포인터 별칭을 지우면 `X`가 포인터가 아닌 struct로 읽힌다
+            "typedef struct X *X;\nstruct X { int len; };\n", "X", id="pointer-alias"
+        ),
+    ],
+)
+def test_a_lookup_that_cannot_tell_the_alias_from_the_body_attaches_neither(
+    source: str, name: str, tmp_path: Path
+) -> None:
+    """같은 파일에 `typedef`(별칭)와 같은 이름의 `struct`가 둘 다 있고 서로를 대신하지 못하면
+    두 행이 남아 「하나뿐」이 안 선다 — 안 붙는다. 틀린 정의를 붙이는 것보다 안 붙이는 것이
+    낫다(v3까지의 동작)."""
+    _, graph = _graph_of(tmp_path, {"main.c": source})
+
+    assert graph.definitions_of([name], "main.c", demote_nonproduct=True) == []
+
+
+def test_a_typedef_struct_with_a_body_still_resolves_to_one_definition(tmp_path: Path) -> None:
+    """원래 고치려던 정상형 둘이 그대로 선다 — `typedef struct Z {…} Z;`(범위가 같은 두 행을
+    접는다)와 `typedef struct X X;` + `struct X {…}`(앞선 선언 하나를 뺀다)."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "main.c": (
+                "typedef struct Z {\n"                  # 1
+                "    int w;\n"                          # 2
+                "} Z;\n"                                # 3
+                "typedef struct X X;\n"                 # 4
+                "struct X {\n"                          # 5
+                "    int v;\n"                          # 6
+                "};\n"                                  # 7
+            )
+        },
+    )
+
+    assert graph.definitions_of(["Z", "X"], "main.c", demote_nonproduct=True) == [
+        Location(file="main.c", symbol="Z", line_start=1, line_end=3),
+        Location(file="main.c", symbol="X", line_start=5, line_end=7),
+    ]
+
+
+def test_a_forward_typedef_and_its_body_on_one_line_resolve_to_the_body(tmp_path: Path) -> None:
+    """두 행의 범위가 같으면(한 줄에 둘) 범위 접기가 앞의 행을 남긴다 — 앞선 선언을 **먼저** 거르지
+    않으면 접기가 본문 행을 가린 채 앞선 선언만 남고 그것마저 지워져 정의가 통째로 사라진다."""
+    _, graph = _graph_of(tmp_path, {"main.c": "typedef struct X X; struct X { int v; };\n"})
+
+    assert graph.definitions_of(["X"], "main.c") == [
+        Location(file="main.c", symbol="X", line_start=1, line_end=1)
+    ]
+
+
+def test_the_indexer_and_the_reader_read_the_same_tag_kinds() -> None:
+    """`forward`를 다는 쪽(인덱서)과 빼는 쪽(`_definition_rows`)이 같은 「본문 있는 태그」 집합을
+    본다 — 인덱서는 `src/`를 import 하지 않아 값이 양쪽에 있다. 어긋나면 한쪽이 과삭제한다."""
+    assert indexer._TAG_KINDS == index_graph._TAG_KINDS
+
+
+_LIMITS_MAIN_C = (
+    '#include "limits.h"\n'                                         # 1
+    "int other(void) { enum { LIMIT = 1 }; return LIMIT; }\n"        # 2
+    "int target(void) { char buf[LIMIT]; return sizeof(buf); }\n"    # 3
+)
+
+
+def test_an_enum_constant_declared_inside_a_function_is_not_a_file_scope_constant(
+    tmp_path: Path,
+) -> None:
+    """리뷰 (P2-2): `other` 안의 `enum { LIMIT = 1 }`은 `other`의 지역이다. 전역 상수 표에 들면
+    같은 파일 우선 규칙이 `target`의 `buf[LIMIT]`에 그것(2행)을 붙인다 — 실제 값은 헤더의
+    128이다."""
+    index, graph = _graph_of(
+        tmp_path, {"main.c": _LIMITS_MAIN_C, "limits.h": "enum { LIMIT = 128 };\n"}
+    )
+
+    assert [row["file"] for row in index["enum_constants"]["LIMIT"]] == ["limits.h"]
+    assert graph.definitions_of(["LIMIT"], "main.c", demote_nonproduct=True) == [
+        Location(file="limits.h", symbol="LIMIT", line_start=1, line_end=1)
+    ]
+
+
+def test_an_enum_constant_in_a_nested_block_is_not_a_file_scope_constant(tmp_path: Path) -> None:
+    """함수 본문 안의 안쪽 블록(`if (n) { enum { … }; }`)도 지역이다 — 함수 한 겹만 보면 샌다."""
+    index, _ = _graph_of(
+        tmp_path,
+        {
+            "main.c": (
+                "int pick(int n) {\n"
+                "    if (n) { enum { INNER = 2 }; return INNER; }\n"
+                "    return 0;\n"
+                "}\n"
+            )
+        },
+    )
+
+    assert "INNER" not in index["enum_constants"]
+
+
+def test_cpp_namespace_and_class_enum_constants_stay_file_scope(tmp_path: Path) -> None:
+    """고친 것이 지나치지 않다는 대조 — `namespace` 안과 클래스 본문의 enum은 함수 본문 밖이라
+    파일 범위로 싣는다(예전과 같다). 클래스 안 **메서드 본문**의 enum만 지역이다. `.cpp`(C++
+    문법) 판이다 — `.h`(C 문법)·매크로가 낀 클래스 머리는 아래 파라미터 테스트가 맡는다."""
+    index, _ = _graph_of(
+        tmp_path,
+        {
+            "k.cpp": (
+                "namespace n { enum E { A }; }\n"                              # 1
+                "struct S {\n"                                                  # 2
+                "    enum F { B };\n"                                           # 3
+                "    void m() { enum { C }; }\n"                                # 4
+                "};\n"                                                          # 5
+            )
+        },
+    )
+
+    assert sorted(index["enum_constants"]) == ["A", "B"]
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "constants"),
+    [
+        pytest.param(  # 리뷰(2라운드) H1 ① — C 문법(`.h`)은 namespace를 함수 정의로 읽는다
+            "ns.h", "namespace n {\nenum E { A, B };\n}\n", ["A", "B"], id="h-namespace"
+        ),
+        pytest.param(  # H1 ② — class도 같다
+            "k.h", "class K {\n enum F { B };\n};\n", ["B"], id="h-class"
+        ),
+        pytest.param(  # H1 ③ — C++ 문법도 매크로가 낀 클래스 머리(`class API K`)는 함수로 읽는다
+            "k.cpp", "class API K {\n enum F { B };\n};\n", ["B"], id="cpp-class-with-macro"
+        ),
+        pytest.param(  # 3라운드 N1 — 머리에 함수형 매크로 호출이 끼면 선언자가 함수 선언자가 된다
+            "am.h",
+            "class ALIGNAS(16) K {\n enum F { B };\n};\n",
+            ["B"],
+            id="h-class-with-call-macro",
+        ),
+        pytest.param(
+            "gv.h",
+            "class _GLIBCXX_VISIBILITY(default) K {\n enum F { B };\n};\n",
+            ["B"],
+            id="h-class-with-visibility-macro",
+        ),
+        pytest.param(
+            "gn.h",
+            "namespace std _GLIBCXX_VISIBILITY(default) {\n enum { FS_a };\n}\n",
+            ["FS_a"],
+            id="h-namespace-with-visibility-macro",
+        ),
+        pytest.param(
+            "gn.c",
+            "namespace std _GLIBCXX_VISIBILITY(default)\n{\n enum { FS_b };\n}\n",
+            ["FS_b"],
+            id="c-namespace-with-visibility-macro",
+        ),
+        pytest.param("ns.hpp", "namespace n {\nenum E { A };\n}\n", ["A"], id="hpp-namespace"),
+        pytest.param("k2.h", "struct K {\n enum F { B };\n};\n", ["B"], id="h-struct"),
+        pytest.param("x.cpp", 'extern "C" {\nenum E { A };\n}\n', ["A"], id="extern-c"),
+        pytest.param("r.c", "enum { A } make(void) { return A; }\n", ["A"], id="return-type-enum"),
+    ],
+)
+def test_enum_constants_outside_a_function_body_stay_file_scope(
+    name: str, source: str, constants: list[str], tmp_path: Path
+) -> None:
+    """**지역 판별이 파일·namespace·클래스 범위를 지우면 안 된다.** tree-sitter는 이런 꼴을
+    함수 정의(`function_definition` + `compound_statement` 본문)로 읽기도 한다 — 그래서 「본문이
+    블록이다」만으로 판정하면 `.h`(C 문법)의 C++ 헤더 상수가 통째로 샌다. 머리에 함수형 매크로
+    호출이 끼면(`class ALIGNAS(16) K {`) 선언자가 `function_declarator`가 되므로 그것만 봐도
+    샌다 — `type`이 `class`·`namespace` 식별자인 정의는 함수가 아니다. 선언자 사슬에
+    `function_declarator`가 있는 함수 본문만 지역이다."""
+    index, _ = _graph_of(tmp_path, {name: source})
+
+    assert sorted(index["enum_constants"]) == constants
+
+
+def test_a_definition_lookup_finds_a_constant_declared_in_a_header_namespace_or_class(
+    tmp_path: Path,
+) -> None:
+    """**경계를 건너는 대조.** 위 반례(머리에 함수형 매크로 호출이 낀 `am.h` 포함)를 실제
+    인덱스에서 `definitions_of`로 읽는다 — `compound_statement`를 지나기만 하면 지역으로 보는
+    규칙이거나, 선언자의 `function_declarator`만 보는 규칙이면 `[]`이다."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "ns.h": "namespace n {\nenum E { A, B };\n}\n",
+            "k.h": "class K {\n enum F { C };\n};\n",
+            "k.cpp": "class API K2 {\n enum F { D };\n};\n",
+            "am.h": "class ALIGNAS(16) K3 {\n enum F { M };\n};\n",
+        },
+    )
+    assert graph.definitions_of(["M"], "am.h", demote_nonproduct=True) == [
+        Location(file="am.h", symbol="M", line_start=2, line_end=2)
+    ]
+
+    assert graph.definitions_of(["A"], "ns.h", demote_nonproduct=True) == [
+        Location(file="ns.h", symbol="A", line_start=2, line_end=2)
+    ]
+    assert graph.definitions_of(["C"], "k.h", demote_nonproduct=True) == [
+        Location(file="k.h", symbol="C", line_start=2, line_end=2)
+    ]
+    assert graph.definitions_of(["D"], "k.cpp", demote_nonproduct=True) == [
+        Location(file="k.cpp", symbol="D", line_start=2, line_end=2)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "constant"),
+    [
+        pytest.param(  # K&R — 선언자는 `function_declarator`, 파라미터 선언이 본문 앞에 낀다
+            "kr.c", "int f(a) int a; { enum { LOC_K }; return LOC_K; }\n", "LOC_K", id="k-and-r"
+        ),
+        pytest.param(
+            "ctor.cpp", "K::K() : x(1) { enum { LOC_C }; }\n", "LOC_C", id="ctor-initializer-list"
+        ),
+        pytest.param(  # 함수 try 블록 — 본문이 `compound_statement`가 아니라 `try_statement`다
+            "try.cpp", "void f() try { enum { LOC_T }; } catch (...) {}\n", "LOC_T", id="try-block"
+        ),
+        pytest.param(
+            "lam.cpp",
+            "auto fn = [](int x) { enum { LOC_L = 1 }; return LOC_L; };\n",
+            "LOC_L",
+            id="file-scope-lambda",
+        ),
+        pytest.param(
+            "meth.cpp", "struct S {\n    void m() { enum { LOC_M }; }\n};\n", "LOC_M", id="method"
+        ),
+        pytest.param(  # 3라운드 N3 — 최외곽이 괄호인 선언자는 괄호를 건너야 함수로 읽힌다
+            "par.c",
+            "int (f(void)) { enum { LOC_P }; return LOC_P; }\n",
+            "LOC_P",
+            id="parenthesized",
+        ),
+        pytest.param(  # 함수 포인터를 돌려주는 정의 — 최외곽은 `function_declarator`다
+            "fpr.c",
+            "int (*pick(int a))(int) { enum { LOC_F }; return 0; }\n",
+            "LOC_F",
+            id="returns-function-pointer",
+        ),
+        pytest.param(  # 3라운드 N2 — `TEST(a, b) {…}`는 C++ 문법이면 함수로 읽혀 빠진다
+            "t.cpp", "TEST(a, b) { enum { LOC_T2 }; }\n", "LOC_T2", id="cpp-test-macro"
+        ),
+    ],
+)
+def test_enum_constants_inside_a_real_function_body_are_not_file_scope(
+    name: str, source: str, constant: str, tmp_path: Path
+) -> None:
+    """지역 판별을 좁힌 뒤에도 진짜 함수 지역은 빠진다 — K&R · 생성자 초기화 목록 · 함수 try 블록 ·
+    람다 · 메서드 본문 · 괄호 선언자 · 함수 포인터 반환 · `.cpp`의 `TEST(a, b) {…}`."""
+    index, _ = _graph_of(tmp_path, {name: source})
+
+    assert constant not in index["enum_constants"]
+
+
+@pytest.mark.parametrize(
+    ("name", "source", "constant"),
+    [
+        pytest.param(
+            "ref.cpp",
+            "int& f() { enum { LIM_R }; static int x; return x; }\n",
+            "LIM_R",
+            id="ref-return",
+        ),
+        pytest.param(
+            "refm.cpp",
+            "S& S::operator=(const S& o) { enum { LIM_O }; return *this; }\n",
+            "LIM_O",
+            id="ref-return-operator",
+        ),
+        pytest.param(
+            "conv.cpp",
+            "K::operator int() const { enum { LIM_V }; return 1; }\n",
+            "LIM_V",
+            id="conversion-operator",
+        ),
+        pytest.param(
+            "try.cpp",
+            "S::S() try : x(1) { enum { LIM_I }; } catch (...) {}\n",
+            "LIM_I",
+            id="try-block-with-initializer-list",
+        ),
+        pytest.param("t.c", "TEST(a, b) { enum { LIM_C }; }\n", "LIM_C", id="c-test-macro"),
+        pytest.param(
+            "sx.c",
+            "int v = ({ enum { LIM_S }; LIM_S; });\n",
+            "LIM_S",
+            id="file-scope-statement-expr",
+        ),
+    ],
+)
+def test_a_local_enum_constant_the_judgement_cannot_see_stays_file_scope(
+    name: str, source: str, constant: str, tmp_path: Path
+) -> None:
+    """**한계 핀.** 지역인데 `enum_constants`에 드는 형태 — 미탐 쪽이다(의심스러우면 행을 남긴다).
+    참조 반환(`reference_declarator`에는 `declarator` 필드가 없어 사슬이 끊긴다) · 변환 연산자 ·
+    초기화 목록이 딸린 함수 try 블록 · `.c`·`.h`의 `TEST(a, b) {…}`(C 문법은 `ERROR` 뒤의 떠도는
+    블록으로 읽는다) · 함수 밖 초기화식의 문 표현식. 어느 쪽이든 올바른 파일 범위 상수를 지우는
+    쪽(오탐)이 아니다."""
+    index, _ = _graph_of(tmp_path, {name: source})
+
+    assert constant in index["enum_constants"]
+
+
+def test_a_variable_in_a_file_scope_lambda_stays_in_file_vars(tmp_path: Path) -> None:
+    """**한계 핀.** 파일 범위 람다 본문의 변수는 `file_vars`에 든다(HEAD 동작 그대로).
+    `file_vars`에서 지역을 빼려는 시도는 쪼개진 함수로 읽힌 파일의 실제 파일 범위 변수까지
+    지웠다(리뷰어의 로컬 코퍼스 관측) — 이 PR 범위 밖이라 되돌렸다. `symbol_resolver`가 같은
+    표를 전역 변수 폴백으로 읽는다."""
+    index, _ = _graph_of(
+        tmp_path,
+        {"k.cpp": "int g_count;\nauto fn = [](int x) { int loc_lv = x; return loc_lv; };\n"},
+    )
+
+    assert sorted(index["file_vars"]) == ["fn", "g_count", "loc_lv"]
+
+
+# `Y`의 앞선 선언(`api.h`)과 본문(`priv.h`)이 다른 파일에 있다. 앞선 선언을 지우려면 본문이 **같은
+# 파일에** 있어야 하므로 두 행이 남는다 — 이 PR 앞(index-v3)과 같은 동작이다. 앵커가 어느 파일을
+# include하느냐에 따라 결과가 갈린다(`definitions_of` — 앵커 파일 · include 닫힘 안 후보가 하나뿐일
+# 때).
+_OPAQUE_API_H = "typedef struct Y Y;\n"
+_OPAQUE_PRIV_H = "struct Y {\n    int n;\n};\n"
+
+
+def test_an_opaque_type_whose_header_and_body_are_both_reachable_attaches_nothing(
+    tmp_path: Path,
+) -> None:
+    """**후퇴를 박는다.** `user.c`가 `api.h`와 `priv.h`를 다 include하면 두 행이 둘 다 닿아
+    하나로 못 좁힌다 — 안 붙는다. v3도 같았다(index-v4의 forward 삭제가 도달성을 건너뛰고
+    `priv.h`를 붙이던 판은 이 PR이 되돌렸다 — 어느 헤더가 어느 헤더를 include하는지 모르는 채
+    지우면 리뷰 (a)처럼 엉뚱한 정의가 붙는다)."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "api.h": _OPAQUE_API_H,
+            "priv.h": _OPAQUE_PRIV_H,
+            "user.c": '#include "api.h"\n#include "priv.h"\nint use(Y *y) { return 0; }\n',
+        },
+    )
+
+    assert graph.definitions_of(["Y"], "user.c", demote_nonproduct=True) == []
+
+
+def test_an_opaque_type_reached_through_the_private_header_attaches_nothing(
+    tmp_path: Path,
+) -> None:
+    """공개 헤더 → 내부 헤더 구조 — `priv.h`가 `api.h`를 include하고 `user.c`는 `priv.h`만
+    include한다. include 닫힘에 둘 다 들어 앞의 테스트와 같이 안 붙는다(v3와 같다)."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "api.h": _OPAQUE_API_H,
+            "priv.h": '#include "api.h"\n' + _OPAQUE_PRIV_H,
+            "user.c": '#include "priv.h"\nint use(Y *y) { return 0; }\n',
+        },
+    )
+
+    assert graph.definitions_of(["Y"], "user.c", demote_nonproduct=True) == []
+
+
+def test_an_opaque_type_attaches_what_the_anchor_can_reach(tmp_path: Path) -> None:
+    """앵커가 닿는 쪽만 붙는다 — 본문 파일이 앵커면 본문, 앵커가 typedef 헤더만 include하고 본문이
+    닿지 않으면 typedef 한 줄이다(index-v4의 forward 삭제 판은 닿지 않는 `impl.c` 본문을 붙였다)."""
+    _, graph = _graph_of(
+        tmp_path,
+        {
+            "api.h": _OPAQUE_API_H,
+            "impl.c": _OPAQUE_PRIV_H,
+            "user.c": '#include "api.h"\nint use(Y *y) { return 0; }\n',
+        },
+    )
+
+    assert graph.definitions_of(["Y"], "user.c", demote_nonproduct=True) == [
+        Location(file="api.h", symbol="Y", line_start=1, line_end=1)
+    ]
+    assert graph.definitions_of(["Y"], "impl.c", demote_nonproduct=True) == [
+        Location(file="impl.c", symbol="Y", line_start=1, line_end=3)
+    ]
+
+
+def test_a_typedef_row_inside_a_function_stays_in_types_for_the_ne_resolver(tmp_path: Path) -> None:
+    """**한계 핀.** 함수 안 `struct`·`union`·`enum` 태그와 `typedef`는 v2 이래 `types`에 든다 —
+    NE resolver가 `struct pkt { … } p;` 같은 지역 변수의 타입을 `types`에서 찾아 체인을 잇는다
+    (`symbol_resolver._type_name_from_line`). 빼면 그 경로가 끊기므로 `enum_constants`와 달리
+    안 뺐다. 정의 조회(`definitions_of`)는 그 행을 다른 함수의 같은 이름에도 붙일 수 있다 —
+    한계다(indexer docstring `v4가 못 잡는 것`)."""
+    index, _ = _graph_of(
+        tmp_path,
+        {"k.c": "int f(void) { struct pkt { int len; } p; typedef int loc_t; return p.len; }\n"},
+    )
+
+    assert sorted(index["types"]) == ["loc_t", "pkt"]

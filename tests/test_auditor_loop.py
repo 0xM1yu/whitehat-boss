@@ -1,4 +1,4 @@
-"""Auditor 도구 루프의 계약 — 봉투(`AuditorAction`)와 홉 루프.
+"""Auditor 도구 루프의 계약 — 봉투(`AuditorAction` · `AuditorProcedureAction`)와 홉 루프.
 
 `tests/test_pov_loop.py`의 Auditor 판이다. 그쪽이 PoV 봉투에 대해 보는 것(액션별 필드 ·
 `tool` Literal ⊆ `TOOL_KINDS` · docstring이 요청 payload에 실린다)을 같은 규율로 본다.
@@ -10,21 +10,26 @@
 
 import json
 import re
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
+from typing import get_args
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
-from src import cli
-from src.adapters import symbol_resolver
+from src import bench_report, cli
+from src.adapters import fake_model, symbol_resolver
 from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import read_symbol_source
 from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.symbol_render import render_followup
-from src.config import load_config
+from src.bench import ROLE_SPEC
+from src.config import CONFIG_DIR, load_config
 from src.interfaces.model_client import ModelResult, SchemaParseError, Usage
+from src.orchestrator import gate
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor, index, preprocess, retrieval, scout, signals
@@ -36,11 +41,18 @@ from src.orchestrator.prompt_loader import (
     PromptTemplate,
     load_prompt,
 )
+from src.orchestrator.runner import RunSpec, _new_record
 from src.orchestrator.trace import EventKind, TraceWriter
-from src.schemas import CapsuleLevel, FindingState, Location, Role
-from src.schemas.auditor import AUDITOR_TOOLS, AuditorAction
-from src.schemas.enums import AuditorStopReason, UnfilledReason
-from src.schemas.finding import Finding
+from src.schemas import CapsuleLevel, FindingState, Location, ProducedBy, Role
+from src.schemas import auditor as auditor_schemas
+from src.schemas.auditor import (
+    AUDITOR_TOOLS,
+    AuditorAction,
+    AuditorProcedureAction,
+    AuditProcedure,
+)
+from src.schemas.enums import AuditorStopReason, EvidenceKind, UnfilledReason
+from src.schemas.finding import AuditBlock, AuditRefutation, Finding
 from src.schemas.need_evidence import Resolution, RetrievedBlock, Unfilled
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.scout_response import RequestedContext, ScoutResponse
@@ -238,9 +250,12 @@ def test_the_internal_reference_detector_catches_the_repo_shapes_and_spares_pros
 
 
 def test_the_request_schema_adds_no_repo_internal_reference() -> None:
-    """`AuditorAction`의 설명은 `response_format.json_schema.schema`로 **모든 Auditor 루프 요청에
-    실린다**(`openai_compat`). 커밋 SHA·PR·이슈 번호·소스 파일 경로 같은 내부 참조가 이 봉투가
-    **새로** 모델 입력에 들어가면 안 된다 — 그런 이력은 클래스 **밖** `#` 주석에 둔다.
+    """`AuditorAction`의 설명은 `response_format.json_schema.schema`로 **v8·v9 Auditor 루프 요청에
+    실린다**(`openai_compat`) — v10은 형제 봉투 `AuditorProcedureAction`을 보내고, 그쪽은
+    `tests/test_auditor_procedure_schema.py`가 이 파일의 `_leaking_definitions`로 **같은 명제**를
+    건다(그 검사가 이미 있어 여기서 파라미터화하지 않는다). 커밋 SHA·PR·이슈 번호·소스 파일 경로
+    같은 내부 참조가 이 봉투 때문에 **새로** 모델 입력에 들어가면 안 된다 — 그런 이력은 클래스
+    **밖** `#` 주석에 둔다.
 
     명제는 「이 클래스(와 필드)의 설명에 내부 참조가 없다」이고, 하나 더 — 「한 방
     `Finding`·Scout·PoV가 **이미 보내는** 정의의 누출은 이 변경이 만든 것이 아니다」. `$defs`의
@@ -267,11 +282,19 @@ def test_the_request_schema_tells_the_model_the_truth_about_spec() -> None:
     **지금 도구는 `spec`을 입력으로 안 받는다**(노드가 sha256과 길이만 기록한다). 설명이 「입력
     바이트가 필요하면 `spec`에 명세를 싣는다」고 하면 모델이 「내가 구성한 입력으로 돌렸더니」라는
     거짓 문장을 궤적에 쓴다 — `docs/agent-contracts.md` §2.2가 막으라고 한 바로 그 문장이다. 클래스
-    설명과 `spec` 필드 설명이 둘 다 「받지 않는다」를 말해야 한다."""
+    설명과 `spec` 필드 설명이 둘 다 그 사실을 말해야 한다.
+
+    ⏵ **2026-10-09 (ADR 0014) — 무는 철자를 옮겼다.** 전에는 「받지 않는다」를 물었는데 컨테이너
+    `poc`는 이제 입력을 **받을 수 있다**(과제 `-vul` 이미지의 `/tmp/poc`). 참인 문장은 **「이
+    경로가 안 싣는다」**이고 그 선을 넘지 않는다 — 「도구가 못 받는다」로 쓰면 다시 거짓이다.
+    싣게 하는 것은 이슈 #419다."""
     schema = AuditorAction.model_json_schema()
 
-    assert "받지 않는다" in schema["description"]
-    assert "받지 않" in schema["properties"]["spec"]["description"]
+    assert "안 싣는다" in schema["description"]
+    assert "안 싣" in schema["properties"]["spec"]["description"]
+    assert "받지 않" not in schema["properties"]["spec"]["description"], (
+        "`poc`는 이제 받는다 — 「도구가 못 받는다」는 모델에게 가는 거짓 문장이다"
+    )
     assert "조립 명세" not in schema["description"]
 
 
@@ -289,12 +312,13 @@ def _literal_values(schema: dict, field: str) -> set[str]:
 # === 홉 루프 (`nodes/auditor.py`의 `_run_hops`) ===============================
 #
 # 위는 봉투만 본다. 아래는 그 봉투를 받는 루프가 **돌고 · 서고 · 도구를 부르는 방식**을 본다.
-# 루프는 `thresholds.auditor_tool_hops`가 양수이고 프롬프트 meta가 `output_schema:
-# AuditorAction`을 선언해야 켜진다 — 이 파일은 **그 모양의 프롬프트를 임시 디렉터리에 만들고**
-# 노드가 부르는 `load_prompt`를 그리로 돌린다(실제 루프 판은 프롬프트 레인이 쓴다). 임시 판의 이름은
-# 번호가 아니다(`LOOP_VERSION`) — 실제 판 번호와 겹치면 어느 쪽이 읽혔는지 이름으로는 모른다. 오염은
-# `src` 모듈 속성(`auditor.load_prompt`·`cli.load_prompt`)에 건다 — 이 파일의 복사본에 걸면 노드가
-# 안 먹고 초록이 난다. 안 먹었으면 `PromptError`로 빨개진다(그 이름의 판이 저장소에 없으므로).
+# 루프는 `thresholds.auditor_tool_hops`가 양수이고 프롬프트 meta가 `output_schema`로 루프 봉투
+# (`AuditorAction` · `AuditorProcedureAction`)를 선언해야 켜진다 — 이 파일은 **그 모양의 프롬프트를
+# 임시 디렉터리에 만들고** 노드가 부르는 `load_prompt`를 그리로 돌린다(실제 루프 판은 프롬프트
+# 레인이 쓴다). 임시 판의 이름은 번호가 아니다(`LOOP_VERSION`) — 실제 판 번호와 겹치면 어느 쪽이
+# 읽혔는지 이름으로는 모른다. 오염은 `src` 모듈 속성(`auditor.load_prompt`·`cli.load_prompt`)에 건다
+# — 이 파일의 복사본에 걸면 노드가 안 먹고 초록이 난다. 안 먹었으면 `PromptError`로 빨개진다(그
+# 이름의 판이 저장소에 없으므로).
 #
 # `ctx` 픽스처와 `_triage`는 `tests/test_nodes.py`의 것을 **복제**했다 — 그 파일은 다른 레인이
 # 쥐고 있어서 import도 수정도 하지 않는다.
@@ -351,7 +375,8 @@ class RecordingModelClient:
 
 
 class _ScriptedModel:
-    """홉마다 정해진 `AuditorAction`을 낸다. 목록이 다하면 마지막 것을 반복한다.
+    """홉마다 정해진 루프 액션을 낸다 — 두 봉투(`AuditorAction` · v10의 `AuditorProcedureAction`)
+    중 어느 쪽이든 목록에 든 대로다. 목록이 다하면 마지막 것을 반복한다.
 
     fake가 못 내는 패턴(조사만 계속 · 같은 요청 두 번 · 모델이 쓴 문자열이 실린 `probe`)을
     **테스트 안에서** 주입한다 — `fake_model`의 빌더는 건드리지 않는다. `prompts`는 노드가 홉마다
@@ -359,7 +384,10 @@ class _ScriptedModel:
     호출에서 그 예외를 올린다 — 모델 호출 실패의 사유 전이를 거는 데 쓴다."""
 
     def __init__(
-        self, actions: list[AuditorAction], *, fail_at: tuple[int, Exception] | None = None
+        self,
+        actions: list[AuditorAction | AuditorProcedureAction],
+        *,
+        fail_at: tuple[int, Exception] | None = None,
     ) -> None:
         self._actions = list(actions)
         self._fail_at = fail_at
@@ -490,15 +518,18 @@ def _triage(ctx: RunContext, target: Location):  # noqa: ANN202
     return candidate, capsule, (graph, *found)
 
 
-def _write_loop_prompt(root: Path, *, tools: tuple[str, ...] | None) -> None:
+def _write_loop_prompt(
+    root: Path, *, tools: tuple[str, ...] | None, output_schema: str = "AuditorAction"
+) -> None:
     """`root/auditor/<LOOP_VERSION>/`에 도구 루프 판 프롬프트를 쓴다. `tools=None`이면 meta에 키를
-    안 쓴다."""
+    안 쓴다. `output_schema`는 그 판이 선언하는 봉투 이름이다(`AuditorAction` · v10의
+    `AuditorProcedureAction`)."""
     directory = root / "auditor" / LOOP_VERSION
     directory.mkdir(parents=True)
     meta = [
         "role: auditor",
         f"version: {LOOP_VERSION}",
-        "output_schema: AuditorAction",
+        f"output_schema: {output_schema}",
         "description: 테스트가 만든 도구 루프 판",
     ]
     if tools is not None:
@@ -521,16 +552,46 @@ def _loop_config(config, *, hops: int):  # noqa: ANN001, ANN202
     )
 
 
+# 한 방 판으로 돌릴 **실서빙** 좌석의 모델 키. critic이 `fake`(계열 `fake`)라
+# `_check_family_split`이 계열 분리를 요구하므로 `qwen` 계열을 쓴다.
+_SERVED_AUDITOR_KEY = "qwen3.8-27b"
+# 그 좌석이 고르는 한 방 판 — `output_schema: Finding`인 판이면 아무것이나 같다.
+_ONE_SHOT_VERSION = "v7"
+
+
+def _served_one_shot_config(config, *, hops: int):  # noqa: ANN001, ANN202
+    """Auditor 좌석을 **실서빙**(Fake 아님) 한 방 판으로 돌리고 상한을 `hops`로 둔 config.
+
+    `loop_problem`의 둘째 규칙(한 방 판 + 양수 상한)은 **Fake 좌석에서 면제된다** — `dev_fake`가
+    루프 판을 고를 길이 없어서다(그 함수 docstring의 셋). 그러니 그 규칙이 실제로 서는 자리를
+    태우려면 좌석이 Fake가 아니어야 한다. `dev_fake`로 돌려도 좌석만 갈면 게이트까지는 간다 —
+    게이트가 `cli.execute` **앞**이라 엔드포인트에 닿지 않는다.
+    """
+    entry = config.models[_SERVED_AUDITOR_KEY].transition(
+        prompt_template_version=_ONE_SHOT_VERSION
+    )
+    return config.transition(
+        models={**config.models, _SERVED_AUDITOR_KEY: entry},
+        profile=config.profile.transition(
+            roles={**config.profile.roles, "auditor": _SERVED_AUDITOR_KEY}
+        ),
+        # v7은 `auditor_guards`를 선언하지 않는다 - 켜진 채면 SOURCE 옵션 게이트가 먼저 서서 이
+        # 검사가 묻는 한 방 판 규칙에 닿지 못한다(2026-10-06 v9가 그 옵션을 켰다).
+        thresholds=config.thresholds.transition(auditor_tool_hops=hops, auditor_guards=0),
+    )
+
+
 def _patch_prompts(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     *,
     tools: tuple[str, ...] | None = LOOP_TOOLS,
+    output_schema: str = "AuditorAction",
 ) -> None:
     """노드(`auditor.load_prompt`)와 cli 게이트(`cli.load_prompt`)가 같은 임시 디렉터리를 읽게 갈아
     끼운다. `LOOP_VERSION` 밖의 버전은 원래 디렉터리로 보낸다."""
     root = tmp_path / "loop_prompts"
-    _write_loop_prompt(root, tools=tools)
+    _write_loop_prompt(root, tools=tools, output_schema=output_schema)
 
     def load(role, version):  # noqa: ANN001, ANN202
         return load_prompt(role, version, root=root if version == LOOP_VERSION else PROMPTS_DIR)
@@ -546,9 +607,10 @@ def _arm(
     *,
     hops: int,
     tools: tuple[str, ...] | None = LOOP_TOOLS,
+    output_schema: str = "AuditorAction",
 ) -> None:
     """Auditor 좌석을 도구 루프 판으로 돌리고 조사 홉 상한을 `hops`로 둔다."""
-    _patch_prompts(monkeypatch, tmp_path, tools=tools)
+    _patch_prompts(monkeypatch, tmp_path, tools=tools, output_schema=output_schema)
     ctx.config = _loop_config(ctx.config, hops=hops)
 
 
@@ -665,6 +727,26 @@ def _template(output_schema: str, tools: tuple[str, ...] = ()) -> PromptTemplate
         ),
         pytest.param("AuditorAction", 4, LOOP_TOOLS, None, id="loop-on"),
         pytest.param("AuditorAction", 4, ("semgrep", "asan"), None, id="loop-on-subset"),
+        # v10의 봉투(`AuditorProcedureAction`)도 같은 표로 건다 — 사유 문장이 **그 판이 선언한
+        # 이름**을 말해야 한다(처음 판은 `AuditorAction`을 문장에 박아 두었다).
+        pytest.param(
+            "AuditorProcedureAction",
+            0,
+            LOOP_TOOLS,
+            "AuditorProcedureAction(도구 루프)을 선언하는데 thresholds.auditor_tool_hops가 0이다",
+            id="procedure-loop-off",
+        ),
+        pytest.param(
+            "AuditorProcedureAction", 4, (), "도구를 선언하지 않는다", id="procedure-no-tools"
+        ),
+        pytest.param(
+            "AuditorProcedureAction",
+            4,
+            (*LOOP_TOOLS, "index"),
+            "AuditorProcedureAction.tool이 받지 않는다",
+            id="procedure-plus-index",
+        ),
+        pytest.param("AuditorProcedureAction", 4, LOOP_TOOLS, None, id="procedure-on"),
     ],
 )
 def test_loop_problem_reads_the_declaration_against_the_threshold(
@@ -675,12 +757,97 @@ def test_loop_problem_reads_the_declaration_against_the_threshold(
     노드(`_ask_model`)와 cli(run·doctor)가 이 함수 하나를 부른다 — 처음 판은 cli가 `tools`만, 노드가
     `output_schema`만 봐서 한쪽만 통과하는 설정이 셋(루프 판+상한 0 · 한 방 판+상한 양수+`tools`
     선언 · `tools: [index]`)이나 `run`·`doctor`를 지나 첫 Auditor 호출에서야 섰다."""
-    problem = auditor.loop_problem(_template(output_schema, tools), hops)
+    problem = auditor.loop_problem(_template(output_schema, tools), hops, is_fake=False)
 
     if needle is None:
         assert problem is None
     else:
         assert problem is not None and needle in problem and "auditor/vx" in problem
+
+
+@pytest.mark.parametrize(
+    ("output_schema", "hops", "tools", "needle"),
+    [
+        pytest.param("Finding", 4, (), None, id="fake-one-shot-on-is-exempt"),
+        pytest.param("Finding", 4, LOOP_TOOLS, None, id="fake-one-shot-on-tools-is-exempt"),
+        pytest.param(
+            "AuditorAction",
+            0,
+            LOOP_TOOLS,
+            "auditor_tool_hops가 0이다",
+            id="fake-loop-off-still-held",
+        ),
+        pytest.param(
+            "AuditorAction", 4, (), "도구를 선언하지 않는다", id="fake-no-tools-still-held"
+        ),
+        pytest.param(
+            "AuditorAction", 4, ("index",), "받지 않는다", id="fake-tool-index-still-held"
+        ),
+        pytest.param(
+            "AuditorProcedureAction",
+            0,
+            LOOP_TOOLS,
+            "AuditorProcedureAction(도구 루프)",
+            id="fake-procedure-loop-off-still-held",
+        ),
+    ],
+)
+def test_a_fake_seat_is_exempt_from_exactly_one_of_the_four_rules(
+    output_schema: str, hops: int, tools: tuple[str, ...], needle: str | None
+) -> None:
+    """Fake Auditor 좌석은 **둘째 규칙만** 면제된다 — 나머지 셋은 그대로 묻는다.
+
+    왜 면제가 있나. `thresholds`는 프로필 공통이라 상한을 켜면 Fake 좌석도 같이 켜지는데
+    `dev_fake`가 루프 판을 고를 길이 **없다**(그 셋은 `loop_problem` docstring이 든다: 한 모델 키에
+    세 역할 · `_check_family_split` · `prompts/critic/`에 그 판 번호가 없음). 만족시킬 설정이 없는
+    규칙은 막는 것이 아니라 거짓 경보다.
+
+    **면제를 넓히면 여기서 빨개진다.** `is_fake`를 함수 머리에서 `return None`으로 올리면 뒤 세
+    행이 전부 초록이 되고, 그러면 Fake로 도는 루프 검사들(이 파일의 B1~B8)이 어긋난 선언을 안고
+    조용히 돈다."""
+    problem = auditor.loop_problem(_template(output_schema, tools), hops, is_fake=True)
+
+    if needle is None:
+        assert problem is None
+    else:
+        assert problem is not None and needle in problem and "auditor/vx" in problem
+
+
+def test_bench_requests_the_schema_the_auditor_prompt_declares() -> None:
+    """bench가 Auditor 판의 meta 선언을 **풀어서** 요청한다 — `ROLE_SPEC`의 이름이 아니다.
+
+    `bench_report`는 처음에 scout 자리만 버전별로 풀었다. auditor가 루프 판으로 올라가면 그대로는
+    bench가 `Finding` grammar를 재서 **운영이 안 쓰는 문법의 수**를 낸다(`ROLE_SPEC`의 auditor
+    스키마는 그때부터 캡슐 레벨 전용이다). 세 판을 다 건다 — 한 방 판(v7)과 봉투가 서로 다른 루프
+    판 둘(v8의 `AuditorAction` · v10의 `AuditorProcedureAction`)."""
+    assert auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v7").output_schema) is Finding
+    assert (
+        auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v8").output_schema)
+        is AuditorAction
+    )
+    assert (
+        auditor.resolve_output_schema(load_prompt(Role.AUDITOR, "v10").output_schema)
+        is AuditorProcedureAction
+    )
+    # `ROLE_SPEC`이 auditor 자리에 든 이름(캡슐 레벨 전용이 된 쪽)을 `declared`로 주고, bench가
+    # 그것을 **무시하고 판 선언을 푸는지** 본다. 문자열 핀으로 걸었을 때는 분기를 `elif False:`로
+    # 막아도 초록이었다(CLAUDE.md 2.5).
+    declared, _ = ROLE_SPEC[Role.AUDITOR]
+    assert declared is Finding, "전제 — ROLE_SPEC의 auditor는 한 방 판 이름이다"
+    for version, expected in (
+        ("v7", Finding),
+        ("v8", AuditorAction),
+        ("v10", AuditorProcedureAction),
+    ):
+        resolved = bench_report.schema_for(
+            Role.AUDITOR, load_prompt(Role.AUDITOR, version), declared
+        )
+        assert resolved is expected, (
+            f"bench가 auditor/{version}의 선언을 안 푼다 — `ROLE_SPEC`의 이름을 그대로 쓰면 "
+            "루프 판 run의 grammar와 bench가 재는 grammar가 갈린다"
+        )
+    # scout 자리는 전부터 풀었고, 그 밖 자리는 `declared`를 그대로 쓴다.
+    assert bench_report.schema_for(Role.CRITIC, load_prompt(Role.CRITIC, "v1"), declared) is Finding
 
 
 def test_the_loader_rejects_a_meta_tool_name_it_does_not_know(tmp_path: Path) -> None:
@@ -697,7 +864,7 @@ def test_the_loader_rejects_a_meta_tool_name_it_does_not_know(tmp_path: Path) ->
 def test_loop_problem_rejects_an_output_schema_outside_the_allowed_set() -> None:
     """허용집합 밖 `output_schema`는 조용히 안 넘어간다 — `PromptError`다."""
     with pytest.raises(PromptError, match="이 역할이 낼 수 없다"):
-        auditor.loop_problem(_template("ScoutResponse", LOOP_TOOLS), 4)
+        auditor.loop_problem(_template("ScoutResponse", LOOP_TOOLS), 4, is_fake=False)
 
 
 # --- B1~B3: 켜진 루프가 lookup → probe → answer로 끝난다 --------------------------
@@ -770,7 +937,8 @@ def test_a_lookup_hop_without_a_resolver_reports_no_resolved_count(
 
     lookup = _hops(ctx)[0]
     assert lookup.data["action"] == "lookup" and lookup.data["requested"] == 1
-    assert not {"resolved", "unfilled", "truncated", "already"} & set(lookup.data)
+    unrun = {"resolved", "unfilled", "truncated", "already", "index_available"}
+    assert not unrun & set(lookup.data)
 
 
 def test_only_the_answering_hop_carries_a_stop_reason(
@@ -836,6 +1004,7 @@ def test_a_found_lookup_feeds_the_blocks_back_without_the_scout_tail(
     data = _hops(ctx)[0].data
     assert (data["resolved"], data["already"], data["fixable_count"]) == (1, 0, 0)
     assert (data["unfilled"], data["truncated"]) == ("", "")
+    assert data["index_available"] is True
     # resolver가 받은 질의 — 훅이 무시되거나 상한이 0으로 바뀌면 조각이 안 온다.
     (query,) = resolver.queries
     assert query.hop == 1 and query.target_file == "parser.c" and query.visible == {}
@@ -909,7 +1078,14 @@ def test_lookup_request_cap_matches_the_resolvers() -> None:
             id="size-cap",
         ),
         pytest.param(
-            Resolution(followup_text="", blocks=(), unfilled=(), already=(), truncated=()),
+            Resolution(
+                followup_text="",
+                blocks=(),
+                unfilled=(),
+                already=(),
+                truncated=(),
+                index_available=False,
+            ),
             "",
             "",
             0,
@@ -932,7 +1108,8 @@ def test_resolved_zero_has_three_causes_and_the_hop_event_tells_them_apart(
 
     처음 판은 셋 다 `{requested: 1, resolved: 0}` 한 모양이었다 — 이름만 틀렸다는 판단과 조회가
     아예 안 돈 사실이 같은 값이었다. `SCOUT_HOP`처럼 `unfilled`(사유)·`truncated`(이름)를 싣고,
-    인덱스 없음은 **넷이 다 빈 것**이 서명이다(`runner._fuzz_entrypoint`가 같은 서명으로 가른다)."""
+    인덱스 없음은 `index_available=False`로 가른다(#315 — 전에는 넷이 다 빈 것이 서명이었고
+    `runner._fuzz_entrypoint`도 같은 키로 가른다)."""
     _lookup_run(ctx, monkeypatch, tmp_path, _StubResolver(resolution))
 
     data = _hops(ctx)[0].data
@@ -942,6 +1119,8 @@ def test_resolved_zero_has_three_causes_and_the_hop_event_tells_them_apart(
         truncated,
         fixable,
     )
+    # 인덱스 없음은 이제 빈 칸의 서명이 아니라 명시 값이다(#315).
+    assert data["index_available"] is resolution.index_available
     assert needle in ctx.models.prompts[1][1].body
 
 
@@ -991,6 +1170,7 @@ def test_a_resolver_value_error_is_fed_back_not_fatal(
     assert isinstance(finding, Finding)
     data = _hops(ctx)[0].data
     assert data["lookup_error"] == "ValueError" and "resolved" not in data
+    assert "index_available" not in data  # 조회가 안 돌았다 — 안 돌린 것을 값으로 적지 않는다
     # 기본 모델은 `RecordingModelClient`라 Scout의 프롬프트도 들어 있다 — Auditor 것만 고른다.
     body = [p for role, p in ctx.models.prompts if role is Role.AUDITOR][1].body
     assert "ValueError" in body and secret not in body
@@ -1067,13 +1247,23 @@ def test_budget_exhaustion_queues_the_candidate_exactly_once(
 def test_a_run_with_the_loop_off_takes_the_one_shot_path_and_emits_no_hop_events(
     ctx: RunContext,
 ) -> None:
-    """`auditor_tool_hops=0`(기본)이면 종전 한 방 경로다 — 호출 하나·`Finding` 스키마·홉 이벤트 0건.
+    """`auditor_tool_hops=0`이면 종전 한 방 경로다 — 호출 하나·`Finding` 스키마·홉 이벤트 0건.
 
-    기본 꺼짐이 이 기능의 약속이다: 켜지 않은 run의 요청이 종전과 같아야 이전 run과 비교할 수
-    있다(evaluation §2.3). 홉 이벤트의 **부재**는 「루프를 안 켰다」를 뜻하고 「홉이 0이었다」가
-    아니다(`EventKind.AUDITOR_HOP` 주석) — 그래서 꺼진 run이 한 건이라도 내면 그 구별이 무너진다."""
+    꺼진 run의 요청이 종전과 같아야 이전 run과 비교할 수 있다(evaluation §2.3). 홉 이벤트는
+    루프가 돌 때만 나가므로 꺼진 run이 한 건이라도 내면 「돌았다」와 「안 돌았다」의 구별이
+    무너진다. ⚠ **거꾸로 읽지 않는다 — 이벤트 0건이 「루프를 안 켰다」는 아니다**(켠 run도 첫
+    호출이 실패하면 0건이다, `EventKind.AUDITOR_HOP` 주석). 꺼짐을 가르는 것은 `model_call`의
+    `schema`(`Finding` ↔ 루프 봉투)이고, 아래 마지막 단언이 그것이다. ⏵ 2026-10-06 — 봉투가
+    둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이 `AuditorProcedureAction`이다.
+    manifest의 `auditor_tool_hops`는 실제로 도는 값만 싣는다(`runner._recorded_thresholds`).
+
+    ⏵ 2026-10-04 — **저장소 기본은 더 이상 꺼짐이 아니다**(`config/budgets.yaml`이 16을 든다,
+    이슈 #419). 그래서 여기서 **명시로 끈다** — 기본값에 기대던 전제 한 줄이 그 PR에서
+    거짓이 됐다(CLAUDE.md §2.3)."""
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
-    assert ctx.config.thresholds.auditor_tool_hops == 0, "전제 — 저장소 기본은 꺼짐이다"
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(auditor_tool_hops=0)
+    )
 
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
 
@@ -1083,15 +1273,109 @@ def test_a_run_with_the_loop_off_takes_the_one_shot_path_and_emits_no_hop_events
 
 
 def test_the_off_switch_leaves_no_trace_in_the_recorded_thresholds() -> None:
-    """꺼진 run(기본)의 `RunRecord.thresholds`(= `flatten()`)에 `auditor_tool_hops` 키가 **없다**.
+    """꺼진 run의 `RunRecord.thresholds`(= `flatten()`)에 `auditor_tool_hops` 키가 **없다**.
 
     `0.0`이 새로 생기면 지금까지 쌓인 모든 manifest와 열이 갈린다 — 요청 바이트가 같아도 재현성
     기록의 모양은 갈린다(#349 `AUDITOR_SOURCE_OPTIONS`·#375 `scout_slice_trim`과 같은 규약이다).
-    켜면 값이 실린다 — 안 실으면 어떤 상한으로 돈 run인지 기록이 안 남는다."""
+    켜면 값이 실린다 — 안 실으면 어떤 상한으로 돈 run인지 기록이 안 남는다.
+
+    ⏵ 2026-10-04 — 저장소 기본이 16이 됐으므로(이슈 #419) **루프가 도는 run의 manifest는 이 키를
+    든다.** 「없다」 쪽은 명시로 끈 run의 성질이고, 그쪽이 여전히 참인지가 이 검사의 절반이다 —
+    끄는 길이 막히면 옛 manifest와 모양을 맞출 방법이 없어진다. 여기서 보는 것은 `flatten()`(설정값)
+    이고, 러너가 manifest에 싣는 값은 아래 `_recorded`를 쓰는 검사들이 본다 — Fake 면제로 한 방으로
+    도는 좌석은 설정이 16이어도 키가 없다."""
     thresholds = load_config("dev_fake").thresholds
 
-    assert "auditor_tool_hops" not in thresholds.flatten()
-    assert thresholds.transition(auditor_tool_hops=16).flatten()["auditor_tool_hops"] == 16.0
+    assert thresholds.flatten()["auditor_tool_hops"] == 16.0, "저장소 기본(#419)"
+    assert "auditor_tool_hops" not in thresholds.transition(auditor_tool_hops=0).flatten()
+
+
+def _recorded(config, tmp_path: Path):  # noqa: ANN001, ANN202
+    """**생산 경로**(`runner._new_record`)가 만든 `RunRecord`.
+
+    `flatten()`만 단언하면 러너가 그 값을 쓰지 않아도 초록이다 — `test_config.py`의
+    `reasoning_efforts` 검사가 같은 이유로 이 함수를 부른다."""
+    record, _ = _new_record(
+        RunSpec(condition="B3prime@pipeline", target=tmp_path, device="atom"),
+        config,
+        "run_20260901_0001",
+        datetime(2026, 9, 1, tzinfo=UTC),
+        [],
+        {},
+        {},
+        None,
+    )
+    return record
+
+
+def test_a_seat_the_fake_exemption_covers_records_no_tool_hops(tmp_path: Path) -> None:
+    """`loop_problem`의 둘째 규칙 면제로 **한 방으로 도는** Auditor 좌석의 manifest에는
+    `auditor_tool_hops`가 없다.
+
+    `thresholds`는 프로필 공통이라 저장소 기본 16(이슈 #419)이 `dev_fake`에도 걸린다. 그 좌석은
+    `Finding` 판이라 루프를 안 돈다 — 16을 그대로 싣으면 manifest는 「켰다」이고 `auditor_hop`은
+    0건이라 **「켰는데 한 번에 answer했다」**로 읽힌다(CLAUDE.md §0: 안 돈 것을 돈 값으로 적는다).
+    키 부재는 이 저장소가 「꺼짐」을 적는 방식이다(`Thresholds.flatten`)."""
+    config = load_config("dev_fake")
+    entry = config.model_for("auditor")
+    assert config.thresholds.auditor_tool_hops == 16, "전제 — 저장소 기본이 켜져 있다"
+    template = load_prompt(Role.AUDITOR, entry.prompt_template_version)
+    assert template.output_schema == "Finding" and entry.is_fake, "전제 — 면제가 걸린 좌석이다"
+    assert auditor.loop_problem(template, 16, is_fake=True) is None, "전제 — 면제다"
+
+    record = _recorded(config, tmp_path)
+
+    assert "auditor_tool_hops" not in record.thresholds
+
+
+def test_a_served_loop_seat_records_the_cap_it_ran_with(tmp_path: Path) -> None:
+    """위 검사의 음성 쌍 — 실서빙 좌석(`harness_pool`: v10 · `AuditorProcedureAction`)은 16이 그대로
+    실린다.
+
+    위만 보면 러너가 이 키를 늘 빼도 초록이다. 켠 run이 어떤 상한으로 돌았는지가 이 기록의
+    존재 이유다(`test_the_off_switch_leaves_no_trace_in_the_recorded_thresholds`의 「켜면 값이
+    실린다」)."""
+    record = _recorded(load_config("harness_pool"), tmp_path)
+
+    assert record.thresholds["auditor_tool_hops"] == 16.0
+
+
+def test_a_fake_seat_that_really_loops_records_its_cap(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fake 좌석이어도 **루프 판을 고르면 루프가 돈다** — 그 manifest는 상한을 싣는다.
+
+    이 파일의 B1~B8이 그렇게 돈다(`_loop_config` — Fake 좌석 + 임시 디렉터리의 루프 판).
+    면제의 판정은 `is_fake`가 아니라 **판이 루프 봉투를 선언하는가**다(`_ask_model`의 분기와
+    같다 — `_loop_envelope`). `is_fake`로 빼면 위 둘은 초록이고 여기서만 빨개진다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    config = _loop_config(load_config("dev_fake"), hops=4)
+
+    record = _recorded(config, tmp_path)
+
+    assert record.thresholds["auditor_tool_hops"] == 4.0
+
+
+def test_a_switched_off_loop_records_without_reading_the_auditor_prompt(tmp_path: Path) -> None:
+    """상한 0이면 `_new_record`가 Auditor 프롬프트를 **안 읽는다** — 못 읽어도 run이 거기서 안 선다.
+
+    `tool_hops_in_effect`가 `hops == 0`에서도 프롬프트를 먼저 읽으면 결과는 어차피 0인데 **수정
+    전에 없던 실패 지점**이 `_new_record`에 생긴다. `cli run`의 `_auditor_loop_problem`이 같은
+    프롬프트를 먼저 읽어 막지만 그 게이트는 `stop_at >= AUDITOR`일 때만 돈다 — `--stop-after` 5
+    미만·`--dry-run`은 Auditor 프롬프트를 안 읽고 `_new_record`에 온다(독립 검토 L-1). 그리고 상한이
+    **양수면** 읽어야 하므로(면제 판정이 그 meta에 달렸다) 못 읽는 판은 여전히 `PromptError`다 —
+    조용히 「안 돈다」로 적지 않는다(fail-closed). 샘플은 저장소 실물이다: `harness_pool`의 Auditor
+    좌석 판 이름만 디스크에 없는 `v99`로 바꿨다."""
+    config = load_config("harness_pool")
+    key = config.profile.roles["auditor"]
+    missing = config.models[key].transition(prompt_template_version="v99")
+    broken = config.transition(models={**config.models, key: missing})
+    off = broken.transition(thresholds=broken.thresholds.transition(auditor_tool_hops=0))
+
+    assert "auditor_tool_hops" not in _recorded(off, tmp_path).thresholds
+
+    with pytest.raises(PromptError):
+        _recorded(broken, tmp_path)
 
 
 # --- B5: 조사만으로 상한을 소진 ----------------------------------------------------
@@ -1279,8 +1563,11 @@ def test_the_cli_gate_lets_a_declared_loop_and_a_switched_off_loop_through(
 ) -> None:
     """도구를 선언한 판은 통과하고, 루프를 끈 한 방 판도 통과한다 — 위 거절 검사의 양성 쌍이다.
 
-    거절만 보면 게이트를 「늘 ERROR」로 바꿔도 초록이다. 꺼진 run을 막으면 기본 설정의 모든 run이
-    시작을 못 한다 — 기본 설정(저장소 프롬프트 · 상한 0)이 통과하는 것도 같이 본다."""
+    거절만 보면 게이트를 「늘 ERROR」로 바꿔도 초록이다. 막는 규칙이 멀쩡한 설정을 막으면 기본
+    설정의 모든 run이 시작을 못 한다 — 기본 설정(`dev_fake`: 저장소 프롬프트 v1 한 방 판 · 저장소
+    기본 상한 16)이 통과하는 것도 같이 본다. ⏵ 2026-10-04 — 저장소 기본 상한은 더 이상 0이 아니다
+    (이슈 #419). 그 설정이 통과하는 것은 상한이 꺼져서가 아니라 **Fake 좌석 면제**(`loop_problem`의
+    둘째 규칙) 덕이다."""
     assert cli._auditor_loop_problem(ctx.config) is None
     assert cli._check_auditor_loop(ctx.config) == []
 
@@ -1293,14 +1580,22 @@ class _Started(RuntimeError):
     """게이트를 지나 `cli.execute`까지 왔다는 표시."""
 
 
-def _patch_cli_config(monkeypatch: pytest.MonkeyPatch, *, hops: int, loop_seat: bool) -> None:
-    """`cli.load_config`가 상한 `hops`(와 루프 판 좌석)를 단 config를 돌려주게 한다."""
+def _patch_cli_config(
+    monkeypatch: pytest.MonkeyPatch, *, hops: int, loop_seat: bool, served_seat: bool = False
+) -> None:
+    """`cli.load_config`가 상한 `hops`(와 좌석)를 단 config를 돌려주게 한다.
+
+    좌석은 셋이다 — 루프 판(`loop_seat`) · 실서빙 한 방 판(`served_seat`) · 손 안 댄 `dev_fake`.
+    셋째는 Fake 한 방 좌석이라 `loop_problem`의 둘째 규칙이 **면제된다**(그 함수 docstring).
+    """
     real = cli.load_config
 
     def load(profile: str, **kwargs: object):  # noqa: ANN202
         config = real(profile, **kwargs)
         if loop_seat:
             return _loop_config(config, hops=hops)
+        if served_seat:
+            return _served_one_shot_config(config, hops=hops)
         return config.transition(thresholds=config.thresholds.transition(auditor_tool_hops=hops))
 
     monkeypatch.setattr(cli, "load_config", load)
@@ -1335,7 +1630,11 @@ def test_run_refuses_to_start_when_the_loop_and_the_prompt_disagree(
     처음 판은 `_auditor_tools_undeclared`만 불러서 `run`의 `if tools_undeclared:` 본문을 `pass`로
     바꿔도, 가드 조건에 `and False`를 붙여도 초록이었다. 어긋남 넷 — 도구 선언 없음 · 루프 판인데
     상한 0 · 한 방 판인데 상한 양수 · 광고하는데 문법이 거절하는 도구(`index`) — 을 각각 건다. 뒤
-    셋은 cli가 예전엔 못 보던 것이다(노드만 첫 Auditor 호출에서 세웠다)."""
+    셋은 cli가 예전엔 못 보던 것이다(노드만 첫 Auditor 호출에서 세웠다).
+
+    ⏵ 2026-10-04 — `one-shot-prompt-on` 행은 좌석을 **실서빙**으로 간다(`_served_one_shot_config`).
+    그 규칙은 Fake 좌석에서 면제되므로(이슈 #419 · `loop_problem` docstring) `dev_fake` 그대로
+    태우면 이 행이 **조용히 통과한다** — 면제를 넣은 그 커밋에서 실제로 그랬다."""
     hops = 0 if defect == "loop-prompt-off" else 4
     if defect != "one-shot-prompt-on":
         tools = {
@@ -1344,9 +1643,22 @@ def test_run_refuses_to_start_when_the_loop_and_the_prompt_disagree(
             "tool-index": (*LOOP_TOOLS, "index"),
         }[defect]
         _patch_prompts(monkeypatch, tmp_path, tools=tools)
-    _patch_cli_config(monkeypatch, hops=hops, loop_seat=defect != "one-shot-prompt-on")
+    _patch_cli_config(
+        monkeypatch,
+        hops=hops,
+        loop_seat=defect != "one-shot-prompt-on",
+        served_seat=defect == "one-shot-prompt-on",
+    )
 
-    code = cli.main([*_RUN_ARGS, "--artifacts-root", str(tmp_path / "arts")])
+    # 실서빙 좌석을 끼운 행은 프로필이 **실서빙으로 읽힌다** — `cli`가 `--device`·`--condition`
+    # 없이는 그 run을 시작하지 않으므로(비교표에 넣을 수 없는 run이다) 루프 게이트 **앞에서**
+    # exit 2가 난다. 둘을 주지 않으면 이 행은 엉뚱한 사유로 초록이 된다.
+    served = (
+        ["--device", "test-box", "--condition", "B3prime@pipeline"]
+        if defect == "one-shot-prompt-on"
+        else []
+    )
+    code = cli.main([*_RUN_ARGS, *served, "--artifacts-root", str(tmp_path / "arts")])
 
     err = capsys.readouterr().err
     assert code == 2, err
@@ -1390,8 +1702,10 @@ def test_estimate_counts_the_tool_loop_calls_in_the_auditor_ceiling() -> None:
 
     docstring이 「예산은 최악을 견뎌야 한다」고 적는 값이다. 상한 16이면 Auditor 몫이 17배인데
     처음 판은 켜도 끈 것과 같은 값을 냈다 — 그 값으로 잡은 예산은 도중에 `BudgetExhausted`로
-    부분 결과가 된다. 끈 run(기본)은 종전 값 그대로다."""
-    config = load_config("dev_fake")
+    부분 결과가 된다. 끈 run은 종전 값 그대로다 — ⏵ 2026-10-04 저장소 기본이 16이 됐으므로
+    (이슈 #419) 그 「끈 run」을 여기서 **명시로** 만든다."""
+    base = load_config("dev_fake")
+    config = base.transition(thresholds=base.thresholds.transition(auditor_tool_hops=0))
     capsules = 10
     candidates = capsules * cli._scout_places(config)
 
@@ -1492,3 +1806,1224 @@ def test_the_answer_hop_counts_the_probe_evidence_it_cites(
     assert hops[-1].data["cited_probe_evidence"] == 1
     made = hops[0].data["evidence_id"]
     assert made in {e.subject_id for e in _events(ctx, EventKind.TOOL_CALL)}
+
+
+# === v10: 최종 답이 `AuditProcedure`인 봉투 (`AuditorProcedureAction`) =========================
+#
+# v10 판은 `answer`가 `Finding`이 아니라 `AuditProcedure`(`audit` 블록 + 판정)를 싣는다. 하네스가
+# 그것을 `Finding`으로 옮겨(`nodes/auditor._finding_from_procedure`) 루프 뒤 흐름이 종전 그대로
+# 돈다. 스키마 자체는 `tests/test_auditor_procedure_schema.py`가 문다 — 여기는 **노드의 배선**이다:
+# 어느 판이 루프 판인가를 한 곳이 정하는가 · 사유 문장이 선언 이름을 말하는가 · 옮겨 담을 때 무엇이
+# 어디로 가는가 · 배선된 판이 근거 본문을 받는가 · Fake가 그 봉투를 낼 수 있는가.
+
+# 하네스만 쓰는 필드 — v10의 모델은 이것을 **낼 수 없다**(`AuditProcedure`에 필드가 없다).
+_HARNESS_ONLY_FIELDS = (
+    "finding_id",
+    "run_id",
+    "candidate_id",
+    "state",
+    "missing_evidence",
+    "produced_by",
+)
+_ISSUED = {
+    "candidate_id": "candidate_0007",
+    "finding_id": "finding_0007",
+    "missing_id": "missing_evidence_0007",
+}
+_STAMPED = ProducedBy(role=Role.AUDITOR, model="scripted", prompt_version="v10")
+_AUDIT_RESULTS = ("defeated", "holds", "path_not_executable", "decisive_code_missing")
+
+
+def _audit_block_payload(result: str = "defeated", steps: tuple[str, ...] | None = None) -> dict:
+    """`audit` 블록의 최소 유효 payload — 경로 둘(source · sink)을 든다.
+
+    `steps`를 주면 경로를 그 종류들로 다시 짠다(`()`이면 빈 경로) — 양 끝이 없는 경로를 만드는
+    자리다."""
+    path = [
+        {"step": "source", "symbol": "main", "note": "인자 len을 넘긴다"},
+        {"step": "sink", "symbol": "memcpy", "note": "len이 buf(64)를 넘을 수 있다"},
+    ]
+    if steps is not None:
+        path = [{"step": step, "symbol": f"sym_{i}"} for i, step in enumerate(steps)]
+    return {
+        "category": "spatial_bounds",
+        "point": {"symbol": "parse_header", "expression": "memcpy(buf, src, len)"},
+        "origin": {"kind": "param", "fact": "len은 호출자가 정한다"},
+        "path": path,
+        "defense": {
+            "expression": "none on visible path",
+            "status": "absent",
+            "gap": None,
+            "fact": "len 검사가 없다",
+        },
+        "refutation": {
+            "result": result,
+            "witness": "len=128이면 넘친다",
+            "missing_information": ["parse_header의 호출자"]
+            if result == "decisive_code_missing"
+            else [],
+        },
+    }
+
+
+def _procedure_payload(
+    *,
+    trigger_status: str = "triggerable",
+    result: str = "defeated",
+    evidence_refs: tuple[str, ...] = (),
+    repro_origin: str | None = None,
+    steps: tuple[str, ...] | None = None,
+) -> dict:
+    """`answer`의 `procedure` payload. `no_signal`이면 `audit`가 `null`이다(스키마 규칙).
+
+    `trigger_status`와 `result`는 **독립이다** — 스키마가 그 대응을 안 싣는다(`AuditProcedure`).
+    `steps`는 `audit.path`의 종류들이다(`_audit_block_payload`)."""
+    no_signal = trigger_status == "no_signal"
+    repro = (
+        None
+        if repro_origin is None
+        else {"steps": ["./build.sh"], "expected_signal": "ASAN", "origin": repro_origin}
+    )
+    return {
+        "audit": None if no_signal else _audit_block_payload(result, steps),
+        "trigger_status": trigger_status,
+        "confidence": 0.8,
+        "cwe": "CWE-787",
+        "title": "out-of-bounds write",
+        "rca_draft": "len이 검증 없이 memcpy로 간다.",
+        "evidence_refs": list(evidence_refs),
+        "repro_spec": repro,
+    }
+
+
+def _procedure(**kwargs: object) -> AuditProcedure:
+    return AuditProcedure.model_validate(_procedure_payload(**kwargs))
+
+
+def _procedure_answer(**kwargs: object) -> AuditorProcedureAction:
+    return AuditorProcedureAction(
+        action="answer", procedure=_procedure_payload(**kwargs), rationale="관측으로 판정한다"
+    )
+
+
+def _convert(procedure: AuditProcedure) -> Finding:
+    return auditor._finding_from_procedure(
+        procedure, ids=_ISSUED, run_id=RUN_ID, produced_by=_STAMPED
+    )
+
+
+@pytest.mark.parametrize(
+    ("version", "declared", "looped"),
+    [
+        pytest.param("v7", "Finding", False, id="v7-one-shot"),
+        pytest.param("v8", "AuditorAction", True, id="v8-finding-envelope"),
+        pytest.param("v9", "AuditorAction", True, id="v9-finding-envelope"),
+        pytest.param("v10", "AuditorProcedureAction", True, id="v10-procedure-envelope"),
+    ],
+)
+def test_the_places_that_ask_is_this_a_loop_prompt_all_get_the_same_answer(
+    version: str, declared: str, looped: bool
+) -> None:
+    """「이 판은 루프 판인가」를 묻는 세 자리(`_ask_model`의 분기 · `loop_problem` ·
+    `tool_hops_in_effect`)가 **한 술어**(`_loop_envelope`)로 같은 답을 낸다 — 저장소 실물 판 넷으로
+    건다.
+
+    처음에는 `is AuditorAction` 비교가 세 자리에 흩어져 있었다. 봉투가 하나 늘면(v10의
+    `AuditorProcedureAction`) 한 자리가 빠져도 그 판이 한 방 판으로 읽히고, 어느 자리가 빠졌느냐에
+    따라 증상이 갈린다: `tool_hops_in_effect`가 빠지면 루프가 도는데 manifest는 「꺼짐」이고,
+    `loop_problem`이 빠지면 상한 0의 루프 판이 막히지 않고 한 방 `Finding`을 요청한다. 여기서 둘을
+    판마다 대조하고, `_ask_model`의 분기는 아래 루프 run 검사들이 홉 이벤트로 문다."""
+    template = load_prompt(Role.AUDITOR, version)
+    assert template.output_schema == declared, "전제 — 그 판이 실제로 선언한 봉투다"
+
+    envelope = auditor._loop_envelope(template)
+
+    assert (envelope is not None) is looped
+    if looped:
+        assert envelope.__name__ == declared, "푼 것이 곧 요청하는 봉투다 — 매핑 표가 없다"
+    assert (auditor.loop_problem(template, 0, is_fake=False) is not None) is looped
+    assert auditor.tool_hops_in_effect(version, 16) == (16 if looped else 0)
+
+
+def test_the_allowed_schemas_are_the_one_shot_finding_plus_exactly_the_loop_envelopes() -> None:
+    """허용집합 = 한 방 `Finding` + 루프 봉투들 — 그리고 한 방 경로가 보내는 `OUTPUT_SCHEMA`가 **그
+    집합에서 루프 봉투를 뺀 유일한 스키마**다.
+
+    `_ask_model`은 루프 봉투가 아니면 `OUTPUT_SCHEMA`(`Finding`)를 보낸다. 허용집합에 비-루프
+    스키마가 하나 더 생기면 그 판은 **선언을 버리고 `Finding`을 요청하는** 길이 열린다 — 이 검사가
+    그때 빨개져 한 방 경로를 다시 고르게 한다. `AuditProcedure`는 봉투의 payload일 뿐이라 허용집합
+    밖이다: 최상위로 요청하면 `lookup`·`probe`·`answer` 없이 감사 결과 하나만 받는 문법이 된다."""
+    allowed = set(auditor.ALLOWED_OUTPUT_SCHEMAS)
+
+    assert allowed == {Finding, AuditorAction, AuditorProcedureAction}
+    assert allowed - set(auditor._LOOP_ENVELOPES) == {auditor.OUTPUT_SCHEMA}
+    assert AuditProcedure not in allowed
+    with pytest.raises(PromptError, match="이 역할이 낼 수 없다"):
+        auditor.resolve_output_schema("AuditProcedure")
+
+
+def test_the_one_shot_sentence_names_every_loop_envelope_and_the_declared_schema() -> None:
+    """한 방 판 + 양수 상한의 사유가 **어느 판에서 도는지**를 둘 다 말한다 — `AuditorAction`만
+    적으면 v10 판으로 올리라는 안내가 빠진다."""
+    problem = auditor.loop_problem(_template("Finding", LOOP_TOOLS), 4, is_fake=False)
+
+    assert problem is not None
+    assert "Finding(한 방)을 선언하는데" in problem
+    assert "AuditorAction · AuditorProcedureAction 판에서만 돈다" in problem
+
+
+def test_a_procedure_loop_prompt_with_a_zero_cap_is_refused_in_the_same_words_everywhere(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture,
+) -> None:
+    """v10 봉투를 선언한 판에 상한 0이면 `run`·`doctor`·노드가 **같은 문장**으로 막는다 — 그 문장이
+    **실제 선언 이름**(`AuditorProcedureAction`)을 말한다.
+
+    왜 세 자리를 한 문장으로 대조하나. 노드와 cli가 따로 판정하면 한쪽만 통과하는 설정이 생겨 첫
+    Auditor 호출(= 그 앞 단계에 쓴 GPU 시간 뒤)에야 선다. 새 봉투가 한 자리에서 `Finding` 선언으로
+    읽히면 상한 0이 **조용히 한 방으로** 간다 — 선언이 `AuditorProcedureAction`인데 `Finding`을
+    요청하는 길이다. 그것이 안 열렸다는 증거가 **모델을 안 불렀다**는 마지막 줄이다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=0, output_schema="AuditorProcedureAction")
+    _patch_cli_config(monkeypatch, hops=0, loop_seat=True)
+
+    problem = cli._auditor_loop_problem(ctx.config)
+    assert problem is not None
+    declaration = f"auditor/{LOOP_VERSION}은 output_schema로 AuditorProcedureAction(도구 루프)을"
+    assert declaration in problem
+    code = cli.main([*_RUN_ARGS, "--artifacts-root", str(tmp_path / "arts")])
+    assert code == 2 and problem in capsys.readouterr().err
+    checks = cli.doctor("dev_fake", artifacts_root=tmp_path / "doc")
+    assert problem in [c.message for c in checks if c.severity is cli.Severity.ERROR]
+    with pytest.raises(PromptError) as raised:
+        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    assert str(raised.value) == problem
+    assert _auditor_calls(ctx) == [], "불일치인데 모델을 불렀다 — GPU 시간이 샌다"
+
+
+# --- 옮겨 담기: `AuditProcedure` → `Finding` --------------------------------------------
+
+
+@pytest.mark.parametrize("name", _HARNESS_ONLY_FIELDS)
+def test_the_model_cannot_supply_the_fields_the_harness_issues(name: str) -> None:
+    """발급 ID·`run_id`·`state`·`missing_evidence`·`produced_by`는 v10의 모델이 **낼 수 없다** —
+    스키마에 필드가 없고 실으면 거절한다. 아래 변환 검사들이 「모델 값을 안 믿는다」 대신 「모델
+    값이 올 길이 없다」를 단언해도 되는 근거가 이 검사다. 이 필드가 `AuditProcedure`에 생기면 하네스
+    값과 모델 값이 경합하는 길이 열리므로 여기서 먼저 빨개진다."""
+    assert name not in AuditProcedure.model_fields
+    with pytest.raises(ValidationError):
+        AuditProcedure.model_validate({**_procedure_payload(), name: "model_made_this"})
+
+
+def test_the_conversion_fills_the_issued_ids_state_and_provenance_from_the_harness() -> None:
+    """변환된 `Finding`의 `finding_id`·`candidate_id`는 발급 `ids`, `run_id`는 run, `state`는 F-1의
+    `hypothesized`, `produced_by`는 하네스가 만든 값이다. 뒤 `stamp_issued`가 **같은 값으로** 덮어도
+    무해하다는 것도 여기서 본다 — 이미 같아서 `issued_override`가 날 이유가 없다."""
+    finding = _convert(_procedure())
+
+    assert finding.finding_id == _ISSUED["finding_id"]
+    assert finding.candidate_id == _ISSUED["candidate_id"]
+    assert finding.run_id == RUN_ID
+    assert finding.state is FindingState.HYPOTHESIZED
+    assert finding.produced_by == _STAMPED
+
+
+def test_the_conversion_moves_audit_path_to_finding_path_and_empties_it_for_no_signal() -> None:
+    """`audit.path` → `Finding.path`. **이 값이 제일 중요하다** — `gate.py`의 `p2`가 경로 양 끝을
+    요구하고, 경로가 비면 Critic은 「경로 없음」, PoV는 단계 없음, 보고서는 제목 대체로 떨어진다. 안
+    옮기면 v10의 모든 Finding이 그 셋에서 조용히 떨어진다(`path`가 required라 파싱은 통과한다).
+    `no_signal`이면 `audit`가 `null`이라 `path`는 빈 리스트다."""
+    signal = _procedure()
+    finding = _convert(signal)
+
+    assert signal.audit is not None and signal.audit.path, "전제 — 옮길 경로가 있다"
+    assert [(s.step.value, s.symbol) for s in finding.path] == [
+        ("source", "main"),
+        ("sink", "memcpy"),
+    ]
+    assert list(finding.path) == list(signal.audit.path)
+
+    quiet = _convert(_procedure(trigger_status="no_signal"))
+    assert quiet.path == [] and quiet.audit is None
+
+
+def test_the_conversion_carries_the_audit_block_and_the_judgment_fields() -> None:
+    """`audit` 블록이 `Finding.audit`에 실린다 — 안 실으면 그 블록은 버려진다(trace에 `raw_text`가
+    안 남는다). 판정 필드(`trigger_status`·`confidence`·`cwe`·`title`·`rca_draft`·`evidence_refs`·
+    `repro_spec`)도 같은 이름으로 간다. 저장소가 돌려주는 `model_dump()`에도 블록이 있는지까지 본다
+    (`Finding.audit`는 요청 스키마에서만 빠지고 직렬화에는 선다)."""
+    procedure = _procedure(evidence_refs=("evidence_0001",), repro_origin="model")
+
+    finding = _convert(procedure)
+
+    assert finding.audit == procedure.audit and finding.audit is not None
+    assert finding.model_dump()["audit"]["refutation"]["result"] == "defeated"
+    assert (finding.trigger_status, finding.confidence, finding.cwe, finding.title) == (
+        "triggerable",
+        0.8,
+        "CWE-787",
+        "out-of-bounds write",
+    )
+    assert finding.rca_draft == procedure.rca_draft
+    assert finding.evidence_refs == ["evidence_0001"]
+    assert finding.repro_spec == procedure.repro_spec and finding.repro_spec is not None
+
+
+# `(refutation.result, trigger_status)` → 발급 `missing_id`가 붙는가. **손으로 적은 표다 — 구현의
+# 조건을 다시 쓴 식이 아니다.** 기대의 출처 둘:
+#   · `result == decisive_code_missing` → 붙는다.
+#   · `trigger_status == reachability_unknown` → `result`가 무엇이든 붙는다.
+#   ⏵ 2026-10-06 — **산문이 둘 다 약속한다.** 처음엔 앞쪽만 적혀 있어 하네스가 「더 넓게」 막는
+#   쪽이었고, 적대적 검토가 그 어긋남을 짚어 산문을 코드에 맞췄다(v10 prefix의 §Identifiers and
+#   evidence references). 넓은 쪽인 이유는 그대로다(`_finding_from_procedure`의 🔴 주석 —
+#   fail-closed): 게이트가
+#     `trigger_status`를 안 읽으므로 「모르겠다」로 라벨한 Finding이 안 막히면 E2로 열린다.
+# 나머지 아홉 칸(`result`가 결정적이지 않고 상태가 판정을 말하는 칸)은 안 붙는다.
+# 스무 칸 중 `no_signal` 열 넷은 이 표에 올 수 없다 — `audit`가 null이라야 하는데 그러면 `result`가
+# 없다(스키마가 둘을 거절한다). 그 넷의 accounting은 아래 표 검사가 맡는다.
+_MISSING_ID_ATTACHED = {
+    ("defeated", "triggerable"): False,
+    ("defeated", "guarded"): False,
+    ("defeated", "no_reach"): False,
+    ("defeated", "reachability_unknown"): True,
+    ("holds", "triggerable"): False,
+    ("holds", "guarded"): False,
+    ("holds", "no_reach"): False,
+    ("holds", "reachability_unknown"): True,
+    ("path_not_executable", "triggerable"): False,
+    ("path_not_executable", "guarded"): False,
+    ("path_not_executable", "no_reach"): False,
+    ("path_not_executable", "reachability_unknown"): True,
+    ("decisive_code_missing", "triggerable"): True,
+    ("decisive_code_missing", "guarded"): True,
+    ("decisive_code_missing", "no_reach"): True,
+    ("decisive_code_missing", "reachability_unknown"): True,
+}
+
+
+@pytest.mark.parametrize(
+    ("result", "status", "attached"),
+    [
+        pytest.param(result, status, attached, id=f"{result}-{status}")
+        for (result, status), attached in _MISSING_ID_ATTACHED.items()
+    ],
+)
+def test_the_issued_missing_id_is_attached_when_the_code_is_missing_or_the_status_is_unknown(
+    result: str, status: str, attached: bool
+) -> None:
+    """발급 `missing_id`는 `result`가 `decisive_code_missing`이거나 `trigger_status`가
+    `reachability_unknown`일 **때** 붙는다 — 둘 중 하나면 붙고 둘 다 아니면 안 붙는다. 일곱 칸이
+    붙고 아홉 칸이 안 붙는다(위 `_MISSING_ID_ATTACHED`, 칸마다 손으로 적은 기대).
+
+    왜 이 칸이 모순 조합까지 있나. 뒤 `_materialize_missing`이 그 ID마다 blocking
+    `MissingEvidence`를 만들어 E2를 막는데, 스키마는 `result` ↔ `trigger_status` 대응을 안 싣는다
+    (`AuditProcedure`). 조건을 `result` 한쪽으로 줄이면(처음 판) `reachability_unknown`인데
+    `result`가 다른 칸 셋이 막히지 않고 풀린다. 두 조건이 다 참인 칸(`decisive_code_missing` /
+    `reachability_unknown`)에서도 ID는 **하나**다."""
+    finding = _convert(_procedure(trigger_status=status, result=result))
+
+    assert finding.missing_evidence == ([_ISSUED["missing_id"]] if attached else [])
+
+
+def test_the_missing_id_table_accounts_for_every_result_status_cell_the_schema_allows() -> None:
+    """표가 스키마의 `result` × `trigger_status` 칸을 **빠짐없이** 든다 — 목록은 스키마에서 뽑는다.
+
+    값이 하나 늘면(새 `result`·새 상태) 그 칸이 표에 없어 여기서 먼저 빨개진다. 표에서 빠지는
+    `no_signal` 열은 `audit`가 null이어야 하는 상태라 **`result`와 함께 올 수 없다** — 그 넷이
+    실제로 거절되는지를 칸마다 본다(스키마 쪽 검사는 `test_auditor_procedure_schema.py`의
+    `test_no_signal_with_an_audit_block_is_refused`가 한 칸으로 문다)."""
+    results = get_args(AuditRefutation.model_fields["result"].annotation)
+    statuses = get_args(AuditProcedure.model_fields["trigger_status"].annotation)
+
+    assert results and statuses, "전제 — Literal에서 값을 못 뽑았다. 검사가 비어 있다"
+    assert set(_MISSING_ID_ATTACHED) == {
+        (result, status) for result in results for status in statuses if status != "no_signal"
+    }
+    for result in results:
+        with pytest.raises(ValidationError):
+            AuditProcedure.model_validate(
+                {**_procedure_payload(result=result), "trigger_status": "no_signal"}
+            )
+
+
+def test_a_no_signal_answer_attaches_no_missing_id() -> None:
+    """`no_signal`(`audit` 없음 · `result` 없는 칸)은 ID를 안 붙인다 — 스무 칸 중 `result`가 없는
+    다섯째 열이다. 「모르겠다」(`reachability_unknown`)와 「신호 없음」은 다른 사실이다: 앞은 판정에
+    필요한 코드가 없어 막히고, 뒤는 판정할 후보가 아니라 막을 것이 없다."""
+    assert _convert(_procedure(trigger_status="no_signal")).missing_evidence == []
+
+
+def _procedure_prefixes() -> dict[str, str]:
+    """`output_schema`가 `AuditorProcedureAction`인 모든 Auditor 판의 산문 — 판 이름을 이 파일이
+    쥐지 않고 **meta 선언에서 묻는다**(v11이 같은 봉투를 선언해도 같이 걸린다)."""
+    found = {}
+    for path in sorted((PROMPTS_DIR / "auditor").iterdir()):
+        template = load_prompt(Role.AUDITOR, path.name)
+        if template.output_schema == AuditorProcedureAction.__name__:
+            found[path.name] = " ".join(template.prefix.split())
+    return found
+
+
+def test_the_procedure_prose_names_both_conditions_for_attaching_the_missing_id() -> None:
+    """산문이 「발급 `missing_id`를 언제 붙이는가」에 **두 조건을 다** 든다 — 하나만 적으면 산문이
+    코드보다 좁다. 기대는 위 `_MISSING_ID_ATTACHED` 표에서 뽑는다(산문에서 베끼지 않는다).
+
+    **사고 형태 —** 독립 검토의 변이 실험: 산문의 「or `trigger_status` is `reachability_unknown`」
+    구를 지워도 640개 검사가 전부 초록이었다. 처음 판의 산문은 앞 조건만 약속했고(코드는 더 넓게
+    막았다) 그 어긋남을 고친 것이 이 구인데, 고친 것이 아무 검사에도 안 걸려 있었다. 모델은 산문을
+    믿고 `result`와 `trigger_status`가 갈린 답에서 그 ID가 안 붙는다고 읽는다.
+
+    표에서 **어느 칸이 항상 붙는가**를 뽑는다 — 한 `result`의 모든 상태에서 붙으면 그 `result`가
+    조건이고, 한 상태의 모든 `result`에서 붙으면 그 상태가 조건이다. 그 둘의 **합집합**이 표 전체와
+    같다는 것까지 본다(조건 하나가 늘면 합집합이 안 맞아 여기서 빨개진다). 산문의 「`필드` is `값`」
+    짝이 그 집합과 같고 「or」로 잇는다(「and」면 교집합이라 아홉 칸이 거짓이다).
+
+    ⚠ 철자 핀이다 — 산문이 같은 조건을 다른 문형으로 적으면 이 검사의 정규식을 맞춘다."""
+    results = get_args(AuditRefutation.model_fields["result"].annotation)
+    statuses = [
+        status
+        for status in get_args(AuditProcedure.model_fields["trigger_status"].annotation)
+        if status != "no_signal"
+    ]
+    by_result = {r for r in results if all(_MISSING_ID_ATTACHED[(r, s)] for s in statuses)}
+    by_status = {s for s in statuses if all(_MISSING_ID_ATTACHED[(r, s)] for r in results)}
+    assert by_result and by_status, "전제 — 표에서 조건을 못 뽑았다. 검사가 비어 있다"
+    for (result, status), attached in _MISSING_ID_ATTACHED.items():
+        assert attached == (result in by_result or status in by_status), (result, status)
+    # 산문이 부르는 두 필드 경로가 실재한다 — `audit` 블록의 `refutation.result` · 바깥의
+    # `trigger_status`.
+    assert {"audit", "trigger_status"} <= set(AuditProcedure.model_fields)
+    assert "refutation" in AuditBlock.model_fields and "result" in AuditRefutation.model_fields
+    result_path = "audit.refutation.result"
+    expected = {(result_path, r) for r in by_result} | {("trigger_status", s) for s in by_status}
+
+    prefixes = _procedure_prefixes()
+    assert prefixes, "전제 — 봉투를 선언한 판이 없으면 이 검사가 아무것도 안 묻는다"
+    for version, prefix in prefixes.items():
+        found = re.search(r"attaches the pre-issued missing-evidence ID when ([^)]*)\)", prefix)
+        assert found, f"{version}: 산문이 발급 ID를 붙이는 조건을 안 적는다"
+        clause = found.group(1)
+        stated = re.findall(r"`([\w.]+)` is `(\w+)`", clause)
+        assert sorted(stated) == sorted(expected), (
+            f"{version}: 산문 {stated} ≠ 표 {sorted(expected)}"
+        )
+        assert clause.count(" or ") == len(expected) - 1 and " and " not in clause, version
+
+
+def test_a_finding_envelope_answer_never_keeps_an_audit_block_the_model_filled(
+    ctx: RunContext,
+) -> None:
+    """v8·v9 봉투(`AuditorAction`)의 `answer`가 `Finding`이고, 그 분기가 모델이 채운 `audit`를
+    **비운다** — `Finding.audit`은 하네스 소유 필드다.
+
+    `audit`는 `SkipJsonSchema`라 요청 스키마에 없지만 파서는 받는다(아래 전제 둘). 문법을 강제하지
+    않는 백엔드에서 모델이 그 자리를 채워 낼 수 있고, 안 비우면 그 블록이 저장되고 **v10 계열
+    처리가 그 값을 믿는다**: `_materialize_missing`이 `audit`의 유무로 근거 문구를 고른다. 이
+    조건(`"audit": None`)으로 되돌리면 이 검사가 죽는다."""
+    schema = AuditorAction.model_json_schema()
+    assert "audit" not in schema["$defs"]["Finding"]["properties"], "전제 — 요청에 안 보인다"
+    action = AuditorAction(
+        action="answer",
+        finding={**_finding_payload(), "audit": _audit_block_payload("holds")},
+        rationale="판정한다",
+    )
+    assert action.answer is not None and action.answer.audit is not None, "전제 — 파서는 받는다"
+
+    finding = auditor._finding_from(ctx, action.answer, ids=_ISSUED, produced_by=_STAMPED)
+
+    assert finding.audit is None
+    assert finding.model_dump()["audit"] is None
+
+
+def test_a_one_shot_answer_never_keeps_an_audit_block_the_model_filled(ctx: RunContext) -> None:
+    """**한 방 경로도** 모델이 채운 `audit`를 비운다 — `_ask_model`의 마지막 줄(`finding.model_copy(
+    update={"audit": None})`)이다. 루프 쪽 `_finding_from`은 위 검사가 이미 문다. 두 경로를 같은
+    규율로 두려는 것이라(그 주석) 한 방 쪽만 핀이 없으면 되돌려도 초록이다.
+
+    `audit`는 `SkipJsonSchema`라 `Finding`을 요청하는 한 방 판의 스키마에 안 보이지만 파서는
+    받는다 — 문법을 강제하지 않는 백엔드에서 모델이 그 자리를 채울 수 있다. 안 비우면 그 블록이
+    저장되고 `_materialize_missing`이 `audit`의 유무로 근거 문구를 고르므로 **한 방 판의 run이
+    v10 문구로 저장된다**(판 간 집계가 섞인다). 그래서 단언은 둘이다 — 저장된 Finding의 `audit`가
+    비었다 + 막는 ID의 문구쌍이 한 방 판의 것이다. 한 방 경로를 탔다는 것은 모델 호출의
+    `schema`가 `Finding`이라는 것으로 본다(`dev_fake`의 Auditor 좌석은 한 방 판이다 — 상한을 0으로
+    두어 루프 판 가정이 끼지 않게 한다)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(auditor_tool_hops=0)
+    )
+    answer = Finding.model_validate(
+        {
+            **_finding_payload(),
+            "audit": _audit_block_payload("decisive_code_missing"),
+            "missing_evidence": ["mev_the_model_wrote_this"],
+        }
+    )
+    assert answer.audit is not None, "전제 — 파서는 모델이 채운 `audit`를 받는다"
+    ctx.models = _ScriptedModel([answer])
+
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert [c.data["schema"] for c in _auditor_calls(ctx)] == ["Finding"], "한 방 경로가 아니다"
+    assert finding.audit is None
+    assert ctx.store.get("finding", finding.finding_id).audit is None
+    assert [(m.need, m.how_to_obtain) for m in missings] == [(_NEED_ONE_SHOT, _HOW_ONE_SHOT)]
+
+
+# --- 옮겨 담기가 안 터진다: `AuditProcedure`가 받는 값은 전부 `Finding`이 된다 -------------------
+
+# JSON 스키마에서 **값의 제약**을 나르는 키 — `title`·`default`는 값을 안 거른다. `$ref`는 클래스
+# 자체다.
+_CONSTRAINT_KEYS = (
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "minLength",
+    "maxLength",
+    "pattern",
+    "minItems",
+    "maxItems",
+    "$ref",
+)
+
+
+def _constraints(node: dict, prefix: str = "") -> set[tuple[str, object]]:
+    """스키마 한 자리의 제약을 `(경로, 값)` 집합으로 편다 — `items`의 안쪽과 `anyOf`의 가지까지."""
+    found = {(prefix + key, node[key]) for key in _CONSTRAINT_KEYS if key in node}
+    if "items" in node:
+        found |= _constraints(node["items"], prefix + "items.")
+    for branch in node.get("anyOf", ()):
+        found |= _constraints(branch, prefix)
+    return found
+
+
+# 값이 클래스가 아니라 **자기 자리에서 선언된** 공유 필드 — 두 모델이 각자 제약을 든다.
+# 나머지 공유 둘(`audit` · `repro_spec`)은 두 모델이 **같은 클래스**를 써서 한쪽만 느슨해질 수 없다.
+_OWN_DECLARED = ("confidence", "cwe", "title", "rca_draft", "evidence_refs", "trigger_status")
+# 필드 종류를 안 가리는 경계 값 — 비문자열·빈 값·길이·범위의 양쪽·`NaN`·널. 어느 모델의
+# 제약이 느슨해져 이 값 하나가 새면 아래 검사가 그 필드 이름으로 알린다.
+_ODD_VALUES = (
+    "",
+    " ",
+    "x",
+    "x" * 128,
+    "x" * 129,
+    "CWE-1",
+    "CWE-",
+    "cwe-1",
+    "1",
+    0,
+    1,
+    -1,
+    0.0,
+    1.0,
+    -0.001,
+    1.001,
+    float("nan"),
+    float("inf"),
+    None,
+    [],
+    [""],
+    ["x"],
+    ["x" * 129],
+)
+
+
+def test_every_value_the_procedure_accepts_converts_to_a_finding() -> None:
+    """**`AuditProcedure`가 받는 값은 전부 `Finding`으로 변환된다** — 변환이 `ValidationError`로
+    죽는 값을 스키마가 먼저 거절한다.
+
+    **사고 형태 —** 독립 검토가 되살려도 초록인 스키마 제약을 여섯 찾았다(`confidence`의 범위 ·
+    `title`·`rca_draft`의 비어 있지 않음 · `evidence_refs`의 `Identifier` · `AuditPoint.expression`
+    · `AuditRefutation.witness`). `AuditProcedure`가 느슨해지면 모델 출력이 **파싱은 통과하고**
+    `_finding_from_procedure`의 `Finding(...)`에서 터져 run이 선다 — 스키마가 거절하면 그 답은
+    재생성되지만 여기서 터지면 후보가 Finding 없이 남는다(`AuditProcedure` 위 주석).
+
+    둘로 건다. ① **스키마 비교** — 두 모델이 공유하는 필드마다 `Finding`이 거는 제약(범위·길이·
+    패턴)을 `AuditProcedure`가 **빠짐없이** 건다(`_constraints`가 JSON 스키마에서 편다).
+    `Finding` 쪽만 더 엄격해지는 미래 변경(예: `title`에 `max_length`)도 여기서 잡는다.
+    ② **경계 값 실행** — 위 표의 값(`_ODD_VALUES`)을 필드마다 넣어 `AuditProcedure`가 받으면
+    변환이 되는지 **돌린다**. 값마다
+    기대를 적지 않는 것이 속성 검사의 요점이다. 각 필드에서 `AuditProcedure`가 거절하는 값이 하나
+    이상이어야 한다 — 거절이 없으면 이 검사가 아무것도 안 묻는 것이다.
+
+    ⚠ **이 명제가 못 덮는 것 셋** — `rca_draft`(`Finding.rca_draft`가 `str = ""`이라 비어 있어도
+    변환이 된다), `AuditPoint.expression`·`AuditRefutation.witness`(`Finding.audit`가 **같은
+    클래스**라 한쪽만 느슨해질 수 없다)는 변환을 못 깬다. 그 셋의 「비어 있지 않음」은 아래 검사가
+    스키마의 문자열 자리 전부에 거는 것으로 묶는다."""
+    shared = set(AuditProcedure.model_fields) & set(Finding.model_fields)
+    assert shared == {*_OWN_DECLARED, "audit", "repro_spec"}, (
+        f"공유 필드가 바뀌었다({sorted(shared)}) — 새 필드는 위 표에 넣거나 같은 클래스인지 본다"
+    )
+    for name in ("audit", "repro_spec"):
+        same = AuditProcedure.model_fields[name], Finding.model_fields[name]
+        assert same[0].annotation == same[1].annotation, f"{name}: 두 모델이 다른 클래스를 쓴다"
+
+    finding_props = Finding.model_json_schema()["properties"]
+    procedure_props = AuditProcedure.model_json_schema()["properties"]
+    # 전제 — 제약을 펴는 코드가 실제로 제약을 편다(못 펴면 아래 비교가 `set() - set()`로 초록이다).
+    assert {("minimum", 0.0), ("maximum", 1.0)} <= _constraints(finding_props["confidence"])
+    assert ("items.maxLength", 128) in _constraints(finding_props["evidence_refs"])
+    looser = {
+        name: sorted(map(str, missing))
+        for name in _OWN_DECLARED
+        if (missing := _constraints(finding_props[name]) - _constraints(procedure_props[name]))
+    }
+    assert looser == {}, f"`Finding`이 거는 제약을 `AuditProcedure`가 안 건다: {looser}"
+
+    refused: dict[str, int] = dict.fromkeys(_OWN_DECLARED, 0)
+    broken: list[str] = []
+    for name in _OWN_DECLARED:
+        for value in _ODD_VALUES:
+            try:
+                procedure = AuditProcedure.model_validate({**_procedure_payload(), name: value})
+            except ValidationError:
+                refused[name] += 1
+                continue
+            try:
+                _convert(procedure)
+            except ValidationError:
+                broken.append(f"{name}={value!r}")
+    assert broken == [], f"`AuditProcedure`는 받는데 `Finding`이 거절하는 값: {broken}"
+    assert all(refused.values()), f"거절하는 값이 없는 필드가 있다 — 검사가 비었다: {refused}"
+
+
+def _free_text_leaves(schema: dict, node: dict, path: str = "") -> Iterator[tuple[str, dict, bool]]:
+    """스키마의 **자유 문자열 자리**(`enum`·`pattern`이 없는 `string`)를 `(경로, 자리, 선택인가)`로
+    돈다. 선택 = `null`과 `anyOf`로 묶인 자리(`PathStep.note`)라 비어 있어도 합법이다."""
+    if "$ref" in node:
+        target = schema["$defs"][node["$ref"].rsplit("/", 1)[1]]
+        yield from _free_text_leaves(schema, target, path)
+    elif "anyOf" in node:
+        nullable = any(branch.get("type") == "null" for branch in node["anyOf"])
+        for branch in node["anyOf"]:
+            for leaf_path, leaf, optional in _free_text_leaves(schema, branch, path):
+                yield leaf_path, leaf, optional or (nullable and branch.get("type") == "string")
+    elif node.get("type") == "array":
+        yield from _free_text_leaves(schema, node["items"], path + "[]")
+    elif node.get("type") == "object" or "properties" in node:
+        for key, child in node.get("properties", {}).items():
+            yield from _free_text_leaves(schema, child, f"{path}.{key}" if path else key)
+    elif node.get("type") == "string" and "enum" not in node and "pattern" not in node:
+        yield path, node, False
+
+
+def test_the_procedure_schema_refuses_the_empty_string_in_every_free_text_field() -> None:
+    """`AuditProcedure`의 **모든 자유 문자열 자리**가 빈 문자열을 거절한다(`minLength` ≥ 1). 위
+    변환 검사가 못 덮는 셋(`rca_draft` · `AuditPoint.expression` · `AuditRefutation.witness`)을
+    그 이웃(`title` · `evidence_refs` 항목 · `symbol` · `fact` · `steps` …)과 함께 **스키마에서
+    뽑아**
+    묶는다 — 자리 목록을 손으로 적지 않아서 문자열 필드가 하나 늘면 같이 걸린다.
+
+    스키마가 빈 문자열을 받으면 모델이 `"expression": ""` 같은 **인용 없는 감사 블록**을 내도
+    파싱이 통과한다 — 산문이 요구하는 「SOURCE에서 그대로 옮긴 식」 · 「짧은 구체적 사실」이 비어도
+    재생성이 안 걸린다. 선택 자리(`PathStep.note` — 산문이 「채워라」만 말한다)는 뺀다.
+
+    `enum`·`pattern`이 있는 자리는 값 집합이 닫혀 있어 센 대상이 아니다(`cwe`는 위 변환 검사 몫).
+    기대하는 자리 일곱이 실제로 뽑혔는지도 본다 — 걷는 코드가 자리를 놓치면 이 검사가 빈 채로
+    초록이다."""
+    schema = AuditProcedure.model_json_schema()
+    leaves = list(_free_text_leaves(schema, schema))
+    paths = {path for path, _, _ in leaves}
+
+    assert {
+        "title",
+        "rca_draft",
+        "evidence_refs[]",
+        "audit.point.symbol",
+        "audit.point.expression",
+        "audit.refutation.witness",
+        "audit.refutation.missing_information[]",
+    } <= paths, f"걷는 코드가 자리를 놓쳤다: {sorted(paths)}"
+    empty_ok = sorted(
+        path for path, leaf, optional in leaves if not optional and not leaf.get("minLength")
+    )
+    assert empty_ok == [], f"빈 문자열을 받는 자유 문자열 자리: {empty_ok}"
+    optional_paths = [path for path, _, optional in leaves if optional]
+    assert optional_paths == ["audit.path[].note"], "선택 자리가 바뀌었다"
+
+
+# `MissingEvidence`의 두 고정 문구쌍(`need` · `how_to_obtain`) — `need`는 **집계의 키다**: 자유
+# 텍스트면 같은 요청이 매번 다르게 쓰여 세지 못한다(`nodes/auditor._NEED` 위 주석). 노드 상수를
+# import해 비교하지 않고 **글자로 적는다** — 상수끼리 비교하면 문구가 바뀌어도 초록이라 집계 키가
+# 조용히 갈린다. `how_to_obtain`도 판마다 가른다: 한 방·v8·v9가 저장해 온 문구(「index 도구」)는
+# 그대로 두고 루프 판(v10)에만 다른 문구를 쓴다 — 루프에는 `index` 도구가 없다(위
+# `test_tool_literal_is_the_whitelist_minus_index`). 문구를 일부러 바꾸면 이 네 줄도 같이 고친다
+# (그 변경이 과거 run과 문구가 갈리는 지점이다).
+_NEED_ONE_SHOT = "대상 경로를 코드만으로 확정할 수 없다: 정적분석 신호 또는 호출 그래프 근거"
+_HOW_ONE_SHOT = "2단계 신호 수집을 대상 파일로 다시 실행하거나 index 도구로 호출자를 확인한다"
+_NEED_V10 = "판정에 필요한 코드가 SOURCE에 없다 (목록이 있으면 audit.refutation에 있다)"
+_HOW_V10 = "모델이 lookup으로 그 코드를 조회하거나 호출 그래프로 호출자를 확인한다"
+
+
+def _procedure_missing(result: str, information: list[str]) -> AuditProcedure:
+    """`reachability_unknown` 답 — `result`와 모델이 적은 「무엇이 없는가」를 정한다."""
+    payload = _procedure_payload(trigger_status="reachability_unknown", result=result)
+    payload["audit"]["refutation"]["missing_information"] = information
+    return AuditProcedure.model_validate(payload)
+
+
+def test_the_blocking_need_is_one_fixed_sentence_per_answer_shape(ctx: RunContext) -> None:
+    """blocking `MissingEvidence`의 `need`·`how_to_obtain`은 답의 **모양**마다 고정 문구 하나씩이다
+    — `audit`가 있으면(v10) `_NEED_V10`·`_HOW_V10`, 없으면(v8·v9·한 방) `_NEED_ONE_SHOT`·
+    `_HOW_ONE_SHOT`. 모델이 적은 「무엇이 없는가」는 문구에 안 들어가고
+    `audit.refutation.missing_information`에 **그대로** 남는다.
+
+    넷을 건다: 모델이 목록을 적은 두 답(서로 다른 목록) · 목록이 빈 `decisive_code_missing` · 목록이
+    빈 채 `reachability_unknown`이라 **넓은 쪽으로 막힌** 답(`result`는 `defeated`). 앞의 둘이 같은
+    문구를 얻는다는 것이 「자유 텍스트가 아니다」의 증거이고, 뒤의 둘이 문구가 「목록이 있다」고
+    단언하지 않는다는 것의 증거다(목록이 비어도 같은 문구가 붙는다). 이 문구의 철자를 바꾸면
+    죽는다 — 집계 키가 갈리는 지점이라 일부러 글자로 문다."""
+    asked = ["parse_header의 호출자", "BUF_SIZE의 정의"]
+    cases = [
+        (_procedure_missing("decisive_code_missing", asked), asked),
+        (_procedure_missing("decisive_code_missing", ["완전히 다른 사정"]), ["완전히 다른 사정"]),
+        (_procedure_missing("decisive_code_missing", []), []),
+        (_procedure_missing("defeated", []), []),
+    ]
+
+    for procedure, information in cases:
+        finding = _convert(procedure)
+        (missing,) = auditor._materialize_missing(ctx, finding)
+
+        assert (missing.need, missing.how_to_obtain) == (_NEED_V10, _HOW_V10)
+        assert missing.blocking is True
+        assert missing.missing_id == _ISSUED["missing_id"]
+        assert missing.finding_id == finding.finding_id
+        assert finding.audit is not None
+        assert finding.audit.refutation.missing_information == information
+
+    plain = Finding.model_validate(
+        {**_finding_payload(), "missing_evidence": [_ISSUED["missing_id"]]}
+    )
+    assert plain.audit is None
+    (missing,) = auditor._materialize_missing(ctx, plain)
+    assert (missing.need, missing.how_to_obtain) == (_NEED_ONE_SHOT, _HOW_ONE_SHOT)
+    assert missing.blocking is True and missing.missing_id == _ISSUED["missing_id"]
+    assert _NEED_ONE_SHOT != _NEED_V10, "전제 — 둘은 다른 사실을 적는다(코드 없음 ≠ 신호 없음)"
+
+
+# --- 관측: `answer` 홉이 싣는 키와 그 상수 --------------------------------------------------
+
+
+def test_the_status_map_has_exactly_the_refutation_results_the_schema_allows() -> None:
+    """`_STATUS_BY_RESULT`의 키 집합이 `AuditRefutation.result`의 Literal 값 집합과 **같다** — 값
+    집합을 스키마에서 뽑는다.
+
+    그 맵은 `_answer_observed`가 `[...]`로 조회한다. 스키마에 `result` 값이 하나 늘면 그 홉에서
+    `KeyError`가 나고, 그 예외는 모델이 낸 출력이 아니라 **하네스 코드의 것**이다. 반대로 맵에만
+    있는 키는 죽은 대응이다. 값 쪽은 `trigger_status`가 실제로 허용하는 상태여야 한다 — 아니면
+    그 칸은 항상 「모순」으로 센다. 이 파일이 손으로 든 `_AUDIT_RESULTS`도 같은 집합이어야 한다
+    (표 검사들이 그 목록으로 돈다)."""
+    results = set(get_args(AuditRefutation.model_fields["result"].annotation))
+    statuses = set(get_args(AuditProcedure.model_fields["trigger_status"].annotation))
+
+    assert results and statuses, "전제 — Literal에서 값을 못 뽑았다. 검사가 비어 있다"
+    assert set(auditor._STATUS_BY_RESULT) == results
+    assert set(auditor._STATUS_BY_RESULT.values()) <= statuses - {"no_signal"}
+    assert set(_AUDIT_RESULTS) == results
+
+
+def test_the_node_counts_the_path_endpoints_the_gate_requires() -> None:
+    """노드의 `_PATH_ENDPOINTS`가 게이트의 `_REQUIRED_PATH_STEPS`와 **같은 값**이다.
+
+    노드는 게이트를 import하지 않으려고(의존 방향) 같은 값을 따로 든다. 갈리면
+    `path_without_endpoints` 관측이 게이트의 `p2`(`path_ok`)가 떨어뜨리는 Finding과 **다른 것을
+    센다** — 그 키는 「게이트가 왜 이 Finding을 떨어뜨렸나」를 합법적 빈 경로와 가르는 값이다.
+    노드의 `_PATH_ENDPOINTS` 주석이 이 검사를 약속한다. 선례는 `tests/test_index_graph.py`의
+    `test_auditor_section_name_matches_the_adapter`(`CALLERS_SECTION` ↔ `GRAPH_SECTION_KINDS`)다."""
+    assert gate._REQUIRED_PATH_STEPS, "전제 — 빈 집합끼리의 일치는 아무것도 안 묻는다"
+    assert auditor._PATH_ENDPOINTS == gate._REQUIRED_PATH_STEPS
+
+
+_CITED = 2  # 인용한 probe 근거 수 — 키가 그 값을 그대로 싣는지 보려고 0도 1도 아닌 값이다
+# (`trigger_status`, `result`, `audit.path`의 종류들, 공통 두 키 밖에 생기는 키). 기대는 칸마다
+# 손으로 적는다 — 어긴 칸에만 키가 생기고 지킨 칸에는 **없어야** 하므로 전체 dict를 비교한다.
+_OBSERVED_CASES = [
+    pytest.param(
+        "triggerable", "defeated", ("source", "propagate", "sink"), {}, id="consistent-triggerable"
+    ),
+    pytest.param("guarded", "holds", ("source", "sink"), {}, id="consistent-guarded"),
+    pytest.param(
+        "no_reach", "path_not_executable", ("source", "sink"), {}, id="consistent-no-reach"
+    ),
+    # 🔴 합법적인 `reachability_unknown`의 빈 경로 — 이 구분이 `path_without_endpoints`의 존재
+    # 이유다.
+    pytest.param(
+        "reachability_unknown", "decisive_code_missing", (), {}, id="legit-unknown-empty-path"
+    ),
+    pytest.param(
+        "reachability_unknown", "decisive_code_missing", ("source",), {}, id="legit-unknown-partial"
+    ),
+    pytest.param(
+        "triggerable",
+        "holds",
+        ("source", "sink"),
+        {"status_result_mismatch": "triggerable/holds"},
+        id="mismatch-only",
+    ),
+    pytest.param(
+        "reachability_unknown",
+        "defeated",
+        ("source", "sink"),
+        {"status_result_mismatch": "reachability_unknown/defeated"},
+        id="mismatch-unknown-label-over-a-defeated-result",
+    ),
+    pytest.param(
+        "guarded",
+        "decisive_code_missing",
+        ("source", "sink"),
+        {"status_result_mismatch": "guarded/decisive_code_missing"},
+        id="mismatch-missing-code-under-a-guarded-label",
+    ),
+    pytest.param(
+        "triggerable", "defeated", ("source",), {"path_without_endpoints": True}, id="no-sink"
+    ),
+    pytest.param("guarded", "holds", ("sink",), {"path_without_endpoints": True}, id="no-source"),
+    pytest.param(
+        "no_reach",
+        "path_not_executable",
+        (),
+        {"path_without_endpoints": True},
+        id="empty-path-under-no-reach",
+    ),
+    pytest.param(
+        "triggerable",
+        "defeated",
+        ("propagate",),
+        {"path_without_endpoints": True},
+        id="propagate-only",
+    ),
+    pytest.param(
+        "triggerable",
+        "holds",
+        (),
+        {"status_result_mismatch": "triggerable/holds", "path_without_endpoints": True},
+        id="both-contradictions",
+    ),
+]
+
+
+@pytest.mark.parametrize(("status", "result", "steps", "extra"), _OBSERVED_CASES)
+def test_the_answer_hop_counts_the_v10_contradictions_and_only_when_they_happen(
+    status: str, result: str, steps: tuple[str, ...], extra: dict
+) -> None:
+    """v10 `answer` 홉의 관측 — `trigger_status`는 **매번** 실리고(모순 비율의 분모다),
+    `status_result_mismatch`·`path_without_endpoints`는 그 모순이 있을 **때만** 생긴다.
+
+    - `status_result_mismatch` — `result`가 가리키는 상태(`_STATUS_BY_RESULT`)와 `trigger_status`가
+      다를 때이고 값은 `"<trigger_status>/<result>"`다.
+    - `path_without_endpoints` — 상태가 경로를 요구하는데(`_PATH_REQUIRED_STATUSES`) `source`·
+      `sink` 양 끝이 없을 때다. 🔴 **합법적인 `reachability_unknown`의 빈·부분 경로에는 없어야
+      한다** — 게이트의 강등은 그 둘을 trace에서 구분하지 못해 규칙 위반을 셀 수 없었다.
+
+    기대의 출처는 v10 prefix의 「4. Keep fields consistent」(`result` ↔ `trigger_status` 대응 ·
+    경로는 `reachability_unknown`에서만 비어도 된다). 전체 dict를 비교하므로 안 어긴 칸에 키가
+    **새는** 것도 잡는다. 이 조건(`!=` · `_PATH_REQUIRED_STATUSES` 소속)을 뒤집으면 죽는다."""
+    procedure = _procedure(trigger_status=status, result=result, steps=steps)
+
+    assert auditor._answer_observed(procedure, cited=_CITED) == {
+        "cited_probe_evidence": _CITED,
+        "trigger_status": status,
+        **extra,
+    }
+
+
+def test_a_no_signal_answer_carries_the_status_and_no_contradiction_key() -> None:
+    """`no_signal`(`audit is None`)은 `trigger_status`만 싣는다 — 비교할 `result`도 경로도 없다.
+    `audit`가 null이라 `audit.refutation`을 읽으면 `AttributeError`인 자리다."""
+    observed = auditor._answer_observed(_procedure(trigger_status="no_signal"), cited=_CITED)
+
+    assert observed == {"cited_probe_evidence": _CITED, "trigger_status": "no_signal"}
+
+
+@pytest.mark.parametrize(
+    ("trigger_status", "expected"),
+    [
+        pytest.param(
+            "triggerable",
+            {"cited_probe_evidence": _CITED, "trigger_status": "triggerable"},
+            id="status-set",
+        ),
+        pytest.param(None, {"cited_probe_evidence": _CITED}, id="status-unset"),
+    ],
+)
+def test_a_finding_answer_gets_no_v10_contradiction_key(
+    trigger_status: str | None, expected: dict
+) -> None:
+    """v8·v9 봉투(`Finding` 답)는 `trigger_status`를 **있을 때** 싣고(`str | None`이라 안 낸 판은
+    키가 없다) v10 전용 키(`status_result_mismatch` · `path_without_endpoints`)는 **절대** 안
+    싣는다.
+
+    입력이 일부러 v10 규칙을 어긴다 — 경로가 비었고 `audit`가 `holds`인데 상태는 `triggerable`이다.
+    `Finding`을 v10 답처럼 읽으면 두 키가 다 생기는 칸이다. 모델이 `Finding.audit`를 채워 냈을
+    때(`_finding_from`이 비우기 **전**의 값이다 — 관측은 raw 답을 본다)도 이 값은 하네스 몫이
+    아니다. 그 판들의 trace에 v10 계약의 모순 비율이 섞이면 판 간 비교가 오염된다."""
+    finding = Finding.model_validate(
+        {
+            **_finding_payload(),
+            "path": [],
+            "audit": _audit_block_payload("holds"),
+            "trigger_status": trigger_status,
+        }
+    )
+
+    assert auditor._answer_observed(finding, cited=_CITED) == expected
+
+
+def test_the_answer_property_takes_the_payload_from_either_envelope() -> None:
+    """봉투의 `answer`가 두 봉투의 `answer` 액션에서 최종 답을(`finding` ↔ `procedure`), 조사
+    액션에서는 `None`을 돌려준다 — 읽는 쪽이 봉투 목록을 모른다.
+
+    **예전에는 노드가 비공개 `_PAYLOAD_FIELD`를 `getattr`로 읽었다**(적대적 검토 2026-10-06).
+    그쪽은 반환이 `Any`라 아무도 타입을 안 봤고, 그 이름이 **엉뚱한 실재 필드**를 가리키면 조용히
+    그 값을 돌려줬다 — `rationale`을 가리키면 `answer`가 `None` 대신 그 문자열이 된다.
+    아래 형제 검사가 그 위반을 **클래스 정의 시점에** 세우는 가드를 문다."""
+    assert isinstance(_answer_action().answer, Finding)
+    assert isinstance(_procedure_answer().answer, AuditProcedure)
+    request = RequestedContext(kind="function", target="x", purpose="읽는다", request_code="L_x")
+    for investigation in (
+        _lookup_action("parse_header"),
+        _probe_action("semgrep"),
+        AuditorProcedureAction(action="probe", tool="semgrep", rationale="도구로 본다"),
+        AuditorProcedureAction(action="lookup", requests=[request], rationale="더 본다"),
+    ):
+        assert investigation.answer is None
+
+
+@pytest.mark.parametrize("payload_field", ["rationale", "procedure", None])
+def test_an_envelope_whose_payload_name_is_not_its_field_fails_at_class_definition(
+    payload_field: str | None,
+) -> None:
+    """`_PAYLOAD_FIELD`가 그 봉투의 **실재하는 필드**가 아니면 클래스 정의가 선다.
+
+    🔴 **미루면 그 위반이 첫 인스턴스화의 `AttributeError`가 되고, 노드의 모델 호출 경로에서는
+    그것이 `SCHEMA_PARSE_FAILED`로 적힌다** — 코드 결함이 **모델 파싱 실패율로 둔갑한다**.
+    세 변이를 문다: 실재하지만 payload가 아닌 필드(`rationale` — 조용히 그 문자열을 돌려준다) ·
+    이 봉투에 없는 다른 봉투의 필드(`procedure`) · 미정의(`None`)."""
+    namespace: dict[str, object] = {
+        "__annotations__": {"finding": Finding | None},
+        "finding": None,
+    }
+    if payload_field is not None:
+        namespace["_PAYLOAD_FIELD"] = payload_field
+
+    with pytest.raises(TypeError, match="_PAYLOAD_FIELD"):
+        type("_BrokenEnvelope", (auditor_schemas._AuditorEnvelope,), namespace)
+
+
+# --- 루프 run: 봉투를 요청하고, 옮겨 담아 저장한다 -----------------------------------------
+
+
+def test_a_procedure_loop_answer_is_stored_as_a_finding_the_harness_stamped(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """v10 봉투로 도는 run — 모델이 낸 `AuditProcedure`가 **하네스가 발급·도장한 `Finding`으로**
+    저장되고 루프 뒤 흐름(`_materialize_missing` · 저장)이 종전 그대로 돈다.
+
+    본 것: 요청한 스키마가 선언한 봉투(`AuditorProcedureAction`)다 · 발급 ID가 저장소의 행과 같고
+    후보를 가리킨다 · `audit` 블록과 경로가 저장된 Finding에 있다 · `produced_by`는 실제 호출 모델
+    (`scripted`)과 판이다 · `decisive_code_missing`이라 blocking `MissingEvidence`가 **발급 ID로**
+    하나 생겼고 그 문구는 v10의 고정 문구쌍이다 · 모델이 적은 「무엇이 없는가」가 저장된 Finding의
+    `audit.refutation.missing_information`에 **그대로** 있다 · 모델이 `harness`라 쓴
+    `repro_spec.origin`은 `model`로 덮였다(`_ensure_repro_origin`을 변환이 우회하지 않는다) ·
+    `issued_override`가 0건이다(모델은 그 값을 쓰지 않았다)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4, output_schema="AuditorProcedureAction")
+    ctx.models = _ScriptedModel(
+        [
+            _procedure_answer(
+                trigger_status="reachability_unknown",
+                result="decisive_code_missing",
+                repro_origin="harness",
+            )
+        ]
+    )
+
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert ctx.models.schemas == [AuditorProcedureAction]
+    assert ctx.store.get("finding", finding.finding_id) == finding
+    assert finding.candidate_id == candidate.candidate_id
+    assert finding.state is FindingState.HYPOTHESIZED
+    assert finding.audit is not None and finding.path == list(finding.audit.path) != []
+    assert finding.produced_by.model == "scripted"
+    assert finding.produced_by.prompt_version == LOOP_VERSION
+    assert [(m.missing_id, m.finding_id, m.blocking) for m in missings] == [
+        (finding.missing_evidence[0], finding.finding_id, True)
+    ]
+    assert [(m.need, m.how_to_obtain) for m in missings] == [(_NEED_V10, _HOW_V10)]
+    assert finding.audit.refutation.missing_information == ["parse_header의 호출자"]
+    assert finding.repro_spec is not None and finding.repro_spec.origin.value == "model"
+    assert _events(ctx, EventKind.ISSUED_OVERRIDE) == []
+    assert [h.data["action"] for h in _hops(ctx)] == ["answer"]
+
+
+@pytest.mark.parametrize(
+    ("status", "result", "steps", "extra"),
+    [
+        pytest.param(
+            "triggerable",
+            "holds",
+            (),
+            {"status_result_mismatch": "triggerable/holds", "path_without_endpoints": True},
+            id="both-contradictions",
+        ),
+        pytest.param("reachability_unknown", "decisive_code_missing", (), {}, id="legit-unknown"),
+    ],
+)
+def test_the_answer_hop_event_carries_the_contradiction_keys_the_loop_observed(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    status: str,
+    result: str,
+    steps: tuple[str, ...],
+    extra: dict,
+) -> None:
+    """`_answer_observed`의 값이 **실제 `answer` 홉 이벤트에 실린다** — 함수 단위 검사(위
+    `_OBSERVED_CASES`)가 못 보는 배선이다(`_emit_hop`에 `observed`를 안 넘기면 함수는 멀쩡한데
+    trace에는 아무것도 안 남는다).
+
+    두 칸: 필드 둘이 다 어긋난 답은 키 둘이 다 생기고, 합법적인 `reachability_unknown`의 빈 경로는
+    `trigger_status`만 실린다. 조사 홉(`lookup`·`probe`)은 이 키를 안 싣는다 — 모순 비율의 분모는
+    **`answer` 홉**이라 다른 홉이 싣으면 분모가 부푼다(아래 Fake run 검사가 그 부재를 문다)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4, output_schema="AuditorProcedureAction")
+    ctx.models = _ScriptedModel(
+        [_procedure_answer(trigger_status=status, result=result, steps=steps)]
+    )
+
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    (hop,) = _hops(ctx)
+    keys = {"trigger_status", "status_result_mismatch", "path_without_endpoints"}
+    assert {key: value for key, value in hop.data.items() if key in keys} == {
+        "trigger_status": status,
+        **extra,
+    }
+
+
+def test_the_finding_envelope_answer_also_gets_the_harness_produced_by(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """v8·v9 봉투(`AuditorAction`)의 `answer`가 싣는 `Finding`의 `produced_by`도 하네스가 찍는다.
+
+    `RunContext.call_model`의 도장은 응답 **루트**에 `produced_by`가 있을 때만 돈다 — 루프 봉투는
+    루트에 없어서, 안 찍으면 안에 든 `Finding`의 `produced_by`는 모델이 쓴 대로(`ChatGPT` 같은 오염
+    값)다. v8·v9 prefix가 「하네스가 덮는다」고 적는다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    payload = _finding_payload()
+    payload["produced_by"] = {"role": "auditor", "model": "ChatGPT", "prompt_version": "v99"}
+    ctx.models = _ScriptedModel(
+        [AuditorAction(action="answer", finding=payload, rationale="판정한다")]
+    )
+
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert finding.produced_by.model == "scripted"
+    assert finding.produced_by.prompt_version == LOOP_VERSION
+
+
+def test_a_finding_envelope_run_blocks_with_the_one_shot_sentences_and_no_audit_block(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """v8·v9 봉투의 run — 모델이 `audit`를 채우고 `missing_evidence`에 **자기 ID**를 쓴 `Finding`
+    답이 저장되면 `audit`는 비고(`_finding_from`), 막는 ID는 발급 `missing_id` 하나로 정규화되고,
+    그 blocking `MissingEvidence`가 **한 방 판의 고정 문구쌍**을 든다.
+
+    `_materialize_missing`이 `audit`의 유무로 문구를 고르므로 둘은 한 사슬이다: `audit`를 안
+    비우면 v8·v9 run의 근거가 v10 문구(「코드가 SOURCE에 없다」)로 저장돼 판 간 집계가 섞인다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    payload = {
+        **_finding_payload(),
+        "audit": _audit_block_payload("decisive_code_missing"),
+        "missing_evidence": ["mev_the_model_wrote_this"],
+    }
+    ctx.models = _ScriptedModel(
+        [AuditorAction(action="answer", finding=payload, rationale="판정한다")]
+    )
+
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert ctx.store.get("finding", finding.finding_id).audit is None
+    assert len(missings) == 1 and missings[0].blocking is True
+    assert missings[0].missing_id == finding.missing_evidence[0] != "mev_the_model_wrote_this"
+    assert [(m.need, m.how_to_obtain) for m in missings] == [(_NEED_ONE_SHOT, _HOW_ONE_SHOT)]
+
+
+@pytest.mark.parametrize(
+    ("keep_static_signal", "result", "status", "blocked"),
+    [
+        pytest.param(True, "defeated", "triggerable", 0, id="static-signal"),
+        pytest.param(
+            False, "decisive_code_missing", "reachability_unknown", 1, id="no-static-signal"
+        ),
+    ],
+)
+def test_the_fake_model_runs_a_procedure_loop_end_to_end(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    keep_static_signal: bool,
+    result: str,
+    status: str,
+    blocked: int,
+) -> None:
+    """Fake가 v10 봉투로 `lookup → probe → answer`를 끝까지 낸다 — 빌더가 없으면 `FakeModelError`다.
+
+    Fake의 `answer`가 `_build_finding`과 같은 판정을 낸다는 것을 **두 갈래 다** 명시 기대로 본다:
+    정적 신호가 있는 후보는 `defeated` · `triggerable`이고 막는 ID가 없다(0건). 신호를 사실
+    블록에서 뺀 같은 후보는 `decisive_code_missing` · `reachability_unknown`이라 발급
+    `missing_id`가 붙고 blocking `MissingEvidence`가 v10 문구쌍으로 하나 생긴다(1건). 변환 → 저장 →
+    `MissingEvidence` 길이 Fake run에서도 선다.
+
+    처음 판은 `result`에서 기대를 **계산했고**(`== int(missing)`) 이 후보가 신호를 가져 한 갈래만
+    돌았다 — Fake가 무엇을 내도 초록이었다. 기대는 위 파라미터에 값으로 있다(Fake의 결정적 출력
+    — `_triage`가 이 후보에 정적 신호 둘을 주고, 그것을 거르면 그래프·빌드 근거만 남는다)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    assert any(e.kind is EvidenceKind.STATIC and e.ok for e in evidences), "전제 — 신호가 있다"
+    if not keep_static_signal:
+        evidences = tuple(e for e in evidences if e.kind is not EvidenceKind.STATIC)
+    _arm(ctx, monkeypatch, tmp_path, hops=4, output_schema="AuditorProcedureAction")
+
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    hops = _hops(ctx)
+    assert [h.data["action"] for h in hops] == ["lookup", "probe", "answer"]
+    assert {c.data["schema"] for c in _auditor_calls(ctx)} == {"AuditorProcedureAction"}
+    assert finding.audit is not None and finding.path
+    assert (finding.audit.refutation.result, finding.trigger_status) == (result, status)
+    assert len(finding.missing_evidence) == len(missings) == blocked
+    assert [(m.need, m.how_to_obtain) for m in missings] == [(_NEED_V10, _HOW_V10)] * blocked
+    assert hops[-1].data["trigger_status"] == status
+    contradiction_keys = {"trigger_status", "status_result_mismatch", "path_without_endpoints"}
+    assert not [h for h in hops[:-1] if contradiction_keys & set(h.data)]
+
+
+def test_the_fake_builder_table_holds_every_loop_envelope() -> None:
+    """Fake의 빌더 표가 노드가 아는 **모든 루프 봉투**를 든다 — 빠지면 그 봉투를 고르는 판으로 도는
+    Fake run이 `FakeModelError`(「모르는 출력 스키마」)로 죽는다. 봉투 목록은 노드의 한 곳
+    (`_LOOP_ENVELOPES`)에서 읽는다 — 이 검사가 그것과 Fake를 묶는다."""
+    assert set(auditor._LOOP_ENVELOPES) <= set(fake_model._BUILDERS)
+
+
+def _fake_context(*, static_signal: bool, build: bool, source: str) -> fake_model.FakeContext:
+    """Fake 빌더가 읽는 사실 블록 — 그래프 근거는 늘 있고 정적 신호·빌드 근거는 인자가 정한다."""
+    ref = fake_model.FakeEvidenceRef
+    evidence = [ref(evidence_id="ev_graph", kind=EvidenceKind.GRAPH)]
+    if static_signal:
+        evidence.append(ref(evidence_id="ev_static", kind=EvidenceKind.STATIC))
+    if build:
+        evidence.append(ref(evidence_id="ev_build", kind=EvidenceKind.BUILD))
+    return fake_model.FakeContext(
+        run_id=RUN_ID,
+        ids=dict(_ISSUED),
+        target=VULN_TARGET,
+        source=source,
+        evidence=evidence,
+        callers=["main"],
+    )
+
+
+@pytest.mark.parametrize("build", [True, False], ids=["build", "no-build"])
+@pytest.mark.parametrize(
+    ("source", "confidence", "cwe"),
+    [
+        pytest.param("memcpy(buf, src, len);", 0.6, "CWE-787", id="risky-call"),
+        pytest.param("return len;", 0.3, "CWE-20", id="no-risky-call"),
+    ],
+)
+@pytest.mark.parametrize(
+    ("static_signal", "result", "status", "missing"),
+    [
+        pytest.param(True, "defeated", "triggerable", [], id="static-signal"),
+        pytest.param(
+            False,
+            "decisive_code_missing",
+            "reachability_unknown",
+            [_ISSUED["missing_id"]],
+            id="no-static-signal",
+        ),
+    ],
+)
+def test_the_two_fake_builders_give_the_same_verdict_and_share_every_common_field(
+    static_signal: bool,
+    result: str,
+    status: str,
+    missing: list[str],
+    source: str,
+    confidence: float,
+    cwe: str,
+    build: bool,
+) -> None:
+    """같은 `FakeContext`로 `_build_finding`(한 방 · v8·v9)과 `_build_audit_procedure`(v10)를 불러
+    **같은 판정**과 **공유 필드 전부**가 같은지 본다 — 정적 신호가 있는 경우와 없는 경우 둘 다.
+
+    `_build_audit_procedure` docstring이 「경로·CWE·제목·신뢰도·근거는 `_build_finding`과 같은 값
+    이다」라 적는데 판정 줄이 **복사돼** 있어 한쪽만 고치면 갈린다 — 묶는 것이 없었다. 판정은 칸마다
+    손으로 적은 기대(위 파라미터)로 문다: `_build_finding`의 `missing_evidence`가 비면 v10은
+    `defeated` · `triggerable`, 발급 ID가 붙으면 `decisive_code_missing` ·
+    `reachability_unknown`이다. 공유 필드(경로 · CWE · 제목 · 신뢰도 · `rca_draft` · 근거 ·
+    `repro_spec`)는 두 출력끼리 비교하되, 위험 호출 유무(신뢰도·CWE)와 빌드 근거 유무(`repro_spec`)
+    로 입력을 갈라 **양쪽 축이 실제로 값을 바꾸는지**도 본다 — 두 출력이 똑같이 빈 값을 내서
+    일치하는 것이 아니다. Fake run 검사(`..._runs_a_procedure_loop_end_to_end`)는 후보 하나로 두
+    갈래를 돌 뿐이라, 이 검사가 그 위에 빌더 단위로 나머지 두 축을 곱한다."""
+    context = _fake_context(static_signal=static_signal, build=build, source=source)
+
+    finding = fake_model._build_finding(context, _STAMPED, ())
+    procedure = fake_model._build_audit_procedure(context, _STAMPED, ())
+
+    assert procedure.audit is not None
+    assert finding.missing_evidence == missing
+    assert (procedure.audit.refutation.result, procedure.trigger_status) == (result, status)
+    assert (finding.confidence, finding.cwe) == (confidence, cwe)
+    assert (finding.repro_spec is not None) is build
+    assert list(procedure.audit.path) == finding.path != []
+    assert (procedure.cwe, procedure.title, procedure.confidence) == (
+        finding.cwe,
+        finding.title,
+        finding.confidence,
+    )
+    assert procedure.rca_draft == finding.rca_draft
+    assert procedure.evidence_refs == finding.evidence_refs != []
+    assert procedure.repro_spec == finding.repro_spec
+
+
+# --- 배선된 판은 근거 본문을 받아야 한다 ---------------------------------------------------
+
+
+def _wired_auditor_seats() -> list[tuple[str, str]]:
+    """저장소 `config/profiles.yaml`의 모든 프로필에서 **실모델** Auditor 좌석이 고르는
+    `(프로필, 프롬프트 판)`. 판 이름을 이 파일이 들고 있지 않다 — 배선을 올리면 같이 따라온다."""
+    text = (CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8")
+    seats = []
+    for name in sorted(yaml.safe_load(text)["profiles"]):
+        config = load_config(name)
+        if "auditor" in config.profile.roles and not config.model_for("auditor").is_fake:
+            seats.append((name, config.model_for("auditor").prompt_template_version))
+    return seats
+
+
+def test_every_wired_auditor_version_is_in_the_content_aware_set() -> None:
+    """실모델 Auditor 좌석이 고르는 판은 전부 `_CONTENT_AWARE_VERSIONS`에 든다 — **이 검사가 판
+    배선 때 그 집합을 빠뜨리는 결함의 재발 방지다.**
+
+    그 집합 밖이면 `aware`가 거짓이라 **Evidence 본문도 위치도 FACTS에 안 실린다**. v10 prefix는
+    `## Evidence body completeness`에서 `FACTS.evidence[].body`·`truncated`를 읽으라고 시키는데
+    재료는 안 주는 상태가 된다 — 오류 없이 돈다. `cli._check_prompt_version`이 실모델 역할에서
+    ERROR로 막지만 그것은 `doctor`의 몫이고 노드는 조용히 본문을 뺀다. 좌석 목록을 설정에서 읽으므로
+    다음 판 배선이 집합을 안 고치면 여기서 빨개진다. 빈 목록이면 이 검사가 아무것도 안 묻는 것이라
+    그것도 막는다."""
+    seats = _wired_auditor_seats()
+
+    assert seats, "전제 — 실모델 Auditor 좌석이 하나도 없다. 검사가 비어 있다"
+    assert [
+        (profile, version)
+        for profile, version in seats
+        if version not in auditor._CONTENT_AWARE_VERSIONS
+    ] == []

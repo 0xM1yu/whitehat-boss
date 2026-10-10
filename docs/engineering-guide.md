@@ -37,9 +37,13 @@ Redis, Kubernetes, 외부 vector database, 다중 worker는 **단일 노드 benc
 │   ├── interfaces/        # ModelClient / Retriever / ToolRunner / StateStore
 │   ├── adapters/          # 위 인터페이스의 구체 구현
 │   ├── schemas/           # Candidate / Evidence / Finding / Decision / RunRecord
-│   ├── bench.py           # §3 체크리스트 측정 (A~E). 접속하는 유일한 경로
+│   ├── bench.py           # §3 체크리스트 측정 (A~E). 진단 중 모델 서버에 요청을 보내는 쪽
 │   ├── bench_metrics.py   # vLLM /metrics 판독 — 이름·파싱·구간 delta
 │   ├── bench_report.py    # 체크리스트 판정 + models.yaml benchmark 반영
+│   ├── preflight.py       # run 전 선결조건 점검(#534) — ssh·TCP·docker run으로 접속한다. 조립·도구 이미지·종료 코드
+│   ├── preflight_remote.py  # 서버 쪽: 원격 교대·터널·원격 커밋·교대 없는 프로필의 서빙 포트
+│   ├── preflight_oracle.py  # 채점 쪽: 채점기·API 키·카나리·과제 번들
+│   ├── preflight_probes.py  # 바깥 세계 주입(`Probes`)과 공용 도우미
 │   └── cli.py             # 표준 CLI 진입점
 ├── tools/                 # 정적분석·build·sanitizer·fuzz 래퍼 (Docker) · slicer/ 오프라인 Joern 슬라이서
 ├── eval/
@@ -77,6 +81,7 @@ class StateStore(Protocol):
     def put(self, obj: StoredObject) -> str: ...
     def get(self, kind: ObjectKind, id: str) -> StoredObject | None: ...
     def query(self, kind: ObjectKind, **filters: object) -> list[StoredObject]: ...
+    def close(self) -> None: ...  # 멱등. run을 연 쪽(CLI)이 부른다 (#156)
 ```
 
 > 구현 대응: `src/interfaces/`. 위 시그니처는 Harness v1 스캐폴드의 실제 코드에 맞춰
@@ -100,7 +105,7 @@ class StateStore(Protocol):
 | Protocol | 누가 쓰는가 | 왜 인터페이스인가 |
 | --- | --- | --- |
 | `EmbeddingClient` · `RerankerClient` (`retrieval.py`) | `HybridRetriever`가 의존, 서빙 쪽이 제공 | knowledge-base.md §3의 2단계 재선별을 어떤 서버로 하든 Retriever 코드가 안 바뀌어야 한다. Fake 대체가 되어야 GPU 없이 이 경로가 돈다 |
-| `Oracle` (`oracle.py`) | 러너가 8단계에서 부른다(`_submit_vul_to_oracle`·`_finalize_oracle`) — 노드는 안 부른다 | 채점 서버의 클라이언트는 어댑터이고 러너는 `src/adapters`를 import하지 않는다. 후보마다 `submit_vul`, run당 한 번 `finalize`로 쪼갠 것은 fix 다리를 최종 PoC 한 개에만 돌리려는 것이다(any-of 방지). `finalize`는 vul 제출이 성공한 후보가 하나일 때만 부른다 — 둘 이상이면 고르는 규칙이 미정이라 지정하지 않는다(`runner._designate_final`). 서버 주소·과제 신원·키는 `cli._oracle_for`가 묶는다 |
+| `Oracle` (`oracle.py`) | 러너가 8단계에서 부른다(`_submit_vul_to_oracle`·`_finalize_oracle`) — 노드는 안 부른다 | 채점 서버의 클라이언트는 어댑터이고 러너는 `src/adapters`를 import하지 않는다. 제출마다 `submit_vul`(PoV 중간 gen은 `query_vul`로 `vul` 판정도 읽는다), run당 한 번 `finalize`로 쪼갠 것은 fix 다리를 최종 PoC 한 개에만 돌리려는 것이다(any-of 방지). `finalize`는 최종으로 지정한 후보 하나에만 부른다 — 후보가 하나뿐이면 그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순서(내부 근거 등급 → `confidence` → 작은 바이트 → PoC 해시)로 하나를 고른다. 등급 또는 `confidence`를 모르는 후보가 있으면 지정하지 않는다(`runner._designate_final` — ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다). 서버 주소·과제 신원·키는 `cli._oracle_for`가 묶는다 |
 
 **`Role`에 넣지 않은 이유**는 [ADR 0004](decisions/0004-retrieval-clients-separate-from-model-client.md)에 있다.
 요약하면 `Role`은 프롬프트 버전·출력 스키마가 붙는 실행 계약 역할이고, 임베딩·리랭킹은

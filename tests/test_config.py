@@ -22,7 +22,7 @@ from pydantic import ValidationError
 from src import schemas
 from src.adapters.factory import _model_client
 from src.bench import ROLE_SPEC
-from src.cli import PROVISIONAL_THRESHOLDS
+from src.cli import PROVISIONAL_THRESHOLDS, _expected_calls
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
@@ -40,7 +40,7 @@ from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import critic as critic_node
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
+from src.orchestrator.prompt_loader import META_KEYS, PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.runner import (
     _AUDITOR_ALIAS_ROUNDS,
     _AUDITOR_CALLEE_CHARS,
@@ -77,6 +77,11 @@ NODE_OUTPUT_SCHEMAS = {
 
 # scout 자리가 낼 수 있는 스키마 이름. 노드·bench가 프롬프트 선언을 이 집합 안에서 고른다.
 SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHEMAS}
+
+# auditor도 같다 — 한 방 판은 `Finding`, 도구 루프 판은 봉투다(이슈 #419). ⏵ 2026-10-06 —
+# 봉투가 둘이 됐다: v8·v9는 `AuditorAction`, v10은 `AuditorProcedureAction`이다. 그 payload
+# 모델 `AuditProcedure`는 허용집합에 **없다** — 집합은 「코드가 보내는 것」만 든다.
+AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
 # --- 참조 정합성 ------------------------------------------------------------
@@ -351,6 +356,17 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
         )
         return
 
+    # auditor도 버전별로 갈린다(이슈 #419) — `auditor_node.OUTPUT_SCHEMA`는 한 방 경로의
+    # 이름이고, 루프 판은 meta 선언을 `resolve_output_schema`로 푼 것을 요청한다. 그래서
+    # scout과 같은 이유로 「하나」와의 동치가 아니라 **집합 소속**을 본다. bench가 같은 선언을
+    # 푸는지는 `tests/test_auditor_loop.py`가 따로 문다.
+    if role is Role.AUDITOR:
+        assert template.output_schema in AUDITOR_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"auditor 자리가 낼 수 있는 것은 {sorted(AUDITOR_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
+
     node_schema = NODE_OUTPUT_SCHEMAS.get(role)
     if node_schema is not None:
         assert template.output_schema == node_schema.__name__, (
@@ -365,6 +381,9 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
 
 # `input: slice`를 선언해야 하는 프롬프트 — `SOURCE`를 슬라이스로 정의한 v3 Scout 셋이다
 # (ADR 0012 결정 1 · 각 `prefix.md`의 「SOURCE」 정의).
+# ⏵ 2026-10-07 — 이 셋은 **디스크에 있고 아무도 안 고른다**(PR #524로 Scout가 v4 = `input: source`에
+# 배선됐다). 그래서 아래 단언은 서빙 상태가 아니라 **선언의 집합**을 고정한다 — 가드가 보는 것이
+# 그 선언이고, 그것을 고르는 설정이 생기면 가드가 다시 찬다(`cli._slice_input_prompts`).
 SLICE_INPUT_PROMPTS = {"scout_memory/v3", "scout_boundary/v3", "scout_injection/v3"}
 
 
@@ -404,6 +423,108 @@ def test_an_unknown_input_kind_is_refused_at_load(tmp_path: Path) -> None:
         load_prompt(Role.SCOUT, "v1", root=tmp_path)
 
 
+@pytest.mark.parametrize(
+    ("read_key", "typo"),
+    [
+        # 로더가 읽는 키 넷의 오타 — 앞의 셋은 이 변경 **전부터** 있던 구멍이다(키를 못 읽고
+        # 기본값으로 가서 값 검사에 닿지도 않았다). 넷째(`hop_header`)는 pov v4가 더했다.
+        ("input", "inputs"),
+        ("source_options", "source_option"),
+        ("tools", "toosl"),
+        ("hop_header", "hop_heder"),
+    ],
+)
+def test_a_misspelled_meta_key_is_refused_at_load(
+    tmp_path: Path, read_key: str, typo: str
+) -> None:
+    """🔴 메타 **키**의 오타는 값 검사에 닿지 않는다 — 로더가 그 키를 못 읽고 기본값(`input: source`
+    · `tools: []` · `hop_header: false`)으로 가서 가드가 **조용히** 꺼졌고, `cli doctor`는 그래도
+    `[OK]`를 찍었다. 위 `test_only_the_v3_scout_prompts_declare_slice_input`이 말하는 `inputs:`가
+    그 실물이다. 로드에서 죽어야 한다.
+
+    복사본(pov/v4)에 오타 키를 붙인다. pov/v4가 `hop_header`를 이미 들고 있으므로 그 키는 이름을
+    **바꿔** 읽을 키가 사라지는 경우(`hop_header: true` → `hop_heder: true`)를 시험한다."""
+    copy = tmp_path / "pov" / "v4"
+    shutil.copytree(PROMPTS_DIR / "pov" / "v4", copy)
+    meta = copy / "meta.yaml"
+    text = meta.read_text(encoding="utf-8")
+    if read_key == "hop_header":
+        assert "hop_header: true" in text  # 전제 — 안 그러면 아래 치환이 아무것도 안 바꾼다
+        text = text.replace("hop_header: true", f"{typo}: true")
+    else:
+        text += f"{typo}: []\n"
+    meta.write_text(text, encoding="utf-8")
+
+    with pytest.raises(PromptError, match=f"모르는 키 .*{typo}"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def _v4_meta_copy(tmp_path: Path) -> Path:
+    copy = tmp_path / "pov" / "v4"
+    shutil.copytree(PROMPTS_DIR / "pov" / "v4", copy)
+    return copy / "meta.yaml"
+
+
+@pytest.mark.parametrize(
+    ("key", "first", "second"),
+    [
+        # 거절돼야 할 값이 **앞**이고 통과하는 값이 **뒤**다 - PyYAML 기본은 뒤가 앞을 덮는다.
+        ("hop_header", "hop_header: true", "hop_header: false"),
+        ("tools", "tools: [gdb]", "tools: []"),
+    ],
+)
+def test_a_duplicated_meta_key_is_refused_at_load(
+    tmp_path: Path, key: str, first: str, second: str
+) -> None:
+    """🔴 같은 키를 두 번 쓰면 PyYAML는 **뒤의 값을 조용히 쓴다** - `hop_header: true` 뒤의
+    `hop_header: false`가 홉 줄을 끄고(`tools: [gdb]` 뒤의 `tools: []`는 광고를 끈다) 값 검사는
+    뒤의 값만 본다. 키 이름 오타를 닫은 `META_KEYS`(위 테스트)가 못 닫는 마지막 자리였다 - 오염
+    변형 열여덟 가지(대소문자 · 키릴 유사 문자 · 끝 공백 · `on:` · 정수·null 키 · 빈 문서 · 목록
+    문서 …) 중 이것만 로드를 통과했다."""
+    meta = _v4_meta_copy(tmp_path)
+    text = meta.read_text(encoding="utf-8")
+    if key == "hop_header":
+        assert "hop_header: true" in text  # 전제 - 안 그러면 치환이 아무것도 안 바꾼다
+        text = text.replace("hop_header: true", f"{first}\n{second}", 1)
+    else:
+        text += f"{first}\n{second}\n"
+    meta.write_text(text, encoding="utf-8")
+
+    with pytest.raises(PromptError, match=f"같은 키 '{key}'"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def test_unknown_meta_keys_of_mixed_types_are_a_prompt_error_not_a_type_error(
+    tmp_path: Path,
+) -> None:
+    """정수·실수·null·문자열 키가 섞여도 `PromptError`다 - 목록을 정렬하기 전에 문자열로 바꾼다
+    (섞인 형을 그대로 `sorted`에 넣으면 `TypeError`가 나 doctor가 ERROR 줄 없이 죽는다)."""
+    meta = _v4_meta_copy(tmp_path)
+    mixed = "1: a\n2.5: b\nfoo: c\n? null\n: d\n"  # 정수 · 실수 · 문자열 · null 키
+    meta.write_text(meta.read_text(encoding="utf-8") + mixed, encoding="utf-8")
+
+    with pytest.raises(PromptError, match="모르는 키 .*'1'.*'2.5'.*'None'.*'foo'"):
+        load_prompt(Role.POV, "v4", root=tmp_path)
+
+
+def test_every_key_on_disk_is_a_known_meta_key() -> None:
+    """디스크의 모든 role 프롬프트 meta가 `META_KEYS` 안의 키만 든다 — 키를 닫은 일이 기존 판을
+    깨지 않는다(`test_every_prompt_version_on_disk_loads`가 로드로 같은 것을 보지만 실패 메시지가
+    판 하나씩이라, 어느 키가 목록에 빠졌는지는 여기서 한꺼번에 읽힌다)."""
+    on_disk = {
+        key
+        for directory in _prompt_dirs()
+        for key in yaml.safe_load((directory / "meta.yaml").read_text(encoding="utf-8"))
+    }
+
+    assert on_disk <= set(META_KEYS), sorted(on_disk - set(META_KEYS))
+    # 로더가 읽는 키 일곱은 목록의 앞 일곱이다 — 목록에서 읽는 키를 빼면 그 키를 쓰는 판이 죽는다.
+    read_by_the_loader = {
+        "role", "version", "output_schema", "input", "source_options", "tools", "hop_header",
+    }
+    assert read_by_the_loader <= set(META_KEYS)
+
+
 @pytest.mark.parametrize("profile", ALL_PROFILES)
 def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> None:
     """프로필이 **고른** 프롬프트 버전이 디스크에 실재한다.
@@ -440,9 +561,9 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v7`을 고른다. 되돌리면 이
-    핀이 빨개진다.
+def test_the_canonical_auditor_selects_prompt_v10(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v10`을 고른다. 되돌리면
+    이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
     프롬프트 #418 · 배선 #421). v5는 건너뛴다 — v5 배선 PR(#390)이 대여 세션 측정까지
@@ -450,10 +571,20 @@ def test_the_canonical_auditor_selects_prompt_v7(profile: str) -> None:
     아니다** — v6는 v5의 범위 제약 둘을 삭제했으므로 v5의 상위집합이 아니다(`config/models.yaml`의
     그 항목이 삭제 목록과 #418이 든 수를 적는다). ⏵ **v7**(2026-10-04 · #349) = v6 + Auditor SOURCE
     옵션 넷의 서술. v6를 그 자리에서 고치지 않은 것은 #418의 수가 v6 문장의 것이라서다
-    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH)."""
+    (agent-contracts §4 규칙 1 — PR #443 리뷰 HIGH). ⏵ **v8**(2026-10-04 · #419) = v7 + 도구
+    루프 — 매 홉 `AuditorAction`이고 `SOURCE` 서술·trigger rule은 v7과 바이트 동일이다
+    (`tests/test_auditor_prompt_v8.py`). v7을 그 자리에서 고치지 않은 것은 v7이
+    `output_schema: Finding`으로 선 판이기 때문이다(같은 규칙 1). ⏵ **v9**(2026-10-06) = v8 +
+    `auditor_guards` 서술 한 항목 — 켠 옵션을 meta가 선언해야 run이 서므로 v8을 안 고치고 올렸다.
+    ⏵ **v10**(2026-10-06) = v7에서 **전면 재작성**한 판이고 출력 계약이 바뀐다 — 매 홉 봉투가
+    `AuditorProcedureAction`이고 결과는 그 `procedure`에 드는 `AuditProcedure`다(새 `audit` 블록
+    하나 + 바깥 필드는 `Finding`과 거의 1:1). 발급 ID 셋과 `state`·`missing_evidence`·
+    `produced_by`를 **모델에게 묻지 않고** 하네스가 붙인다. v8·v9를 그 자리에서 고치지
+    않은 것은 그 둘이
+    `output_schema: AuditorAction`으로 선 판이기 때문이다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v7"
+    assert config.model_for("auditor").prompt_template_version == "v10"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -506,6 +637,10 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
         )
         if thresholds.auditor_callee_wrappers:
             assert f"up to {_AUDITOR_ALIAS_ROUNDS} renaming steps" in flat  # 매크로 별칭(C4)
+        # 큰 enum은 그 상수 앞뒤만 — 줄 수가 러너 상수와 같아야 한다
+        from src.orchestrator.runner import _AUDITOR_ENUM_CONTEXT_LINES
+
+        assert f"the {_AUDITOR_ENUM_CONTEXT_LINES} lines before and after that constant" in flat
     if thresholds.auditor_callee_hops:
         assert (
             f"a callee block, counting its banner line, over {_AUDITOR_CALLEE_CHARS:,} characters"
@@ -530,12 +665,19 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
-    # 규칙 3의 판정 **방향** — 「Otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    # 규칙 3의 판정 **방향** — 「otherwise decide」를 「defer」로 바꾸는 한 단어 변이를 막는다.
+    # ⏵ 2026-10-06 — v9까지 이 핀은 한 문장이었고, 그 문장이 **모델에게** 발급
+    # missing-evidence ID를 쓰라고 시켰다. v10은 `missing_evidence`를 모델 출력에서 빼고
+    # 하네스가 붙인다(`result`가 `decisive_code_missing`이거나 `trigger_status`가
+    # `reachability_unknown`일 때 —
+    # `nodes/auditor`의 변환). 옛 철자를 그대로 묶으면 **거짓이 된 문장을 묶는다.**
+    # 그래서 명제를 두 구로 쪼개 묶고, 「모델이 그 ID를 안 낸다」를 셋째 핀으로 더한다.
+    # ⚠ 핀은 **배선된 판의 철자**다(이 검사의 설계) — 판을 되돌리면 철자도 같이 본다.
+    assert "otherwise decide from the supplied material" in flat
+    assert "Truncation alone is not a reason to defer" in flat
     assert (
-        "If deciding the candidate requires an unshown fact and SOURCE and FACTS do not "
-        "establish it, use the issued missing-evidence ID; use `reachability_unknown` for a "
-        "missing reachability fact or path connection. Otherwise decide; truncation alone is "
-        "not a reason to defer" in flat
+        "Do not output `finding_id`, `run_id`, `candidate_id`, `state`, `missing_evidence`, "
+        "or `produced_by`" in flat
     )
     # 근거 본문·절단 계약 — **`_CONTENT_AWARE_VERSIONS` 자격의 근거가 이 문구들이다**(#328 리뷰
     # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
@@ -606,7 +748,7 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 통제 — prompts/critic/v4/meta.yaml:1. 첫째·셋째 철자를 함께 들어 여기서는 철자를
         # 못 가른다 — 철자별로는 `test_the_known_metas_…`가 본다.
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
-        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성(gpt-oss-20b은 v1)」.
+        # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성: v3 자체는 미배선이다」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
@@ -619,10 +761,28 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 고르지 않는다」. v7 배선(2026-10-04)으로 미선택이 되며 달았고, 그 전에는 이 행이
         # 음성 통제였다.
         ("auditor", "qwen3.8-27b", "v6", ["auditor/v6"]),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1의 「정본」. **이 문형은 실재한다**(배선된 판의
-        # 머리 주석 형식이고 v6도 2026-10-04까지 「정본」이었다) — 판독기가 그것을 「안 고른다」로
-        # 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
-        ("auditor", "qwen3.8-27b", "v7", []),
+        # 실물 형제 문형 — prompts/auditor/v7/meta.yaml 마지막 ⏵ 「… 지금은 어느 / registry
+        # 엔트리도 이 버전을 고르지 않는다」. v8 배선(2026-10-04 · PR #491)으로 미선택이 되며
+        # 달았고, 그 전에는 이 행이 음성 통제였다. v6처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "qwen3.8-27b", "v7", ["auditor/v7"]),
+        # 실물 형제 문형 — prompts/auditor/v8/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
+        # 엔트리도 이 버전을 고르지 않는다」. v9 배선(2026-10-06)으로 미선택이 되며 달았다.
+        ("auditor", "qwen3.8-27b", "v8", ["auditor/v8"]),
+        # 실물 형제 문형 — prompts/auditor/v9/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry
+        # 엔트리도 이 버전을 / 고르지 않는다」. v10 배선(2026-10-07)으로 미선택이 되며
+        # 달았고, 그 전에는 이 행이 음성 통제였다. v8처럼 구절이 주석 줄바꿈으로 갈린다.
+        ("auditor", "qwen3.8-27b", "v9", ["auditor/v9"]),
+        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다.
+        # **이 문형은 실재한다**(서빙 판의 머리 주석 형식이고 v9도 그날까지 서빙 판이었다) —
+        # 판독기가 그것을 「안 고른다」로 잘못 읽으면 서빙 판이 미배선으로 보고돼 여기서 걸린다.
+        ("auditor", "qwen3.8-27b", "v10", []),
+        # 실물 형제 문형 — prompts/pov/v3/meta.yaml 머리의 ⏵ 「… 지금은 어느 registry 엔트리도 이
+        # 버전을 고르지 않는다」. pov v4 배선(2026-10-08)으로 미선택이 되며 달았고, 그 전에는
+        # 이 판이 서빙 판이었다. 구절이 한 줄에 든다(주석 줄바꿈이 가르지 않는다).
+        ("pov", "feyospace-v1-small", "v3", ["pov/v3"]),
+        # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형(「…에 배선됐다」)으로 적는다.
+        # 같은 이유로 실재하는 문형이다 — v3도 2026-10-08까지 그 문형이었다.
+        ("pov", "feyospace-v1-small", "v4", []),
     ],
 )
 def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
@@ -631,8 +791,10 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     """판을 **실제로 고르게 만든 합성 config**에서 위 검사의 판독기가 그 판의 「안 고른다」를
     읽어 내는가. `test_no_profile_selects_…`는 저장소 config만 돌리므로, 어느 프로필도 안
     고르는 판의 철자를 판독기가 못 읽어도 거기서는 드러나지 않는다(#341 L-1). ⚠ 목록에 든
-    meta 여섯만 시험한다(⏵ 2026-10-04 v7 음성 통제를 더해 여섯) — 새 철자로 적은 meta는
-    목록에 넣어야 잡힌다."""
+    meta 여덟만 시험한다(⏵ 2026-10-04 v8 배선으로 v7이 음성 통제에서 양성으로 옮겨가고 v8이
+    새 음성 통제가 되어 일곱 · ⏵ 2026-10-07 v10 배선으로 v9가 같은 식으로 옮겨가고 v10이 새
+    음성 통제가 되어 여덟 · ⏵ 2026-10-08 pov v4 배선으로 pov/v3가 양성으로 더해지고 pov/v4가 둘째
+    음성 통제가 되어 아홉) — 새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
         tmp_path,
@@ -661,8 +823,21 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # prompts/auditor/v6/meta.yaml:6-7 — v7 배선으로 미선택이 되어 v4와 같은 철자를 쓰고,
         # 구절이 주석 줄바꿈으로 갈린다(`:6` 끝이 「어느」다).
         ("auditor", "v6", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
-        # 음성 통제 — prompts/auditor/v7/meta.yaml:1은 「정본」이라 적는다(실재하는 문형).
-        ("auditor", "v7", set()),
+        # prompts/auditor/v7/meta.yaml 마지막 ⏵ — v8 배선으로 미선택이 되어 v6와 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
+        ("auditor", "v7", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/auditor/v8/meta.yaml 머리의 ⏵ — v9 배선으로 미선택이 되어 v7과 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「어느」다).
+        ("auditor", "v8", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # prompts/auditor/v9/meta.yaml 머리의 ⏵ — v10 배선으로 미선택이 되어 v8과 같은 철자를
+        # 쓰고, 구절이 주석 줄바꿈으로 갈린다(그 줄 끝이 「이 버전을」이다).
+        ("auditor", "v9", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/auditor/v10/meta.yaml:1은 배선된 판의 문형으로 적는다(실재하는 문형).
+        ("auditor", "v10", set()),
+        # prompts/pov/v3/meta.yaml 머리의 ⏵ — pov v4 배선으로 미선택이 되어 셋째 철자를 쓴다.
+        ("pov", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/pov/v4/meta.yaml:1은 배선된 판의 문형이다(실재하는 문형).
+        ("pov", "v4", set()),
     ],
 )
 def test_the_known_metas_match_exactly_these_claim_spellings(
@@ -671,7 +846,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 여섯 meta의(⏵ 2026-10-04 v7을 더해 여섯) 오늘 문구에 묶인다 — 머리
+    않는다(#341 R2). ⚠ 이 아홉 meta의(⏵ 2026-10-04 v8을 더해 일곱 · ⏵ 2026-10-06 v10을 더해
+    여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉) 오늘 문구에 묶인다 — 머리
     주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 
@@ -689,8 +865,8 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
 )
 def test_the_meta_fold_reads_a_claim_through_comment_markup(raw: str) -> None:
     """접기가 빈 주석 줄·공백 런·굵게(`**`)·백틱을 넘어 철자를 읽어 내는가. meta 머리 주석은
-    굵게·백틱을 쓰는 문체다 — 굵게는 `prompts/critic/v3/meta.yaml:4`, 백틱은
-    `prompts/critic/v1/meta.yaml:1`(그 한 줄이 굵게와 백틱을 같이 든다). ⚠ 전에는 백틱 증인으로
+    굵게·백틱을 쓰는 문체다 — 굵게와 백틱은 `prompts/critic/v1/meta.yaml:1`에 함께 있다.
+    ⚠ 전에는 백틱 증인으로
     critic/v3의 `:7`을 들었는데 그 줄이 거짓 이력 블록이라 지워졌다 — 지금 critic/v3 머리에는
     백틱이 0개다. 다섯 형은 검토 변이
     B8·B9·B17·B18·B19에서 가져왔다(실물 meta의 형이 아니다) — 접기가 이것들을 못 넘으면 같은
@@ -1006,6 +1182,61 @@ def test_max_hops_rejects_negative() -> None:
     thresholds = load_config("dev_fake").thresholds
     with pytest.raises(ValidationError):
         thresholds.transition(max_hops=-1)
+
+
+def test_pov_tool_hops_reaches_the_run_record_and_is_provisional() -> None:
+    """`pov_tool_hops`(8단계 PoV 툴 루프의 **전용** 상한 — `max_hops`에서 떼어냈다, 이슈 #511)가
+    `flatten()`으로 run 기록에 실리고, 값이 미결정이라 `PROVISIONAL_THRESHOLDS`에도 있다."""
+    thresholds = load_config("dev_fake").thresholds
+    assert thresholds.pov_tool_hops >= 0
+    assert thresholds.flatten()["pov_tool_hops"] == float(thresholds.pov_tool_hops)
+    assert "pov_tool_hops" in PROVISIONAL_THRESHOLDS
+
+
+def test_pov_tool_hops_rejects_negative() -> None:
+    thresholds = load_config("dev_fake").thresholds
+    with pytest.raises(ValidationError):
+        thresholds.transition(pov_tool_hops=-1)
+
+
+def test_pov_tool_hops_has_no_field_default() -> None:
+    """값은 `config/budgets.yaml`만 든다. 필드 기본이 0이면 키가 빠진 설정이 PoV를 hop0(gen) 뒤에서
+    조용히 세운다 — submit이 0건이던 증상(#511) 그대로다. `auditor_tool_hops`의 기본 0과 다른
+    자리다: 그쪽 0은 「꺼짐 = 종전 경로」이고 여기 0은 「submit에 못 닿는다」다."""
+    thresholds = load_config("dev_fake").thresholds
+    assert type(thresholds).model_fields["pov_tool_hops"].is_required()
+
+
+def test_a_budgets_file_without_pov_tool_hops_does_not_load(tmp_path: Path) -> None:
+    """키가 빠지면 **로드가 터진다** — 적대적 검토 2026-10-06의 생존 변이.
+
+    위 `is_required()` 핀은 스키마 메타데이터만 단언한다. 키 부재 시 `max_hops`를 복사해 채우는
+    before-validator 변이가 **아무 테스트도 빨갛게 하지 않았다**(363 passed). 그러면 PoV 상한이
+    Scout 상한을 조용히 따라간다 — 이 PR이 끊은 결합 그대로다. 성질로 무는 자리가 여기다.
+    """
+    _copy_config(tmp_path, profile_patch={})
+    raw = yaml.safe_load((tmp_path / "budgets.yaml").read_text("utf-8"))
+    del raw["thresholds"]["pov_tool_hops"]
+    (tmp_path / "budgets.yaml").write_text(
+        yaml.safe_dump(raw, allow_unicode=True), encoding="utf-8"
+    )
+    with pytest.raises((ConfigError, ValidationError)):
+        load_config("dev_fake", config_dir=tmp_path)
+
+
+def test_the_estimate_scout_calls_follow_max_hops_not_pov_tool_hops() -> None:
+    """`cli estimate`의 scout 호출 상한은 `1 + max_hops`다 — PoV 상한을 올려도 안 움직인다(#511).
+
+    통제가 헛돌지 않게 `max_hops`는 움직이는지도 본다."""
+    config = load_config("dev_fake")
+    base = _expected_calls(config, 4)
+
+    def with_thresholds(**changes: int) -> HarnessConfig:
+        return config.transition(thresholds=config.thresholds.transition(**changes))
+
+    pov_hops = config.thresholds.pov_tool_hops
+    assert _expected_calls(with_thresholds(pov_tool_hops=pov_hops + 7), 4) == base
+    assert _expected_calls(with_thresholds(max_hops=config.thresholds.max_hops + 1), 4) > base
 
 
 def test_the_output_cap_reaches_the_run_record_and_the_gateway_together() -> None:
@@ -1391,6 +1622,8 @@ def test_benchmark_distinguishes_three_states() -> None:
     `is_measured`가 `any`라 그것만으로는 **절반만 채운 모델이 production 게이트를 그냥
     통과한다.** ATOM에서 `mem_gb_ctx8k`를 nvidia-smi로 얻을 수 없다는 것이 확정됐으므로
     (2026-08-17) 부분 측정은 가정이 아니라 곧 실제로 생기는 상태다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). vast에서 이 필드가 채워지는지는
+    미실측이다(`src/config.py`의 `Benchmark.is_measured` 같은 ⏵).
     """
     none = _bench()
     partial = _bench(tok_s_single=30.0, tok_s_batch32=90.0)
@@ -2203,8 +2436,34 @@ def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> N
     타임아웃이 상한보다 먼저 오면 호출이 끊기고
     연속 셋이면 run이 선다(#261) ③ 사고 상한이 출력 상한과 같으면 답 몫이 없다. 그래서 **값이 아니라
     관계를** 잠근다 — 값은 ATOM 실측으로 바뀐다.
+    ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 값을 바꿀 실측 장비는 vast다(D81).
     """
     _assert_thinking_seat_holds_together("auditor")
+
+
+@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
+def test_the_run_gpu_budget_holds_a_full_lap_of_declared_request_timeouts(profile: str) -> None:
+    """run `gpu_seconds`는 서빙 역할 한 바퀴의 선언된 요청 타임아웃 합 이상이다(이슈 #389).
+
+    7,200이던 때는 한 바퀴(선언값의 합 — 두 프로필 모두 21,300 s, 2026-10-05 계산)의 3분의 1이라
+    호출 하나가 7,500 s 타임아웃으로 한도를 넘을 수 있었고, 정상 run이 중간에 끊긴 채 장부에는
+    「결과가 적은 run」으로만 남았다. **값이 아니라 관계를 잠근다** — 입력이 전부 선언된 설정값이라
+    측정 없이 핀할 수 있다(타임아웃 선언이 없는 좌석은 어댑터 기본 300 s). 이 검사는 실모델 서빙
+    프로필 둘만 본다.
+    """
+    config = load_config(profile)
+    timeouts = {
+        role: config.model_for(role).request_timeout_s or 300 for role in config.profile.roles
+    }
+
+    assert config.budget.gpu_seconds >= max(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 단일 호출 타임아웃 최대 "
+        f"{max(timeouts.values())}보다 작다 — 호출 하나가 run 예산을 넘는다(#389)"
+    )
+    assert config.budget.gpu_seconds >= sum(timeouts.values()), (
+        f"{profile} — gpu_seconds {config.budget.gpu_seconds}가 서빙 역할 한 바퀴의 선언 "
+        f"타임아웃 합 {sum(timeouts.values())}보다 작다 — 정상 run이 예산에 끊긴다(#389)"
+    )
 
 
 def test_the_canonical_pov_seat_thinks_within_a_budget_that_holds_together() -> None:

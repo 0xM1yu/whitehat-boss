@@ -103,8 +103,13 @@ graph LR
 > 여유 `_HOP_TOKEN_MARGIN`(512)은 설계값이고 미실측이다. RETRIEVED 코드 블록만의 글자/토큰 비는 안
 > 쟀다 — 3.28은 Scout 좌석 전체의 실측 하한이다. 실서빙 run에서 이 루프가 도는 것은 아직 안 쟀다
 > (ATOM 스모크 전).)
+> (⏵ **2026-10-07 — 서빙 Scout 판이 v4다**(PR #524 배선). v4는 `input: source`를 선언하고 `SOURCE`를
+> 「대상 함수 본문, 줄번호·배너 없음」으로 정의하므로 **위 v3 서술은 서빙 경로가 아니다.** ⚠ 어긋남의
+> 방향이 뒤집혔다 — 노드는 여전히 슬라이스 유무로 `SOURCE`를 고르니(`nodes/scout.py`) `--slices` run에서는
+> 렌더가 가고 v4 산문과 어긋난다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
+> 서빙 경로에서 돌지 않는다.)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 지금 배선된 v7(body는 v6와 같다)은
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 2026-10-07 지금 배선된 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)는
 >   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)
@@ -112,12 +117,16 @@ graph LR
 >   함수에도 안 든 줄은 trace `auditor_source`가 센다. ⏵ 2026-10-01 #349 -> 이 모양을 넓히는 옵션 다섯
 >   (`config.AUDITOR_SOURCE_OPTIONS`)은 ~~전부 기본 꺼짐~~. 켜면 Auditor 프롬프트 meta의 `source_options`가 그 키를 들어야
 >   run이 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄 · entry 줄이기만 꺼짐).
->   상한은 토큰이 되고 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판 v7(⏵ 2026-10-04 — v6 + 그 서술,
+>   상한은 토큰이 되고 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판은 ⏵ 2026-10-04 **v8**이었고(⏵ 2026-10-06부터 v9 — v8 + `auditor_guards` 서술 · ⏵ 2026-10-07 v10 — 아래 「물려받았다」는 v8·v9의 서술이고 v10은 v7을 전면 재작성해 그 절을 다시 썼다)
+>   그 절을 v7에서 바이트 그대로 물려받았다(도구 루프, #419). 그 전 판 v7(⏵ 2026-10-04 — v6 + 그 서술,
 >   v6는 #418이 잰 문장 그대로)이 그 모양을 서술한다. ⏵ 2026-10-04 -> 피호출 본문 1단 너머는 다섯째 옵션
 >   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)다 -> 짧은 래퍼면 그 너머 2단까지, 이름만 바꾸는 매크로면
->   그 대상 정의·함수를 2번까지 더 붙인다(v7이 서술). ⏵ 같은 날 -> 간접 피호출(`auditor_indirect_callees` — 필드
+>   그 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술). ⏵ 같은 날 -> 간접 피호출(`auditor_indirect_callees` — 필드
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
->   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다)
+>   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다).
+>   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
+>   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
+>   PoV 프롬프트에도 든다
 > - **슬라이스·RETRIEVED는 Evidence가 아니다**(결정 1). STATIC으로 적으면 E1이 구조적으로 참이 된다
 >   ([D78](open-questions/D/D78.md) ③).
 
@@ -283,8 +292,10 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 - 다중 노드(ConnectX-7 2대) 구성 — 단일 노드 병목 확인 후 재검토
 - CyberGym PoV — 실서빙 실측과 외부 oracle 차분 검증의 실측은 MVP 밖이다(서빙+도구 되는 호스트가
   잡힌 뒤). oracle 제출 배선(`run --oracle-submit`, 기본 꺼짐)은 들어왔고 대역으로만 검증했다 — 하네스
-  run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(8건 200,
-  `run_20261003_0003`); **왕복(vul→fix→조회)은 여전히 0건**이다. ⚠ 같은 run의 **8단계 E4는
+  run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — vul 다리는 실서버로 쟀다**(제출 8건 200 ·
+  **고유 PoC 1개** — `cached` 미적중 1·적중 7 · `win11`의 `run_20261003_0003`(trace sha256
+  `f308c5fbfc4f8e54…`), [보고서](experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md));
+  **왕복(vul→fix→조회)은 여전히 0건**이다. ⚠ 같은 run의 **8단계 E4는
   Fake 도구의 상수**(`fake_tools.py:166-179`)이고 오라클 `vul_exit_code`는 0이라 **어긋난다** —
   E4를 Fake로 관측했다고 읽지 마라. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` ·
   `PovSpec`→`assemble_poc`)·러너 8단계 라우팅(추가형)·feyospace 서빙 배선(§1 pov 좌석)도 들어왔다. 모델-주도 툴 루프(코드열람·Python·

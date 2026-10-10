@@ -5,8 +5,10 @@
 결함("선언과 실제의 괴리")과 같은 종류다.
 """
 
+import os
 from pathlib import Path
 
+import pytest
 import yaml
 
 from src.config import CONFIG_DIR
@@ -21,7 +23,8 @@ ALL_PROFILES: list[str] = sorted(
 
 # scout 자리만 실서빙인 합성 config의 scout 키. `prompts/scout`에 있는 버전(v1)을 골라야
 # 프롬프트까지 열린다. ⏵ 2026-09-29 — 이 키의 registry 버전이 Auditor v3
-# (⏵ 2026-10-03 v6 · ⏵ 2026-10-04 v7)가 되어
+# (⏵ 2026-10-03 v6 · ⏵ 2026-10-04 v7 · ⏵ 2026-10-08 — 그 뒤 v8·v9·v10. 지금 판은
+# `config/models.yaml`이 정본이다)가 되어
 # (`prompts/scout/v3`는 없다) `served_scout_config`가 합성 엔트리에서 v1로 고정한다 —
 # registry 버전에 기대지 않는다.
 SERVED_SCOUT_KEY = "qwen3.8-27b"
@@ -46,3 +49,19 @@ def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 �
         adapters=base.profile.adapters.transition(state_store="sqlite"),
     )
     return base.transition(models={**base.models, SERVED_SCOUT_KEY: entry}, profile=profile)
+
+
+def plant_link(kind: str, link: Path, outside: Path) -> None:
+    """`link` 자리에 `outside`를 가리키는 항목을 심는다 — `symlink`(살아 있는 링크)·`dangling`(없는
+    곳을 가리키는 링크, 호출부가 `outside`를 안 만든다)·`hardlink`(같은 inode).
+
+    못 만드는 환경이면 **사유를 적고 건너뛴다**(Windows는 심링크 권한이 없을 수 있다) — 안 만들어진
+    링크 위에서 초록이 나면 공허하다.
+    """
+    try:
+        if kind == "hardlink":
+            os.link(outside, link)
+        else:
+            link.symlink_to(outside)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"{kind}를 만들 수 없는 환경이다: {type(exc).__name__}: {exc}")

@@ -13,6 +13,8 @@
 받으며 어댑터 조립은 `src/adapters/factory.py`가 한다(engineering-guide.md §3).
 """
 
+import hashlib
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from time import perf_counter
@@ -20,6 +22,7 @@ from time import perf_counter
 from src.config import HarnessConfig
 from src.ids import IdFactory
 from src.interfaces.model_client import (
+    AttemptRecord,
     ChatTurn,
     ModelClient,
     ModelResult,
@@ -65,6 +68,26 @@ def _trace_scalar(value: object) -> str:
     (`src/schemas/common.py`). 필드가 달랐다는 사실(`fields`)은 그래도 정확하다.
     """
     return ",".join(value) if isinstance(value, list) else str(value)
+
+
+def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
+    """시도별 출력 토큰·종료 사유를 `model_call`의 두 키로 (#550). 정본 설명은 `trace.py`다.
+
+    **값은 JSON 배열 문자열이다**(`TraceValue`가 스칼라라서). 쉼표로 잇지 않는 것은 미측정 칸
+    (`null`)을 빈 칸이나 지어낸 문자열로 쓰지 않으려는 것이다 — `json.loads`로 읽으면 `None`이
+    `None`으로 온다.
+
+    **`log`가 비면 두 키 모두 `None`이다** — 어댑터가 안 실은 호출(Fake·소비를 안 든 예외)이거나,
+    실었는데 잃은 호출(측정된 뒤 생 예외가 `complete()`를 뚫은 경우)이다. 둘은 여기서 안 갈린다
+    (`trace.py` 읽는 규칙 2). `"[]"`이 아니다: 시도가 없었다는 뜻으로 읽히고, 키 집합은 성공·실패
+    행에서 같아야 한다.
+    """
+    if not log:
+        return {"attempt_output_tokens": None, "attempt_finish_reasons": None}
+    return {
+        "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
+        "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
+    }
 
 
 def _unwired_read_source(_target: Location) -> str:
@@ -129,6 +152,12 @@ class RunContext:
     # 로그 파일을 안 쓴다)가 실제로 있고, 그때는 근거 본문 없이 metadata만으로 진행한다.
     # 배선은 factory/cli가 artifacts_root로 만든 리더를 넣는다.
     read_payload: Callable[[str], str | None] = field(default=lambda _ref: None)
+    # 파일(대상 루트 기준 상대경로) → **원본 바이트**. `read_source`는 텍스트 모드로 읽어 `\r`·
+    # `\r\n`을 `\n`으로 접으므로 `\r\r\n`·옛 Mac 줄바꿈은 거기서 안 보이고, 인덱서(`\n`만 센다)와
+    # 줄 번호가 어긋난다 — 그 어긋남을 보는 쪽(`auditor_guards`의 줄 정렬 검사)이 쓴다.
+    # `read_payload`와 같은 성격이다: 미배선 기본값은 `None`("못 읽음")을 돌려주는 리더이고 그
+    # 검사는 텍스트로만 한다. 배선은 cli가 대상 루트로 만든 리더를 넣는다.
+    read_raw: Callable[[str], bytes | None] = field(default=lambda _file: None)
     # file → 그 파일에 정의된 심볼 위치. 러너가 후보 목록을 만든다(W2).
     #
     # `read_source`와 달리 **미배선 기본값이 예외가 아니라 `None`("인덱스 없음")이다.**
@@ -169,8 +198,8 @@ class RunContext:
     field_writes_of: Callable[[str, str], list[Location] | None] = field(
         default=lambda _field, _file: None
     )
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 미배선 `None`이면
-    # 정의를 안 붙인다 — `callees_of`와 같은 성격.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). 미배선
+    # `None`이면 정의를 안 붙인다 — `callees_of`와 같은 성격.
     definitions_of: Callable[..., list[Location] | None] = field(
         default=lambda _names, _file, **_kw: None
     )
@@ -207,8 +236,9 @@ class RunContext:
     # 후자는 정지하지 않고 「조회가 없다」는 관측을 모델에게 준다.
     # `Dependencies.resolve_requests`(runner.py)와 같은 자리를 `RunContext`로 옮겨 온 것뿐이다.
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
-    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 후보마다 `vul`
-    # 다리만, 최종으로 지정한 하나에만 `fix` 다리와 판정 조회를 낸다(`runner._finalize_oracle`).
+    # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 중간 gen은
+    # `vul` 다리와 원시 종료 코드 조회를 다음 홉 관측에 쓰고, 모델이 submit한 하나만 지정 후보가
+    # 된다. 최종으로 지정한 하나에만 `fix` 다리를 낸다(`runner._finalize_oracle`).
     # `None`이면 이 run은 제출하지 않는다(기본) — `resolve_requests`·`swap_to`와 같은 자리다.
     # 구현은 어댑터에 있고 이 경계는 `src/interfaces/oracle.py`의 Protocol이 넘는다.
     oracle: Oracle | None = None
@@ -291,7 +321,7 @@ class RunContext:
             # 청구는 예외가 소비를 들고 왔을 때만 한다(아래 `if usage is not None`).
             #
             # **이벤트 키는 성공 경로와 균질하게 둔다(#82 리뷰 F10).** 소비를 안 든 예외
-            # (`BudgetExhausted` 등)는 토큰·gpu·attempts를 `None`으로 싣는다 — 안 잰 것은 0이
+            # (`UnknownRoleError` 등)는 토큰·gpu·attempts를 `None`으로 싣는다 — 안 잰 것은 0이
             # 아니라 `None`이고(model_client.py `gpu_ms` 주석), 키 집합이 실패 종류마다 달라지면
             # 사후 집계가 실패 행에서 KeyError나 `.get(...,0)` 0-뭉갬을 낸다. `attempts`도 안
             # 실려 오면 **지어낸 1이 아니라 `None`**이다(#83 리뷰 F3 — 미실측은 미실측으로 둔다).
@@ -304,14 +334,30 @@ class RunContext:
                 "cached_tokens": usage.cached_tokens if usage is not None else None,
                 "gpu_ms": gpu_ms,
                 "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
+                # 시도별 내역도 같은 규칙이다 — 안 실려 왔으면 `None`이고 지어낸 빈 목록이 아니다.
+                # 가르려는 호출(`SchemaParseError`로 버려진 Finding)이 전부 이 경로로 온다(#550).
+                **_attempt_fields(getattr(exc, "attempt_log", ())),
             }
             # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
             # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
             # 없어 `getattr`가 빈 튜플을 준다.
-            retry_fields = self._record_retries(
-                role=role, stage=stage, prompt=prompt,
-                retry_bodies=getattr(exc, "retry_bodies", ()), hop=hop, history=history,
-            )
+            # **쓰기 실패가 이 블록을 끊지 않는다(#168 (a)).** 파일 I/O가 여기서 터지면 그 예외가
+            # 원 예외를 덮고, 아래 `emit`·`charge`가 안 돌아 이미 쓴 토큰·GPU가 장부 밖으로 샌다 —
+            # 실패분 청구(#82)의 우회로다. 재시도 많은 run이 곧 디스크를 채우는 run이라 무작위
+            # 실패도 아니다. 실패하면 `sent_sha256` 대신 사유(예외 이름·errno)를 싣고 청구·원
+            # 예외는 그대로 간다. ⚠ 같은 파일시스템이 차서 trace 쓰기(`emit`)까지 실패하면 그
+            # 예외가 원 예외를 덮는다 — 이 가드는 재시도 기록 쓰기 하나만 막는다.
+            # 성공 경로는 건드리지 않는다 — 거기서는 쓰기 실패가 호출 자체를 멈춘다.
+            try:
+                retry_fields = self._record_retries(
+                    role=role, stage=stage, prompt=prompt,
+                    retry_bodies=getattr(exc, "retry_bodies", ()), hop=hop, history=history,
+                )
+            except OSError as record_exc:
+                # errno까지 싣는다 — 클래스 이름만으로는 ENOSPC·EROFS·EIO가 다 `OSError`다.
+                retry_fields = {
+                    "retry_record_error": f"{type(record_exc).__name__}(errno={record_exc.errno})"
+                }
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -374,6 +420,8 @@ class RunContext:
             gpu_ms=result.gpu_ms,
             gpu_ms_source=result.gpu_ms_source,
             attempts=result.attempts,
+            # `output_tokens`는 위 시도들의 합이다. 시도별 내역과 종료 사유는 여기(#550).
+            **_attempt_fields(result.attempt_log),
         )
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
@@ -574,6 +622,14 @@ class RunContext:
         evidence = self.tools.run(tool, args, sandbox)
         elapsed = max(0, self.monotonic_ms() - started)
         self.store.put(evidence)
+        # 도구 요청에 실은 입력은 **크기와 digest만** trace에 간다(맨 hex — `pov_hop`의
+        # `poc_sha256`과 같은 형식). 원바이트는 안 간다. 키 부재 = 입력 없음.
+        sent: dict[str, TraceValue] = {}
+        if args.input_bytes is not None:
+            sent = {
+                "input_bytes": len(args.input_bytes),
+                "input_sha256": hashlib.sha256(args.input_bytes).hexdigest(),
+            }
         self.trace.emit(
             EventKind.TOOL_CALL,
             stage=stage,
@@ -586,6 +642,7 @@ class RunContext:
             exit_code=evidence.exit_code,
             error=evidence.error,
             finding_id=subject_id,
+            **sent,
         )
         # **밀리초를 그대로 넘긴다.** 여기서 `// 1000`을 하던 것이 이 결함의 세 지점 중
         # 하나였다 — 도구 11건 중 8건(342~906 ms)이 0으로 청구됐다(2026-08-17 실측).

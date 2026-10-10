@@ -183,10 +183,9 @@ models:
     source: "hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee"
     family: "gpt-oss"
     reasoning_effort: "high"
-    # v1로 둔다. critic/v3 prefix는 metadata-only 런타임에서 항상 need_evidence를 내므로,
-    # 켜면 validated·proven이 구조적으로 0이 되고 8단계가 안 돈다(리뷰 #237 HIGH-1). **그
-    # 전제였던 「evidence 본문이 Critic에 닿는 배선」은 #247이 넣었다** — v3로 flip하는 것은
-    # validated·proven이 실제로 나오는지 확인하는 후속의 몫이다. 미참조 버전은 정상이다(v2도).
+    # ⏵ 2026-10-05 — Critic v6을 배선한다. 근거 본문·위치와 Auditor가 본 SOURCE를
+    # 함께 싣는다. 공유 fake 엔트리는 v1을 유지한다. 이전 입력과 직접 비교하지 않는다.
+    # v6의 uphold 관측·입력 토큰 수·스키마 준수율은 0(미실측 — 실모델 run 필요).
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
@@ -199,13 +198,19 @@ models:
     # **값이 없으면 어댑터 기본 300 s다.** 느린 후보가 셋 연달아 끊기면 run이 선다
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
-    request_timeout_s: 900
-    prompt_template_version: "v1"
+    # 🔴 ⏵ 2026-10-05 — 900에서 **3,600**으로 올렸다. `output_max_by_role.critic`이 32,768이 되어
+    # 32,768 ÷ 12 tok/s ≈ 2,731초가 필요하다(계산값 · 12는 위와 같은 안 잰 가정이다).
+    # ⚠ **위 「지금(4,096 · 순차)은 기본 300 s로도 든다」는 이제 전이다** — 그 문단의 93 s·71.8 s·95 s는
+    # 전부 `max_tokens 4096`에서 잰 값이고 상한이 8배가 됐다. 같은 보고서 §3.3의 16,384토큰 382초를
+    # 비율로 쓰면 ≈42.9 tok/s이고 32,768은 ≈764초다(계산값) — 3,600은 그 위에 네 배 여유를 둔 값이다.
+    request_timeout_s: 3600
+    prompt_template_version: "v6"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
       # 없어 프로필에 못 올린다 → `cli bench`를 못 돌린다."* 등재로 그 사유가 사라졌으므로
       # `bench --roles critic --device atom --apply`가 채운다. **그때까지 0은 미실측 표시다.**
+      # ⏵ 2026-10-08 — `--device atom`은 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 아래는 여전히 미실측이다.
       measured_at: null
       measured_on: null
       tok_s_single: 0
@@ -390,7 +395,10 @@ models:
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
     request_timeout_s: 1200
-    prompt_template_version: "v3"
+    # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
+    #   (`triage_need_evidence` 없음). 짝인 `qwen3-14b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
+    #   ⚠ 되묻기를 안 내므로 `cli estimate` 상한의 Scout 항이 4배 느슨하다 — 전체 추정은 약 17% 과대다(이슈 #530).
+    prompt_template_version: "v4"
     fallback: null
     benchmark:
       measured_at: null
@@ -418,6 +426,8 @@ models:
     # `context_limit`은 모델 상한이지 띄울 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
     # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다. 그전에 돈
     #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    #   ⏵ 2026-10-08 — 「ATOM에서 받은 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 이후 실측 장비는
+    #   vast다(docs/portability.md §6 ⏵). `checksum`은 여전히 0이다.
     # ⚠ 고른 근거는 벤더 모델 카드뿐이다 — Qwen3.6-27B 대비 LiveCodeBench v6 90.3 vs 83.9 · SWE-bench Pro
     #   61.7 vs 53.5 `[출처주장]`. 옛 Auditor(35B-A3B)와 직접 비교한 수가 아니고, 취약점 탐지 점수는 공개된
     #   것이 없으며, 우리 장비 품질 실측도 0이다.
@@ -444,8 +454,11 @@ models:
     #   - 타임아웃 7,500 s ≥ 32,768 ÷ 4.5 tok/s(아래 외부 보고) ≈ 7,282 s(계산값) — 시계가 상한보다 먼저
     #     끊지 않게 한다(이슈 #261). 그 관계를 `tests/test_config.py`의
     #     `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가 잠근다.
-    #   ⚠ run 예산(`config/budgets.yaml`의 `budgets.default.gpu_seconds` 7,200)은 이 값에 맞춰 안 잡혔다 —
-    #   사고 켠 호출 한두 건이 그 예산을 다 쓸 수 있다(계산). 실 run 전에 정할 일이다(이슈 #97).
+    #   ⚠ run 예산(`config/budgets.yaml`의 `budgets.default.gpu_seconds`)은 이 값에 맞춰 안 잡혔다 —
+    #   7,200일 때는 사고 켠 호출 한두 건이 그 예산을 다 쓸 수 있었다(계산). ⏵ 2026-10-05 — 72,000으로
+    #   올렸다(이슈 #389 — 한 바퀴 선언값 합 21,300 s의 3.4배 · 정한 값이지 잰 값이 아니다).
+    #   ⏵ **2026-10-05 (둘째) — 7,200,000이다**(같은 합의 338배 · 계산값). 220 슬라이스 환산이 72,000을
+    #   넘어서다 — `config/budgets.yaml`의 `default` 줄 주석이 식과 결과를, PR #501 본문이 그 한계를 든다.
     #   ⏵ **2026-10-03 — 위 세 수 중 둘이 움직였다(@danielcho02 승인, council 판정).** 출력 상한 32,768 → **65,536** ·
     #   사고 상한 28,672 → **57,344** · 타임아웃 **7,500 s 그대로**. 그래서 위 「사고 28,672 = 32,768 − 4,096」과
     #   「7,500 ≥ 32,768 ÷ 4.5 ≈ 7,282 s」는 2026-09-26의 기록이고 지금 서는 관계는 **답 몫 8,192 = 65,536 − 57,344**
@@ -467,9 +480,16 @@ models:
     #     `tests/test_config.py`의 속도 상수를 좌석별로 쪼갰다(Auditor 16.2 실측 / PoV 4.5 보수값). 묶어 두면
     #     한 좌석의 실측이 다른 좌석의 하한까지 느슨하게 만든다. 그 좌석 값 셋(32,768 · 28,672 · 7,500)은 그대로다.
     #   - ⚠ **위 run 예산 경고가 더 커졌다** — 상한이 2배가 되어 같은 폭주가 2배 비싸진다. 폭주 한 번이
-    #     65,536 ÷ 16.2 ≈ 4,045 s로 `gpu_seconds` 7,200의 56%(계산값)다. 그리고 **상한은 호출당인데 피해는
+    #     65,536 ÷ 16.2 ≈ 4,045 s로 `gpu_seconds`의 56%(계산값 — 7,200이던 때의 비율이다. 2026-10-05에
+    #     72,000으로 올려 5.6%가 되고, **같은 날 둘째 인상으로 7,200,000이 되어 지금은 0.056%**다 —
+    #     4,045 ÷ 7,200,000, 계산값)다. 그리고 **상한은 호출당인데 피해는
     #     후보당이다** — 도구 루프 상한 16홉이면 한 후보가 최대 16 × 65,536토큰을 쓴다. 호출 타임아웃도 이 잠금도
-    #     그 누적을 안 묶는다. 묶는 것은 run 예산뿐이고 그쪽이 걸리면 run이 **중단**된다. 이슈 #97이 그 자리다.
+    #     그 누적을 안 묶는다. 묶는 것은 run 예산뿐이고 그쪽이 걸리면 run이 **중단**된다. 이슈 #389가 그 자리다.
+    #     ⏵ **2026-10-05 — 묶는 키가 바뀌었다.** ⚠ 위 0.056%는 **호출 1회**(4,045 s)의 비율이고,
+    #     후보 하나가 16홉을 다 쓰면 **17호출 × 65,536 ÷ 16.2 ≈ 68,773 s**다 — 그것이
+    #     `gpu_seconds` 7,200,000의 **1.0%**이고 `output_tokens` 40,000,000의 **2.8%**다(계산값).
+    #     즉 **먼저 걸리는 것은 `output_tokens`**이고, `config/budgets.yaml`의 `default` 주석
+    #     「실효 상한」 단락이 그 비교를 든다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
@@ -547,6 +567,16 @@ models:
     #   `qwen3.8-27b`)는 프롬프트가 적어도 8,664자(prefix 7,623 + body 틀 322 + 슬라이스 719, 계산값 — 채운
     #   값은 안 셌다)에 3,782토큰이라 비가 2.29 이상이다(계산값). 위 상한 13,396(비 1.22)은 영어 prefix 몫에는
     #   보수적일 수 있다. 실측이 아니다.
+    #   ⏵ 2026-10-04 — FACTS의 evidence 항목마다 `location` 키(없으면 `null`)가 더 실린다(이슈 #475) — 위 합에
+    #   미산입이다. 수치는 바꾸지 않았다(새 계산값을 지어내지 않는다).
+    #   ⏵ **2026-10-09 — 서빙 판 v10 기준으로 같은 식을 다시 센다(#556).** v1 대비 prefix **+55,752자**
+    #   (v10 56,906 − v1 1,154 — 이 저장소 파일 글자 수) · body 틀 +92자 · 근거 본문 4,000자 = **59,844자** →
+    #   **+18,025~49,052토큰**(계산값, 같은 비 3.32~1.22). 스모크 최대를 더하면 **33,462~64,489토큰**
+    #   (= 15,437 + …, 계산값)이고 입력 몫 196,608 안이다. 위 SOURCE 가정(약 +15,100토큰)까지 더하면 약
+    #   79,600토큰(계산값). ⚠ **hop0 한 호출의 계산이다** — 도구 루프(v10)는 홉마다 history가 쌓여
+    #   뒤 홉의 입력이 이보다 크다(`thresholds.auditor_tool_hops` 주석). ⚠ 비 1.22~3.32는 v1 입력의 것이라
+    #   영어 prefix인 v10에는 보수적일 수 있다(위 ⚠). **v10 입력 토큰도 미실측이다** —
+    #   `run_20261007_0001`(v10)의 보고서는 출력 토큰만 적고 입력은 안 적었다(trace는 저장소 밖).
     #   ⚠ **400은 run을 세운다**(이슈 #296 — 2026-09-26 전에는 조용했다). parser가 빠지면(사고 예산 거절)
     #   또는 창이 출력 상한보다 작으면 첫 Auditor 요청에서 멈춘다(`consecutive_target_failures`). 창은 상한
     #   이상인데 입력 몫이 모자라 Auditor 요청이 전부 넘치면 루프 끝에서 멈춘다. 일부만 넘치면 그 후보만
@@ -620,7 +650,27 @@ models:
     # v6 문장을 그 자리에서 고치지 않은 것은 위 #418의 수가 v6 문장(prefix 21,398자)에서 나왔기
     # 때문이다(같은 규칙 1 — 한 판 번호가 두 문장을 가리키지 않는다). 그 수는 v6의 것이고 v7로 돈
     # run은 0건이다. v7도 `_CONTENT_AWARE_VERSIONS`에 든다.
-    prompt_template_version: "v7"
+    # ⏵ 2026-10-04 — v7에서 **v8**로 올렸다(도구 루프, 이슈 #419). v8 = v7 + 홉 프로토콜 절 +
+    # v7이 「이 호출은 한 방이다」라고 단언하던 자리의 재작성(열두 줄) + 캡슐이 빠뜨린 사실에
+    # `reachability_unknown`을 쓰라던 문장 하나에 「먼저 `lookup`」 단서(`prompts/auditor/v8/meta.yaml`
+    # — 열세 줄이 v7과 다르다). `SOURCE` 서술과 trigger rule은
+    # v7과 바이트 동일이다(`tests/test_auditor_prompt_v8.py`). v7 문장을 그 자리에서 고치지
+    # 않은 것은 v7이 `output_schema: Finding`으로 선언된 판이기 때문이다 — 한 판 번호가 두
+    # 문장을 가리키지 않는다(같은 규칙 1). **v8로 돈 run은 0건이고 v7로 돈 run도 0건이다.**
+    # 이 판은 `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 돈다 — 둘이
+    # 어긋나면 `nodes/auditor.loop_problem`이 run·doctor를 막는다. v8도
+    # `_CONTENT_AWARE_VERSIONS`에 든다.
+    # ⏵ 2026-10-06 — v9(v8 + `auditor_guards` 서술 한 항목, `prompts/auditor/v9/meta.yaml`)로
+    # 올렸다. 이 판으로 돈 run도 0건이다.
+    # ⏵ 2026-10-07 — v9에서 **v10**으로 올렸다(`prompts/auditor/v10/` + 그 판을 고르는 이 배선). v10은 v7을
+    # 전면 재작성한 판이다 — 분석 절차(5단계 점검 · 우선순위 · 트리거 규칙)와 출력 계약을 새로 썼고
+    # 도구는 v8·v9와 같은 홉 구조다. **출력 계약이 다르다**: 매 홉 `AuditorProcedureAction`이고
+    # `answer`가 `Finding`이 아니라 `AuditProcedure`(`audit` 블록 + 판정)를 싣는다 — 하네스가 그것을
+    # `Finding`으로 옮기고 발급 ID·`produced_by`·`missing_evidence`를 채운다(`nodes/auditor.py`의
+    # `_finding_from_procedure`). v9 문장을 그 자리에서 고치지 않은 것은 판 번호 하나가 두 문장을
+    # 가리키지 않게 하려는 것이다(agent-contracts §4 규칙 1). v10도 `_CONTENT_AWARE_VERSIONS`에 든다 —
+    # 프롬프트가 `FACTS.evidence[].body`를 읽으라고 시킨다. 이 판으로 돈 run은 0건이다.
+    prompt_template_version: "v10"
     fallback: null
     benchmark:
       measured_at: null
@@ -645,6 +695,8 @@ models:
     # `context_limit`은 모델 상한이지 그날 띄운 값이 아니다(`gpt-oss-20b` 항목과 같은 관례).
     # ⚠ `checksum`은 자리표시자 0이다 — ATOM에서 받은 뒤 `tools/model_checksum.py`로 채운다. 그전에 돈
     #   run은 비교표에서 제외된다(CLAUDE.md §0). `benchmark`도 전부 미실측이다.
+    #   ⏵ 2026-10-08 — 「ATOM에서 받은 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 · docs/portability.md §6). 이후 실측 장비는
+    #   vast다(docs/portability.md §6 ⏵). `checksum`은 여전히 0이다.
     #
     # ## 기동 조건 — 하네스가 보내지 않는다 (model-serving.md §5)
     #
@@ -696,7 +748,10 @@ models:
     # (`_MAX_CONSECUTIVE_DROPS`, 이슈 #261).
     # 대가: 응답 없이 멈춘 서버는 이 값이 지나야 알아챈다 — 멈춤 판정이 타임아웃 뒤에만 난다(`openai_compat._post`).
     request_timeout_s: 1800
-    prompt_template_version: "v3"
+    # ⏵ 2026-10-07 — v3 → v4 배선(PR #524). v4는 `input: source`를 선언하고 신호가 둘이다
+    #   (`triage_need_evidence` 없음). 짝인 `seccoderx-8b`와 **함께** 올린다 — 풀 세 자리가 한 버전이다(ADR 0010 §6).
+    #   ⚠ 되묻기를 안 내므로 `cli estimate` 상한의 Scout 항이 4배 느슨하다 — 전체 추정은 약 17% 과대다(이슈 #530).
+    prompt_template_version: "v4"
     fallback: null
     benchmark:
       measured_at: null
@@ -730,6 +785,10 @@ models:
   # ⚠ **checksum·benchmark는 전부 미실측(0/null)이다** — 아직 우리 장비에서 받지도 띄우지도
   #   않았다(ATOM 종료 · 서빙+도구 되는 호스트 미확보). 그전에 돈 run은 비교표 제외(CLAUDE.md §0).
   #   `tools/model_checksum.py`가 스냅샷을 받은 뒤 checksum을, `bench --apply`가 benchmark를 채운다.
+  #   ⏵ 2026-10-08 — 「받지도 띄우지도 않았다」는 낡았다: vast에서 처음 떴다(`run_20261005_0001`, 날짜는 UTC —
+  #   `docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md` §0, 가중치 로드 51.1 GiB · `tool_runner: fake`).
+  #   「호스트 미확보」도 낡았다 — 서빙만 vast에 두는 `vastai-remote`가 들어왔다(#417 — 2026-10-04 머지). checksum·benchmark는
+  #   여전히 0/null이다(아래 `checksum` 줄).
   #
   # ## 배선됨 — `harness_pool`·`harness_pool_hybrid`의 8단계 pov 좌석
   # PoV 노드(`nodes/pov.py`)가 러너 8단계(Stage.VALIDATE) 라우팅에 들어갔다(추가형 — validate.run 뒤).
@@ -738,6 +797,10 @@ models:
   # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
   # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
   # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
+  #   ⏵ 2026-10-08 — 호스트는 위 ⏵대로 생겼다(`vastai-remote`). 실도구(docker)로 8단계에서 이 키를 부른 run은
+  #   `run_20261007_0001` 하나다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`
+  #   §1 — PoV 시도 5건, #551). 2026-10-03 run은 8단계 모델을 안 불렀고(`2026-10-04-cybergym-operational-run-vastai-remote.md`
+  #   메타) 2026-10-05 프로브는 `tool_runner: fake`다. 셋 다 비교표 제외다(각 보고서 머리).
   #
   # ## 추론(사고) — Auditor 손잡이를 물려받았다(사고 켬)
   # 템플릿이 Auditor와 같다 — reasoning_effort `xhigh`(기본)·`medium`·`low`(high는 예외) · `<think>`
@@ -771,9 +834,26 @@ models:
       min_p: 0.0
       presence_penalty: 0.0
     thinking_token_budget: 28672
-    # v2 = PoV 툴 루프 프롬프트(PovAction, gen/inspect/submit). @danielcho02 전달 2026-09-30 · @sumin0218 리뷰 대상
-    # (승인 원천은 저장소에 없다). 단발 v1은 루프로 대체돼 제거됐다(`prompts/pov/v2/`, `nodes/pov.py`).
-    prompt_template_version: "v2"
+    # v4 = v3 + 넷(2026-10-08 #549/#515/#511): 채점기 vul 종료 코드 읽는 규칙(제외 코드 0·71·300) ·
+    # 반복 판정의 실제 범위(모든 gen의 바이트) · 도구 한계 문단 정정과 `last_gen_*` 필드 설명 · 고정
+    # 홉 예산(followup 첫 줄의 홉 줄 — meta `hop_header` · 마지막 홉의 submit은 마지막 gen의 코드로 가른다:
+    # 제외 코드 밖이면 하고 안이면 안 하며 unavailable은 정보 없음이므로 0바이트가 아니고 rationale에
+    # SOURCE·FACTS의 앞단 조건을 거쳐 sink에 이르는 사슬을 적을 때만 한다 - submit 원칙의 유일한 예외).
+    # 캐시된 코드(cached=true)로 submit하면 rationale에 그 사실을 적는다(막지는 않는다).
+    # v4가 물려받은 v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의
+    # vul 판정 관측(2026-10-05 #354/#386①)이다.
+    # 판정 관측은 `run --oracle-submit`일 때만 실린다. 실모델 입력 토큰은 v3 prefix로 잰 값만 있다(v4는
+    # 아직 안 쟀다 - 호출당 60,446~61,018, n=1, 한 finding의 네 호출,
+    # `docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md`). ⚠ 전형값이 아니다: 그 프로브는
+    # `tool_runner: fake`라 도구 출력 꼬리가 없었고 같은 run의 다른 finding hop0은 6,572토큰으로
+    # 약 열 배 작았다(n=2). 미실측은 판정
+    # 되먹임이 PoC를 낫게 바꾸는 효과 · v4 prefix의 입력 토큰 · 제외 코드 규칙과 마지막 홉 규칙이 submit을
+    # 늘리는지이고, v4로 돈 run은 0건이다.
+    # ⏵ 2026-10-09 — v5로 올렸다(ADR 0014 · 이슈 #513). v4 prefix의 「도구가 PoC를 받지
+    # 않는다」 문단이 거짓이 됐고 프롬프트 판은 불변 기록이라 **다음 판**이 고친다. 그 판의
+    # 효과(poc 관측이 PoC의 함수가 된 것이 submit을 늘리는지)는 **미실측**이다 — v5로 돈 run이
+    # 0건이고 위 「v4로 돈 run은 0건」도 그대로다.
+    prompt_template_version: "v5"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고

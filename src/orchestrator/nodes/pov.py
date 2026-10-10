@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from src.interfaces.model_client import ChatTurn, Prompt
-from src.interfaces.tool_runner import ToolArgs
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_target
@@ -33,14 +33,20 @@ OUTPUT_SCHEMA = PovAction
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). `config/models.yaml`의 pov 좌석은 아직 v2라 **배선된 입력은 그대로다** — v2는
-# 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4, 프롬프트가 바뀌면
-# 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도 없지만, 다음에
-# 돌 v2 run까지 조용히 입력을 바꿀 이유는 없다). v3가 그 입력을 받는 판이다(배선은 별 PR).
+# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가 `config/models.yaml`의 실 PoV 좌석이라 이
+# 넓은 입력을 받는다. v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
+# 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
+# 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
+# 관측이 함께 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
+# 🔴 **이 집합은 판이 하나 늘 때마다 같이 자란다** - v2를 뺀 새 판을 여기 안 넣으면 그 판에서
+# 넓은 입력이 **조용히 꺼진다**(프롬프트는 그대로 로드되는데 입력이 v2로 돌아간다. 이유는
+# `prompt_loader` docstring의 「버전 이름으로 분기하지 않는 이유」). 막는 것은
+# `tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`와 doctor의
+# 「내용 인식」 검사다.
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5"})
 
 
 def _render_prompt(
@@ -117,8 +123,8 @@ def open_hop(
     넘겼다** — 그래서 PoV는 `None` 갈래로 `ctx.read_source(capsule.target)`, 즉 **entry 함수
     하나**만 봤다. `_WIDE_INPUT_VERSIONS`인 판에서는 러너가 Auditor가 본 것과 **같은 문자열**을
     넘긴다(`runner._Once` · `state.finding_sources`) — 그 판단은 **러너가** 한다(이 함수는 받은
-    `source`를 버전과 무관하게 그대로 쓴다, `_render_prompt` 주석). 슬라이스 타깃이 아니면 두
-    문자열이 같으므로 `None`이어도 예전 갈래가 그대로 맞다.
+    `source`를 버전과 무관하게 그대로 쓴다, `_render_prompt` 주석). 비슬라이스 타깃도 Auditor의
+    최초 읽기를 캐시하므로 그 뒤 파일이나 reader가 달라져도 같은 문자열을 받는다.
 
     `fuzz_entrypoint`는 **PoV만 받는 사실**이다 — libFuzzer 하네스의 진입점과 그 본문이고,
     「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`). 이것은
@@ -182,24 +188,40 @@ def _call_hop(
     )
 
 
-def run_tool(ctx: RunContext, *, finding: Finding, tool: str, workdir: str) -> Evidence:
-    """PoV 홉에서 도구를 돌린다 — gen이 만든 PoC를 대상에서 실행/진단(asan·build·gdb·poc).
+def run_tool(
+    ctx: RunContext, *, finding: Finding, tool: str, workdir: str, poc: bytes | None = None
+) -> Evidence:
+    """PoV 홉에서 도구를 돌린다 — asan·build·gdb·poc.
 
-    ⚠ **PoC 바이트를 도구 입력으로 쓰지 않는다**(`ToolArgs`는 도구 이름과 workdir만 싣는다).
-    fake 도구는 workdir의 대상 소스 존재만 보고 ok를 낸다(`fake_tools._run_repro`) — dev_fake는
-    루프 배선(gen→도구→Evidence→되먹임)을 고정하는 자리다. 이 함수가 쓰는 파일은 없다 —
-    조립된 바이트는 루프가 종단(`_pov_finish`)에 닿으면 `_run_pov_hops`의 반환값과 종단
-    이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서 러너가 마지막 gen의 PoC를 run 산출물
-    사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기 전에 끊기면 바이트는 안 남는다
-    (#394). 특히 예산이 이 도구 호출 자신에서 소진되면(`ctx.call_tool`의 `ensure`) 그 홉의
-    gen 이벤트가 나가기 전이라 해시도 안 남는다 — 앞 홉이 이미 낸 gen 이벤트의 `poc_sha256`만
-    남는 경로와 구별한다(`docs/agent-contracts.md`). 컨테이너 경로(호스트)에서 PoC를
-    **마운트 파일로 도구에 넘길** 때 바이트를 materialize한다(`validate._call`이
-    `[tool, *steps]`를 넘기는 자리와 같은 계약).
+    `poc`가 있으면 **데이터로** 싣는다: `ToolArgs.input_bytes`가 그 바이트이고 argv가 자리표를 든다
+    (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓴다(컨테이너는 로그 머리의
+    자리표만 그 경로로 바꾼다) — 이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한
+    PoC를, `inspect` 홉은 **직전 gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]`
+    하나). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
+
+    ⏵ **2026-10-09 (ADR 0014) — 컨테이너의 `poc`는 그 바이트를 먹인다.** 과제 `-vul` 이미지의
+    `/tmp/poc`로 바인드하므로 **그 도구의 관측은 PoC의 함수다**. ⚠ **나머지는 아니다** — fake는
+    쓰고 지우며 대상 소스 존재만 보고 ok를 내고(`fake_tools._run_repro`), 컨테이너의
+    `asan`·`gdb`·`build`는 우리가 빌드한 대상을 돌려 그 관측이 PoC의 함수가 아니다(셋을
+    바꾸려면 대상
+    빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은 러너가
+    관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
+    안 간다 — `call_tool`이 크기와 digest만 싣는다.
+
+    이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
+    닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
+    러너가 마지막 gen의 PoC를 run 산출물 사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기
+    전에 끊기면 바이트는 안 남는다(#394). 특히 예산이 이 도구 호출 자신에서 소진되면
+    (`ctx.call_tool`의 `ensure`) 그 홉의 gen 이벤트가 나가기 전이라 해시도 안 남는다 — 앞 홉이
+    이미 낸 gen 이벤트의 `poc_sha256`만 남는 경로와 구별한다(`docs/agent-contracts.md`).
     """
     return ctx.call_tool(
         tool=tool,
-        args=ToolArgs(argv=[tool], workdir=workdir),
+        args=ToolArgs(
+            argv=[tool] if poc is None else [tool, INPUT_PLACEHOLDER],
+            workdir=workdir,
+            input_bytes=poc,
+        ),
         sandbox=DEFAULT_SANDBOX,
         stage=Stage.VALIDATE,
         subject_id=finding.finding_id,
@@ -222,7 +244,7 @@ def _describe_finding(finding: Finding, *, wide: bool = True) -> str:
     ⏵ 2026-10-02 정정: 전 판은 필드를 `cmd`·`input_ref`라 적었는데 **그런 필드는 없다**(§2.1 —
     문서가 코드를 서술하면 그 코드를 열어 대조한다).
 
-    `wide=False`(`_WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **옛 모양 그대로**다 —
+    `wide=False`(`_WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **옛 모양 그대로**다 —
     `len(finding.path)`만 싣는다(`_render_prompt`가 결정한다, 적대적 리뷰 2026-10-02 MEDIUM-4).
     """
     if not wide:

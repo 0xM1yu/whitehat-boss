@@ -458,3 +458,37 @@ def test_import_query_without_a_database_passes_no_frontend_args():
     query = queries.import_query("/r", "proj")
     assert "--compilation-database" not in query
     assert "args=List" not in query
+
+
+def test_import_query_with_the_include_root_passes_the_repo_as_a_header_include_path():
+    """c2cpg 4.0.605 (`Main.scala`): `--include <path>` is `opt[String]("include").unbounded()`,
+    "header include paths", and `ParserConfig` takes each as `Paths.get(_).toAbsolutePath` -- so
+    the path is the (already absolute) repo itself, not a relative one."""
+    query = queries.import_query("/r/repo", "proj", include_root=True)
+    assert (
+        'importCode.c(inputPath="/r/repo", projectName="proj", '
+        'args=List("--include", "/r/repo"))' in query
+    )
+    # the path goes through the same literal helper as the other arguments (quotes, backslashes)
+    assert 'args=List("--include", "C:\\\\w\\\\r\\"x")' in queries.import_query(
+        'C:\\w\\r"x', "proj", include_root=True
+    )
+    # never `--define`: one dummy define cut the internal methods 21.5-62.8% on 3 repos (E3 probe)
+    assert "--define" not in query
+
+
+def test_import_query_without_the_include_root_is_the_query_it_always_was():
+    """Flag off: every way of saying so gives the same bytes, with or without a database."""
+    plain = queries.import_query("/r/repo", "proj")
+    assert queries.import_query("/r/repo", "proj", None, False) == plain
+    assert "--include" not in plain
+    database = queries.import_query("/r/repo", "proj", "/work/cc.json")
+    assert queries.import_query("/r/repo", "proj", "/work/cc.json", False) == database
+    assert 'args=List("--compilation-database", "/work/cc.json"))' in database
+    assert "--include" not in database
+
+
+def test_import_query_composes_both_options_in_one_arg_list():
+    """The builder composes them; the CLI refuses the pair (not measured), see test_slicer.py."""
+    query = queries.import_query("/r/repo", "proj", "/work/cc.json", True)
+    assert 'args=List("--compilation-database", "/work/cc.json", "--include", "/r/repo"))' in query

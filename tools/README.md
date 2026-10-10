@@ -9,7 +9,7 @@
 | `slicer/` | 오프라인 Joern 슬라이서 모듈들 — 하네스가 파일(`slices.json`)로 받는 입력을 만든다. 하네스는 import하지 않는다. 사용법은 [slicer-README.md](../docs/slicer-README.md) |
 | `gt_guided/` | 🔴 **긴급용 · FT 데이터 전용 · 하네스 슬라이싱 설계 아님.** GT 근처 후보만 잘라 Auditor FT 입력을 만든다(행마다 `gt_guided: true`). 실 Joern 종단 1회(표본 4개) · 테스트는 가짜 상자뿐(실 vast·ssh 0건). [gt_guided/README.md](gt_guided/README.md) |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
-| `oracle_canary.py` | **수동 점검이다 — 채점을 막지 않는다.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조한다(종료 코드: 통과 0 · 어긋남 1 · 못 돌림 2 · N이 작은 약한 통과 3). 🔴 **이 도구를 호출하는 코드가 없다**(문서 밖 호출자 0건) — 사람이 돌려 결과를 읽는다. 🔴 **실 Docker로 0회 돌았다** — 통과하는 28의 경우도 실패하는 32의 경우도 실제 관측이 없고, argv는 보고서 §13 재현 절차의 *모양*이지 저자 `run_container` 자체가 아니다. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · 이슈 #383 |
+| `oracle_canary.py` | **수동 실행이다 — 하네스가 부르지 않는다.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조한다(종료 코드: 통과 0 · 어긋남 1 · 못 돌림 2 · N이 작은 약한 통과 3). 🔴 **이 도구를 호출하는 코드가 없다**(문서 밖 호출자 0건) — 사람이 돌려 보고서를 만든다. ⏵ **2026-10-04 — 그 보고서가 채점 run을 막는다**: `--oracle-canary`로 준 JSON을 `src/adapters/canary_report.py`가 읽어 `verdict != pass` · 다른 과제 · `mmap_rnd_bits > 28` · 미측정이면 **제출 전에** 거부한다. 막는 것은 **보고서**이고 호출자는 여전히 0건이다. 🔴 **실 Docker 실행은 2건이고 둘 다 통과했다** — 2026-10-03 `arvo:1065`(MSan, 40/40) · 2026-10-04 `oss-fuzz:368076871`(ASan, 40/40 · `139` 0건). 둘째는 **보고서 파일이 없다**(출처: PR #463 본문 · 같은 PR 리뷰의 재실행 1회). **`mmap_rnd_bits = 32`에서 실패하는 경우는 여전히 0회 관측**이고(통과 쪽만 봤다) argv는 보고서 §13 재현 절차의 *모양*이지 저자 `run_container` 자체가 아니다. 과제 계열은 **둘**을 안다(`arvo` → `n132/arvo` + `/bin/arvo` · `oss-fuzz` → `cybergym/oss-fuzz` + 인자 없는 `/usr/local/bin/run_poc`) — 저자 `server_utils._image_and_command_from_task_id`가 접두사와 명령을 같이 고르므로 이 표도 둘을 같이 든다. 모르는 계열은 거부하고 `--vul-image`/`--fix-image`/`--run-cmd`로 셋 다 받는다. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · [배관 보고서](../docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §3(**`arvo:1065` 첫 실행만**) · 이슈 #383 |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
 ### `probe/` 안의 것들
@@ -68,6 +68,8 @@ docker build -t harness-tools:v3 tools/harness-tools/
 **#304(index-v3) 전에 빌드한 v3 이미지는 다시 빌드한다** — 인덱서가 이미지에 구워지므로 낡은 이미지는
 index-v2를 내고, `index_graph`의 v3 조회(`writes_of`·`fn_pointer_targets` 등)가 `None`이 된다.
 태그는 그대로라 run끼리는 `tool_images` digest로 가른다(Dockerfile 머리 주석). sif도 같다.
+⏵ 2026-10-04 -> 인덱서가 index-v4(`includes`·`enum_constants`)가 됐다. 그 전에 빌드한 이미지는 v3를 내고
+정의 조회의 include 도달성·enum 상수가 안 붙는다(옛 규칙 그대로) -> 다시 빌드한다.
 
 **v2가 있는 장비에서 v3를 만들 때는 룰셋 커밋을 v2와 맞춘다** — `SEMGREP_RULES_COMMIT`의 기본값이
 브랜치(`develop`)라 그냥 빌드하면 gdb만 더하려던 이미지에서 정적 신호까지 움직인다. v1·v2 이미지는
@@ -95,6 +97,13 @@ docker run --rm harness-tools:v3 cat /opt/semgrep-rules/COMMIT
 ```
 
 ### ATOM 빌드·실행
+
+> ⏵ 2026-10-08 — ATOM은 2026-09-29 사용이 끝났다(#340 · [portability.md](../docs/portability.md) §6). 이 절은
+> 그때의 절차다. 그 뒤 도구까지 돈 완주는 하네스·도구가 로컬 Docker이고 서빙만 vast였다(`--device vastai-remote`) —
+> Windows `run_20261003_0003`([2026-10-04 보고서](../docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md)
+> §2·§4 — 도구 4개 중 2개 ok)와 `run_20261007_0001`([2026-10-08 보고서](../docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) 메타).
+> 전부가 아니다: WSL `run_20261003_0002`는 Docker 소켓이 없어 도구 4개 전부 실패했고(10-04 보고서 §4),
+> 2026-10-05 PoV 프로브는 `tool_runner: fake`다([2026-10-06 보고서](../docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md) 머리 표).
 
 ATOM에는 **docker 29.2.1과 podman 4.9.3(rootless)이 함께 있고 singularity는 없다**
 (2026-08-21 확인, 2026-08-28 `ssh atom 'which podman; which docker'` 재확인 —
@@ -132,6 +141,8 @@ python -m src.cli run --profile dev_singularity --tool-runner docker --target <�
 기준 아래 `podman`이었고, 되돌린 경위는
 [ADR 0005](../docs/decisions/0005-tool-runner-override.md) 마지막 절이다. `--tool-runner`는
 프로필이 선언한 런타임이 그 장비에 없을 때 쓴다(ADR 0005).
+⏵ 2026-10-08 — 「주 실서빙 장비가 ATOM」은 낡았다(위 절 머리의 ⏵). 도구를 돌리는 로컬도 `docker`다
+(2026-10-04 보고서 §2 — Docker 29.5.3).
 
 podman은 docker CLI 호환이라 `container_argv`가 바이너리 이름만 갈고 격리 플래그는 같다.
 **rootless인데도 `--cpus`·`--memory`를 강제하므로**(아래 표) SLURM 같은 외부 도구가 필요
@@ -278,6 +289,7 @@ include 경로 설정이 필요한 실제 저장소에서 **실패**해 `Evidenc
 | `calls` | `{"memcpy": [{"file": "parser.c", "line": 24, "caller": "parse_header", "args": ["buf", "src", "len"]}]}` — callee → 호출 지점(index-v2. v1은 같은 간선의 목록이었다) |
 | 조회 표(index-v2) | `functions`·`macros`·`types`·`file_vars`·`fields`·`locals`·`assigns`·`field_assigns` — 모양은 `indexer.py` 모듈 docstring. NE resolver 몫이고 캡슐로 가지 않는다 |
 | 조회 표(index-v3, #304) | `writes`(원소·역참조 대입 · 함수 안 선언 초기화) · `fn_bindings`(함수 포인터 필드에 묶인 함수 — 필드 대입·지정 초기화) · `field_calls`(`x->f(...)` 호출 지점) — v2 표는 그대로다. 읽는 쪽은 `index_graph`의 `writes_of`·`field_writes_of`·`fn_pointer_targets`·`indirect_callees_of` |
+| 조회 표(index-v4) | `includes`(파일 → `#include` 지시문 — 경로 원문 · 꺾쇠 여부) · `enum_constants`(enum 상수 → 그 enum 정의 전체 범위) · `types`의 앞선 선언 typedef 행에 `forward` — v3 표는 그대로다. 읽는 쪽은 `index_graph.definitions_of`(여러 정의 중 앵커가 include로 닿는 것이 하나뿐이면 그것) |
 | `unresolved_calls` | 대상을 특정하지 못한 호출 **수** |
 | `unresolved_symbols` | 정의를 찾았는데 이름을 못 뽑은 **수** |
 | `files` | 실제로 인덱싱한 파일 — 분모다. `symbols`가 적을 때 "함수가 없다"와 "파일이 안 왔다"를 가른다 |
