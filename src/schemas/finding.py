@@ -25,6 +25,11 @@ FindingStateValue = Literal[
 ]
 
 # 근거 없이 도달할 수 없는 상태. Evidence Gate E3 이상이 필요한 구간이다.
+# ⚠ **이 불변식이 보증하는 것은 「근거가 있다」가 아니다** — 「Evidence 레코드가 하나라도
+# 붙어 있다」다.
+# 붙이는 쪽(`nodes/gate_node.attach_observed`)이 `ok`를 안 보므로 실패 기록(`ok=False`)으로도
+# 충족된다 — 8단계는 처음부터 그랬고 6단계가 이슈 #552로 같아졌다. 등급 쪽은 `gate.evaluate`의
+# `usable`이 `ok=True`만 세므로 실패 기록만으로는 E1에 못 간다. 두 규칙이 다른 층에 있다.
 _EVIDENCE_BACKED_STATES = frozenset(
     {FindingState.VALIDATED, FindingState.PROVEN, FindingState.REPORTED}
 )
@@ -362,7 +367,8 @@ class Finding(HarnessModel):
     rca_draft: str = ""
     # ⏵ 2026-10-09 (이슈 #525 선택지 1) — **`no_signal`에서만 `None`일 수 있다**(아래
     # `_cwe_is_null_only_for_no_signal`). `no_signal`은 뿌리 원인을 못 세운 판정이라 참인 CWE가
-    # 없다 — non-null을 강제하면 모델이 지어낸 값이 SARIF `ruleId`와 보고서 중복 제거 키로 갔다.
+    # 없다 — non-null을 강제하면 모델이 지어낸 값이 SARIF `ruleId`와 보고서 중복 제거 키로 갈 수
+    # 있었다(그 값이 실제로 지어낸 것이었는지는 미측정 — 이슈 #525 「안 쟀다」).
     # ⚠ **JSON 스키마는 종전 그대로 둔다**(`_FINDING_CWE_JSON_SCHEMA`) — `Finding`을 요청하는 한 방
     # 판과 `AuditorAction`(v8·v9, `$defs`에 `Finding`)의 요청 바이트가 이 스키마라, `anyOf`로
     # 넓히면 프롬프트가 안 바뀌었는데 그 판들의 요청이 바뀐다(evaluation §2.3 — 위 `audit`의

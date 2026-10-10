@@ -108,7 +108,7 @@
 | Precision | `proven` + `validated` 중 사람 검토에서 참으로 확인된 비율 |
 | False Positive Rate | benign 샘플에서 취약점으로 판정한 비율 |
 | AI-Human 일치도 | AI 판정과 사람 판정의 일치율 |
-| 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율 |
+| 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율. ⏵ **2026-10-08 — Evidence Gate 축은 그 날 앞뒤가 같은 지표가 아니다**(이슈 #552): 6단계가 모델 인용 대신 타깃 관측 Evidence로 등급을 매기게 되어 그전 값에는 **인용 순응률**이 섞여 있었다. 한 열에 이어 쓰지 않는다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
 > ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
