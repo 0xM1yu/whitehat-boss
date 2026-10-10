@@ -4,7 +4,9 @@
 `command`)을 로컬 subprocess로 부르고, 명령이 끝나면 올린 모델마다 `/v1/models`로 창을 다시 본다.
 """
 
+import ast
 import json
+import subprocess
 import sys
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -12,16 +14,17 @@ from pathlib import Path
 
 import pytest
 
-from src.adapters import model_swap
+from src.adapters import factory, model_swap
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.model_swap import swap_runner
 from src.config import load_config
 from src.ids import IdFactory
-from src.interfaces.model_client import ModelGatewayError, ModelSwapError
+from src.interfaces.model_client import ModelGatewayError, ModelSwapError, error_detail
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.runner import _is_droppable
+from src.orchestrator.runner import _swap as runner_swap
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas.enums import ReasonCode
@@ -353,3 +356,444 @@ def test_fake_models_and_the_teardown_probe_nothing(tmp_path: Path) -> None:
     swap_to(())
 
     assert [call["argv"] for call in _calls(tmp_path)] == [["fake"], []]
+
+
+# --- #476: 실패 사유가 잘린 상세의 맨 앞에 남는다 ------------------------------------------
+
+
+def test_the_reason_leads_the_truncated_detail_even_behind_a_long_report(tmp_path: Path) -> None:
+    """보고의 `error`가 상세·메시지 맨 앞이다 — 상세는 실패 이벤트에서 앞 512자로 잘린다.
+
+    `run_20261003_0001`에서 보고(서버 기동 인자)가 앞을 다 먹어 사유가 잘렸고 운영자는
+    `memavail_before`만 보고 메모리 부족으로 읽었다. 실제 사유는 「이 run 밖의 GPU 프로세스」였다.
+    """
+    args = "serve Qwen/Qwen3-14B " + "--flag value " * 300  # 실측 보고처럼 긴 기동 인자
+    reason = "outside GPU process: 2920 3648"
+    report = {
+        "ok": False,
+        "memavail_before": 8.5,
+        "server": {"qwen3-14b": {"args": args}},
+        "error": reason,
+    }
+    body = "\n".join(
+        [
+            f"sys.stderr.write({'ABORT: ' + reason!r} + chr(10))",
+            f"print(json.dumps({report!r}))",
+            "sys.exit(2)",
+        ]
+    )
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
+
+    shown = error_detail(caught.value)  # 실패 이벤트·경고에 실리는 그 문자열
+    assert shown.startswith(f"사유: {reason}")
+    assert reason in str(caught.value)
+    assert caught.value.report["error"] == reason  # 보고는 그대로 실린다
+
+
+def test_without_a_report_stderr_leads_the_detail(tmp_path: Path) -> None:
+    """명령이 보고를 못 내면 stderr가 맨 앞이다 — `swap-remote.sh`가 ssh 전에 2로 끝나는 경우."""
+    body = "sys.stderr.write('swap-remote: SWAP_SSH_HOST is empty' + chr(10))\nsys.exit(2)"
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
+
+    assert caught.value.report == {}
+    assert error_detail(caught.value).startswith("stderr: swap-remote: SWAP_SSH_HOST is empty")
+
+
+# --- #477: 교대 명령의 실행 파일을 PATH로 먼저 푼다 ----------------------------------------
+
+
+def test_the_command_head_is_resolved_on_path_before_it_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`command[0]`이 경로 없는 이름이면 `shutil.which`로 푼 절대경로로 띄운다.
+
+    Windows `CreateProcess`는 `System32`를 PATH보다 먼저 뒤져 `bash`를 WSL 런처로 풀었다 — 그러면
+    교대 스크립트가 Windows 환경변수를 못 받는다(`run_20261003_0001`). 여기서는 PATH에 없는 이름
+    `harness-test-shell`을 `which`가 이 파이썬으로 풀게 해, 해소한 경로가 실제로 실행되는지 본다.
+    """
+    seen: list[str] = []
+
+    def which(name: str) -> str | None:
+        seen.append(name)
+        return sys.executable if name == "harness-test-shell" else None
+
+    monkeypatch.setattr(model_swap.shutil, "which", which)
+    script = _command(tmp_path)[1]
+
+    report = _swap(("harness-test-shell", script), _probe())(("seccoderx-8b",))
+
+    assert seen == ["harness-test-shell"]
+    assert report == {}  # 기본 가짜 명령은 보고를 안 낸다 — 성공 경로만 본다
+    assert _calls(tmp_path)[0]["argv"] == ["seccoderx-8b"]
+
+
+def test_a_command_head_with_a_path_or_not_on_path_is_left_as_is() -> None:
+    assert model_swap._resolved((sys.executable, "x")) == (sys.executable, "x")
+    assert model_swap._resolved(("tools/serve/x.sh",)) == ("tools/serve/x.sh",)
+    assert model_swap._resolved(("no-such-shell-1f3a",)) == ("no-such-shell-1f3a",)
+
+
+# --- #477: 해소한 bash가 WSL 런처면 띄우지 않는다 ---------------------------------------------
+# 아래 두 문자열은 **지어낸 샘플이 아니다** — 2026-10-05 이 PC(Windows 11 · Python 3.14.5)에서 두
+# PATH로 `shutil.which("bash")`를 불러 나온 값 그대로다. 레지스트리 PATH(PowerShell·cmd 기본)에서는
+# System32의 런처가, 앞에 Git의 `usr/bin`을 붙인 PATH(Git Bash로 띄운 셸)에서는 Git Bash가 나온다.
+# `sys.platform`·`which`를 대역으로 바꿔 Windows가 아닌 장비에서도 돈다.
+_WSL_LAUNCHER = r"C:\Windows\system32\bash.EXE"
+_GIT_BASH = r"C:\Program Files\Git\usr\bin\bash.EXE"
+
+
+@pytest.mark.parametrize(
+    ("system_root", "launcher"),
+    [
+        (r"C:\WINDOWS", _WSL_LAUNCHER),
+        (None, _WSL_LAUNCHER),
+        (r"D:\Winnt", r"D:\Winnt\system32\bash.EXE"),
+    ],
+    ids=["SystemRoot-in-another-case", "SystemRoot-unset", "relocated-windows-directory"],
+)
+def test_a_bash_that_resolves_to_the_wsl_launcher_is_refused_when_the_swap_is_attempted(
+    monkeypatch: pytest.MonkeyPatch, system_root: str | None, launcher: str
+) -> None:
+    """`which`가 푼 `bash`가 `%SystemRoot%`의 System32 아래 런처면 **띄우지 않고** `ModelSwapError`.
+
+    **만들 때가 아니라 부를 때** 난다 — 만들 때 던지면 교대 안 하는 run(`--dry-run`·낮은
+    `--stop-after`)까지 `build_deps`에서 죽는다(아래 `…never_resolves_the_command_head`). 부를 때
+    난 `ModelSwapError`는 `swap_to`를 **감싸이지 않고** 지나야 러너가 교대면 `model_swap_failed`로,
+    run 끝 내림이면 경고로 읽는다(`runner._swap`·`run_pipeline`의 `except ModelSwapError`) —
+    감싸이면 「예상 밖 오류」로 적힌다.
+    `usr/bin`이 System32보다 앞에 없는 PATH(레지스트리 PATH — PowerShell·cmd)에서는 `which`도
+    `CreateProcess`와 같은 런처를 고른다. 그대로 띄우면 교대 스크립트가 WSL 안에서 돌아 Windows
+    환경변수를 하나도 못 받고 `SWAP_SSH_HOST`이 비었다 같은 엉뚱한 사유로 실패한다
+    (`run_20261003_0001`). 판정은 대소문자를 가리지 않고, `SystemRoot`가 없으면 `C:/Windows`이며,
+    다른 위치의 Windows 디렉터리도 따른다.
+    """
+    started: list[object] = []
+    with monkeypatch.context() as patched:
+        patched.setattr(sys, "platform", "win32")
+        patched.setattr(model_swap.shutil, "which", lambda _name: launcher)
+        patched.setattr(model_swap.subprocess, "run", lambda *args, **_kw: started.append(args))
+        if system_root is None:
+            patched.delenv("SystemRoot", raising=False)
+        else:
+            patched.setenv("SystemRoot", system_root)
+        swap_to = swap_runner(
+            ("bash", "tools/serve/swap-remote.sh"),
+            models=MODELS,
+            deadline_s=600,
+            run_id=RUN_ID,
+            device="rig",
+            probe=_probe(),
+        )  # 만들기는 성공한다
+
+        for keys in (("seccoderx-8b",), ()):  # 교대, 그리고 run 끝 내림(키 없음)
+            with pytest.raises(ModelSwapError) as refused:
+                swap_to(keys)
+
+            message = str(refused.value)
+            assert message.startswith("교대 명령의 bash가 WSL 런처로 풀렸다")  # 안 감싸였다
+            assert refused.value.__cause__ is None
+            assert launcher in message
+            assert "command[0]" in message  # 어떻게 푸는지까지 말한다
+            assert "repo_dirty" in message  # 그 해법의 대가까지 — 비교표에서 빠진다
+
+    assert started == []
+
+
+def test_the_launcher_refusal_is_recorded_by_the_runner_as_a_failed_swap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """부를 때 난 거부는 러너의 교대 채널을 탄다 — `model_swap ok=false`에 사유가 남고
+    `ModelSwapError`가 그대로 올라간다(`run_pipeline`의 `except ModelSwapError`가 그것을
+    `model_swap_failed`로 읽는다 — `test_stage_swap.py`의 `test_a_failed_swap_stops_the_run…`).
+    만들 때 던지면 이 채널을 못 지나 `build_deps`에서 트레이스백으로 끝난다."""
+    ctx = _ctx()
+    started: list[object] = []
+    with monkeypatch.context() as patched:
+        patched.setattr(sys, "platform", "win32")
+        patched.setattr(model_swap.shutil, "which", lambda _name: _WSL_LAUNCHER)
+        patched.setattr(model_swap.subprocess, "run", lambda *args, **_kw: started.append(args))
+        patched.setenv("SystemRoot", r"C:\Windows")
+        ctx.swap_to = swap_runner(
+            ("bash", "tools/serve/swap-remote.sh"),
+            models=MODELS,
+            deadline_s=600,
+            run_id=RUN_ID,
+            device="rig",
+            probe=_probe(),
+        )
+
+        with pytest.raises(ModelSwapError):
+            runner_swap(ctx, ("seccoderx-8b",), stage=Stage.SCOUT)
+
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_SWAP]
+    assert event.data["ok"] is False
+    assert str(event.data["error"]).startswith("교대 명령의 bash가 WSL 런처로 풀렸다")
+    assert started == []
+
+
+@pytest.mark.parametrize("device", ["atom", "vastai", "vastai-remote"])
+def test_assembling_a_swap_runner_never_resolves_the_command_head(
+    monkeypatch: pytest.MonkeyPatch, device: str
+) -> None:
+    """만들 때는 `which`를 안 부른다 — 부르면(=거부가 만들 때 나면) 교대 안 하는 run이 죽는다.
+
+    `factory._swap_to`의 docstring이 「모델에 안 닿는 run(`--dry-run`·낮은 `--stop-after`)은 교대도
+    안 하므로 장비 없이도 조립돼야 한다」고 적는다. 이 조립(`build_deps`)에서 던지면 레지스트리
+    PATH의 PowerShell·cmd에서 `run --dry-run --device atom`이 트레이스백으로 끝나고 run 디렉터리에
+    `state.db`·`trace.jsonl`만 남았다(거부가 만들 때 날 때 — 2026-10-05 이 PC 실측). 장비 파일
+    셋(`atom`·`vastai`·`vastai-remote`)은 전부 맨 `bash`를 명령으로 든다.
+    """
+
+    def which(name: str) -> str | None:
+        raise AssertionError(f"교대 콜러블을 만들 때 which를 불렀다: {name}")
+
+    monkeypatch.setattr(model_swap.shutil, "which", which)
+
+    swap_to = factory._swap_to(load_config("harness_pool"), run_id=RUN_ID, device=device)
+
+    assert callable(swap_to)
+
+
+@pytest.mark.parametrize(
+    ("name", "found"),
+    [
+        ("bash", _GIT_BASH),
+        ("cmd", r"C:\Windows\system32\cmd.EXE"),
+        ("wsl", r"C:\Windows\system32\wsl.EXE"),
+    ],
+    ids=["git-bash", "other-system32-tool", "wsl-asked-for-by-name"],
+)
+def test_only_the_system32_bash_is_refused(
+    monkeypatch: pytest.MonkeyPatch, name: str, found: str
+) -> None:
+    """Git Bash는 절대경로로 띄운다. System32의 다른 도구(`cmd`)와 `wsl`을 이름으로 부른 것은
+    사용자가 고른 것이라 막지 않는다 — 막는 것은 **`bash`가 런처로 풀린 경우**뿐이다."""
+    with monkeypatch.context() as patched:
+        patched.setattr(sys, "platform", "win32")
+        patched.setattr(model_swap.shutil, "which", lambda _name: found)
+        patched.setenv("SystemRoot", r"C:\Windows")
+        resolved = model_swap._resolved((name, "tools/serve/swap-remote.sh"))
+
+    assert resolved == (found, "tools/serve/swap-remote.sh")
+
+
+@pytest.mark.parametrize(
+    "found", ["/usr/bin/bash", _WSL_LAUNCHER], ids=["posix-bash", "launcher-string-off-windows"]
+)
+def test_the_launcher_guard_never_fires_off_windows(
+    monkeypatch: pytest.MonkeyPatch, found: str
+) -> None:
+    """Windows가 아니면 경로가 무엇이든 발화하지 않는다 — 둘째 행은 경로 판정 앞의 **플랫폼 문**을
+    따로 핀한다(Windows 경로 문자열이 리눅스에서 올 일은 없지만 문이 빠지면 여기서 빨개진다)."""
+    with monkeypatch.context() as patched:
+        patched.setattr(sys, "platform", "linux")
+        patched.setattr(model_swap.shutil, "which", lambda _name: found)
+        resolved = model_swap._resolved(("bash", "x"))
+
+    assert resolved == (found, "x")
+
+
+def test_a_command_head_with_a_path_is_neither_looked_up_nor_refused(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`command[0]`에 경로를 직접 적었으면 `which`로 푼 것이 아니다 — 부르지도 막지도 않는다."""
+
+    def which(name: str) -> str | None:
+        raise AssertionError(f"경로가 든 이름을 which로 풀었다: {name}")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(sys, "platform", "win32")
+        patched.setattr(model_swap.shutil, "which", which)
+        resolved = model_swap._resolved((sys.executable, "x"))
+
+    assert resolved == (sys.executable, "x")
+
+
+# --- #476: 타임아웃 분기와 상세 순서 -------------------------------------------------------
+# 사유는 `run_20261003_0001`의 것이다 — 원격 교대의 메모리 판정이 낸 한 줄.
+_REASON = "outside GPU process: 2920 3648"
+
+
+def test_a_timeout_keeps_the_partial_report_and_leads_the_detail_with_its_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """마감을 넘긴 명령이 stdout에 남긴 JSON 보고의 사유가 상세 맨 앞에 서고, 보고는 예외에 남는다.
+
+    `TimeoutExpired`의 출력 형은 플랫폼 의존이다 — POSIX는 `text=True`여도 bytes(CPython
+    `subprocess.run` 소스의 주석으로 읽었다, 안 쟀다), Windows는 str(2026-10-05 이 PC · Python
+    3.14.5 실측). 대역은 POSIX 모양(bytes)을 올려 `_text`의 bytes 갈래를 본다. `subprocess.run`
+    대역이라 진짜 kill은 아니다 — 그것은
+    `test_a_command_past_its_deadline_is_torn_down_before_raising`가 본다.
+    사유 뒤에는 stderr, 그 뒤에 stdout 꼬리다(자르면 뒤가 잘린다).
+    """
+    report = {
+        "ok": False,
+        "memavail_before": 8.5,
+        "server": {"qwen3-14b": {"args": "serve Qwen/Qwen3-14B"}},
+        "error": _REASON,
+    }
+    stdout = ("log line before the report\n" + json.dumps(report)).encode()
+    stderr = f"ABORT: {_REASON}\n".encode()
+    argvs: list[list[str]] = []
+
+    def fake_run(
+        argv: list[str], *, timeout: float, **_kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        argvs.append(list(argv))
+        if len(argvs) == 1:
+            raise subprocess.TimeoutExpired(argv, timeout, stdout, stderr)
+        return subprocess.CompletedProcess(argv, 0, "", "")  # 내림 명령
+
+    monkeypatch.setattr(model_swap.subprocess, "run", fake_run)
+
+    with pytest.raises(ModelSwapError, match="마감") as caught:
+        _swap((sys.executable, "swap.py"), _probe())(("qwen3-14b",))
+
+    assert [argv[2:] for argv in argvs] == [["qwen3-14b"], []]  # 교대, 그리고 내림 한 번
+    shown = error_detail(caught.value)
+    assert shown.startswith(f"사유: {_REASON} | stderr: ABORT: {_REASON}")
+    assert caught.value.report == {
+        "ok": False,
+        "memavail_before": 8.5,
+        "server.qwen3-14b.args": "serve Qwen/Qwen3-14B",
+        "error": _REASON,
+    }
+
+
+def test_a_teardown_the_resolver_refuses_does_not_hide_the_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """마감 뒤 내림 호출이 `_resolved`의 거부(`run`이 풀다 낸 `ModelSwapError`)를 만나도 원래 마감
+    실패가 남는다 — `_teardown`은 원래 실패를 가리지 않도록 예외를 안 올린다. 실제로는 첫 호출이
+    풀린 뒤라 같은 PATH에서 둘째가 거부될 일이 드물다 — 이 갈래는 계약을 지키려고 둔 것이다."""
+    resolved_calls: list[tuple[str, ...]] = []
+    real_resolved = model_swap._resolved
+
+    def resolved(command: tuple[str, ...]) -> tuple[str, ...]:
+        resolved_calls.append(command)
+        if len(resolved_calls) > 1:
+            raise ModelSwapError("거부")
+        return real_resolved(command)
+
+    def fake_run(argv: list[str], *, timeout: float, **_kwargs: object) -> object:
+        raise subprocess.TimeoutExpired(argv, timeout)
+
+    monkeypatch.setattr(model_swap, "_resolved", resolved)
+    monkeypatch.setattr(model_swap.subprocess, "run", fake_run)
+
+    with pytest.raises(ModelSwapError, match="마감") as caught:
+        _swap((sys.executable, "swap.py"), _probe())(("qwen3-14b",))
+
+    assert "내림 명령을 불렀다(실패: ModelSwapError)" in str(caught.value)
+
+
+def test_a_teardown_failure_of_an_unforeseen_type_is_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`_teardown`의 `except`는 **좁다** — 마감·실행 실패·해소 거부(`TimeoutExpired`·`OSError`·
+    `ModelSwapError`)만 삼킨다. 그 밖의 예외(여기서는 `RuntimeError`)는 올라가 `swap_to`의 경계가
+    「예상 밖 오류」로 감싼다 — 내림이 계약 밖으로 죽었는데 마감 실패로 가려지면 안 된다."""
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], *, timeout: float, **_kwargs: object) -> object:
+        calls.append(list(argv))
+        if len(calls) == 1:
+            raise subprocess.TimeoutExpired(argv, timeout)
+        raise RuntimeError("내림 중 계약 밖")
+
+    monkeypatch.setattr(model_swap.subprocess, "run", fake_run)
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap((sys.executable, "swap.py"), _probe())(("qwen3-14b",))
+
+    assert len(calls) == 2  # 교대 · 내림
+    assert str(caught.value).startswith("모델 교대 중 예상 밖 오류(RuntimeError: 내림 중 계약 밖)")
+    assert isinstance(caught.value.__cause__, RuntimeError)
+
+
+@pytest.mark.parametrize(
+    ("head", "which_result", "shown"),
+    [
+        ("bash", _GIT_BASH, _GIT_BASH),
+        ("no-such-shell-1f3a", None, "no-such-shell-1f3a"),
+    ],
+    ids=["resolved-path", "name-not-on-path"],
+)
+def test_a_command_that_cannot_start_names_the_executable_it_tried(
+    monkeypatch: pytest.MonkeyPatch, head: str, which_result: str | None, shown: str
+) -> None:
+    """실행 실패(`OSError`) 메시지는 **띄우려던 실행 파일**을 보여 준다 — `which`가 푼 경로면
+    그것을, 못 풀었으면 이름을. 호출 시점 해소로 바꾼 뒤 맨 이름(`bash`)만 보이면 #477의 요점인
+    「어느 `bash`가 골라졌나」가 이 경로에서 사라진다. Windows의 `[WinError 2]`는 `exc`에 경로가
+    안 든다."""
+
+    def fake_run(argv: list[str], **_kwargs: object) -> object:
+        raise OSError(2, "The system cannot find the file specified")
+
+    monkeypatch.setattr(model_swap.shutil, "which", lambda _name: which_result)
+    monkeypatch.setattr(model_swap.subprocess, "run", fake_run)
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap((head, "tools/serve/swap.sh"), _probe())(("seccoderx-8b",))
+
+    assert str(caught.value) == (
+        f"교대 명령을 실행하지 못했다({shown}): [Errno 2] The system cannot find the file specified"
+    )
+
+
+def test_a_failed_command_details_the_reason_then_stderr_then_stdout(tmp_path: Path) -> None:
+    """stderr와 stdout이 **둘 다** 있을 때의 순서 — 사유 → stderr → stdout.
+
+    상세는 앞에서부터 512자로 잘린다. stdout 마지막 줄은 긴 JSON 보고라 앞에 서면 사유를 먹는다
+    (#476). stderr만 있는 실패 테스트는 stdout이 없어 이 순서를 못 본다.
+    """
+    body = (
+        "print('log line before the report')\n"
+        "sys.stderr.write('ABORT: out of memory\\n')\n"
+        "print(json.dumps({'ok': False, 'error': 'no mem'}))\n"
+        "sys.exit(2)"
+    )
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+
+    shown = error_detail(caught.value)
+    parts = ("사유: no mem", "stderr: ABORT", "stdout: log")
+    assert [shown.index(part) for part in parts] == sorted(shown.index(part) for part in parts)
+
+
+def test_a_blank_error_field_is_not_a_reason(tmp_path: Path) -> None:
+    """공백뿐인 `error`는 사유가 아니다 — 메시지에 빈 접미를, 상세 앞에 빈 「사유:」를 안 세운다."""
+    body = (
+        "sys.stderr.write('boom\\n')\nprint(json.dumps({'ok': False, 'error': '   '}))\nsys.exit(2)"
+    )
+
+    with pytest.raises(ModelSwapError) as caught:
+        _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+
+    assert str(caught.value).endswith("(exit 2): seccoderx-8b")
+    assert error_detail(caught.value).startswith("stderr: boom")
+
+
+# --- 문자열에 제어 문자가 먹히지 않았다 ----------------------------------------------------
+
+
+def test_no_string_in_the_adapter_carries_a_control_character() -> None:
+    """비 raw 문자열에 백슬래시 b를 쓰면 백스페이스가 된다 — System32 아래 bash.exe를 그렇게 적은
+    `_resolved` docstring이 **소스 바이트는 멀쩡한데 실행 시 문자열에 0x08을 들고** 있었다
+    (2026-10-05). 소스 바이트 검사(`test_remote_swap.py`)로는 안 잡히는 층이라 AST로 본다."""
+    tree = ast.parse(Path(model_swap.__file__).read_bytes())
+
+    leaked = sorted(
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and isinstance(node.value, str)
+        and any(ord(char) < 32 and char not in "\n\t" for char in node.value)
+    )
+
+    assert leaked == []

@@ -334,8 +334,8 @@ class NeStopReason(StrEnum):
 class PovStopReason(StrEnum):
     """PoV 툴 루프(Option C)가 서는 사유. `NeStopReason`을 미러한 모델-주도 루프다.
 
-    루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(직전 gen과 같은 PoC 바이트 재생성) ·
-    `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
+    루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(이미 낸 gen과 같은 PoC 바이트 재생성)
+    · `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
     계약대로) — `PARSE_FAILED`(스키마 파싱 실패) · `CONTEXT_OVERFLOW`
     (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이). **서버 쪽 사건(status 없음·5xx)과
     예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라 여기 값이 없다(`NeStopReason`이
@@ -507,7 +507,10 @@ class ReasonCode(StrEnum):
     # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
     # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
     # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로
-    # 산출물은 남지만 run은 실패다. 「조용히 넘어간 run」과 섞지 않는다.
+    # 산출물은 남지만 run은 실패다: `RunResult`가 안 나와 `run`은 트레이스백(종료 코드 1)으로
+    # 끝난다. 위 다섯 중 예산 소진은 정상 종료(0)이고 나머지 넷은 `RunResult`로 돌아와 종료 코드
+    # 3이다(#533) — 종료 코드가 0인 정지 사유는 사용자 상한 둘(`USER_STOP_REQUESTED`·`DRY_RUN`)과
+    # 예산 소진뿐이다.
     UNFORESEEN_FAILURE = "unforeseen_failure"
     # 제보 (disclosure-policy.md) — 자동 전이 없음, 사람 승인으로만
     HUMAN_VERIFIED = "human_verified"

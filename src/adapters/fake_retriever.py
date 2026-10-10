@@ -269,6 +269,15 @@ def _read_source(root: Path, relative: str) -> str:
     return path.read_text("utf-8", errors="replace")
 
 
+def read_raw_source(root: Path, relative: str) -> bytes | None:
+    """대상 파일의 **원본 바이트**. `read_symbol_source`는 텍스트 모드로 읽어 `\\r`·`\\r\\n`을
+    `\\n`으로 접으므로 `\\r\\r\\n`이나 옛 Mac 줄바꿈은 거기서 안 보인다 — 인덱서는 `\\n`만 세서
+    줄 번호가 어긋나는데, GUARDS의 줄 정렬 검사(`auditor_guards`)가 그 모양을 보려고 이것을
+    쓴다. 없는 파일은 `None`이고 루트 밖은 `read_symbol_source`처럼 `PathEscape`다."""
+    path = safe_join(root, relative)
+    return path.read_bytes() if path.is_file() else None
+
+
 def _sections_for(
     level: CapsuleLevel,
     source: str,

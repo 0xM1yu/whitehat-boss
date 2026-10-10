@@ -29,7 +29,7 @@
 > ④ **「PR #327(gdb) 미머지」**(§4.4) → `5cf5c20`(2026-10-01 03:29 KST)으로 main에 머지됐다.
 > ⑤ **「미커밋 조사 문서」**(§6.1의 `2026-09-29-cybergym-pov-design.md`) → 그 문서는 PR #376이 처음 저장소에 올린다(`0583ddd`, 2026-10-02 01:47 KST) — 그 PR이 머지되기 전에는 여전히 main에 없다.
 > ⑥ **「Auditor 프롬프트가 v1(`config/models.yaml:468`)이고 v4 PR #328이 열려 있다」**(§4.1 ①) → PR #328은 2026-09-29T12:52:38Z(21:52 KST)에 머지됐고 `6e005ef`(2026-09-29 22:54 KST, 제목 「rewire the canonical auditor from prompt v3 to v4」)가 정본 Auditor를 v4로 배선했다.
-> 지금 `config/models.yaml`의 `qwen3.8-27b` 항목은 `:403`부터이고 `prompt_template_version`은 `:546`의 `v4`다. ⏵ 2026-10-03 — 그 뒤 #418·#421이 v6로 올렸다: 지금은 `qwen3.8-27b` 항목의 `prompt_template_version: "v6"`다(2026-10-03 기준 `:578` — 항목 시작 `:403`은 그대로). 이 문서의 `config/models.yaml:` 줄 인용은 전부 `b52f847` 기준이라 줄 번호가 옮겨 갔다.
+> 지금 `config/models.yaml`의 `qwen3.8-27b` 항목은 `:403`부터이고 `prompt_template_version`은 `:546`의 `v4`다. ⏵ 2026-10-03 — 그 뒤 #418·#421이 v6로 올렸다: 지금은 `qwen3.8-27b` 항목의 `prompt_template_version: "v6"`다(2026-10-03 기준 `:578` — 항목 시작 `:403`은 그대로). ⏵ 2026-10-08 — 그 뒤 v7·v8(2026-10-04) · v9(PR #508, 2026-10-06 01:54 KST 머지) · v10(PR #521, 2026-10-07 16:12 KST 머지)으로 올랐다 — 「지금은 v6」은 그날까지다. 판은 그 항목의 `prompt_template_version`이 정본이고 줄 번호는 여기 다시 적지 않는다. 이 문서의 `config/models.yaml:` 줄 인용은 전부 `b52f847` 기준이라 줄 번호가 옮겨 갔다.
 > 이 노트가 다루는 것은 위 줄들뿐이다 — 나머지 `[코드]` 서술은 이 PR에서 다시 열지 않았다.
 
 ---
@@ -108,7 +108,7 @@
 | 전제 | 2026-09-24 ADR 서술 | **2026-09-29 실제** |
 | --- | --- | --- |
 | ① **학습 입력 = 서빙 입력 형식** | 없다 | **흔들린다.** Auditor 프롬프트가 **v1**이다(`config/models.yaml:468` `prompt_template_version: "v1"`). v2·v3는 디스크에 있으나 미배선이고(`prompts/auditor/v3/meta.yaml` 머리: *"미배선(disk-only)"*), **v4 PR #328이 열려 있다** ⏵ 낡음 — 위 시점 노트 ⑥ |
-| ② **모델 원문 기록** | 없다 | **반쪽 충족.** `ModelResult.raw_text`가 생겼고(`src/interfaces/model_client.py`) 어댑터가 채운다(`openai_compat.py:262`). **그러나 그 필드 주석이 스스로 적는다 — *"사고 토큰은 담지 않는다 — 그 자리는 Phase 8이다."*** `finish_reason`·`reasoning`도 그대로 없다. **[D84](../open-questions/D/D84.md) 열림** |
+| ② **모델 원문 기록** | 없다 | **반쪽 충족.** `ModelResult.raw_text`가 생겼고(`src/interfaces/model_client.py`) 어댑터가 채운다(`openai_compat.py:262`). **그러나 그 필드 주석이 스스로 적는다 — *"사고 토큰은 담지 않는다 — 그 자리는 Phase 8이다."*** `finish_reason`·`reasoning`도 그대로 없다. **[D84](../open-questions/D/D84.md) 열림** ⏵ 2026-10-08 -> `finish_reason`은 #550으로 시도별 trace(`model_call.attempt_finish_reasons`)에 남는다. 없는 것은 `reasoning`이다 |
 | ③ **내보내기** | 없다 | **그대로 없다.** CLI 서브커맨드는 다섯이다 — `doctor`·`estimate`·`run`·`bench`·`gc`(`src/cli.py:919-957`) |
 
 > **②가 이 계획에 가장 아프게 걸린다.** Auditor는 **`reasoning_effort: xhigh` · `thinking_token_budget: 28672`**로 돈다

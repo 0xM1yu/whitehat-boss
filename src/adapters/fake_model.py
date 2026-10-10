@@ -20,13 +20,22 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, Field
 
-from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, Usage
-from src.schemas.auditor import AuditorAction
+from src.interfaces.model_client import AttemptRecord, ChatTurn, ModelResult, Prompt, Usage
+from src.schemas.auditor import AuditorAction, AuditorProcedureAction, AuditProcedure
 from src.schemas.candidate import Candidate
 from src.schemas.common import HarnessModel, Location, ProducedBy
 from src.schemas.decision import Decision, DecisionDraft
 from src.schemas.enums import EvidenceKind, FindingState, PathStepKind, Role, Verdict
-from src.schemas.finding import Finding, PathStep, ReproSpec
+from src.schemas.finding import (
+    AuditBlock,
+    AuditDefense,
+    AuditOrigin,
+    AuditPoint,
+    AuditRefutation,
+    Finding,
+    PathStep,
+    ReproSpec,
+)
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 
@@ -70,6 +79,11 @@ class FakeEvidenceRef(HarnessModel):
     # optional로 받는다.
     body: str | None = None
     truncated: bool | None = None
+    # content-aware 판이 싣는 `Evidence.location`(`prompt_loader.build_facts`의 `evidence_locations`
+    # — 판단 보조이고 게이트 등급 근거가 아니다). **느슨하게 받는다**: 위 `FakeCapsuleSection`과
+    # 같은 이유로 프롬프트에서 파싱해 온 것에 `Location`의 불변식을 다시 걸지 않는다. Fake는
+    # 판정에 위치를 쓰지 않으므로 거부하지 않는 것만이 목적이다.
+    location: dict[str, object] | None = None
 
 
 class FakeCapsuleSection(HarnessModel):
@@ -125,8 +139,15 @@ class FakeModelError(RuntimeError):
 class FakeModelClient:
     """`ModelClient` 구현. 같은 프롬프트에는 항상 같은 출력을 낸다."""
 
-    def __init__(self, *, model_name: str = "fake") -> None:
+    def __init__(
+        self, *, model_name: str = "fake", scripted_attempts: Sequence[AttemptRecord] = ()
+    ) -> None:
         self.model_name = model_name
+        # 시도별 (출력 토큰, 종료 사유)를 **대본으로 줄 때만** 결과에 싣는다(#550) — GPU 없이
+        # `length`와 여러 시도를 만들어 `model_call`의 쪼갠 값을 재기 위한 손잡이다. 기본(빈 대본)은
+        # 기존 그대로 `attempt_log=()`, 곧 「안 쟀다」다: Fake는 종료 사유를 재지 않았으므로
+        # `stop`을 지어내지 않는다.
+        self._scripted_attempts = tuple(scripted_attempts)
         # prefix cache 시뮬레이션. 같은 prefix를 다시 보면 그만큼 cached_tokens로 잡는다
         # (agent-contracts.md §4.2, evaluation.md §5.2 cache hit ratio).
         self._seen_prefixes: set[str] = set()
@@ -156,11 +177,24 @@ class FakeModelClient:
         # (`_build_pov_action`·`_build_auditor_action`). 다른 빌더는 홉을 안 보지만 dict
         # 디스패치라 시그니처가 하나다.
         value = builder(context, produced_by, history)
+        usage = self._usage(prompt, value)
+        if not self._scripted_attempts:
+            return ModelResult(
+                value=value, usage=usage, model=self.model_name, raw_text=value.model_dump_json()
+            )
+        # 대본이 있으면 합산 출력 토큰을 대본에서 낸다 — 합과 쪼갠 값이 어긋난 Fake를 안 만든다.
+        log = self._scripted_attempts
         return ModelResult(
             value=value,
-            usage=self._usage(prompt, value),
+            usage=Usage(
+                input_tokens=usage.input_tokens,
+                output_tokens=sum(a.output_tokens or 0 for a in log),
+                cached_tokens=usage.cached_tokens,
+            ),
             model=self.model_name,
+            attempts=len(log),
             raw_text=value.model_dump_json(),
+            attempt_log=log,
         )
 
     def _usage(self, prompt: Prompt, value: BaseModel) -> Usage:
@@ -244,6 +278,16 @@ def _build_candidate(
     )
 
 
+def _fake_path(context: FakeContext, symbol: str, sink: str) -> list[PathStep]:
+    """Fake가 내는 source→sink 경로 — `_build_finding`과 `_build_audit_procedure`가 같이 쓴다."""
+    source_symbol = context.callers[0] if context.callers else "input"
+    return [
+        PathStep(step=PathStepKind.SOURCE, symbol=source_symbol),
+        PathStep(step=PathStepKind.PROPAGATE, symbol=symbol, note="길이 검증 없이 전달"),
+        PathStep(step=PathStepKind.SINK, symbol=sink, note="고정 크기 버퍼"),
+    ]
+
+
 def _build_finding(
     context: FakeContext, produced_by: ProducedBy, _history: Sequence[ChatTurn]
 ) -> Finding:
@@ -257,13 +301,7 @@ def _build_finding(
     symbol = target.symbol or "unknown"
     risky = risky_calls_in(context.source)
     sink = risky[0] if risky else "unknown"
-    source_symbol = context.callers[0] if context.callers else "input"
-
-    path = [
-        PathStep(step=PathStepKind.SOURCE, symbol=source_symbol),
-        PathStep(step=PathStepKind.PROPAGATE, symbol=symbol, note="길이 검증 없이 전달"),
-        PathStep(step=PathStepKind.SINK, symbol=sink, note="고정 크기 버퍼"),
-    ]
+    path = _fake_path(context, symbol, sink)
     missing = [] if _has_static_signal(context) else [_require_id(context, "missing_id")]
     has_build = any(ref.kind is EvidenceKind.BUILD and ref.ok for ref in context.evidence)
 
@@ -288,6 +326,54 @@ def _repro_spec(target: Location, sink: str) -> ReproSpec:
     return ReproSpec(
         steps=["./build.sh --sanitize=address", f"./poc {target.file}"],
         expected_signal=f"AddressSanitizer: heap-buffer-overflow at {target.symbol or sink}",
+    )
+
+
+def _build_audit_procedure(
+    context: FakeContext, _produced_by: ProducedBy, _history: Sequence[ChatTurn]
+) -> AuditProcedure:
+    """v10 도구 루프의 최종 답 — `_build_finding`과 **같은 판정**을 `audit` 블록으로 낸다.
+
+    `_build_finding`이 정적 신호 없이 `missing_evidence`를 내던 자리가 `decisive_code_missing`
+    (`reachability_unknown`)이고, 신호가 있으면 `defeated`(`triggerable`)다 — 하네스가 그 결과값으로
+    발급 `missing_id`를 붙이는 길(`nodes/auditor._finding_from_procedure`)이 Fake run에서도 서게
+    한다. ID·`produced_by`는 모델이 못 내는 값이라 여기 없다(`ids`를 읽지 않으므로
+    `FakeModelError`도 없다). 경로·CWE·제목·신뢰도·근거는 `_build_finding`과 같은 값이다.
+    """
+    target = context.target or Location(file="unknown")
+    symbol = target.symbol or "unknown"
+    risky = risky_calls_in(context.source)
+    sink = risky[0] if risky else "unknown"
+    has_signal = _has_static_signal(context)
+    has_build = any(ref.kind is EvidenceKind.BUILD and ref.ok for ref in context.evidence)
+
+    return AuditProcedure(
+        audit=AuditBlock(
+            category="spatial_bounds",
+            point=AuditPoint(symbol=symbol, expression=f"{sink}(...)"),
+            origin=AuditOrigin(kind="input", fact="fake: 입력 길이가 그대로 전달된다"),
+            path=_fake_path(context, symbol, sink),
+            defense=AuditDefense(
+                expression="none on visible path",
+                status="absent",
+                gap=None,
+                fact="fake: 길이 검증이 보이지 않는다",
+            ),
+            refutation=AuditRefutation(
+                result="defeated" if has_signal else "decisive_code_missing",
+                witness="fake: 길이가 버퍼보다 크면 넘친다",
+                missing_information=[]
+                if has_signal
+                else ["fake: 정적 분석 신호 또는 호출 그래프 근거"],
+            ),
+        ),
+        trigger_status="triggerable" if has_signal else "reachability_unknown",
+        confidence=0.6 if risky else 0.3,
+        cwe=RISKY_CALLS.get(sink, "CWE-20"),
+        title=f"{symbol}에서 검증 없는 {sink}",
+        rca_draft=f"{symbol}이 입력 길이를 확인하지 않고 {sink}로 전달한다.",
+        evidence_refs=[ref.evidence_id for ref in context.evidence],
+        repro_spec=_repro_spec(target, sink) if has_build else None,
     )
 
 
@@ -386,16 +472,19 @@ def _build_pov_action(
     )
 
 
-def _build_auditor_action(
-    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
-) -> AuditorAction:
-    """Auditor 툴 루프의 fake 액션 (#419). 홉을 `history` 길이로 가른다.
+def _auditor_investigation(
+    context: FakeContext, history: Sequence[ChatTurn]
+) -> dict[str, object] | None:
+    """Auditor 툴 루프의 fake **조사 홉** (#419) — 두 봉투(`AuditorAction` ·
+    `AuditorProcedureAction`)가 같은 액션을 낸다. 홉을 `history` 길이로 가르고, `answer` 홉이면
+    `None`이다(그 홉의 최종 답은 봉투마다 다르다 — 호출한 빌더가 싣는다).
 
     hop0(history 빔)은 `lookup` — 대상 함수를 부르는 쪽(없으면 대상 자신)의 본문을 이름으로
     묻는다. hop1은 `probe` — 읽기 전용 도구(`semgrep`)부터 한 번 돌린다. `spec`은 싣지 않는다:
-    지금 도구는 입력을 받지 않아 `spec`은 기록일 뿐이고, 바이트 materialize(#386 ①)가 서기
-    전에 fake가 그 길을 태울 이유가 없다. hop≥2는 `answer` — `_build_finding`이 최종 Finding을
-    채우고 루프가 끝난다.
+    ⏵ 2026-10-09 — **Auditor 경로가** 그 값을 도구에 안 싣기 때문이다(`nodes/auditor._probe`의
+    `ToolArgs`에 `input_bytes`가 없다. 컨테이너 `poc` 자체는 ADR 0014로 받을 수 **있다**).
+    그래서 `spec`은 기록일 뿐이고, 그 경로가 싣게 되기(이슈 #419) 전에 fake가 그 길을 태울 이유가
+    없다. hop≥2는 `answer`다.
 
     홉을 `history`로 가르는 자리는 `_build_pov_action`과 같다 — 홉 번호가 따로 안 넘어온다.
     다만 거기는 「비었나」만 보지만 여기는 **홉 번호**가 필요하다: 매 홉이 user 턴(그 홉 본문)과
@@ -405,19 +494,14 @@ def _build_auditor_action(
 
     실제 모델은 관측을 보고 lookup/probe/answer를 스스로 고르고 몇 번이고 되풀이한다 — fake는
     그 루프 배선(lookup→조회→probe→도구→answer)이 한 번씩 도는지만 고정한다.
-
-    ⚠ `answer`가 `_build_finding`을 재사용하므로 그 함수의 전제가 여기도 걸린다 — FACTS 블록이
-    발급한 `finding_id`·`candidate_id`(·정적 신호가 없으면 `missing_id`)를 `ids`에서 읽는다.
-    사실 블록은 hop0 user 턴(`history[0]`)에서 읽으므로(`FakeModelClient.complete`) 루프가
-    그 턴을 끝까지 `history` 맨 앞에 보존해야 한다.
     """
     hop = len(history) // 2
     if hop == 0:
         target = context.target
         name = context.callers[0] if context.callers else (target.symbol if target else None)
-        return AuditorAction(
-            action="lookup",
-            requests=[
+        return {
+            "action": "lookup",
+            "requests": [
                 RequestedContext(
                     kind="function",
                     target=name or "",
@@ -425,23 +509,67 @@ def _build_auditor_action(
                     request_code="fake_auditor_lookup",
                 )
             ],
-            rationale="fake: 근거를 이름으로 조회한다",
-        )
+            "rationale": "fake: 근거를 이름으로 조회한다",
+        }
     if hop == 1:
-        return AuditorAction(
-            action="probe", tool="semgrep", rationale="fake: 읽기 전용 도구로 확인한다"
-        )
+        return {
+            "action": "probe",
+            "tool": "semgrep",
+            "rationale": "fake: 읽기 전용 도구로 확인한다",
+        }
+    return None
+
+
+_AUDITOR_ANSWER_RATIONALE = "fake: 관측을 받았으니 감사를 끝낸다"
+
+
+def _build_auditor_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorAction:
+    """Auditor 툴 루프의 fake 액션 (#419) — 최종 답이 `Finding`인 봉투(v8·v9). 조사 홉은
+    `_auditor_investigation`이 정하고, hop≥2의 `answer`는 `_build_finding`이 최종 Finding을
+    채워 루프가 끝난다.
+
+    ⚠ `answer`가 `_build_finding`을 재사용하므로 그 함수의 전제가 여기도 걸린다 — FACTS 블록이
+    발급한 `finding_id`·`candidate_id`(·정적 신호가 없으면 `missing_id`)를 `ids`에서 읽는다.
+    사실 블록은 hop0 user 턴(`history[0]`)에서 읽으므로(`FakeModelClient.complete`) 루프가
+    그 턴을 끝까지 `history` 맨 앞에 보존해야 한다.
+    """
+    hop = _auditor_investigation(context, history)
+    if hop is not None:
+        return AuditorAction(**hop)
     return AuditorAction(
         action="answer",
         finding=_build_finding(context, produced_by, history),
-        rationale="fake: 관측을 받았으니 감사를 끝낸다",
+        rationale=_AUDITOR_ANSWER_RATIONALE,
+    )
+
+
+def _build_auditor_procedure_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorProcedureAction:
+    """Auditor 툴 루프의 fake 액션 — 최종 답이 `AuditProcedure`인 봉투(v10). 조사 홉은
+    `_build_auditor_action`과 같고(`_auditor_investigation`), `answer`는 `_build_audit_procedure`다.
+    그 빌더는 `ids`를 안 읽는다 — v10의 모델은 발급 ID를 못 낸다.
+
+    **이 항목이 빌더 표에 없으면** Fake가 v10을 고르는 run이 `FakeModelError`로 죽는다.
+    """
+    hop = _auditor_investigation(context, history)
+    if hop is not None:
+        return AuditorProcedureAction(**hop)
+    return AuditorProcedureAction(
+        action="answer",
+        procedure=_build_audit_procedure(context, produced_by, history),
+        rationale=_AUDITOR_ANSWER_RATIONALE,
     )
 
 
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
-# fake의 `probe`는 `spec`을 아예 싣지 않는다(`_build_auditor_action`).
+# fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).
+# Auditor 루프 봉투는 **둘이고 둘 다 든다** — 빠지면 그 봉투를 고르는 판의 Fake run이 죽는다
+# (`tests/test_auditor_loop.py`가 `nodes/auditor`의 루프 봉투 집합과 대조한다).
 _BUILDERS = {
     Candidate: _build_candidate,
     ScoutResponse: _build_scout_response,
@@ -450,4 +578,5 @@ _BUILDERS = {
     DecisionDraft: _build_decision_draft,
     PovAction: _build_pov_action,
     AuditorAction: _build_auditor_action,
+    AuditorProcedureAction: _build_auditor_procedure_action,
 }

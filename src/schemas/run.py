@@ -54,7 +54,9 @@ class Budget(HarnessModel):
     #
     # ⚠ **실서빙 프로필의 예산이 이 키를 안 적으면 0이고, `load_config`가 그것을 거부한다**
     # (`_check_real_serving_limits_are_positive`) — 임대 GPU 위에서 「검사 안 함」은 한도 없음이다.
-    # 이 스키마가 0을 계속 받는 것은 옛 manifest와 Fake 전용 프로필 때문이다.
+    # 컨테이너 런타임(`tool_runner != fake`)의 0도 같은 가드가 막는다
+    # (`check_container_runtime_caps_tool_time` · #436). 이 스키마가 0을 계속 받는 것은 옛
+    # manifest와 Fake 런타임 프로필 때문이다.
     tool_seconds: int = Field(default=0, ge=0)
 
 
@@ -78,6 +80,13 @@ class ModelSampling(HarnessModel):
     모델마다 다르고(예: Qwen3-8B는 `top_k 20`, Foundation-Sec·granite는 없음) 기록에
     안 남으면 모델 비교에서 샘플링 차이가 모델 차이로 섞인다(evaluation.md §2.3).
 
+    ⏵ 2026-10-08 — 「`temperature`·`top_p`만 보내므로」(2026-08-29 `7bc68c6`)는 낡았다.
+    registry `sampling`이 선언한 모델은 `temperature`·`top_p`·`top_k`·`min_p`·
+    `presence_penalty`를 요청에 싣는다(`RequestSampling` -> `extra_params`, `f695dab`
+    2026-09-25 #261). `top_k` 선언은 `f59d63c`(2026-09-26)부터 -> `qwen3.8-27b`·
+    `feyospace-v1-small` 둘(20). `repetition_penalty`는 여전히 안 보낸다. 응답 쪽 서술은
+    재확인 안 함.
+
     **필드가 전부 optional인 것은 모델마다 선언하는 부분집합이 다르기 때문이다.** `None`은
     "그 모델의 `generation_config.json`이 이 키를 선언하지 않았다" = 서버가 vLLM 기본값을
     쓴다는 뜻이지 값이 0이라는 뜻이 아니다. 지어내지 않고 파일에 있는 것만 담는다.
@@ -88,9 +97,9 @@ class ModelSampling(HarnessModel):
     # **`0`과 `-1`은 스키마 밖 값이 아니라 "비활성"이라는 정상 선언이다.** HF는 `top_k: 0`,
     # vLLM은 `-1`을 그 뜻으로 쓴다. `Sampling`(우리가 **보내는** 값)이었다면 `ge=1`이 맞지만
     # 이쪽은 **모델이 선언한 것을 그대로 받아 적는** 자리라, 정상 선언을 스키마 밖으로 밀어내면
-    # 그 모델의 기록이 통째로 사라진다(`read_declared_sampling`이 검증 실패 시 전부 버린다).
-    # 그러면 `temperature 0.7 · top_k 0`을 선언한 모델이 "선언 없음"으로 남아, #99가 막으려던
-    # 오독을 정확히 반대 방향에서 재생산한다.
+    # 그 키가 기록에서 사라진다(`read_declared_sampling`은 검증 실패한 키만 버린다). 그러면
+    # `temperature 0.7 · top_k 0`이 `top_k` 미선언(`None`)으로 남고, `top_k 0`만 선언한 모델은
+    # 빈 `ModelSampling()` = "선언 없음"이 된다 — #99가 막으려던 오독을 반대 방향에서 재생산한다.
     top_k: int | None = Field(default=None, ge=-1)
     repetition_penalty: float | None = Field(default=None, gt=0.0)
 
@@ -259,10 +268,18 @@ class RunRecord(UtcModel):
     # 역할 → 그 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). `sampling`이
     # 보낸 값이라면 이쪽은 서버가 모델 파일에서 적용하는 값이다 — `top_k`·`repetition_penalty`는
     # 하네스가 안 보내고 요청·응답에도 안 실려 이 필드로만 기록에 남는다.
+    # ⏵ 2026-10-08 — 위 두 줄(2026-08-29 `7bc68c6`)은 `top_k`에 대해 낡았다. registry
+    # `sampling`이 요청에 실린다(`RequestSampling` -> `extra_params`, `f695dab` 2026-09-25 #261):
+    # `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`. `top_k`를 처음 선언한 것은
+    # `f59d63c`(2026-09-26) — 그 모델을 쓰는 역할은 보낸 `top_k`가 `model_request_params`에도
+    # 남는다. `repetition_penalty`는 여전히 안 보낸다. 응답 쪽 서술은 재확인 안 함.
     #
     # **`| None`이고 기본값 `None`인 것은 device·repo_dirty와 같은 관용구다.** `None`은
     # "이 manifest는 기록하지 않았다"(이 필드 이전에 쓰인 기록)이고, `{}`는 "기록했으나
-    # 선언 샘플링을 읽을 실서빙 모델이 없었다"(Fake 프로필·`source` 없는 모델)로 서로 다르다 —
+    # 선언 샘플링을 읽은 역할이 없었다"로 서로 다르다. 빠지는 길은 둘이다 -> (a) 읽기 시도
+    # 없음: `PROMPTED_ROLES` 밖·서빙 모델 없음(Fake 포함) (b) 읽었으나 `None`: `source` 없음·
+    # 경로 리졸브 실패·파일 없음·파일 깨짐(`declared_sampling_by_role` docstring).
+    # 읽었으나 선언이 0개인 역할은 빈 `ModelSampling()`으로 dict에 남으므로 `{}`가 아니다 —
     # 새 run은 항상 dict(비어도)를 남기므로 `None`은 옛 manifest에서만 나온다. 그래서 이
     # 필드를 늘려도 `test_a_manifest_written_before_tool_seconds_still_loads`가 지키는
     # "옛 manifest는 로드된다"가 깨지지 않는다.
@@ -314,10 +331,21 @@ class RunRecord(UtcModel):
     # CPG가 못 본 줄은 모델도 못 본다 — `partial`로 돈 run이 그 사실 없이 비교표에 서지 않게
     # 남긴다. `None`은 슬라이스 없이 돈 run(파일·심볼 타깃)이다.
     slicer: dict[str, str | int | None] | None = None
-    # 채점기(oracle)를 켠 run의 제출 요약 (#386) — `{vul_submitted, vul_failed, final, record}`.
+    # 채점기(oracle)를 켠 run의 제출 요약 (#386) —
+    # `{vul_submitted, vul_failed, final, final_reason, record}` - 여기에 **0이 아닐 때만**
+    # `vul_intermediate`(중간 gen 시도 수)·`vul_candidates`(최종 후보 수 - `vul_intermediate`가
+    # 있으면 0이어도 있다)·
+    # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)가
+    # 붙는다.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
-    # `none`(지정할 후보가 없었다) · `not_reached`(8단계가 끝까지 안 돌았다)이고 `record`는
-    # 사이드카의 run_dir 상대 경로다.
+    # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급 또는
+    # `confidence`를 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
+    # `all_vul_submissions_failed`·`rate_limited`·`grade_unknown`) ·
+    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 예산·서버 쪽 게이트웨이
+    # 오류로 끊겨도 이미 낸 최종 후보가 있거나 추가 PoV 대상에서 끊긴 run은 최종 단계를 부르고
+    # 끝난다)이고 `record`는 사이드카의 run_dir 상대 경로다.
+    # 카나리에 기댄 run은 `canary_path`(풀어 쓴 경로)·`canary_sha256`(게이트가 **검사한 바이트의**
+    # 해시)가 더 붙는다 - 점수가 어느 보고서에 기댔는지 사후에 변호하는 값이다(#487).
     # **판정 값(종료 코드·`success`)은 여기에 없다** — 서버가 돌려준 값이라 사이드카에 두고, 이
     # 매니페스트에는 **무슨 일이 있었는지**(몇 건을 냈고 몇 건이 실패했고 최종이 있었나)만 싣는다.
     # 그래야 「최종 PoC가 없다」·「제출이 전부 실패했다」가 `trace.jsonl`을 안 열고도 보인다.

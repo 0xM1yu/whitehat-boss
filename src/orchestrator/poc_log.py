@@ -37,9 +37,9 @@
 
 **바이트로 쓴다.** `open(…, "xb")`는 개행을 번역하지 않는다. 텍스트로 쓰면 Windows에서 파일은
 CRLF인데 digest는 LF 본문의 해시가 되어 digest가 그 파일과 안 맞는다 — `_write`
-(`src/adapters/container_tools.py`)가 실제로 그 상태이고 #387이 그것이다. `os.open`을 직접 쓰면
-Windows에서 `O_BINARY`를 따로 주지 않는 한 같은 번역이 난다(2026-10-02 이 장비에서 LF가 CRLF로,
-CRLF가 CR·CR·LF로 바뀌는 것을 실측했다) — 그래서 `open`이다.
+(`src/adapters/container_tools.py`)가 그 상태였고(#387) 지금은 바이트 쓰기로 고쳐졌다.
+`os.open`을 직접 쓰면 Windows에서 `O_BINARY`를 따로 주지 않는 한 같은 번역이 난다
+(2026-10-02 이 장비에서 LF가 CRLF로, CRLF가 CR·CR·LF로 바뀌는 것을 실측했다) — 그래서 `open`이다.
 
 **digest는 파일에서 계산하고, 되읽은 바이트를 조립한 바이트와 대조한다.** 파일에서만 계산하면
 digest는 그 파일에 대해 항상 참인데 번역된 바이트가 「의도된 내용」으로 굳는다(#387이 그 방안의
@@ -57,13 +57,15 @@ digest는 그 파일에 대해 항상 참인데 번역된 바이트가 「의도
 `_seq`가 0에서 다시 시작해 남은 `.tmp`와 앞선 `.poc`(`os.replace`가 최종 이름을 덮는다)에
 부딪힌다 — 그때 번호 부여를 같이 고친다.
 
-**임시 경로는 새로 만든다(`x` = `O_CREAT|O_EXCL`).** 이미 있는 것은 심링크여도 따라가지 않고
-`FileExistsError`다 — WSL Ubuntu(Python 3.12.3)에서 살아 있는 링크·끊어진 링크 둘 다 거절하고 대상이
-안 만들어지는 것을 실측했다. `O_NOFOLLOW`는 안 건다: 말단 하나만 막는데 `O_EXCL`이 이미 그것을
-하고, Windows에는 그 플래그가 없다. **막지 못하는 것** — `pov_poc/`나 그 상위가 디렉터리
-심링크·정션으로 바뀐 경우(WSL에서 상위 심링크는 따라가는 것을 실측했다), Windows의 `CREATE_NEW`가
-심링크 말단을 거절하는지(이 장비는 심링크 권한이 없어 못 쟀다). run_dir을 쓸 수 있는 쪽은 이미
-신뢰 경계 안이라는 전제다.
+**임시 경로는 새로 만든다(`x` = `O_CREAT|O_EXCL`) — 그리고 연 뒤 신원을 견준다.** Linux에서는
+`O_EXCL`만으로 말단 심링크를 따라가지 않는다 — WSL Ubuntu(Python 3.12.3)에서 살아 있는 링크·끊어진
+링크 둘 다 거절하고 대상이 안 만들어지는 것을 실측했다. **Windows는 다르다** — `CREATE_NEW`가 살아
+있는 링크는 거절하지만 **끊어진 링크는 따라가** 대상에 새 파일을 만든다(이슈 #565 · 2026-10-09
+Windows 11 · CPython 3.14.5 실측). 그래서 열고 나서 우리 fd(`fstat`)와 그 경로 말단(`lstat`)의
+신원이 다르면 거절한다(`_refuse_if_followed`). `O_NOFOLLOW`는 안 건다 — Windows에는 그 플래그가
+없다(실측). **막지 못하는 것** — `pov_poc/`나 그 상위가 디렉터리 심링크·정션으로 바뀐
+경우(WSL에서 상위 심링크는 따라가는 것을 실측했다). run_dir을 쓸 수 있는 쪽은 이미 신뢰
+경계 안이라는 전제다.
 
 **쓰기 실패(`OSError`)는 여기서는 올린다.** 흡수하는 곳은 `_pov_finish`다 — PoV는 추가형이라
 사이드카는 부가 산출물이고 실패가 run을 죽이면 안 된다(「캡슐 미스는 finding을 죽이지 않는다」가
@@ -106,6 +108,7 @@ import contextlib
 import errno
 import os
 from pathlib import Path
+from typing import BinaryIO
 
 from src.ids import sha256_digest
 
@@ -164,6 +167,7 @@ class PocLog:
         tmp = final.with_name(final.name + ".tmp")
         self._dir.mkdir(parents=True, exist_ok=True)
         handle = open(tmp, "xb")  # FileExistsError면 남의 것이라 여기서 그대로 올린다
+        _refuse_if_followed(handle, tmp)
         try:
             with handle:
                 handle.write(poc)
@@ -176,3 +180,32 @@ class PocLog:
                 tmp.unlink(missing_ok=True)
             raise
         return f"{DIR_NAME}/{final.name}", sha256_digest(written)
+
+
+def _refuse_if_followed(handle: BinaryIO, tmp: Path) -> None:
+    """`open(tmp, "xb")`이 **말단 링크를 따라갔으면** 거절한다(#565).
+
+    Windows의 `CREATE_NEW`는 끊어진 심링크를 따라가 **링크 대상**에 새 파일을 만든다(2026-10-09
+    실측 — Windows 11 · CPython 3.14.5). 그러면 우리 바이트가 run_dir 밖에 쓰이고 `os.replace`가
+    링크를 rename해 성공으로 보고된 ref가 밖을 가리킨다. 그래서 연 **뒤에** 우리 fd의 신원
+    (`fstat`)과 그 경로의 말단 신원(`lstat` — 링크면 링크 자신)을 견준다. 다르면 따라간 것이다.
+    `fstat`은 우리 fd라 TOCTOU가 없고 `O_NOFOLLOW`가 없는 플랫폼에도 걸린다. Linux는 `O_EXCL`이
+    이미 거절해 이 갈래에 안 온다.
+
+    거절하며 **심긴 링크는 지우지 않는다**(남의 것 — 위 `write` docstring). 대신 **우리가 방금 만든
+    대상 파일**은 지운다: 링크를 푼 경로의 신원이 우리 fd와 같을 때만이다(그 사이 바뀌었으면 남의
+    것이라 둔다).
+    """
+    opened = os.fstat(handle.fileno())
+    at_path = os.lstat(tmp)
+    if (opened.st_ino, opened.st_dev) == (at_path.st_ino, at_path.st_dev):
+        return
+    handle.close()
+    with contextlib.suppress(OSError):
+        target = Path(os.path.realpath(tmp))
+        made = os.lstat(target)
+        if (made.st_ino, made.st_dev) == (opened.st_ino, opened.st_dev):
+            target.unlink()
+    raise FileExistsError(
+        errno.EEXIST, "임시 경로가 링크라 그 대상에 열렸다 — 따라가지 않는다", str(tmp)
+    )

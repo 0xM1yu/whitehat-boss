@@ -39,7 +39,7 @@ from src.adapters.fake_tools import TOOL_KINDS
 from src.config import load_config
 from src.ids import sha256_digest
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError, Usage
-from src.orchestrator import prompt_log, runner
+from src.orchestrator import poc_log, prompt_log, runner
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov, preprocess
@@ -314,9 +314,9 @@ def test_a_failed_attempt_takes_its_number_so_a_leftover_temp_file_never_blocks_
 def test_a_symlink_at_the_temp_path_is_not_followed(tmp_path: Path) -> None:
     """임시 경로의 심링크를 **따라가 대상 파일을 덮지 않는다** — 살아 있는 링크도 끊어진 링크도.
 
-    `O_NOFOLLOW`를 따로 걸지 않은 근거가 이 검사다: `O_EXCL`이 이미 말단 심링크를 거절한다
-    (`FileExistsError`). 심링크 권한이 없는 환경(일반 Windows)에서는 건너뛴다 — 그곳의 `CREATE_NEW`
-    동작은 이 검사가 못 잰다.
+    Linux에서는 `O_EXCL`이 말단 심링크를 거절한다. Windows의 `CREATE_NEW`는 **끊어진** 링크를
+    따라가므로 연 뒤 신원 대조(`_refuse_if_followed`)가 막는다(#565 — 수정 전 권한 있는 Windows에서
+    이 검사가 둘째 바퀴에서 빨갰다). 심링크 권한이 없는 환경(일반 Windows)에서는 건너뛴다.
     """
     victim = tmp_path / "victim"
     victim.write_bytes(b"ORIGINAL")
@@ -335,6 +335,38 @@ def test_a_symlink_at_the_temp_path_is_not_followed(tmp_path: Path) -> None:
 
     assert victim.read_bytes() == b"ORIGINAL"
     assert not dangling.exists(), "끊어진 링크의 대상이 만들어졌다 — 링크를 따라갔다"
+
+
+def test_a_path_whose_identity_differs_from_the_opened_file_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """연 fd(`fstat`)와 경로 말단(`lstat`)의 신원이 다르면 **링크를 따라간 것**이라 거절한다(#565).
+
+    Windows의 `CREATE_NEW`는 끊어진 링크를 따라가는데, 그 갈래는 심링크 권한이 있는 Windows에서만
+    위 검사가 실제로 탄다(이 저장소 CI·권한 없는 장비에서는 skip). 그래서 `lstat`을 갈아 끼워 같은
+    상황을 세운다 — 신원 대조를 지우는 변이를 이 검사가 잡는다. 말단은 **남의 것**으로 보이므로
+    지우지 않는다(위 「남의 것은 안 지운다」와 같은 성질).
+    """
+    log = PocLog(tmp_path / "run")
+    real_lstat = poc_log.os.lstat
+
+    def lstat(path: object) -> os.stat_result:
+        found = real_lstat(path)
+        if str(path).endswith(".poc.tmp"):
+            # 경로 말단이 우리가 연 파일이 아니다 — 링크를 따라갔다. 진짜 stat_result에서 신원만
+            # 바꾼다(POSIX `os.path.realpath`가 같은 `lstat`을 불러 `st_mode`를 읽는다).
+            fields = list(found[:10])
+            fields[1], fields[2] = -1, -1  # st_ino, st_dev
+            return os.stat_result(fields)
+        return found
+
+    monkeypatch.setattr(poc_log.os, "lstat", lstat)
+
+    with pytest.raises(FileExistsError):
+        log.write(b"CLOBBER")
+
+    assert not (log.directory / "0001.poc").exists(), "거절했는데 최종 파일이 생겼다"
+    assert (log.directory / "0001.poc.tmp").exists(), "남의 것으로 보이는 말단을 지웠다"
 
 
 # --- 위치 — 다른 쓰는 쪽·전처리기와 겹치지 않는다 -------------------------------------
@@ -405,21 +437,30 @@ def test_a_previous_runs_poc_inside_the_target_tree_never_reaches_a_prompt(
 
 # --- 루프 종단 — 모든 갈래가 마지막 gen의 PoC를 남긴다 ---------------------------------
 
-_EXITS = ("submitted", "max_hop", "repeat_spec", "absorbed_hop1_failure")
+_EXITS = (
+    "submitted", "max_hop", "repeat_spec", "repeat_spec_after_another_gen", "absorbed_hop1_failure",
+)
 
 
-def _exit_case(max_hops: int, name: str) -> tuple[list[object], PovStopReason, bytes]:
+def _exit_case(pov_hops: int, name: str) -> tuple[list[object], PovStopReason, bytes]:
     """종단 갈래별 (모델 스크립트, 정지 사유, **마지막 gen이 조립하는 바이트**)."""
     return {
         # gen 둘 → submit: 파일은 **마지막** gen(5바이트)이다. 첫 gen(3바이트)이 아니다.
         "submitted": ([_gen(count=3), _gen(count=5), _SUBMIT], PovStopReason.SUBMITTED, b"A" * 5),
-        # 모델이 매 홉 다른 gen만 낸다 — hop `max_hops`의 gen(count=max_hops+1)에서 선다.
+        # 모델이 매 홉 다른 gen만 낸다 — hop `pov_hops`의 gen(count=pov_hops+1)에서 선다.
         "max_hop": (
-            [_gen(count=n) for n in range(1, max_hops + 5)],
+            [_gen(count=n) for n in range(1, pov_hops + 5)],
             PovStopReason.MAX_HOP,
-            b"A" * (max_hops + 1),
+            b"A" * (pov_hops + 1),
         ),
         "repeat_spec": ([_gen(count=8), _gen(count=8)], PovStopReason.REPEAT_SPEC, b"A" * 8),
+        # A→B→A: hop2에서 선다. 파일은 **서게 한 gen**의 바이트(3)이지 직전 gen(5)이 아니다 — 그
+        # gen이 「마지막 gen」이다. 끝의 `_gen(count=7)`은 이 경로가 아닐 때 닿는 자리(MAX_HOP)다.
+        "repeat_spec_after_another_gen": (
+            [_gen(count=3), _gen(count=5), _gen(count=3), _gen(count=7)],
+            PovStopReason.REPEAT_SPEC,
+            b"A" * 3,
+        ),
         "absorbed_hop1_failure": (
             [_gen(count=8), SchemaParseError("bad at hop1")],
             PovStopReason.PARSE_FAILED,
@@ -440,7 +481,7 @@ def test_every_exit_that_holds_a_poc_files_the_last_gen_and_names_it_in_the_even
     것은 그 일곱이 `gen → submit` 한 경로만 지났기 때문이다. 종단 사유로 가르지 않는 것이 이
     설계의 요점이다(회수가 목적이다).
     """
-    actions, reason, expected = _exit_case(ctx.config.thresholds.max_hops, exit_name)
+    actions, reason, expected = _exit_case(ctx.config.thresholds.pov_tool_hops, exit_name)
 
     scripted, run_dir, result = _loop(ctx, tmp_path, actions)
 
@@ -752,20 +793,23 @@ def test_gen_hop_events_carry_the_poc_sha256_and_other_hops_do_not(
     assert "poc_sha256" not in hops[1].data and "poc_sha256" not in hops[3].data
 
 
-@pytest.mark.parametrize("exit_name", ["max_hop", "repeat_spec"])
+@pytest.mark.parametrize(
+    "exit_name", ["max_hop", "repeat_spec", "repeat_spec_after_another_gen"]
+)
 def test_the_stopping_gen_hop_event_also_carries_the_poc_sha256(
     ctx: RunContext,  # noqa: F811
     tmp_path: Path,
     exit_name: str,
 ) -> None:
     """루프를 **세우는** gen 홉(max_hop·repeat)의 이벤트에도 해시가 실린다 — 정지 이벤트만 따로
-    빼먹기 쉬운 자리다. 종단 이벤트의 `poc_sha256`과 같아야 한다."""
-    actions, _, expected = _exit_case(ctx.config.thresholds.max_hops, exit_name)
+    빼먹기 쉬운 자리다. 종단 이벤트의 `poc_sha256`과 같아야 한다 — A→B→A로 서는 repeat도 서게 한
+    gen(A)의 해시이지 직전 gen(B)의 것이 아니다."""
+    actions, reason, expected = _exit_case(ctx.config.thresholds.pov_tool_hops, exit_name)
 
     scripted, _, _ = _loop(ctx, tmp_path, actions)
 
     last = _hops(scripted)[-1]
-    assert last.data["action"] == "gen" and last.data["stop_reason"] == exit_name
+    assert last.data["action"] == "gen" and last.data["stop_reason"] == reason.value
     assert last.data["poc_sha256"] == hashlib.sha256(expected).hexdigest()
     assert last.data["poc_sha256"] == _terminal(scripted).data["poc_sha256"]
 

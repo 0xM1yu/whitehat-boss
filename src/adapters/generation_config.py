@@ -126,6 +126,12 @@ def declared_sampling_by_role(
     `ModelSampling()`으로 맵에 남는다** — granite·Foundation-Sec가 그 모양이고, 그것은
     우리 구멍이 아니라 **관측된 실험 사실**이라 기록에서 사라지면 안 된다.
 
+    ⏵ 2026-10-08 — 「"읽지 못한" 역할뿐」(2026-09-01)은 정확하지 않다. 빠지는 길은 둘이다 ->
+    (a) 읽기 시도 없음: `PROMPTED_ROLES` 밖·`served.get(role)`이 `None`(Fake 포함) — 아래 루프가
+    `read_declared_sampling`을 안 부르고 `continue` (b) 읽었으나 `None`: `source` 없음·경로
+    리졸브 실패·파일 없음·파일 깨짐. Fake는 (b)가 아니라 (a)다
+    (`dev_fake`의 `served_models()`가 `{}`).
+
     그래서 **부재의 뜻이 하나로 좁혀졌다**: "이 역할의 선언 샘플링을 읽지 못했다."
     HF 캐시는 저장소 밖이라 사후 확인이 불가능하므로, 이 구분이 없으면 그 run의 샘플링
     축을 나중에 검증할 수 없다.

@@ -18,6 +18,8 @@ from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from src.adapters.openai_compat import OpenAICompatModelClient
 from src.bench import (
     BATCH32,
@@ -37,8 +39,9 @@ from src.bench import (
 )
 from src.bench_metrics import METRIC_KV_USAGE
 from src.config import PROMPTED_ROLES, HarnessConfig
+from src.orchestrator.nodes import auditor as auditor_node
 from src.orchestrator.nodes import scout as scout_node
-from src.orchestrator.prompt_loader import load_prompt
+from src.orchestrator.prompt_loader import PromptTemplate, load_prompt
 from src.schemas.enums import Role
 
 # `--apply`가 건드리는 키. `config.Benchmark`의 필드와 **같아야 한다** —
@@ -112,6 +115,29 @@ def run_bench(
     }
 
 
+def schema_for(
+    role_enum: Role, template: PromptTemplate, declared: type[BaseModel]
+) -> type[BaseModel]:
+    """그 역할·그 프롬프트 판으로 **노드가 실제로 요청하는** 구조화 출력 스키마.
+
+    scout·auditor 자리는 **버전별로 스키마가 갈린다**(scout v1·v2=Candidate, v3=ScoutResponse 래퍼 ·
+    auditor 한 방 판=Finding, 도구 루프 판=AuditorAction). ⏵ 2026-10-06 — 루프 봉투가 둘이라
+    v8·v9=`AuditorAction`, v10=`AuditorProcedureAction`이다(위 `AuditorAction`은 v8·v9의 이름).
+    노드가 프롬프트 meta가 선언한 것을
+    요청하므로(`nodes/scout.py`·`nodes/auditor.py`) bench도 같은 것을 재야 **운영 grammar**를 재는
+    것이 된다 — 그 자리에서 `ROLE_SPEC`의 스키마는 캡슐 레벨 전용이 된다.
+
+    **함수로 뺀 이유**: `_measure_role` 안의 `if/elif`로 두면 그 분기를 `elif False:`로 막아도
+    검사가 초록이었다(문자열 핀만 있었다 — CLAUDE.md 2.5의 「검사가 무는 것을 세게 적지 않는다」).
+    엔드포인트 없이 부를 수 있는 자리로 빼면 성질을 직접 묻는다.
+    """
+    if role_enum in scout_node.SCOUT_ROLES:
+        return scout_node.resolve_output_schema(template.output_schema)
+    if role_enum is Role.AUDITOR:
+        return auditor_node.resolve_output_schema(template.output_schema)
+    return declared
+
+
 def _measure_role(
     config: HarnessConfig,
     role: str,
@@ -130,14 +156,10 @@ def _measure_role(
         return {**head, "skipped": FAKE_SKIP}
 
     role_enum = Role(role)
-    schema, level = ROLE_SPEC[role_enum]
+    declared, level = ROLE_SPEC[role_enum]
     tokens = config.thresholds.budget_for(level)
     template = load_prompt(role_enum, entry.prompt_template_version)
-    # scout 자리는 버전별로 스키마가 갈린다(v1·v2=Candidate, v3=ScoutResponse 래퍼). 노드가
-    # 프롬프트 meta가 선언한 것을 요청하므로(`nodes/scout.py`), bench도 같은 것을 재야
-    # 운영 grammar를 재는 것이 된다 — ROLE_SPEC의 scout 스키마는 캡슐 레벨 전용이 된다.
-    if role_enum in scout_node.SCOUT_ROLES:
-        schema = scout_node.resolve_output_schema(template.output_schema)
+    schema = schema_for(role_enum, template, declared)
     startup = check_startup(entry.endpoint, model_key)
     head |= {
         "capsule_level": level.value,

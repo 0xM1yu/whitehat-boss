@@ -6,6 +6,7 @@
 
 특정 장비의 접속·잡 실행 절차는 여기 없다. 그건 운용 사항이라
 [tools/probe/README.md](../tools/probe/README.md)와 래퍼 스크립트에 있다.
+예외 하나 -> Windows에서 원격 교대 실모델 run을 세우는 순서는 §1 「Windows에서 원격 교대 run 절차」.
 
 ## 1. 하네스가 장비에 요구하는 것
 
@@ -16,11 +17,87 @@
 | Python 3.11.4+ | 아무것도 안 된다 | — |
 | OpenAI 호환 엔드포인트 (실서빙 프로필만) | `fake://` 프로필은 그대로 돈다 | 스킴이 어댑터를 고른다. `models.yaml`의 `endpoint` |
 | 컨테이너 런타임 (도구 프로필만) | `tool_runner: fake` 프로필은 그대로 돈다 | `doctor`가 PATH를 보고 WARN. `--tool-runner`로 갈아끼운다 |
-| GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다. 🔴 ⏵ 2026-10-03 — **실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을 204,963이 넘겨 `stopped_after: 4`). 합성·소형 타깃 이야기다 — 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424) |
+| GPU | 실서빙·도구 프로필만 필요 | `dev_fake`·`dev_hybrid`는 GPU 없이 0~9단계를 완주한다. 🔴 ⏵ 2026-10-03 — **실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을 204,963이 넘겨 `stopped_after: 4`). 합성·소형 타깃 이야기다 — 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424). ⏵ 2026-10-03 밤 — **닫혔다**: #427이 `dev_fake` 예산의 토큰 상한을 `0`(= 상한 없음)으로 내렸다(위 문장은 `1fa2182`의 사진). 깨끗한 트리 완주 재현은 `dev_fake` 하나다 — 같은 예산을 쓰는 `dev_hybrid` 등의 재현은 이 줄의 근거에 없다 |
+| Joern·JDK (실모델 run — 슬라이스를 만들 때만) | 실모델 Scout 좌석의 프롬프트(v3, meta `input: slice`)가 `--slices` 없이 모델에 닿는 run을 시작하지 않는다 — 실모델 run은 슬라이스에 경질 의존이다 | 개발 장비(Windows·WSL)에는 `joern`·`java`가 0건이었다. 슬라이싱은 CPU 장비를 따로 빌려 한다(이슈 #479 (a)(b)) |
 | `nvidia-smi --query-gpu`가 **GPU 메모리를 보고할 것** | `mem_gb_ctx8k`를 GB로 못 얻는다 | 사유를 남기고 0으로 둔다. 추정하지 않는다. **PATH에 없는 것과, 있는데 `[N/A]`를 주는 것은 다른 사유로 기록된다** — GB10은 통합메모리라 별도 VRAM이 없어 후자다(2026-08-17 실측). 그 경우 이 쿼리로는 고칠 것이 없다. **`--query-compute-apps`는 같은 장비에서 값을 주지만**(2026-09-03 실측) PID별이고 context 고정이 아니라 이 필드를 바로 채우지 못한다 ([보고서](experiments/harness/2026-09-03-model-swap-sleep-atom.md) §3.4) |
 
 **GPU 아키텍처·드라이버·CUDA 버전·스케줄러·호스트명은 목록에 없다.** 하네스 코드가 그
 값들을 읽지 않기 때문이다.
+
+### 실모델 run의 선결조건 (이슈 #479)
+
+2026-10-04 실모델·실도구 run을 세우며 문서가 비어 막혔던 자리다. 코드 결함이 아니라 문서 결함이었다.
+
+- **슬라이스가 먼저다.** 프롬프트 meta가 `input: slice`인 역할이 그 프로필에 있으면(지금은 실모델 Scout
+  좌석의 v3) 모델에 닿는 run은 `--slices` 없이 시작하지 않는다(`--dry-run`·낮은 `--stop-after`는 막지
+  않는다 — `cli`, ADR 0012 결정 1). 슬라이싱에는 Joern(그 run은 4.0.646)과 JDK(21)가 든다 — 그 run은
+  별도 vast 박스에 깔아(그 박스의 사양은 보고서에 근거가 없다) 후보 1,047 → 슬라이스 220을 18.9분에
+  만들었다. 슬라이서 장비는 모델 서빙 장비와 별개여도 된다(슬라이스는 파일로 받는다).
+- **하네스와 채점 서버(오라클)는 같은 네트워크 namespace에서 돈다.** 오라클은 `127.0.0.1:8666`에만
+  바인드한다(`0.0.0.0`은 금지). 이슈 #479 (d)가 보고한 것: WSL2 **기본(NAT) 네트워킹**에서 Windows의
+  `127.0.0.1:8666`은 WSL에서 안 닿고, 그 run은 오라클을 WSL 안에 다시 띄우다가 결국 하네스를 Windows로
+  옮겨 풀었다. 그리고 WSL에서는 `/mnt/c`의 git worktree를 못 읽어(`.git`이 Windows 절대경로) 원격 교대
+  스크립트(`vast-bootstrap.sh`·`swap-remote.sh`가 `git -C "$ROOT" rev-parse HEAD`를 쓴다)를 돌리려면 WSL
+  안의 네이티브 clone이 필요하다. ⚠ **이 서술은 이슈 본문의 진술이고 그 로그는 저장소에 없다** — 두 run
+  모두 오라클에 닿지 못했다(`vul_submitted: 0`). 저장소 안 보고서가 적는 WSL run `0002`의 실제 실패는
+  Docker 소켓이 없는 것이었다(§4).
+- ⚠ **미실측**: WSL2 mirrored 네트워킹과 네이티브 Linux에서 위 namespace 문제가 안 생기는지는 **0회 관측**이다(win11·WSL 기본 네트워킹만 했다).
+- **이 목록의 접속 가능한 부분은 `cli preflight`(#534)가 한 번에 본다** — 원격 교대 환경변수·bash 해소·터널 포트·원격 커밋·(교대 없는 프로필의) 서빙 포트·채점기 TCP·API 키 모양·카나리 보고서와 현재 Docker VM·과제 번들·도구 이미지의 인덱서. ⚠ 통과가 run의 거부를 전부 되풀이한 것은 아니다(`doctor`도 돌린다). 자동화는 `--strict`로 돌린다 — 건너뛴 점검(WARN)이 있으면 exit 4다. 이 PC에서 실제 원격으로 끝까지 돌려 본 적은 없다(미실측). ⏵ 2026-10-07 — 실 vast 박스에 붙여 셸 셋으로 돌렸다(이슈 #538 본문). 저장소에 남은 결과는 교대 환경변수·bash 해소 두 점검뿐이다(아래).
+
+#### Windows에서 원격 교대 run 절차 (이슈 #538)
+
+장비 `vastai-remote` -> 하네스·도구·오라클은 로컬, 서빙만 vast. 스크립트별 세부는 각 파일 머리 주석.
+
+🔴 **셸 하나로는 preflight를 통과하지 못한다.** 2026-10-07 실 vast 박스, `harness_pool` · main `5828a0a`(이슈 #538 본문):
+
+| 셸 | 교대 환경변수 | bash 해소 |
+| --- | --- | --- |
+| Git Bash `export` | ERROR -> `SWAP_REMOTE_ROOT`가 `C:/Program Files/Git/root/harness`로 바뀐다 | OK |
+| PowerShell `$env:` | OK | ERROR -> `C:\Windows\system32\bash.EXE`(WSL 런처) |
+| **PowerShell + `Git\usr\bin`을 PATH 앞에** | **OK** | **OK** |
+
+- 기제 -> MSYS가 네이티브 파이썬에 넘기는 환경변수 값의 POSIX 경로를 바꾼다 · `model_swap._resolved`의 `shutil.which`가 PATH를 앞에서부터 본다(레지스트리 PATH면 System32가 앞).
+- 2026-10-08 이 PC 재현 -> 가짜 호스트(`SWAP_SSH_HOST=nohost.invalid`)로 `python -m src.cli preflight --profile harness_pool --device vastai-remote`를 세 셸에서 돌려 위 표와 같은 판정. 원격 커밋 점검은 호스트가 없어 ERROR라 그 너머는 안 봤다.
+- Git Bash 대안 -> `MSYS2_ENV_CONV_EXCL="SWAP_REMOTE_ROOT;SWAP_REMOTE_PYTHON"`. 둘 다 빼야 한다. 2026-10-08 이 PC, 두 값 `export` 뒤 `py -3.11`이 받은 `os.environ`:
+  - 제외 없음 -> `C:/Program Files/Git/root/harness` · `C:/Program Files/Git/usr/bin/python3`
+  - `SWAP_REMOTE_ROOT`만 -> `/root/harness` · `C:/Program Files/Git/usr/bin/python3`
+  - 둘 다 -> `/root/harness` · `/usr/bin/python3`
+- 같은 날 가짜 호스트 preflight는 둘 다 뺀 형태에서 두 점검 OK. ⚠ preflight는 `SWAP_REMOTE_ROOT`의 모양만 본다(`preflight_remote.py` `check_swap_env`) -> `SWAP_REMOTE_ROOT`만 빼도 OK가 나오고 바뀐 `SWAP_REMOTE_PYTHON`은 못 잡는다. 그 값은 `swap-remote.sh`가 `HARNESS_PYTHON`으로 원격에 넘긴다 -> 원격에서 깨지리라는 것은 코드 읽기이고 실행 확인은 없다. 실 박스·run은 미실측. `MSYS_NO_PATHCONV=1`은 안 쓴다 -> `git -C`가 깨진다(2026-10-04 보고서 §3.3).
+- 그래서 1·4는 Git Bash, 5·6은 PowerShell + PATH다. 1·4의 값은 bash 안에서만 쓰여 변환이 안 걸린다(1은 2026-10-07 Git Bash 통과 — #538 본문).
+
+```bash
+# Git Bash
+# 1) 원격 사본 — 로컬 HEAD를 원격 루트에 푼다. 커밋이 바뀌면 다시(미커밋 변경은 안 간다)
+SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> SWAP_REMOTE_ROOT=/root/harness \
+  SWAP_REMOTE_PYTHON=/usr/bin/python3 bash tools/serve/vast-bootstrap.sh
+# 2) 원격 감시자 — run마다 하나
+ssh -p <포트> root@<호스트> 'cd /root/harness && MAX_HOURS=10 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &'
+# 4) 터널 — 별도 창, run 동안 둔다
+SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/vast-tunnel.sh
+```
+
+3) 교대는 손으로 안 한다 -> run이 단계마다 장비 파일 `command`(`swap-remote.sh`)로 원격 `swap.sh`를 부른다. 손으로 띄운 서버가 남으면 다음 run 교대가 ABORT한다([2026-10-04 보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md) §3.1) -> 원격에서 `HARNESS_RUN_ID=<그 run id> bash tools/serve/swap.sh`로 내린다.
+
+```powershell
+# PowerShell — 5·6은 같은 창
+$env:PATH = "C:\Program Files\Git\usr\bin;$env:PATH"   # Git 설치 경로의 usr\bin. System32보다 앞
+$env:SWAP_SSH_HOST = 'root@<호스트>'
+$env:SWAP_SSH_PORT = '<포트>'
+$env:SWAP_REMOTE_ROOT = '/root/harness'
+$env:SWAP_REMOTE_PYTHON = '/usr/bin/python3'
+# CYBERGYM_API_KEY도 이 창에서 $env:로 세운다. 값은 문서·명령문·run 기록에 적지 않는다
+# 5) preflight — ERROR가 있으면 exit 2. 0이어야 6으로
+python -m src.cli preflight --profile harness_pool --device vastai-remote `
+  --task-dir <번들> --oracle-server http://127.0.0.1:8666 --oracle-canary <카나리.json>
+# 6) run
+python -m src.cli run --profile harness_pool --device vastai-remote --condition B3prime@pipeline `
+  --slices <slices.json> --task-dir <번들> --task-work-dir <빈 디렉터리> --artifacts-root <저장소 밖> `
+  --oracle-canary <카나리.json> --oracle-submit --oracle-server http://127.0.0.1:8666
+```
+
+- 원격 커밋 점검은 `ssh -o BatchMode=yes`다 -> 암호를 묻는 키면 ERROR. 키를 에이전트에 올려 둔다.
+- `<slices.json>`의 경로에는 `src-vul/` 접두어가 있어야 한다 -> [slicer-README.md](slicer-README.md) 「`--task-dir`로 쓸 슬라이스」.
+- ⚠ 이 절차로 6까지 끝까지 돈 run은 아직 없다 — 미실측. 5의 두 점검까지만 위 표가 근거다.
 
 ## 2. 무엇으로 확인되는가
 
@@ -30,7 +107,7 @@
 | --- | --- | --- |
 | 실행 코드에 장비 고유명이 없다 | `src/**`를 AST로 파싱해 주석·docstring을 뺀 뒤 장비명·아키·스케줄러 이름을 찾는다 | 0건. 남는 것은 `docker`/`singularity`/`podman`(config가 고르는 런타임 이름)과 ~~`NVFP4`(registry의 양자화 값)~~뿐이고, 둘 다 장비가 아니라 설정을 가리킨다. ⏵ 2026-09-24 — `NVFP4`는 이제 안 남는다: `src/` 문자열 상수(docstring 제외)에 0건이고 registry의 `quantization`에도 없다(가중치는 bf16 그대로 · `gpt-oss-20b`만 MXFP4 — 조민규). 장비명 쪽 판정은 다시 안 쟀다 |
 | 전 프로필이 GPU·네트워크 없이 진단을 통과한다 | 모든 프로필에 `doctor` 실행 | ~~8/8~~, ERROR 0건. ⏵ 2026-09-24 — 지금 프로필은 일곱이고 다시 돌려 **7/7 · ERROR 0건**이다(`cli doctor --profile` 일곱, 로스터 밖 정리 뒤) |
-| GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주. 🔴 ⏵ 2026-10-03 — **실 Level 1 번들에서는 `stopped_after: 4`**(#424). 상한을 제거하면 완주한다 |
+| GPU 없이 파이프라인이 완주한다 | `dev_fake`·`dev_hybrid`로 `run` | 완주. 🔴 ⏵ 2026-10-03 — **실 Level 1 번들에서는 `stopped_after: 4`**(#424). 상한을 제거하면 완주한다. ⏵ 2026-10-03 밤 — #427이 그 상한을 내려 **제거 없이 완주한다**(#424 CLOSED — 재현은 그 PR 본문, `dev_fake`) |
 | 테스트가 GPU·네트워크 없이 돈다 | CI(`ubuntu-latest`, GPU 없음) | 전 테스트 통과 |
 | 프로브가 `pip install` 없이 돈다 | import 그래프를 따라가며 `sys.stdlib_module_names` 밖을 찾는다(`tests/test_probe.py`) | stdlib 밖 0건. `src/__init__.py`까지 따라간다 |
 | 측정 절차가 장비 사이에서 같다 | `tools/probe/run_probe.sh` 하나를 두 래퍼가 공유한다 | 래퍼는 잡 실행·접속만 감싼다 |
@@ -130,6 +207,7 @@ python -m src.cli doctor --profile harness_pool --device seraph
 | 2 | **`single_gpu_12g`의 scout `qwen3-4b`가 `fp8`이다.** FP8 텐서코어는 Ada(sm_89) 이상이다 | Ada(sm_89) 미만 — Ampere 포함 | ~~미해결. **셋 중 진단 비용이 가장 크다**(아래)~~ **2026-09-24 소멸 — 그 프로필과 키를 지웠다**(로스터 밖 정리). 아래 「#2가 #1보다 위험한 이유」는 그때의 서술이다 |
 | 4 | `tool_images` digest를 **런타임 사이에서도 아키텍처 사이에서도** 비교할 수 없다. 런타임마다 적는 값의 종류가 다르고(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest), 같은 Dockerfile이라도 아키텍처가 다르면 **다른 이미지**라 digest가 다르다 | 런타임 혼용(docker↔singularity↔podman) **또는** 아키텍처 혼용(x86_64↔aarch64) | [STATUS.md](../STATUS.md) §10. `RunRecord.tool_runner`가 **런타임 축만** 드러낸다 — 아키텍처 축은 기록에 없고 `device` 라벨이 §6 표를 거쳐 간접적으로 가리킬 뿐이다. **두 축 모두 실측으로 뒷받침된다**(아래) |
 | 5 | **`qwen3-4b`(`fp8`)가 sm_121에서 `VLLM_USE_DEEP_GEMM=0` 없이 기동하지 않는다.** DeepGEMM이 fp8 scale-factor 레이아웃을 변환하지 못해 가중치 로딩 후처리에서 죽는다(`Unknown SF transformation`, 2026-08-17 ATOM 실측) | ATOM(sm_121) — **플래그 없이** | **해소(기동 인자로).** 플래그를 주면 뜨고, 그 사실과 오진 방향이 `config/models.yaml`의 해당 모델 주석에 있다(⏵ 2026-09-24 — 그 `qwen3-4b` 항목은 로스터 밖 정리로 지웠다 — git 이력과 [ADR 0007](decisions/0007-atom-qwen3-4b-first-measurement.md)). **#2와 반대 방향이라 같은 행에 넣지 않았다** — #2는 "카드가 낡아서" 못 돌고 이쪽은 "카드는 충분히 새로운데 백엔드가 그 레이아웃을 못 다뤄서" 못 돈다. R1(커널 호환성)은 bf16으로 통과했고 양자화 커널은 그 범위 밖이었다 — 이것이 그 첫 사례다 |
+| 6 | **`PocLog.write`의 `open(…, "xb")`(`x` = `O_CREAT`+`O_EXCL`)가 Windows에서 끊어진 심링크를 따라간다.** `pov_poc/NNNN.poc.tmp` 자리에 없는 곳을 가리키는 링크가 심겨 있으면 PoC 바이트가 **run_dir 밖 링크 대상에 새 파일로** 쓰이고, `write()`는 **성공 ref·digest를 돌려준다** — `os.replace`가 링크 자체를 rename하므로 `NNNN.poc`도 심링크로 남아 trace의 `poc_ref`·`poc_sha256`이 run_dir 밖을 가리킨다. **살아 있는 링크는 `CREATE_NEW`가 거절한다**(`FileExistsError`) — 구멍은 **끊어진 링크 한 갈래**다 | Windows + **심링크 생성 권한이 있는** 계정. 권한이 없으면 `tests/test_poc_log.py:314`의 그 검사가 `skip`되어 증상이 안 보인다 — **저장소의 초록이 장비 권한에 달려 있다**. CI(`ubuntu-latest`)는 마지막 성공 run `37227620542`(2026-10-04 · `93f78f2`)에서 통과 -> 그 뒤 Actions 미가동(결제) | **해소 ⏵ 2026-10-09 — 선택지 (b)**: 연 뒤 우리 fd(`fstat`)와 경로 말단(`lstat`)의 신원이 다르면 거절하고 우리가 만든 대상 파일만 지운다(`poc_log._refuse_if_followed`). 아래는 등재 때 서술 -> 이슈 [#565](https://github.com/0xM1yu/whitehat-boss/issues/565)이 선택지 (a)~(d)를 든다. **2026-10-09 실측**(Windows 11 10.0.26200 · CPython 3.14.5 · 버리는 프로브 2개): 끊어진 링크에서 `open(…,"xb")`와 `os.open(O_CREAT`+`O_EXCL`+`O_BINARY)`가 **둘 다 따라가고**(살아 있는 링크는 둘 다 거절), `hasattr(os, "O_NOFOLLOW")`는 **False**다 — `poc_log` 모듈 docstring이 적은 *"Windows의 `CREATE_NEW`가 심링크 말단을 거절하는지 … 못 쟀다"*는 이 실측으로 낡았다. **Linux는 다시 재지 않았다** — 그쪽 근거는 그 docstring의 WSL Ubuntu(Python 3.12.3) 실측(둘 다 거절)이다. ⚠ **형제 쓰는 쪽이 안 걸리는 이유는 `O_EXCL`이 아니다** — `fake_tools.write_input`(`src/adapters/fake_tools.py:73`)이 `open` **앞에** `unlink`를 하고 `ContainerToolRunner`도 그 함수를 쓴다. `PocLog.write`에는 그 `unlink`가 없다. 같은 장비에서 링크를 심는 검사 11건 중 **실패는 `poc_log` 하나**다 |
 
 **`#`는 고정 ID다.** 해소된 항목을 지울 때 뒤 번호를 당기지 않는다 — [model-serving.md](model-serving.md) §3이
 `#5`를 이름으로 가리킨다(`config/models.yaml`의 `qwen3-4b` 주석도 가리켰는데 그 키는 2026-09-24에 지웠다).

@@ -25,6 +25,7 @@ from src.adapters.factory import build_deps
 from src.adapters.fake_retriever import FakeRetriever
 from src.adapters.hybrid_retriever import HybridRetriever
 from src.adapters.index_graph import (
+    _INCLUDE_DEPTH,
     GRAPH_SECTION_KINDS,
     STATUS_LOADED,
     STATUS_MALFORMED,
@@ -33,6 +34,7 @@ from src.adapters.index_graph import (
     SUPPORTED_INDEX_VERSIONS,
     V2_TABLES,
     V3_TABLES,
+    V4_TABLES,
     GraphIndex,
     IndexSummary,
     fit_names,
@@ -876,7 +878,7 @@ def _v1_v2(tmp_path: Path) -> tuple[GraphIndex, GraphIndex]:
 
 def test_the_reader_still_accepts_index_v1():
     """v1·v2 문서는 계속 읽힌다 — 그 이미지로 돈 run의 산출물이 남아 있다."""
-    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2", "index-v3"}
+    assert set(SUPPORTED_INDEX_VERSIONS) == {"index-v1", "index-v2", "index-v3", "index-v4"}
 
 
 def test_v2_calls_give_the_same_graph_edges_as_the_v1_list(tmp_path: Path):
@@ -2056,3 +2058,293 @@ def test_a_misshapen_v3_document_is_refused_whole(broken: dict, tmp_path: Path):
     assert graph.summary.status == STATUS_MALFORMED
     assert graph.table("writes") is None
     assert graph.names_for("callers", _PARSE_HEADER) is None
+
+
+# --- index-v4: include 도달성 · enum 상수 · 같은 사실의 행 -----------------------------------
+#
+# v4는 v3 위에 `includes`(파일 → 지시문)·`enum_constants`를 더하고 앞선 선언 typedef 행에
+# `forward`를 붙인다. 아래 문서는 손으로 적었다 — 줄 번호는 이 문서 안에서만 뜻이 있다.
+#
+#   app/main.c ─ "util.h"(같은 디렉터리) · "../include/defs.h"(상대) · <cfg/config.h>(접미)
+#   app/util.h ─ "deep.h"
+#   include/defs.h, cfg/config.h, other/config.h(접미 `cfg/config.h`에 안 맞는다)
+#   win/defs.h · unix/defs.h — `TRUE`를 각자 정의하는 다른 헤더(앵커가 include하지 않는다)
+_V4_FILES = [
+    "app/main.c",
+    "app/util.h",
+    "app/deep.h",
+    "include/defs.h",
+    "cfg/config.h",
+    "other/config.h",
+    "win/defs.h",
+    "unix/defs.h",
+]
+
+
+def _macro(file: str, line: int = 1) -> dict:
+    return {"file": file, "line_start": line, "line_end": line}
+
+
+_INDEX_V4 = {
+    **_INDEX_V3,
+    "version": "index-v4",
+    "files": _V4_FILES,
+    "includes": {
+        "app/main.c": [
+            {"line": 1, "path": "util.h", "system": False},
+            {"line": 2, "path": "../include/defs.h", "system": False},
+            {"line": 3, "path": "cfg/config.h", "system": True},
+            {"line": 4, "path": "stdio.h", "system": True},
+        ],
+        "app/util.h": [{"line": 1, "path": "deep.h", "system": False}],
+    },
+    "macros": {
+        **_INDEX_V3["macros"],
+        # 닿는 헤더 하나 + 안 닿는 헤더 둘 -> 닿는 것으로 정해진다
+        "TRUE": [_macro("include/defs.h"), _macro("win/defs.h"), _macro("unix/defs.h")],
+        # 깊이 2(main.c -> util.h -> deep.h)에서 닿는다
+        "DEEP": [_macro("app/deep.h"), _macro("win/defs.h")],
+        # 꺾쇠 include의 접미 해석 — `cfg/config.h`는 맞고 `other/config.h`는 안 맞는다
+        "CFG": [_macro("cfg/config.h"), _macro("other/config.h")],
+        # 닿는 헤더 둘 -> 여전히 못 가른다
+        "BOTH": [_macro("include/defs.h", 2), _macro("app/util.h", 2)],
+        # 아무 데도 안 닿는다 -> 예전처럼 안 싣는다
+        "NOWHERE": [_macro("win/defs.h", 3), _macro("unix/defs.h", 3)],
+    },
+    "enum_constants": {
+        "PseudoClass": [
+            {"file": "include/defs.h", "line_start": 5, "line_end": 9, "enum": "ClassType"}
+        ],
+        "DirectClass": [
+            {"file": "include/defs.h", "line_start": 5, "line_end": 9, "enum": "ClassType"}
+        ],
+    },
+}
+
+
+def test_the_reader_accepts_index_v4_and_exposes_its_tables(tmp_path: Path) -> None:
+    """v4 표는 v4 문서에서만 나온다 — v3 이하는 `None`(「없다」)이다."""
+    v4 = _graph(tmp_path / "v4", _INDEX_V4)
+    v3 = _graph(tmp_path / "v3", _INDEX_V3)
+
+    assert "index-v4" in SUPPORTED_INDEX_VERSIONS
+    assert v4.summary.status == STATUS_LOADED
+    assert all(v4.table(name) for name in V4_TABLES)
+    assert all(v3.table(name) is None for name in V4_TABLES)
+    assert v4.table("writes") == v3.table("writes")
+
+
+def test_definitions_of_narrows_several_definitions_to_the_one_the_anchor_includes(
+    tmp_path: Path,
+) -> None:
+    """후보가 여럿이고 앵커 파일에 없으면, 앵커가 `#include`로 닿는 파일의 후보가 **하나뿐일 때만**
+    그것을 싣는다. 같은 디렉터리(`util.h`) · 상대 경로(`../include/defs.h`) · 전이(`deep.h`) · 꺾쇠
+    접미(`cfg/config.h` — `other/config.h`는 접미가 달라 안 닿는다)를 다 탄다. 닿는 것이 둘(`BOTH`)
+    이거나 없으면(`NOWHERE`) 예전처럼 안 싣는다."""
+    names = ["TRUE", "DEEP", "CFG", "BOTH", "NOWHERE"]
+
+    found = _graph(tmp_path, _INDEX_V4).definitions_of(names, "app/main.c")
+
+    assert found == [
+        Location(file="app/deep.h", symbol="DEEP", line_start=1, line_end=1),
+        Location(file="cfg/config.h", symbol="CFG", line_start=1, line_end=1),
+        Location(file="include/defs.h", symbol="TRUE", line_start=1, line_end=1),
+    ]
+
+
+def test_definitions_of_without_an_include_table_keeps_the_old_rule(tmp_path: Path) -> None:
+    """v3 문서(`includes` 없음)는 같은 정의 행에서 아무것도 안 싣는다 — 도달성은 v4에만 있다."""
+    v3_doc = {**_INDEX_V3, "files": _V4_FILES, "macros": _INDEX_V4["macros"]}
+    names = ["TRUE", "DEEP", "CFG", "BOTH", "NOWHERE"]
+
+    assert _graph(tmp_path, v3_doc).definitions_of(names, "app/main.c") == []
+
+
+def test_include_reachability_does_not_follow_past_the_depth_limit(tmp_path: Path) -> None:
+    """닫힘은 `_INCLUDE_DEPTH`단까지다 — 사슬 끝의 헤더는 안 닿고, 그 이름은 안 싣는다."""
+    chain = [f"h{depth}.h" for depth in range(_INCLUDE_DEPTH + 2)]
+    doc = {
+        **_INDEX_V4,
+        "files": ["a.c", "far.h", *chain],
+        "includes": {
+            "a.c": [{"line": 1, "path": chain[0], "system": False}],
+            **{
+                chain[depth]: [{"line": 1, "path": chain[depth + 1], "system": False}]
+                for depth in range(len(chain) - 1)
+            },
+        },
+        "macros": {
+            "NEAR": [_macro(chain[_INCLUDE_DEPTH - 1]), _macro("far.h")],
+            "FAR": [_macro(chain[_INCLUDE_DEPTH]), _macro("far.h", 2)],
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["NEAR", "FAR"], "a.c")
+
+    assert [loc.symbol for loc in found] == ["NEAR"]
+
+
+def test_a_quoted_include_prefers_the_includers_directory_and_a_suffix_keeps_ties(
+    tmp_path: Path,
+) -> None:
+    """따옴표 include는 포함 파일 디렉터리의 파일이 먼저다(`x/a.c` → `x/c.h`, `y/c.h`가 아니다).
+    접미로만 맞으면 성분이 가장 적은 것들이고 그래도 여럿이면 전부 닿는다(`z/c.h` → `p/c.h` ·
+    `q/c.h` 둘 다 — 그러면 두 곳에 정의된 이름은 못 가른다)."""
+    doc = {
+        **_INDEX_V4,
+        "files": ["x/a.c", "x/c.h", "y/c.h", "z/b.c", "p/c.h", "q/c.h", "r/s/c.h"],
+        "includes": {
+            "x/a.c": [{"line": 1, "path": "c.h", "system": False}],
+            "z/b.c": [{"line": 1, "path": "c.h", "system": False}],
+        },
+        "macros": {
+            "XY": [_macro("x/c.h"), _macro("y/c.h")],
+            "PQ": [_macro("p/c.h"), _macro("q/c.h")],
+            "PR": [_macro("p/c.h", 2), _macro("r/s/c.h")],
+        },
+    }
+    graph = _graph(tmp_path, doc)
+
+    assert [loc.file for loc in graph.definitions_of(["XY"], "x/a.c")] == ["x/c.h"]
+    assert graph.definitions_of(["PQ"], "z/b.c") == []
+    assert [loc.file for loc in graph.definitions_of(["PR"], "z/b.c")] == ["p/c.h"]
+
+
+def test_reachability_runs_after_nonproduct_demotion(tmp_path: Path) -> None:
+    """강등(`demote_nonproduct`)이 먼저다 — 비제품 행을 뺀 뒤 남은 제품 행으로 도달성을 본다.
+    `tests/defs.h`는 앵커가 include해도 제품 정의가 있으면 후보가 아니다."""
+    doc = {
+        **_INDEX_V4,
+        "files": [*_V4_FILES, "tests/defs.h"],
+        "includes": {
+            **_INDEX_V4["includes"],
+            "app/main.c": [
+                *_INDEX_V4["includes"]["app/main.c"],
+                {"line": 5, "path": "../tests/defs.h", "system": False},
+            ],
+        },
+        "macros": {"T2": [_macro("include/defs.h"), _macro("tests/defs.h"), _macro("win/defs.h")]},
+    }
+    graph = _graph(tmp_path, doc)
+
+    assert graph.definitions_of(["T2"], "app/main.c") == []
+    assert graph.definitions_of(["T2"], "app/main.c", demote_nonproduct=True) == [
+        Location(file="include/defs.h", symbol="T2", line_start=1, line_end=1)
+    ]
+
+
+def test_definitions_of_attaches_an_enum_constant_as_its_whole_enum(tmp_path: Path) -> None:
+    """enum 상수(v4 `enum_constants`)는 그 enum 정의 전체 범위로 붙는다. 같은 enum의 상수 둘을
+    물으면 같은 범위가 둘 나온다 — 겹치는 범위는 읽는 쪽(`runner`)이 한 번만 싣는다."""
+    found = _graph(tmp_path, _INDEX_V4).definitions_of(["PseudoClass", "DirectClass"], "app/main.c")
+
+    assert [(loc.symbol, loc.file, loc.line_start, loc.line_end) for loc in found] == [
+        ("DirectClass", "include/defs.h", 5, 9),
+        ("PseudoClass", "include/defs.h", 5, 9),
+    ]
+
+
+def test_rows_with_the_same_span_count_once(tmp_path: Path) -> None:
+    """`typedef struct Z {…} Z;`는 범위가 같은 행 둘(struct · typedef)을 낸다 — 같은 사실이라 하나로
+    센다. 판과 상관없다(v2 문서에서도). 범위가 다른 두 행(`#if` 양쪽 가지)은 그대로 둘이다."""
+    doc = {
+        **_INDEX_V2,
+        "types": {
+            "Z": [
+                {"file": "z.h", "line_start": 2, "line_end": 4, "kind": "struct"},
+                {"file": "z.h", "line_start": 2, "line_end": 4, "kind": "typedef"},
+            ],
+            "W": [
+                {"file": "w.h", "line_start": 2, "line_end": 4, "kind": "struct"},
+                {"file": "w.h", "line_start": 7, "line_end": 9, "kind": "struct"},
+            ],
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["Z", "W"], "parser.c")
+
+    assert found == [Location(file="z.h", symbol="Z", line_start=2, line_end=4)]
+
+
+def test_a_forward_typedef_gives_way_to_the_body_in_its_own_file(tmp_path: Path) -> None:
+    """`typedef struct X X;`(v4 `forward`)와 **같은 파일의** `struct X {…}`가 같이 있으면 본문
+    행을 싣는다. 본문이 다른 파일에 있으면(`api.h`의 `Y` · `impl.c`의 본문) 두 행이 다 남아 안
+    붙는다 — 어느 파일이 어느 파일을 include하는지 모르는 채 앞선 선언을 지우지 않는다. 본문이
+    없으면 앞선 선언 행이라도 싣는다(그 이름의 유일한 사실)."""
+    forward = {"file": "mxf.c", "line_start": 1, "line_end": 1, "kind": "typedef", "forward": True}
+    doc = {
+        **_INDEX_V4,
+        "types": {
+            "X": [forward, {"file": "mxf.c", "line_start": 3, "line_end": 9, "kind": "struct"}],
+            "Y": [
+                {**forward, "file": "api.h"},
+                {"file": "impl.c", "line_start": 4, "line_end": 8, "kind": "struct"},
+            ],
+            "Opaque": [{**forward, "file": "api.h", "line_start": 2, "line_end": 2}],
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["X", "Y", "Opaque"], "mxf.c")
+
+    assert found == [
+        Location(file="api.h", symbol="Opaque", line_start=2, line_end=2),
+        Location(file="mxf.c", symbol="X", line_start=3, line_end=9),
+    ]
+
+
+def test_a_forward_row_is_not_dropped_for_an_unrelated_row_in_another_file(tmp_path: Path) -> None:
+    """리뷰 #485 (a): `forward` 표시만 믿고 「같은 이름의 **어떤** 다른 행」 때문에 지우면 후보가
+    `b.h`의 `typedef int X;` 하나로 줄어 도달성 검사를 건너뛴다. 읽는 쪽이 같은 파일의 본문 행을
+    직접 확인하므로 표시가 틀려도(옛 인덱서 산출물) 앵커가 include하는 `a.h`의 행이 남는다."""
+    doc = {
+        **_INDEX_V4,
+        "files": ["main.c", "a.h", "b.h"],
+        "includes": {"main.c": [{"line": 1, "path": "a.h", "system": False}]},
+        "types": {
+            "X": [
+                {"file": "a.h", "line_start": 1, "line_end": 1, "kind": "typedef", "forward": True},
+                {"file": "b.h", "line_start": 1, "line_end": 1, "kind": "typedef"},
+            ]
+        },
+    }
+
+    found = _graph(tmp_path, doc).definitions_of(["X"], "main.c", demote_nonproduct=True)
+
+    assert found == [Location(file="a.h", symbol="X", line_start=1, line_end=1)]
+
+
+@pytest.mark.parametrize(
+    "broken",
+    [
+        pytest.param(
+            {key: value for key, value in _INDEX_V4.items() if key != "includes"},
+            id="v4-without-includes",
+        ),
+        pytest.param(
+            {**_INDEX_V4, "includes": {"app/main.c": [{"line": 1, "path": "a.h"}]}},
+            id="v4-include-without-system",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V4,
+                "includes": {"app/main.c": [{"line": 1, "path": "a.h", "system": "no"}]},
+            },
+            id="v4-system-not-a-bool",
+        ),
+        pytest.param(
+            {
+                **_INDEX_V4,
+                "enum_constants": {
+                    "A": [{"file": "e.h", "line_start": 0, "line_end": 1, "enum": None}]
+                },
+            },
+            id="v4-enum-line-zero",
+        ),
+    ],
+)
+def test_a_misshapen_v4_document_is_refused_whole(broken: dict, tmp_path: Path) -> None:
+    """v4라고 적고 v4 표가 모자라거나 모양이 다르면 통째로 거절한다 — v3와 같은 규칙."""
+    graph = _graph(tmp_path, broken)
+
+    assert graph.summary.status == STATUS_MALFORMED
+    assert graph.definitions_of(["TRUE"], "app/main.c") is None

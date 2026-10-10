@@ -25,6 +25,8 @@
 `dev_fake` 프로필로 0~9단계가 완주하고, 동일 조건 재실행 시 trace가 재현된다.
 🔴 **⏵ 2026-10-03 — 실제 CyberGym Level 1 번들에서는 완주하지 않는다**(`input_tokens 200,000`을
 204,963이 넘겨 `stopped_after: 4`). 이슈 [#424](https://github.com/0xM1yu/whitehat-boss/issues/424).
+⏵ **2026-10-03 밤 — 닫혔다.** PR #427이 `dev_fake`의 토큰 상한을 `0`(= 상한 없음)으로 내려 이슈가 닫혔다(13:55:38Z) —
+깨끗한 트리로 완주한 재현은 그 PR 본문이 적는다(`repo_dirty: false` · `stopped_after: null`). 위 문장은 `1fa2182`의 사진이다.
 비어 있는 부분은 전부 `src/adapters/` 쪽이므로 **오케스트레이터를 고치지 않고 교체 가능**하다.
 
 ```
@@ -116,7 +118,9 @@
 **실제 산출물 형식** (`indexer.INDEX_VERSION == "index-v1"`, 읽는 쪽이 모르는 버전은 거절).
 ⏵ 2026-09-26 — 지금은 `index-v2`다: `calls`가 callee → [{file, line, caller, args}]로 묶였고
 조회 표 여덟이 더해졌다(`tools/README.md` 인덱서 절). ⏵ 2026-10-03 — `index-v3`(#304)가 v2 표를
-그대로 두고 `writes`·`fn_bindings`·`field_calls`를 더한다. 아래는 v1 시절 모양이다:
+그대로 두고 `writes`·`fn_bindings`·`field_calls`를 더한다. ⏵ 2026-10-04 — `index-v4`가 v3 표를 그대로
+두고 `includes`·`enum_constants`를 더한다(`types`의 앞선 선언 typedef 행에 `forward`). 아래는 v1 시절
+모양이다:
 ```json
 {
   "version": "index-v1",
@@ -260,7 +264,7 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 
 ### 🟡 PoV(PoC) 생성 — 러너 배선·과제 로더·툴 루프 착지, 실서빙 전
 
-**현재:** `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
+**현재:** `Role.POV` + `prompts/pov/v4/`(2026-10-08 배선, 그전은 v3(2026-10-05~)·v2) + `nodes/pov.py`(다중 홉 툴 루프 — 매 홉 `PovAction` → `gen`이면
 `PovSpec` → 순수·결정론 `assemble_poc` → 바이트, council 2026-09-30 fork B-iii)에 더해, 러너가
 `Stage.VALIDATE`에서 `validate.run`과 **나란히** pov를 `_run_pov_hops` 루프로 부른다(추가형 — 캡슐
 미스·스키마·버릴 수 있는 게이트웨이 실패는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽
@@ -269,28 +273,48 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(조민규 선정)는 §1 8단계 pov 좌석으로
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
-⚠ **호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다** — PoC 바이트가 아직 도구 입력으로 안 들어가
-(`run_tool`이 도구 argv·workdir만 넘긴다) 관측이 PoC와 무관하다. 그 전에는 `harness_pool`의 8단계를 돌리지 않는다.
+⏵ **2026-10-09 — 그 조건이 섰다**(ADR 0014(`docs/decisions/0014-poc-tool-runs-the-task-image.md`) · 이슈 #513). `poc` 도구가 과제 자신의 `-vul` 이미지에
+PoC를 `/tmp/poc`로 바인드해 돌리므로 **그 도구의 관측은 PoC의 함수다.** 🔴 `inspect` 홉의
+`asan`·`gdb`·`build` 셋은 그대로다 — 셋을 바꾸려면 우리가 대상을 빌드해야 하고 그 안은 기각됐다
+(이슈 #507). 전 판은 *"호스트 후속 전에는 실서빙 pov 루프를 켜지 않는다"*였고 그 문장이 막던
+조건이 이것이다. **효과는 미실측이다** — 그 뒤로 돈 run이 0건이다.
 
-**남은 것(서빙+도구 되는 호스트 필요):** `poc` 실행파일 materialize + E4 게이트 · feyospace 실서빙
+**남은 것(서빙+도구 되는 호스트 필요):** E4 게이트 전이 · feyospace 실서빙
 실측(checksum·benchmark·홉수). 외부 CyberGym oracle 제출은 `run --oracle-submit`(기본 꺼짐)으로 들어왔다 —
 대역으로만 검증했고 하네스 run으로 실서버 왕복을 잰 것은 0건이다. ⏵ **2026-10-03 — 「대역으로만」은
-vul 다리에 한해 깨졌다**(`run_20261003_0003`이 실서버에 8건 제출, 전부 200). **왕복(vul→fix→조회)은
+vul 다리에 한해 깨졌다**(`win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`)이 실서버에 8건
+제출, 전부 200 — **고유 PoC 1개**, `cached` 미적중 1·적중 7). **왕복(vul→fix→조회)은
 여전히 0건**이다 — 후보 8건이라 최종 PoC를 지정하지 않았다
-([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). `fix` 다리·판정은 vul 제출이 성공한
-후보가 하나일 때만 돈다 — 둘 이상이면 고르는 규칙이 정해지지 않아 안 돈다. `PovSpec` 표현력 절벽(계산 크로스필드)이
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). ⏵ **고르는 규칙은 동결·배선됐다**(2026-10-03, 조민규 · council 뒤) — 그때의 규칙은
+**내부 근거 등급 최댓값, 동점이면 거부**였고(⏵ 2026-10-04에 뒤의 거부가 사슬로 바뀌었다 — 아래)
+지정 로직이 채점기 값을 안 읽는다는 불변식에 테스트가 붙었다. 지정이 보는 등급은 8단계 `gate_eval`과 같다(`runner._grades_by_finding` — 8단계 도구 근거까지
+센다). 🔴 **`dev_fake`에서는 그래도 점수가 안 난다** — Fake `_run_repro`가 대상 소스의 존재만 봐 재현이
+전 후보에서 성공하므로 후보가 전부 E4 동점이었다(`grade_tie`). ⏵ **2026-10-04 — 그 거부를 없앴다.**
+실측 run의 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 어느 쪽을 지정해도
+제출될 바이트가 같은데 거부한 것이다. 같은 바이트는 접고(`sole_poc`) 남은 동점은 사슬
+(①등급 ②`confidence` ③작은 바이트 ④PoC 해시 — ④가 전순서다)로 넘긴다. `grade_tie`는 닿지 않는
+분기가 되어 사유 상수째 지웠다(`runner._designate_final`). 🔴 **실도구 run에서 후보 등급이 갈릴지는 미실측이다** — 2026-10-09까지는 8단계 도구 실행이
+PoC의 함수가 아니었고(⏵ ADR 0014가 `poc` 쪽을 세웠다) 그 뒤로 돈 run이 0건이다. `PovSpec` 표현력 절벽(계산 크로스필드)이
 실측되면 gen-script(코드열람·Python 스크립팅) 승격을 별도로 검토한다.
+
+⏵ **2026-10-03 밤 — 둘째 과제 계열**(`oss-fuzz:368076871`, `cybergym/oss-fuzz` 이미지)**에서도 같은 모양이다** —
+완주 · 제출 8건 전부 200 · 실패 0 · **고유 PoC 1개**(`cached` 미적중 1 · 적중 7) · `repo_dirty false`
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §11). **왕복은 두 계열 모두 0건**이고
+사유도 같다(후보 8건 → 그 시점의 지정 규칙이 등급을 읽지 않고 거부). 후보가 8인 것은 `critic_top_n`(모든 프로필 공통
+상한)에 **닿은** 값이다 — 이 run은 Fake Critic이 올라간 8건을 전부 `upheld`로 돌려줬다. ⚠ 「Finding이 둘 이상 승격되면
+후보가 둘 이상」은 **n=2 관측**이고 승격 Finding마다 PoC가 하나씩 나오는지는 코드로 확인하지 않았다(배관 증명 보고서 §11.5·§7). 등급
+변별력은 **미실측**이다 — 8단계 E4 8건 동점은 `dev_fake`의 기록이고 원인 후보는 보고서 §11.5가 든다.
 
 **선택지:**
 | 방향 | 내용 |
 |---|---|
 | A | 데이터셋에 딸린 정답 PoC 재생 (CyberGym/OSS-Fuzz) |
-| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v2/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
+| B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v4/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
 ⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
 최종 PoC 바이트까지이고(그 PoC를 채점기에 내보내 판정을 기록하는 길은 `--oracle-submit`으로 들어왔다 —
-⏵ 2026-10-03 vul 다리 8건 실측 · 왕복은 0건), 실제 크래시 재현은 후속(서빙+도구 호스트 배선)이다.
+⏵ 2026-10-03 vul 다리 제출 8건(고유 PoC 1개) 실측 · 왕복은 0건), 실제 크래시 재현은 후속(서빙+도구 호스트 배선)이다.
 
 ### 🟡 진짜 정적분석 (2단계)
 
@@ -581,7 +605,7 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 `target_skipped`로 남았다. **즉 이 run의 제거율 분모는 79도 542도 아닌 256이다** — 세 수를
 섞으면 같은 run이 세 개의 다른 제거율을 낸다. 분모로 쓸 값은 `target_plan.planned`다.
 
-### Gate E1의 `location_ok`는 여전히 작동하지 않는다 — 원인은 후보 위치가 아니었다
+### Gate E1의 `location_ok`는 여전히 작동하지 않는다(2026-08-23, #248 전) — 원인은 후보 위치가 아니었다
 
 > ⚠ **2026-09-24 — 이 절의 제목과 2026-08-23 문단들(「왼쪽에 값이 없다」·「어느 쪽도 `location=`을 넘기지
 > 않는다」·「…채워야 하고, 그것은 별개의 작업이다」)은 #248 전의 서술이다.**
@@ -589,6 +613,12 @@ zlib에서 분석 대상 artifact **79건**이 심볼 **542건**이 됐다. 그�
 > Fake 짝이 함께). clang-tidy는 그대로 `None`이다. 등급 영향이 0인 것은 아래 2026-08-25 블록 그대로다 —
 > 위치를 싣는 것이 STATIC Evidence뿐이다. 본문은 날짜 기록이라 고치지 않고, 경과는
 > [D23](docs/open-questions/D/D23.md) 본문이 든다.
+> ⏵ **2026-10-08 — 지금 `location_ok`는 참이 될 수 있다.** 6단계 `gate_eval`은 `candidate_location`을 넘기므로
+> semgrep 첫 히트 위치가 후보와 겹치면 참이다. 실관측: `run_20260924_0003` 6단계 36/36 참
+> ([보고서](docs/experiments/harness/2026-09-24-roster-smoke-atom.md) §3 실험 3, `checksum` 0 스모크라 비교표 밖).
+> `Location.overlaps()`는 한쪽에 줄이 없으면 파일 일치를 겹침으로 본다 -> 줄 범위가 빠진 후보는 파일만 맞아도 참이다
+> ([D83](docs/open-questions/D/D83.md)). 7·8단계는 `candidate_location`을 안 넘겨 거짓이다. 등급 영향 0은 그대로다 ->
+> E1은 `p1 = static_ok or location_ok`이고 위치를 싣는 것이 STATIC Evidence뿐이다(`location_ok`는 종류를 안 본다).
 
 **2026-08-23 정정.** 이 문서는 오래 "심볼 단위로 좁혀지면 `location_ok`가 비로소 작동을
 시작한다(지금은 `Evidence.location`이 후보 위치와 겹칠 일이 사실상 없다)"고 적어 왔다.

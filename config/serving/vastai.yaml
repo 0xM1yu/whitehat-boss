@@ -13,14 +13,20 @@
 # scratchpad `vast_53219060/auditor_boot.log`).
 # ⚠ 컨테이너에 docker·podman이 없다(같은 날) — 하네스 도구 단계를 어디서 돌릴지 **아직 정하지 않았다.** 그래서
 #   이 장비로 끝까지 도는 run은 아직 없다. 첫 종단 검증은 ATOM이다(`atom.yaml`).
+#   ⏵ 2026-10-08 — ATOM 종단은 2026-09-29 07:28 KST에 한 번 돌았고(`docs/experiments/harness/2026-09-29-stage-swap-smoke-atom.md`)
+#   같은 날 ATOM 사용이 끝났다(#340 · docs/portability.md §6). 도구 단계는 `vastai-remote.yaml`(하네스·도구 로컬, 서빙만 vast)로 갈랐고
+#   그 장비로 사슬이 처음 완주했다(WSL `run_20261003_0002` — 도구 4개 전부 실패 · 도구까지 돈 완주는 Windows
+#   `run_20261003_0003` — `docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md`).
+#   이 파일(`--device vastai`, 로컬 실행)로 돈 run은 `docs/experiments/` 보고서에 없다.
 # ⚠ 컨테이너 메모리 상한은 감시자의 cgroup 층이 본다(`tools/serve/guard.sh` 머리 주석 3). 감시자의 자동 탐색은
 #   cgroup v2(`/proc/self/cgroup`의 `0::` 줄)만이라, v1 컨테이너(`memory.limit_in_bytes`)면 감시자를 띄울 때
 #   `GUARD_CGROUP_DIR=/sys/fs/cgroup/memory`를 준다 — **미검증 처방이다**(v1 읽기는 가짜 트리로만 확인했다 —
 #   실제 v1 커널·vast 컨테이너에서 안 돌려 봤다). 시작 로그의 `cgroup=`이 `없음`이면 이 층이 안 돈다.
 #
 # ## command — 로컬 실행
-# 하네스와 같은 기계의 로컬 subprocess다(ADR 0009 「2026-09-29 제안」 절 6). 하네스를 vast 밖에서 돌리게 되면 이
-# 줄을 원격 실행으로 바꿀 수 있다 — 그 경로는 짓지 않았다. 이미지의 `vllm`이 PATH에 있어 `VLLM_BIN`은 안 준다.
+# 하네스와 같은 기계의 로컬 subprocess다(ADR 0009 「2026-09-29 제안」 절 6). 하네스가 vast 밖이면 이 파일 대신
+# `vastai-remote.yaml`을 쓴다 -> `command`만 ssh 래퍼(`tools/serve/swap-remote.sh`)이고 `servers`는 이 파일과 같다
+# (2026-10-03). 이미지의 `vllm`이 PATH에 있어 `VLLM_BIN`은 안 준다.
 #
 # ## 값의 성격
 # **실측은 `qwen3.8-27b` 행의 기동 하나다** — util 0.90 · 창 262,144 · parser `qwen3` · xgrammar · eager · 공통

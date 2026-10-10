@@ -1,0 +1,26 @@
+# 도구 루프 판. `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고 `config/budgets.yaml`의
+# `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다 — 둘이 어긋나면
+# `nodes/auditor.loop_problem`이 run과 doctor를 같은 문장으로 막는다.
+#
+# v9 = v8 + `auditor_guards` 서술 한 항목(`## Original-source input contract`의 목록 한 줄).
+# 그 밖은 v8과 바이트 동일이고 `tests/test_auditor_prompt_v9.py`가 그 동일성을 문다. SOURCE
+# 상한(20,000토큰)도 v8과 같다. 판을 올린 이유: 켜진 옵션을 meta `source_options`가 선언하지 않으면
+# run·doctor가 막는데(`cli._undescribed_source_options`) v8을 그 자리에서 고치면 한 판 번호가 두
+# 문장을 가리킨다(`docs/agent-contracts.md` 규칙 1).
+# ⚠ 가드 목록을 켠 효과는 미실측이고 이 판은 아직 어느 run에도 안 쓰였다 — 근거는 유병률이다
+# (`config/budgets.yaml`의 `auditor_guards`). 글자 수는 여기 적지 않는다(CLAUDE.md 2.3).
+#
+# `input` 키는 안 둔다(= `source`) — v8과 같은 이유다. 도구 여섯은 `AuditorAction.tool`의 Literal과
+# 같고 `index`는 일부러 뺐다(코드 열람은 `lookup`이 담당한다).
+# ⏵ 2026-10-07 — `qwen3.8-27b`를 v10으로 올려 지금은 어느 registry 엔트리도 이 버전을
+# 고르지 않는다. 위 첫 줄의 「엔트리가 이 버전을 고르고」는 그날까지의 기록이다. 이 판의
+# prefix·body·meta는 그대로고 `_CONTENT_AWARE_VERSIONS`에도 남는다. v10은 v9 + 한 항목이
+# **아니다** — v7에서 전면 재작성한 판이고 출력 계약이 바뀐다(봉투 `AuditorProcedureAction`,
+# 결과는 그 `procedure`에 드는 `AuditProcedure`). 그래서 이 판과 v10 사이에 바이트 동일성 핀이
+# 없다 — v10의 서술이 러너와 맞는지는 `tests/test_config.py`의 서빙판 핀이 문다.
+role: auditor
+version: v9
+output_schema: AuditorAction
+description: v8에 Auditor SOURCE 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 GUARDS)의 입력 서술을 더한 판 — 도구 루프(매 홉 AuditorAction · lookup/probe/answer)와 나머지 지시는 v8과 같다
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]

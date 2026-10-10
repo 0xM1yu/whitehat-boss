@@ -54,8 +54,20 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 **기록에 남긴다.**
 
 **신호 판정은 심볼 단위다(#70).** STATIC `Evidence.location`의 줄을 품는 심볼에만
-신호가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로 간다. 단
-위치를 못 뽑은 신호(실 clang-tidy 등)와 인덱스 없는 폴백은 artifact 단위로 되돌아간다.
+히트 순위(rank 2)가 붙는다 — 큰 파일에서 semgrep이 한 곳을 짚으면 그 심볼만 큐 상위로
+간다. 위치를 못 뽑은 신호(실 clang-tidy — `container_tools.first_hit_location`은 semgrep만
+읽는다)만 걸린 artifact는 심볼 전부가 rank 1이고, 인덱스 없는 폴백의 파일 단위 target도
+그 artifact에 STATIC 신호가 있으면 rank 1이다(없으면 0 — `_symbol_signal_rank`).
+**그래서 그 artifact는 다른 파일의 위치 있는 히트(rank 2) 뒤로 간다** — 정렬 키 첫 항이
+`-signal_rank`라 파일 순서보다 앞선다(`_order_and_cut`). #249 전에는 신호 artifact의
+심볼이 모두 동급이었으므로 그때와 다른 순서이고, `candidate_max`가 물면 그 artifact의
+심볼이 다른 파일의 히트보다 먼저 잘린다.
+이 동작을 받아들였다(#257 2).
+`--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
+`line_end`가 없다(`src/adapters/slices.py`). `_symbol_signal_rank`가 `end = line_end or start`로
+보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
+히트는 clang-tidy만 걸린 것과 같은 rank 1이다(`_plan_slice_targets`의 ponytail, 코드 읽기 +
+함수 직접 호출 — `--slices` run으로 순서를 재지는 않았다).
 **점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
 거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 
@@ -77,12 +89,18 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다. 그리고 **끝까지 시도한 뒤** 한 자리가
 한 번도 성공하지 못했으면 원인이 크기여도 멈춘다 — 그 자리는 아무것도 못 봤다.
 
-**멈추는 것과 산출물을 잃는 것은 다르다.** 셋 중 어느 갈래로 멈추든 예산 소진과 같은
-자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지 가고 `stopped_after`·사유가
-`RunRecord`에 남는다(전이 표 R-2). 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
+**멈추는 것과 산출물을 잃는 것은 다르다.** 장애 갈래 넷(교대 실패·게이트웨이 장애·연속 폐기·
+스키마 파싱 실패)은 예산 소진과 같은 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지
+가고 `RunRecord`에는 `stopped_after`가 남는다(전이 표 R-2). **사유는 `RunRecord`에 없다** — trace의
+R-2 `transition` 이벤트(`subject_kind: run`)의 `reason`이 든다. 같은 자리에서 끝나도 **밖에서 보이는
+것은 갈린다**: 예산 소진은 종료 코드 0이고 이 넷은 `cli`가 stderr `[ERROR]` 줄과 3으로 돌려준다
+(`RunResult.stop_reason` — `src/cli.py` 모듈 docstring). 예상 밖 예외(`UNFORESEEN_FAILURE`)는 이
+넷과 또 다르다 — 매니페스트·trace는 남지만 `RunResult`가 안 나오고(리포트 파일 없음) 예외를 다시
+던져 `run`은 트레이스백(1)으로 끝난다. 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
 
+import contextlib
 import hashlib
 import json
 import re
@@ -96,7 +114,7 @@ from pathlib import Path
 from typing import Protocol
 
 from src.config import SCOUT_POOL_ROLES, ConfigError, HarnessConfig
-from src.ids import IdFactory, sha256_text
+from src.ids import IdFactory, sha256_digest, sha256_text
 from src.interfaces.model_client import (
     ModelClient,
     ModelGatewayError,
@@ -130,7 +148,7 @@ from src.orchestrator.nodes.report import Report
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.poc_log import PocLog
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE
+from src.orchestrator.prompt_loader import _HARNESS_HEADER_LINE, load_prompt
 from src.orchestrator.prompt_log import PromptLog
 from src.orchestrator.source_definitions import (
     definition_names,
@@ -138,6 +156,7 @@ from src.orchestrator.source_definitions import (
     slice_line_refs,
     slice_names_first,
 )
+from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
@@ -148,6 +167,7 @@ from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
     CapsuleLevel,
+    EvidenceGrade,
     EvidenceKind,
     FindingState,
     NeStopReason,
@@ -155,6 +175,7 @@ from src.schemas.enums import (
     ReasonCode,
     Role,
     ScoutSignal,
+    Verdict,
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
@@ -435,7 +456,7 @@ class Dependencies(Protocol):
     # (이름|필드, 가까운 파일) → 쓰는 지점(index-v3, C5(a)). 같은 경계다.
     writes_of: Callable[[str, str], list[Location] | None]
     field_writes_of: Callable[[str, str], list[Location] | None]
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). 같은 경계다.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). 같은 경계다.
     definitions_of: Callable[..., list[Location] | None]
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름. 정의 조회가 본문 이름에서 뺀다. 같은 경계다.
     locals_of: Callable[[str, str], frozenset[str] | None]
@@ -520,6 +541,10 @@ class RunResult:
     candidates: tuple[Candidate, ...]
     findings: tuple[Finding, ...]
     warnings: tuple[str, ...]
+    # 9단계 전에 멈춘 사유 — `finish_run`에 넘긴 값 그대로다(`None` = 끝까지 갔다). `RunRecord`는
+    # 사유를 안 들고(trace에만 있다) `cli.run`이 종료 코드를 정하려면 여기서 받아야 한다.
+    # **기본값이 없다** — `None`이 「끝까지 갔다」로 읽혀서, 새 생성처가 빠뜨리면 조용한 0이 된다.
+    stop_reason: ReasonCode | None
 
 
 class CacheHookUnbound(RuntimeError):
@@ -726,8 +751,8 @@ class _Accumulator:
     finding_capsules: dict[str, ContextCapsule] = field(default_factory=dict)
     # 8단계 PoV가 쓸 `SOURCE` — **Auditor가 본 것과 같은 문자열**이다(사용자 지적 2026-10-02).
     # `_Once`라 PoV가 꺼내 써도 `_auditor_source`가 다시 돌지 않는다(= `auditor_source` 이벤트도
-    # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 슬라이스 타깃이 아닌 finding은 키가 없고, 그때는
-    # PoV가 예전처럼 캡슐 대상을 직접 읽는다 — 그 둘이 같은 문자열이다(`_step_auditor` 주석).
+    # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
+    # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
@@ -745,6 +770,10 @@ class _Accumulator:
     # 나누는 이유는 그 필드를 `deferred`·`dropped`와 나눈 이유와 같다 — 이쪽은 "안 올라갔다"
     # 이고 저쪽은 "올라가서 죽었다"라 한 수로 묶으면 7단계 분모가 섞인다.
     critic_failed: int = 0
+    # 그 Finding들의 id. **수가 아니라 누구인가**를 8단계가 읽는다 — 판정을 못 받고 버려진 Finding은
+    # 상태가 안 바뀌어(`HYPOTHESIZED` 그대로) 상태로는 못 가르고, `_pov_targets`가 추가 대상 풀에서
+    # 뺀다. `critic_failed`와 **한 자리에서만** 갱신된다(`_drop_finding`).
+    critic_failed_ids: set[str] = field(default_factory=set)
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
     # 어휘는 **10사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 **넷**.
     #   `_POV_CAPSULE_MISSING`      캡슐 미스 — 루프에 못 들어가 enum 값을 못 받는다
@@ -771,7 +800,7 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
-    # 채점기(oracle)의 후보별 vul 시도와 최종 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
+    # 채점기(oracle)의 모든 vul 시도와 최종 지정 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
     # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
     # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
     oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
@@ -790,6 +819,7 @@ def run_pipeline(
     deps: Dependencies,
     read_source: Callable[[Location], str],
     read_payload: Callable[[str], str | None] = lambda _ref: None,
+    read_raw: Callable[[str], bytes | None] = lambda _file: None,
     trace: TraceWriter,
     run_dir: Path | None = None,
     cache_hook: LateCacheHook | None = None,
@@ -824,6 +854,7 @@ def run_pipeline(
         read_source=read_source,
         read_slice=deps.read_slice,
         read_payload=read_payload,
+        read_raw=read_raw,
         symbols_for=deps.symbols_for,
         callees_of=deps.callees_of,
         call_sites_of=deps.call_sites_of,
@@ -912,6 +943,9 @@ def run_pipeline(
         # 끊은 것이 이쪽이다.
         stopped_after, stop_reason = exc.stage, ReasonCode.BUDGET_EXHAUSTED
         warnings.append(f"{exc.stage}단계에서 예산 소진: {exc.item} {exc.spent}/{exc.limit}")
+        # `_analyze`의 PoV 루프가 최종 지정 실패를 `add_note`로 붙여 올린다 — 이 갈래가 예외를
+        # 삼키므로 여기서 안 읽으면 그 사유는 산출물 어디에도 안 남는다(#532).
+        warnings.extend(getattr(exc, "__notes__", ()))
     except ModelSwapError as exc:
         # **아래 게이트웨이 갈래보다 먼저 잡는다** — `ModelSwapError`는 그 하위형이다. 떠 있던
         # 서버가 죽은 것이 아니라 다음 단계 서버를 띄우지 못한 것이라 대응이 다르다(장비 파일과
@@ -931,6 +965,7 @@ def run_pipeline(
         # 경고는 원인을 단언하지 않는다(「응답하지 않아」는 계약 밖 200에 거짓이다) — 원인은
         # detail이다.
         warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
+        warnings.extend(getattr(exc, "__notes__", ()))  # 위 예산 갈래와 같은 이유(#532)
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)
@@ -956,10 +991,11 @@ def run_pipeline(
         # 것은 별 작업이다(아래 `finally`(스왑 내림)와 섞이면 원래 예외가 덮인다).
         #
         # 🔴 **삼키지 않는다 — 적고, 매니페스트를 쓰고, 다시 던진다.**
-        # 삼키면 두 가지가 깨진다: ① 호출자(`cli.execute`)가 run을 성공으로 읽는다
-        # ② `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 — 그쪽은
-        # **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. 최후 방어선의 뜻은 "삼킨다"가
-        # 아니라 "**증거를 남기고** 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
+        # 삼키면 `tests/test_stage_swap.py`의 예상 밖 예외 검사 셋이 `DID NOT RAISE`가 된다 —
+        # 그쪽은 **예상 밖 예외가 올라오는 것**을 계약으로 못 박았다. (#533 이전에는 호출자
+        # (`cli.execute`)가 run을 성공으로 읽는 것도 깨졌다 — 지금은 `cli.run`이 허용목록 밖 사유를
+        # 3으로 돌려줘 그 갈래는 막혔다.) 최후 방어선의 뜻은 "삼킨다"가 아니라 "**증거를 남기고**
+        # 올려 보낸다"다. 쓰고 던지는 자리는 `finally` 바로 뒤다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.UNFORESEEN_FAILURE
         unforeseen = exc
@@ -994,7 +1030,8 @@ def run_pipeline(
     # 기록이 그대로다.
     oracle_summary = state.oracle_ledger.summary()
     if oracle_summary is not None:
-        record = record.transition(oracle=oracle_summary)
+        # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
+        record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
@@ -1099,34 +1136,21 @@ def run_pipeline(
     }
     # **등급을 리포트에 넘긴다 (#101·PR #37).** Finding에 등급 필드가 없어 등급은 게이트
     # 판정이라 trace에만 있었고, 그래서 리포트가 대표를 고를 때 등급을 못 보고(E3 삭제)
-    # 최종 산출물에 등급을 못 실었다. `gate.evaluate` 순수 함수로 다시 매긴다.
+    # 최종 산출물에 등급을 못 실었다. 계산은 `_grades_by_finding`(순수 함수 — `gate_eval`을
+    # 재발행하지 않는다)이고 최종 PoC 지정(`_finalize_oracle`)이 **같은 함수**를 부른다.
     #
-    # **`evidences_for`로 이 Finding이 참조하는 근거만 거른다** — 6·7·8단계 게이트가 전부
-    # 그렇게 하고(`gate_node`·`critic`·`validate`), 안 거르면 artifact 단위 근거 묶음의 다른
-    # Finding 근거로 등급이 올라가 제거율이 무의미해진다. Fake auditor에선 근거가 전량이라
-    # 무동작이지만 **실서빙 auditor가 붙으면 켜진다**(#36의 B1′/B3′). `ctx.evaluate_gate`가
-    # 아니라 순수 함수라 `gate_eval`을 재발행하지 않는다(제거율 분모 이중 계상 방지).
-    #
-    # **E4는 이 경로로 안 나온다** — asan 근거가 `state.evidences`가 아니라 `ctx.store`에만
-    # 들어간다. 이유는 그 하나이고, 그것을 만드는 자리가 아래 `after, _ = validate.run(...)`이다
-    # (`produced`를 반환하는데 `_`로 버린다). E4가 이 경로로도 열리면 그 근거를 여기로 모으는
-    # 일이 따라온다.
+    # **E4도 이 경로로 나온다 (#460 리뷰).** 8단계 `validate.run`이 만든 런타임 근거(`produced`)를
+    # `_analyze`가 `state.evidences`에 모으므로 이 등급이 8단계 `gate_eval`과 같다. 그 전에는 그것을
+    # 버려 E4가 `ctx.store`에만 있었고 이 경로·지정이 둘 다 E3으로 읽었다.
+    # ⚠ **그래서 리포트의 등급·대표 선정도 E4에 닿는다** - 재현에 성공한 Finding이 `[E3]`이 아니라
+    # `[E4]`로 찍히고 `dedupe`의 대표로 E4가 먼저 남는다(`report.dedupe`가 등급 우선이다).
     #
     # ⚠ **「Fake에선 E4가 원리상 도달 불가」를 두 번째 이유로 달았던 것은 거짓이라 뺐다.**
     # `FakeToolRunner._run_repro()`는 실행 대신 대상 소스의 존재를 보므로 Fake 경로에서 E4는
     # 실제로 나고, `test_e4_is_reachable_and_only_at_the_stage_that_runs_the_tools`가 그것을
     # 단언한다(2026-08-21). 못 넘는 것은 **컨테이너 러너에 가짜 `repro_spec`이 갈 때**이고
     # 그것은 빌드가 끊겨서다 — 「Fake auditor」와 「Fake 도구 러너」는 다른 축이다.
-    grades = {
-        f.finding_id: gate.evaluate(
-            f,
-            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
-            state.decisions.get(f.finding_id, ()),
-            state.missings.get(f.finding_id, ()),
-            candidate_location=by_cand.get(f.candidate_id),
-        ).grade.value
-        for f in findings
-    }
+    grades = {fid: grade.value for fid, grade in _grades_by_finding(state).items()}
     # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
     # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
     analyzed_targets = {_target_key(c.location, c.slice_id) for c in state.candidates}
@@ -1160,6 +1184,7 @@ def run_pipeline(
         candidates=tuple(state.candidates),
         findings=tuple(findings),
         warnings=tuple(warnings),
+        stop_reason=stop_reason,
     )
 
 
@@ -1202,6 +1227,8 @@ def _analyze(
                 finding=finding,
                 evidences=state.evidences.get(finding.finding_id, ()),
                 missings=state.missings.get(finding.finding_id, ()),
+                # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
+                source=state.finding_sources.get(finding.finding_id),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
@@ -1240,17 +1267,19 @@ def _analyze(
     # `validate.run`(유일한 결정론 E4 게이트)을 **먼저 전부** 돌린다. pov는 그 뒤에 추가로 돈다
     # (PoV 배선 — 추가형). 둘을 finding마다 번갈아 돌리면 pov 실패(재발생 갈래)가 뒤 finding의
     # validate.run을 건너뛰어 E4 게이트가 빠진다 — pov는 게이트를 어지럽히면 안 된다.
-    # **pov의 대상도 이 목록이다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.** 재현
+    # **pov의 대상은 이 목록으로 시작한다 — `validate.run`이 `QUEUED`로 내린 Finding도 포함한다.**
+    # (`pov_attempt_top_n`이 양수면 `_pov_targets`가 `validated` **밖의** Finding을 뒤에 더 붙인다 —
+    # 그 추가 대상은 `validate.run`을 안 돈다. 이 목록의 `validate.run` 루프는 안 넓어진다.) 재현
     # 명세가 부르는 `./poc`는 PoV가 낸 PoC 바이트를 파일로 써야 생기는데(STATUS.md §5 — E4를
     # 막는 것은 실행 환경이 아니라 PoC 생성), 이 pov는 바이트를 trace와 run 산출물 사이드카
-    # (`pov_poc/`, #355)에 남길 뿐 `./poc`로 쓰지 않는다(그 `./poc` materialize는 호스트가
-    # 필요한 후속). 그래서 실도구 경로의 E4는 여전히 그 뒤이고, 그 앞의
+    # (`pov_poc/`, #355)에 남긴다. ⏵ 2026-10-09 (ADR 0014) — 컨테이너 `poc`는 그 바이트를 과제
+    # `-vul` 이미지에 먹이므로 실도구 경로의 E4 **전제**는 섰다(게이트 전이는 그 뒤다). 그 앞의
     # `validate.run`이 재현 실패로 내린 것이 pov가 돌 이유를 지우지 않는다. `validate.run` **뒤**
     # 상태로 거르면 그 강등이 pov의 입장 조건이 되는 순환이고 PoV 시도가 준다 — 바꾸려면 사람이
     # 정한다(`tests/test_nodes.py`의 핀이 지금 동작을 고정한다).
     validated = state.in_state(FindingState.VALIDATED)
     for finding in validated:
-        after, _ = validate.run(
+        after, produced = validate.run(
             ctx,
             finding=finding,
             workdir=state.workdirs.get(finding.finding_id, "."),
@@ -1259,9 +1288,22 @@ def _analyze(
             decisions=state.decisions.get(finding.finding_id, ()),
         )
         state.update(after)
+        # **8단계가 만든 런타임 근거(build와 asan·poc 실행 로그)를 모은다.** 버리면
+        # `_grades_by_finding`이 8단계 `gate_eval`과 다른 등급(E4 대신 E3)을 계산해 최종 PoC
+        # 지정(`_designate_final`)이 E4를 못 본다 - 후보가 둘 이상이면 어느 run에서나 E3 동점이라
+        # `top_grade`가 도달 불가였다(#460 리뷰). 이것은 **하네스가 도구를 돌려 낸 내부 근거**이고
+        # 채점기 응답이 아니다 - 채점기 값은 `oracle_ledger`에만 들어가고 이 사전에는 안 닿는다
+        # (`test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다). 새 튜플이다 - 5단계가
+        # 넣은 튜플을 안 바꾼다.
+        if produced:
+            state.evidences[finding.finding_id] = (
+                *state.evidences.get(finding.finding_id, ()),
+                *produced,
+            )
     # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
     # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
-    if validated and Role.POV.value in ctx.config.profile.roles:
+    pov_targets = _pov_targets(ctx, state, validated)
+    if pov_targets and Role.POV.value in ctx.config.profile.roles:
         swap = ctx.config.swap
         # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
         # 자리다.** pov가 fake 엔드포인트·비-swappable이면 아예 안 부른다. `_swap_for`는 불리면
@@ -1269,13 +1311,133 @@ def _analyze(
         # 막는다.
         if swap is not None and Role.POV.value in swap.swappable:
             _swap_for(ctx, Stage.VALIDATE)
+        validated_ids = {f.finding_id for f in validated}
         # validate.run이 전이시킨 최신 finding으로 돈다(상태는 안 바꾸지만 기록 일관성).
-        for finding in validated:
-            _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+        for finding in pov_targets:
+            try:
+                _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
+            except (BudgetExhausted, ModelGatewayError) as stop:
+                # 🔴 **오라클에 이미 낸 PoC가 있으면 최종 지정은 하고 올린다**(#532) — 그냥 올리면
+                # `_finalize_oracle`을 건너뛰어 그 PoC의 `fix` 다리·판정 조회를 잃고
+                # `oracle.final`이 `not_reached`가 된다. 「낸 PoC」는 `_designate_final`이 읽는
+                # `candidates`(submit했고 vul 제출이 성공한 시도)다. **추가 대상**
+                # (`pov_attempt_top_n`)에서 끊긴 run은 후보가 0건이어도 이 단계를 돈다
+                # (`none`/`no_poc`) — 예산은 종전대로, 게이트웨이는 #532에서 새로다. 둘 다 아니면
+                # `not_reached`다.
+                # 사유는 새로 안 적는다 — 같은 예외를 올리면 `run_pipeline`의 갈래가 적는다.
+                # `except Exception`으로 안 넓힌 것은 일부러다 — 핸들러가 `raise`로 다시 올리므로
+                # 어느 예외가 run을 멈추느냐는 안 바뀐다. 바뀌는 것은 **임의 예외에서도 오라클
+                # 네트워크 호출(`fix` 다리·판정 조회)이 돈다**는 것이다(핀:
+                # `test_a_non_target_exception_…`).
+                # 버릴 수 있는 게이트웨이 오류는 루프가 흡수해 여기 안 온다
+                # (`_pov_classify_exception`). `ModelSwapError`(하위형)도 이 `except`에 들지만 이
+                # 루프 안에는 교대를 부르는 경로가 없다(`_swap_for`·`_swap`을 전수로 열어 확인했다 —
+                # 루프 앞·단계 진입·Critic 앞·run 끝뿐) — 그래서 전용 핀이 없다.
+                # ⚠ `_finalize_oracle`이 흡수하는 것은 `oracle.finalize`의 `Exception`과 장부
+                # 쓰기의 `OSError`뿐이다 — 그 밖에서 던지면 원 예외가 가려지므로 `add_note`로
+                # 붙이고 원 예외를 올린다. 그 예외를 `run_pipeline`의 예산·게이트웨이 갈래가
+                # **삼키므로** 그 갈래가 `__notes__`를 읽어 `warnings`에 싣는다(안 읽으면 사유가
+                # 버려진다 — 매니페스트 실패의 `add_note`는 `raise`로 올라가 트레이스백에 찍히는
+                # 것과 다르다. `ModelSwapError` 갈래는 안 읽는다 — 위 이유로 여기서 안 온다).
+                # 그 실경로는 못 찾았다(미확인).
+                if state.oracle_ledger.candidates or finding.finding_id not in validated_ids:
+                    try:
+                        _finalize_oracle(ctx, state)
+                    except Exception as exc:
+                        stop.add_note(f"최종 지정을 돌리지 못했다: {type(exc).__name__}: {exc}")
+                raise
     # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
     # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
-    # `not_reached`로 남는다.
+    # `not_reached`로 남는다 — **위 `except`가 받는 예외로 끊긴 run은 예외다**(낸 PoC가 있거나 추가
+    # 대상에서 끊겼으면 최종 지정을 하고 올린다. 그 밖의 예외는 이 예외에 안 든다).
     _finalize_oracle(ctx, state)
+
+
+def _pov_targets(
+    ctx: RunContext, state: _Accumulator, validated: list[Finding]
+) -> list[Finding]:
+    """PoV를 시도할 Finding. 기본은 `validated` 그대로고, 임계가 양수면 그 **밖에서** 더 붙인다.
+
+    **`validated`는 빼지 않는다.** `validated`는 전부 그대로 돌고, `pov_attempt_top_n`은 그 뒤에
+    붙일 수의 상한이다. 그래서 이 상한이 잘라 낸 Finding은 **종전에도 PoV를 안 돌던 것**이고,
+    **상한 자체가** 시도할 대상을 조용히 잃게 하지는 않는다(`candidate_max`가 잘린 후보를
+    `target_skipped`로 남겨야 했던 이유가 여기엔 없다 — 그쪽은 파이프라인에서 빼는 상한이다).
+    ⚠ 다만 **추가 대상은 예산을 더 쓴다** — 거기서 `BudgetExhausted`나 서버 쪽 `ModelGatewayError`가
+    나면 run은 그 자리에서 끝나지만, 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정)은 하고
+    끝난다(`_analyze` · #532). 그 밖의 예외는 최종 지정을 안 돈다.
+
+    **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
+    ① **Critic이 반박(F-6)·보류(`need_evidence`, F-7)로 판정한 것** — `gate.normalize` 뒤 판정이
+    `uphold`가 아닌 것이다(근거 없는 반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로
+    **든다**) ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
+    (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
+    Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
+    명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
+    판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
+
+    **왜 빼나.** 정렬 키가 Auditor `confidence` 하나라 반박돼도 값이 그대로다 — 풀에 두면 반박된
+    Finding이 더 높은 값으로 다른 Finding의 자리를 밀어내고, 최종 지정 사슬(`_designation_key`)은
+    등급 상한이 같으면 `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가
+    공식 최종 제출이 될 수 있다.** `need_evidence`는 반박은 아니나 같이 뺐다 — Critic이 판정을
+    남긴 Finding을 Critic을 안 거친 것과 같은 줄에 세우지 않는다(판단이 갈려 보수적으로 뺀 쪽이다).
+
+    **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
+    Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
+    (`insufficient_evidence`)에 내렸고 Critic을 한 번도 안 거쳤다
+    (`docs/experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md` §4) —
+    8단계 진입 시점의 `validated`가 비어 있었다. Level 1은 재현 명세의 근거를 주지 않아
+    (`repro_spec`이 `null`인 것이 정상이다 — 이슈 #354~#360) 인용이 고쳐져도 F-9에서 멈출 수 있다.
+    PoC가 없으면 채점 점수가 없다(`oracle.final`이 `no_poc`). 그래서 등급이 못 올라간 Finding에도
+    PoV를 시도할 길을 뒀다.
+
+    ⚠ **이 필터는 그 run의 풀을 바꾸지 않는다.** 필터는 반박된 Finding의 PoC가 최종 제출이 되는
+    것을 막지만, 이 기능이 처음 겨냥한 run(`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳐
+    `state.decisions`가 비어 있고(그래서 전부 풀에 든다), 셋 다 **Auditor가 스스로 낸 부정
+    결론**이다 — `trigger_status=no_signal` · `confidence` 0.10·0.10·0.05(같은 날 WSL
+    `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
+    풀은 그것을 거르지 않는다(결정 대기). **그런 Finding에서 PoV가 낼 PoC가 있는지는
+    미측정이다**(`pov_attempt_top_n`을 켠 run은 0건). 출처는 위 보고서 §4·결과 표다.
+
+    🔴 **`validate.run` 루프는 안 넓힌다.** 그쪽은 유일한 결정론 E4 게이트이고 `from=validated`를
+    요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓히는 것은 **PoV
+    쪽뿐**이고, PoV는 추가형이라 상태를 안 바꾼다(`_run_pov`).
+
+    ⚠ **이것만으로 등급이 오르지는 않는다.** ⏵ 2026-10-09 (ADR 0014) — `poc` 도구가 그 바이트를
+    과제 이미지에 먹이게 됐지만 **게이트 전이는 별건이다**(`p4`가 종료 코드까지 본다 — #232).
+    이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
+
+    자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`
+    (정렬이 흔들리면 재현 실행이 갈라진다). ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한
+    값이 아니다** — 그래서 이것은 등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
+    건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
+    """
+    limit = ctx.config.thresholds.pov_attempt_top_n
+    if limit <= 0:
+        return validated
+    already = {finding.finding_id for finding in validated}
+    rest = sorted(
+        (
+            f
+            for f in state.findings.values()
+            if f.finding_id not in already and not _critic_set_aside(state, f.finding_id)
+        ),
+        key=lambda f: (-f.confidence, f.finding_id),
+    )
+    return [*validated, *rest[:limit]]
+
+
+def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
+    """7단계가 이 Finding을 **밀어 냈나** — 판정 호출이 실패해 버려졌거나(`_drop_finding`), Critic이
+    반박·보류로 판정했다. 판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이
+    읽는 값과 같아야 `QUEUED`(F-6·F-7)와 이 판정이 어긋나지 않는다.
+
+    ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
+    **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
+    `any(normalize == UPHOLD)`)과 이 `any(normalize != UPHOLD)`가 갈릴 수 있다 — 그때 맞출 것."""
+    return finding_id in state.critic_failed_ids or any(
+        gate.normalize(decision) is not Verdict.UPHOLD
+        for decision in state.decisions.get(finding_id, ())
+    )
 
 
 # PoV 관측에 싣는 도구 출력 꼬리 길이. **잰 값이 아니라 설계 상수다** — ASan 요약(`SUMMARY:` 줄과
@@ -1318,7 +1480,8 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
 
     **조회는 기존 resolver를 재사용한다**(`ctx.resolve_requests`). 이름으로 함수 본문을 찾는
     수단이 그것뿐이다 — `symbols_for`는 (파일 → 심볼)이고 `definitions_of`는 `macros`·`types`·
-    `file_vars`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서 새 훅·새
+    `file_vars`·`enum_constants`만 본다(`src/adapters/index_graph.py`의 `DEFINITION_TABLES`). 그래서
+    새 훅·새
     어댑터 배선이 0이다.
     resolver는 `table("functions")`가 없으면 빈 `Resolution`을 돌려주므로(`need_evidence` 모듈)
     인덱스 없는 run에서도 예외 없이 "못 찾았다"로 떨어진다.
@@ -1397,10 +1560,11 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
                 f"진입점을 찾았으나 resolver 조회 상한"
                 f"({_FUZZ_ENTRYPOINT_RESOLVE_MAX_CHARS:,}자, 렌더 기준)에 통째로 잘렸다"
             )
-        elif not (resolution.blocks or resolution.unfilled or resolution.truncated):
-            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 아무 사유도 없이
-            # 통째로 빈 `Resolution`을 돌려준다 — `unfilled`조차 비는 것이 그 서명이다. 이것을
-            # "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지 이름인지 안 갈린다**
+        elif not resolution.index_available:
+            # **인덱스가 없거나 v1이다.** resolver는 `table("functions")`가 없으면 조회를 안 하고
+            # `index_available=False`를 돌려준다(#315 — 전에는 `unfilled`조차 비는 서명으로
+            # 갈랐다). 이것을 "함수 표에 없다"와 같은 사유로 적으면 **고칠 자리가 인덱스인지
+            # 이름인지 안 갈린다**
             # (§0). 훅은 factory가 **항상** 꽂으므로(`src/adapters/factory.py`) 위의
             # `resolve_requests is None` 갈래는 프로덕션에서 안 닿는다 — 여기가 그 자리다.
             missing["reason"] = "인덱스가 없거나 v1이다(함수 표 없음) — 조회가 아무 사유도 못 냈다"
@@ -1617,7 +1781,9 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     가능성뿐이다. 그 판정은 오라클이 낸다(범위 밖).
     """
     # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
-    # ① 8단계 앞에서 멈췄다 ② 8단계에 든 VALIDATED가 0건이라 `_run_pov`가 안 불렸다 ③ 프로필에 pov
+    # ① 8단계 앞에서 멈췄다 ② `_pov_targets`가 0건이라 `_run_pov`가 안 불렸다(VALIDATED가 0건이고
+    # `pov_attempt_top_n`이 0이거나, 양수인데 Critic이 밀어 내지 않은 추가 대상이 0건이다)
+    # ③ 프로필에 pov
     # 좌석이 없다(`REQUIRED_ROLES`에 pov가 없어 스키마상 합법이다. 다만 지금 커밋된 프로필은 전부
     # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
     # 대상이 0건」을 따로 말하려면 필드가 하나 더 필요하다(범위 밖 — 이 경고의 명제는 「PoV를
@@ -1646,8 +1812,10 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
     올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
-    (`_pov_finish`)이 한다(#355). PoC를 도구 입력(`./poc`)으로 materialize하는 것·E4 게이트는
-    호스트 후속이다.
+    (`_pov_finish`)이 한다(#355).
+    ⏵ **2026-10-09 (ADR 0014) — PoC를 도구에 먹이는 쪽이 섰다**(이슈 #513). `poc` 도구가 과제
+    자신의 `-vul` 이미지를 돌린다. **E4 게이트 전이는 여전히 별건이다** — `p4`가 종료 코드까지
+    보고(#232) 그 run이 실제로 E4를 내는지는 미실측이다.
 
     **어느 출구로 끝나도 `state.pov_results`에 이 finding의 사유를 하나 남긴다**(이슈 #357·#358) —
     캡슐 미스 갈래 포함. 그 전에는 PoC가 0건인 run에서 **왜 0인지가 trace에만** 있었고, pov가
@@ -1657,13 +1825,16 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     `ModelGatewayError`·`SchemaParseError`는 받아 경고를 달고 보고서를 내므로 사유도 같이 실리고,
     그 밖의 형은 run과 함께 보고서도 잃는다.
 
-    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만, 아니면 아무것도 안 한다). 루프가
-    `SUBMITTED`로 끝나 바이트가 있으면 `_submit_vul_to_oracle`이 그 PoC를 채점기의 **`vul`
-    다리에만** 내보낸다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 최종으로 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 하나일 때만 지정한다, `_designate_final`). 부분 PoC
-    (`MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프가 `last_poc`로 들고 오는 것)는 나가지
-    않는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**, 바이트가 채점기로 갈 길이 없었다
-    (`pov_poc/NNNN.poc` 사이드카는 사람이 회수하는 파일이었다, #386 ①).
+    **PoC는 채점기로 나간다**(#386 — `--oracle-submit`일 때만). v3 이상 루프의 중간 `gen`마다
+    (마지막 홉의 gen은 빼고) `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내
+    원시 종료 코드를 다음 홉에 싣는다.
+    루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
+    모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
+    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
+    ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
+    그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
+    바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
     if capsule is None:
@@ -1689,20 +1860,31 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     try:
         poc, reason = _run_pov_hops(ctx, state, finding, capsule)
         if reason is PovStopReason.SUBMITTED and poc is not None:
-            _submit_vul_to_oracle(ctx, state, finding, poc)
+            _submit_vul_to_oracle(
+                ctx, state, finding, poc, designatable=True, in_validate_span=False
+            )
     finally:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
 
 def _submit_vul_to_oracle(
-    ctx: RunContext, state: _Accumulator, finding: Finding, poc: bytes
-) -> None:
-    """후보 하나의 PoC를 채점기의 `vul` 다리에 내보낸다 (#386). 채점기가 없으면 아무것도 안 한다.
+    ctx: RunContext,
+    state: _Accumulator,
+    finding: Finding,
+    poc: bytes,
+    *,
+    designatable: bool,
+    in_validate_span: bool,
+) -> str:
+    """PoC를 `vul` 다리에 내보내고 다음 홉 관측 한 줄을 돌려준다 (#386).
+
+    채점기가 없으면 부수효과 없이 `oracle_vul=unavailable`을 돌려준다. `designatable=False`인 중간
+    gen은 원시 종료 코드를 조회하고, `True`인 모델 submit만 최종 지정 후보가 된다.
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
-    적는데 클라이언트는 그것을 강제하지 않는다 — 후보마다 `vul`·`fix`를 다 내면(`run_round_trip`)
-    비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 후보마다는 `vul`만 내고 최종은 `_finalize_oracle`이
-    지정한다.
+    적는데 클라이언트는 그것을 강제하지 않는다. 각 vul 제출마다 `vul`·`fix`를 다 내면
+    (`run_round_trip`) 비최종 PoC에도 `-fix` 이미지가 돈다. 그래서 각 제출에는 `vul`만 내고
+    최종은 `_finalize_oracle`이 지정한다.
 
     **추가형이다** — finding 상태를 바꾸지 않고 Evidence도 만들지 않는다(채점은 저장소 밖 기준이고
     내부 등급 E4는 실행 로그를 따로 요구한다, #232 · `interfaces/oracle.py`). 기록만 남긴다.
@@ -1716,16 +1898,44 @@ def _submit_vul_to_oracle(
     안에서 돌고 이벤트가 `wall_ms`를 단다. 구간 밖에서 내면 이 이벤트가 8단계 `stage_end` 뒤에 나가
     왕복이 단계 시간 장부에서 빠진다. 값은 장부(`state.oracle_ledger`)와 사이드카에 쌓이고,
     trace에는 결정론 필드만 간다(분류는 `oracle_log` 모듈 docstring).
+
+    **이미 그 구간 안이면 다시 열지 않는다(`in_validate_span=True`, #518)** — 중간 gen은
+    `_run_pov_hops`가 연 8단계 구간 안에서 불린다. 여기서 또 열면 `StageSpan`이 중첩을 몰라
+    `stage_start`·`stage_end` 쌍이 겹치고, 안쪽 `wall_ms`가 바깥 구간에 이미 든 시간을 한 번 더
+    세 8단계·run 합계 latency(`trace.py` 지표표)가 부푼다. 평면으로 구간을 읽는 쪽은 안쪽
+    `stage_end` 뒤의 `pov_hop`을 구간 밖으로 읽는다. 기본값을 두지 않는다 — 호출부가 자기가
+    구간 안인지를 정한다(`designatable`과 같은 이유).
     """
     if ctx.oracle is None:
-        return
-    with ctx.stage(Stage.VALIDATE):
+        return "oracle_vul=unavailable"
+    with contextlib.nullcontext() if in_validate_span else ctx.stage(Stage.VALIDATE):
         started = ctx.monotonic_ms()
+        if not poc:
+            attempt = oracle_log.vul_empty(finding.finding_id, poc, designatable=designatable)
+            ctx.trace.emit(
+                EventKind.ORACLE_FAILED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                wall_ms=0,
+                leg="vul",
+                designatable=designatable,
+                poc_sha256=attempt.poc_sha256,
+                poc_bytes=0,
+                error=attempt.error,
+                reason=oracle_log.ERROR_EMPTY_POC,
+            )
+            state.oracle_ledger.add_attempt(attempt)
+            return "oracle_vul=unavailable"
         try:
             submission = ctx.oracle.submit_vul(poc)
         except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
             attempt = oracle_log.vul_failed(
-                finding.finding_id, poc, exc, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                exc,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
             )
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
@@ -1734,13 +1944,53 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
                 error=attempt.error,
             )
+            observation = "oracle_vul=unavailable"
         else:
+            exit_code: int | None = None
+            query_error: Exception | None = None
+            if not designatable:
+                try:
+                    exit_code = ctx.oracle.query_vul(poc)
+                except Exception as exc:  # 조회도 추가형 — 실패를 기록하고 다음 모델 홉은 계속한다.
+                    query_error = exc
+                    ctx.trace.emit(
+                        EventKind.ORACLE_FAILED,
+                        stage=Stage.VALIDATE,
+                        subject_kind="finding",
+                        subject_id=finding.finding_id,
+                        wall_ms=max(0, ctx.monotonic_ms() - started),
+                        leg="query_vul",
+                        designatable=designatable,
+                        poc_sha256=hashlib.sha256(poc).hexdigest(),
+                        poc_bytes=len(poc),
+                        error=type(exc).__name__,
+                    )
+            # 조회가 **예외 없이** 비어 돌아온 것도 기록한다 - 제출이 성공한 직후의 빈 답은 이상이다
+            # (`finalize`는 행이 없으면 예외를 낸다). 안 적으면 서버 설정이 틀려도 모든 gen이
+            # 조용히 `unavailable`을 받는다.
+            no_verdict = not designatable and query_error is None and exit_code is None
             attempt = oracle_log.vul_ok(
-                finding.finding_id, poc, submission, max(0, ctx.monotonic_ms() - started)
+                finding.finding_id,
+                poc,
+                submission,
+                max(0, ctx.monotonic_ms() - started),
+                designatable=designatable,
+                observation_exit_code=exit_code,
+                observation_error=(
+                    oracle_log.OBSERVATION_NO_VERDICT
+                    if no_verdict
+                    else None
+                    if query_error is None
+                    else type(query_error).__name__
+                ),
+                observation_error_detail=(
+                    "" if query_error is None else oracle_log.clip_error(query_error)
+                ),
             )
             ctx.trace.emit(
                 EventKind.ORACLE_SUBMITTED,
@@ -1749,43 +1999,205 @@ def _submit_vul_to_oracle(
                 subject_id=finding.finding_id,
                 wall_ms=attempt.wall_ms,
                 leg="vul",
+                designatable=designatable,
                 task_id=submission.task_id,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
             )
+            observation = (
+                f"oracle_vul exit_code={exit_code}"
+                if exit_code is not None
+                else "oracle_vul=unavailable"
+            )
+            # 서버 캐시 hit(같은 바이트를 앞서 냈다 - 이슈 #385)면 그 코드는 **이번 환경의 새
+            # 측정이 아닐 수 있다.** 모델이 새 값으로 읽지 않게 표시한다.
+            if exit_code is not None and submission.cached:
+                observation += " cached=true"
         state.oracle_ledger.add_attempt(attempt)
+        return observation
+
+
+def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
+    """Finding별 내부 근거 등급. **순수 함수** — `gate_eval`을 재발행하지 않는다.
+
+    **두 자리가 같은 값을 봐야 해서 함수로 뽑았다.** 최종 PoC 지정(`_designate_final`)이 리포트보다
+    **먼저** 돈다 — 8단계 끝의 `_finalize_oracle`이고 리포트는 그 뒤다. 그래서 한 자리에서 계산해
+    넘길 수 없고, 둘이 이것을 부른다. 등급이 두 자리에서 갈리면 리포트가 보여주는 등급과 지정의
+    근거가 달라진다.
+
+    `ctx.evaluate_gate`가 아니라 `gate.evaluate`를 쓰는 이유는 그쪽이 `gate_eval`을 재발행해 제거율
+    분모를 이중 계상하기 때문이다. `evidences_for`로 이 Finding이 참조하는 근거만 거르는 이유는
+    6·7·8단계 게이트가 전부 그렇게 하기 때문이고, 안 거르면 artifact 단위 근거 묶음의 다른 Finding
+    근거로 등급이 오른다.
+
+    🔴 **입력은 `state`의 Finding·근거·판정·누락뿐이고, 근거에는 8단계가 만든 런타임 근거가 든다**
+    (`_analyze`가 `validate.run`의 `produced`를 모은다 — #460 리뷰). 그래서 여기서 나는 등급은
+    8단계 `gate_eval`이 낸 등급과 **같다.** 그 근거를 안 모으던 때는 후보가 전부 E3로 읽혀 지정이
+    어느 run에서나 등급 동점이었고, 그때의 규칙은 동점에서 거부였으므로 점수가 안 났다(그 거부는
+    ⏵ 2026-10-04에 사슬로 바뀌었다 — `_designate_final`).
+    채점기 결과(`OracleLedger`·`VulSubmission`)는 **이 입력에 안
+    닿는다** — 채점기 값이 등급을 올리면 지정이 채점기 값으로 고르는 것과 같아진다.
+
+    ⚠ **실도구 run에서 E4가 나는지는 이 함수의 몫이 아니다.** ⏵ 2026-10-09 (ADR 0014) — 컨테이너
+    러너의 `poc`는 PoC를 과제 이미지에 먹이므로 그 도구 실행은 PoC의 함수다. 그래도 **후보 등급이
+    갈릴지는 미실측**이다 — 그 뒤로 돈 run이 0건이다.
+    """
+    by_cand = {c.candidate_id: c.location for c in state.candidates}
+    return {
+        f.finding_id: gate.evaluate(
+            f,
+            gate.evidences_for(f, state.evidences.get(f.finding_id, ())),
+            state.decisions.get(f.finding_id, ()),
+            state.missings.get(f.finding_id, ()),
+            candidate_location=by_cand.get(f.candidate_id),
+        ).grade
+        for f in state.findings.values()
+    }
+
+
+def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
+    """Finding별 `confidence`. **`_grades_by_finding`과 키 집합이 같다** — 둘 다 `state.findings`를
+    전수로 돈다. 최종 PoC 지정이 이 둘을 나란히 읽고, 한쪽에만 있는 `finding_id`는 지정이
+    `grade_unknown`으로 거부한다(`_designate_final`).
+
+    ⚠ **`confidence`는 모델이 적은 수다** — 게이트가 계산한 등급과 다른 종류의 값이고, 그래서
+    지정 사슬에서 등급 **뒤**에 온다. 채점기 응답에서는 안 나온다(Auditor가 Finding에 적는다) —
+    그 불변식은 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다.
+    """
+    return {f.finding_id: f.confidence for f in state.findings.values()}
+
+
+# 최종 PoC 지정 사슬의 단계 이름. **`_designation_key`가 내는 튜플과 자리가 하나씩 맞다** — 앞에서
+# 보아 처음 값이 갈리는 자리가 그 run의 `designation`이다. 이름과 키의 길이가 어긋나면
+# `zip(..., strict=True)`가 터진다(키를 늘리고 이름을 안 붙이는 변이를 그 자리가 막는다).
+_DESIGNATION_CHAIN = (
+    oracle_log.DESIGNATION_TOP_GRADE,
+    oracle_log.DESIGNATION_TOP_CONFIDENCE,
+    oracle_log.DESIGNATION_SMALLEST_POC,
+    oracle_log.DESIGNATION_POC_DIGEST,
+)
+
+
+def _designation_key(
+    attempt: oracle_log.VulAttempt,
+    grades: Mapping[str, EvidenceGrade],
+    confidences: Mapping[str, float],
+) -> tuple[int, float, int, str]:
+    """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값뿐이다.
+
+    ①등급 내림차순 ②`confidence` 내림차순 ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
+
+    🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
+    갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
+    (처음·마지막)가 아니다. 자리로 고르지 않는다는 규칙은 그대로다 — 같은 후보 묶음을 어떤
+    순서로 넣어도 같은 PoC가 지정된다.
+
+    ⚠ **④는 약한 근거다.** 거기까지 와서 갈린 run은 `designation`이 `poc_digest`로 찍힌다 —
+    읽는 쪽이 「해시로 골랐다」를 알아야 한다(§0).
+    """
+    return (
+        -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
+        -confidences[attempt.finding_id],
+        attempt.poc_bytes,
+        attempt.poc_sha256,
+    )
 
 
 def _designate_final(
     ledger: oracle_log.OracleLedger,
-) -> tuple[oracle_log.VulAttempt | None, str | None]:
+    grades: Mapping[str, EvidenceGrade],
+    confidences: Mapping[str, float],
+) -> tuple[oracle_log.VulAttempt | None, str, str | None]:
     """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
 
-    돌려주는 것은 `(지정한 시도, None)`이거나 `(None, 지정 못 한 사유)`다. **셋으로 갈린다:**
+    돌려주는 것은 `(지정한 시도, 지정 근거, None)`이거나 `(None, "", 지정 못 한 사유)`다.
+    **넷으로 갈린다:**
 
-    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed` — 낼 PoC가 없던
-      것과 낸 것이 다 실패한 것은 다른 사건이다, §0). `fix` 다리와 판정 조회는 0번이다.
+    - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed`·`rate_limited` —
+      낼 PoC가 없던 것, 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
+      사건이다**, §0. 사유를 가르는 것은 `oracle_log.OracleLedger.none_reason`이고 이 함수는
+      그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
-    - **후보가 둘 이상이다** → **지정하지 않는다**(`policy_undecided`). `fix` 다리와 판정
-      조회는 0번이다. 벤치마크는 에이전트가 최종 답을 정확히 하나 명시적으로 고르라고
-      요구하고, 조사 문서 1.3절(docs/research/2026-09-29-cybergym-pov-design.md)은 거기서
-      「best-of도 last-attempt도 아니다」라는 결론을 낸다 — 마지막·처음·점수로 고르는 기본값을
-      둘 수 없다. 합의된 방식은 모델에게 묻는 것이고 그것은 프롬프트 버전과 좌석이 필요한
-      별도 조각이다. 그 전에는 하나를 고르지 않고 이유를 남긴다 — 판정이 없는 편이 금지된
-      규칙으로 낸 판정보다 낫다(CLAUDE.md §0).
+    - **등급 또는 `confidence`를 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown` — 이름은
+      등급 미상에서 굳었지만 이 검사는 둘을 같이 본다). **방어 분기다** — 후보의 `finding_id`는
+      `_run_pov`가 `state.findings`에서 받은 것이고 `_grades_by_finding`·
+      `_confidences_by_finding`이 그 전부를 세므로 현 러너로는 닿지 않는다(직접 호출 검사만 문다 —
+      실영향은 없다).
+    - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
+      먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
+      **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
+      `designation`이다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
 
-    「후보」는 `vul` 제출이 **성공한** PoC다. 제출이 실패한 PoC는 `vul` 쪽 결과가 없어 후보가 아니다
-    — 그래서 PoC 셋 중 둘의 제출이 실패하면 남은 하나가 후보 하나다(그 run의 경고가 실패 건수를
-    알린다).
+    ⏵ **2026-10-04 — 동점 거부를 없앴다.** 2026-10-03 동결 규칙은 「내부 근거 등급 최댓값 ·
+    동점이면 거부」였고 이 함수가 `grade_tie`를 냈다. 그 규칙이 실측에서 **점수를 0으로
+    만들었다**: 후보 8건이 전부 **같은 PoC 바이트**였고(제출 8 = 고유 PoC 1 = DB 행 1) 등급이
+    Finding 단위라 8건이 동점이었다. 어느 쪽을 지정해도 제출될 바이트가 같은데 거부한 것이다.
+    고친 모양은 둘이다 — ① 같은 바이트는 **접는다**(선택이 없는 것을 선택 실패로 적지 않는다)
+    ② 남은 동점은 거부가 아니라 **사슬의 다음 단계**로 넘긴다. 사슬의 끝(PoC 해시)이 전순서라
+    `grade_tie`가 닿지 않는 분기가 되어 **사유 상수째 지웠다**(`oracle_log`).
+
+    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는
+    `response_exit_code` 같은 오라클 응답 값이 실려 **지정 시점에 손에 있는데도** 그렇다. 이것은
+    **이 저장소의 결정이고 저자의 금지 문장이 아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가
+    정확히 하나 지정하라고 요구하고 any-of가 무차별 대입을 보상한다고 적을 뿐 고르는 방법을
+    금지하지 않는다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 그 값으로
+    후보를 가르면 후보를 채점기에 물어 고르는 best-of가 되어 읽지 않기로 했다. 읽는 것은
+    `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스가 만든 값**
+    (내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다. 내부 등급은 하네스가 도구를
+    돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
+
+    `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
+    `==`)을 분기마다(사슬이 갈린 자리 넷 · 같은 바이트 · 등급 또는 `confidence` 미상 · 후보 하나)
+    문다.
+    ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
+    (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
+    docstring)와 후보 0건(읽을 `submission`이 없다).
+
+    「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
+    위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
+    아니다(그 run의 경고가 실패 건수를 알린다).
     """
-    candidates = [attempt for attempt in ledger.attempts if attempt.ok]
+    candidates = ledger.candidates
     if not candidates:
-        return None, ledger.none_reason()
+        return None, "", ledger.none_reason()
     if len(candidates) == 1:
-        return candidates[0], None
-    return None, oracle_log.REASON_POLICY_UNDECIDED
+        return candidates[0], oracle_log.DESIGNATION_SOLE_CANDIDATE, None
+    # 등급이나 confidence를 모르는 후보가 하나라도 있으면 거부한다 — 모르는 값을 0으로 깔면
+    # **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은 0이 아니라 미실측 표시다).
+    if any(
+        attempt.finding_id not in grades or attempt.finding_id not in confidences
+        for attempt in candidates
+    ):
+        return None, "", oracle_log.REASON_GRADE_UNKNOWN
+    # `finding_id` 꼬리는 **사슬의 단계가 아니다** — 같은 바이트를 낸 후보가 여럿일 때(접기
+    # 대상) 어느 `finding_id`로 기록할지를 입력 순서가 아니라 id로 정하려는 것뿐이다. 제출될
+    # 바이트는 그 묶음 안에서 같으므로 이 꼬리가 PoC를 바꾸지 않는다. 그래서 `_DESIGNATION_CHAIN`
+    # 에 이름이 없고 `zip(..., strict=True)`가 그 길이를 맞춰 둔다.
+    ordered = sorted(
+        candidates,
+        key=lambda a: (*_designation_key(a, grades, confidences), a.finding_id),
+    )
+    picked = ordered[0]
+    # **같은 바이트를 접는 자리다.** 접어서 하나만 남으면 고를 것이 없다 — 지정이 어느 후보를
+    # 가리키든 채점기에 나가는 바이트가 같다(`_score`가 내보내는 것은 `attempt.poc`다).
+    if all(attempt.poc_sha256 == picked.poc_sha256 for attempt in ordered[1:]):
+        return picked, oracle_log.DESIGNATION_SOLE_POC, None
+    # 어느 단계가 갈랐나 — **다른 바이트를 든 가장 센 후보**와 견준다. 같은 바이트끼리의 차이는
+    # 제출될 PoC를 바꾸지 않으므로 갈랐다고 적지 않는다.
+    rival = next(a for a in ordered if a.poc_sha256 != picked.poc_sha256)
+    decided = next(
+        name
+        for name, mine, theirs in zip(
+            _DESIGNATION_CHAIN,
+            _designation_key(picked, grades, confidences),
+            _designation_key(rival, grades, confidences),
+            strict=True,
+        )
+        if mine != theirs
+    )
+    return picked, decided, None
 
 
 def _score(
@@ -1821,25 +2233,54 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     `_designate_final`이 최종 PoC를 지정하면 그 하나에만 `fix` 다리와 판정 조회를 돌린다. 점수는
     후보 N건의 any-of가 아니라 이 호출 하나다 — 그래서 `oracle_final`이 run당 1건이고
     `oracle_submitted`는 판정 값을 안 든다(`trace.py`). **지정된 후보가 없는 사건**
-    (`no_poc`·`all_vul_submissions_failed`·`policy_undecided`)은 `status=none`이고, 지정했는데
-    `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가 없다」가 「최종
-    PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 지정하지 않는다** — 고르는 규칙이
-    정해지지 않았다(`_designate_final`).
+    (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_unknown`)은 `status=none`이고,
+    지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
+    없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 같은 바이트를 접은 뒤
+    ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는
+    2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
-    계약). 이 단계는 8단계가 **끝까지 돌았을 때만** 불린다 — 예산 소진 등으로 루프가 중간에 끊기면
-    불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+    계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
+    `ModelGatewayError`로 끊겨도 오라클에 이미 낸 후보가 있거나(`candidates`) `pov_attempt_top_n`의
+    추가 대상에서 끊겼으면 `_analyze`가 이 단계를 부른 뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의
+    최종 지정을 잃지 않으려는 것이다(#532). `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가
+    대상이 도는 것은 설정상 평상시다 — 이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
+    중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+
+    ⚠ **그 밖의 중단은 둘이고 축이 다르다.** ① 그 두 예외 **밖의** 예외로 끊긴 run(예외 종류) ②
+    그 두 예외라도 낸 후보 없이 `validated` 대상에서 끊긴 run(위치·후보 유무). 핀은
+    `tests/test_oracle_wiring.py`다.
+    ⚠ **흡수하는 것은 둘이다:** `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
+    `OSError`(`oracle_log` 장부). 지정(`_designate_final`)·`trace.emit`은 안 감쌌고 던질 실경로를
+    못 찾았다(미확인) — 그래서 `_analyze`가 이 함수의 예외를 원 예외의 `add_note`로 붙여 원 예외를
+    올리고, `run_pipeline`의 예산·게이트웨이 갈래가 그 노트를 `warnings`에 싣는다.
+    ⚠ **추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`로 남는다** —
+    의도한 것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다).
+    「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
+    후자는 run 수준의 `stopped_after`·`BUDGET_EXHAUSTED`·`MODEL_GATEWAY_UNAVAILABLE`·경고가 말한다.
+    후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이
+    없던 run은 `vul_submitted` - 와 `stopped_after`로 재구성한다).
     """
     if ctx.oracle is None:
         return
     ledger = state.oracle_ledger
     with ctx.stage(Stage.VALIDATE):
-        picked, reason = _designate_final(ledger)
+        grades = _grades_by_finding(state)
+        picked, designation, reason = _designate_final(
+            ledger, grades, _confidences_by_finding(state)
+        )
         if picked is None:
             final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
         else:
-            final = _score(ctx, ctx.oracle, picked, oracle_log.DESIGNATION_SOLE_CANDIDATE)
-        ledger.set_final(final)
+            final = _score(ctx, ctx.oracle, picked, designation)
+        # 지정이 읽은 등급을 사이드카에 남긴다(후보가 둘 이상일 때만 읽는다). 같은 `grades`다.
+        candidates = ledger.candidates
+        read = (
+            {a.finding_id: grades[a.finding_id].value for a in candidates if a.finding_id in grades}
+            if len(candidates) > 1
+            else None
+        )
+        ledger.set_final(final, grades=read)
         ctx.trace.emit(
             EventKind.ORACLE_FINAL,
             stage=Stage.VALIDATE,
@@ -1868,23 +2309,29 @@ def _run_pov_hops(
     **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/gdb/poc)를 돌린다. `submit`은
     루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
 
-    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 직전 gen과 같은
-    **PoC 바이트** → REPEAT_SPEC(spec JSON이 아니라 조립 바이트로 본다 — rationale 재작성으로 못
-    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `max_hops` 소진 → MAX_HOP. 홉 호출 자체가
+    **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 이미 낸 어느 gen과든
+    같은 **PoC 바이트**(digest 집합 조회 — A→B→A도 선다) → REPEAT_SPEC(spec JSON이 아니라 조립
+    바이트로 본다 — rationale 재작성으로 못
+    피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `pov_tool_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
     쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
     호출부 20여 곳이 쥐고 있다.
 
-    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.** ⚠ **PoC 바이트가 아직 도구 입력으로 materialize
-    되지 않는다**(적대적 리뷰 2026-09-30) — dev_fake는 대상 소스 존재만 보고, 컨테이너는 미생성
-    파일을 돌려 관측이 PoC와 무관하다(호스트 후속). 그 전까지 실서빙 pov 루프를 돌리면 관측이
-    spec과 무관하다(모델이 언제 submit할지는 안 쟀다). E4 게이트 전이도 후속이다(채점기 제출은
-    `_run_pov`가 이 루프의 반환값으로 한다, #386). 여기서는 홉 이벤트(`POV_HOP`)와 종단
-    이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서 **마지막 `gen`의 PoC를 run 산출물
-    사이드카로 남긴다**(`_pov_finish` — #355).
+    ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
+    ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
+    `/tmp/poc`)라 그 도구의 관측은 **PoC의 함수**다. ⚠ **나머지는 아니다** — dev_fake는 대상 소스
+    존재만 보고, 컨테이너의 `asan`·`gdb`·`build`는 우리가 빌드한 대상을 돌려 그 관측이 PoC와
+    무관하다(셋을 바꾸려면 대상 빌드 규칙이 필요하다 — 이슈 #507). `inspect` 홉 관측에서 PoC의
+    함수인 것은 입력의 크기·digest 줄(`_pov_observation`)뿐이다 —
+    그 전까지 실서빙 pov 루프를 돌리면 도구 관측으로는 spec의 효과를 못 읽는다(모델이 언제
+    submit할지는 안 쟀다). E4 게이트 전이도 후속이다. 중간 gen은 별도로 `vul` 판정을 읽어 다음
+    모델 홉에 싣는다(v3 이상 - #354/#386①). meta가 `hop_header`를 켠 판(v4~)은 followup **맨
+    앞**에 홉 줄을 더 받는다(`_pov_hop_line` · #511) - 그 줄이 있어야 모델이 마감을 안다. 여기서는
+    홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서
+    **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
-    `max_hops`는 NE 루프와 같은 임계를 재사용한다 — pov 전용 상한은 실측 후 config로 가른다.
+    홉 상한은 PoV 전용 `thresholds.pov_tool_hops`다(이슈 #511) — NE 루프의 `max_hops`와 갈랐다.
 
     `_pov_finish`는 사이드카의 `(ref, digest)`를 3·4번째로 내지만 이 함수의 반환은 위 2-튜플
     그대로다 — 네 출구는 `_pov_finish_and_record`를 불러 `ref`를 계수기 사유에 쓰고 2-튜플만
@@ -1892,10 +2339,12 @@ def _run_pov_hops(
     그대로 낸다. 반환을 넓히는 슬라이스는 그 함수에서 `ref`·`digest`를 그대로 올리면 되고
     디렉터리를 글로브할 필요가 없다.
     """
-    max_hops = ctx.config.thresholds.max_hops
+    pov_hops = ctx.config.thresholds.pov_tool_hops
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
+        # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) — 바이트는 안 든다.
+        seen: set[str] = set()
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
@@ -1903,8 +2352,9 @@ def _run_pov_hops(
         # 묶는 이유는 조회가 던져도 `except` 갈래가 이 이름을 안전하게 읽어야 해서다.
         fuzz: dict[str, object] | None = None
         # 루프 내내 안 바뀐다(설정값) — 홉마다 다시 읽지 않는다. hop0의 `source=` 결정과
-        # 매 홉의 관측 꼬리(`_pov_observation`) 둘 다 이것을 본다(적대적 리뷰 2026-10-02
-        # MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도 이 PR의 새 입력이다).
+        # 매 홉의 관측 꼬리(`_pov_observation`)와 중간 gen의 vul 제출·판정 줄 셋 다 이것을 본다
+        # (적대적 리뷰 2026-10-02 MEDIUM-4 — v2는 이 PR 전과 바이트가 같아야 한다. 관측 꼬리도
+        # 이 PR의 새 입력이다).
         pov_wide = (
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
@@ -1913,8 +2363,8 @@ def _run_pov_hops(
             started = ctx.monotonic_ms()
             try:
                 if prev is None:
-                    # `source`는 Auditor가 본 것과 **같은 문자열**이다(`_Once`) — 없으면(슬라이스
-                    # 타깃이 아니면) 노드가 캡슐 대상을 직접 읽는 예전 갈래로 간다.
+                    # 넓은 입력 판은 슬라이스 여부와 무관하게 Auditor의 최초 읽기를 보관한
+                    # `_Once`를 받는다. 이전 판 또는 캐시 부재 시 노드가 캡슐 대상을 직접 읽는다.
                     entrypoint = _fuzz_entrypoint(ctx, capsule.target.file)
                     # 🔴 **조회 결과를 홉 이벤트에 싣는다**(아래 `fuzz=`). 안 남기면 「진입점 탐색
                     # 성공률」이 영영 미실측이고, 성공 0이 나왔을 때 모델 탓인지 조회 탓인지 못
@@ -1964,26 +2414,39 @@ def _run_pov_hops(
                     ctx, state, finding, PovStopReason.SUBMITTED, last_poc
                 )
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
+            oracle_observation = "oracle_vul=unavailable"
             if action.action == "gen":
-                # 반복 판정은 조립된 **바이트**로 한다 — spec JSON에는 `rationale`(바이트에 안 드는
-                # 자유 텍스트)이 섞여, 같은 PoC를 재설명만 바꿔 내면 못 잡는다(적대적 리뷰).
+                # 반복 판정은 조립된 **바이트**의 digest를 **본 적 있는 모든 gen**과 견준다 — spec
+                # JSON에는 `rationale`(바이트에 안 드는 자유 텍스트)이 섞여 재설명만 바꾼 같은 PoC를
+                # 못 잡고(적대적 리뷰), 직전 한 gen만 보면 A→B→A 진동이 안 선다.
                 hop_poc = assemble_poc(action.spec)
-                if last_poc is not None and hop_poc == last_poc:
+                digest = sha256_digest(hop_poc)
+                if digest in seen:
                     _emit_pov_hop(
                         ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
                     )
+                    # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
-                        ctx, state, finding, PovStopReason.REPEAT_SPEC, last_poc
+                        ctx, state, finding, PovStopReason.REPEAT_SPEC, hop_poc
                     )
+                seen.add(digest)
                 last_poc = hop_poc
-                evidence = pov.run_tool(ctx, finding=finding, tool="poc", workdir=workdir)
-            else:  # inspect — 새 PoC 없이 현 후보를 진단
+                # 마지막 홉(`hop >= pov_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
+                # 두 번이 레이트 예산만 쓰고 버려진다.
+                if pov_wide and hop < pov_hops:
+                    oracle_observation = _submit_vul_to_oracle(
+                        ctx, state, finding, hop_poc, designatable=False, in_validate_span=True
+                    )
                 evidence = pov.run_tool(
-                    ctx, finding=finding, tool=action.tool, workdir=workdir
+                    ctx, finding=finding, tool="poc", workdir=workdir, poc=hop_poc
                 )
-            if hop >= max_hops:
+            else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
+                evidence = pov.run_tool(
+                    ctx, finding=finding, tool=action.tool, workdir=workdir, poc=last_poc
+                )
+            if hop >= pov_hops:
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value,
@@ -1994,15 +2457,45 @@ def _run_pov_hops(
                 ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                 fuzz=fuzz if hop == 0 else None,
             )
+            # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = _pov_observation(
-                action.action, evidence, read_payload=ctx.read_payload, wide=pov_wide
+                action.action,
+                evidence,
+                read_payload=ctx.read_payload,
+                wide=pov_wide,
+                poc=last_poc,
             )
+            if action.action == "gen" and pov_wide:
+                # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
+                # 의미를 파생하지 않는다. 모델이 이 관측을 본 뒤 submit할지를 정한다.
+                followup = f"{followup}\n{oracle_observation}"
+            # 홉 줄은 **맨 앞**이다 - 이 followup에 답할 홉 번호와 마지막 홉 번호(#511). 위 `hop`은
+            # 방금 끝낸 홉이라 모델이 답할 홉은 `hop + 1`이고, 여기까지 왔다는 것은
+            # `hop < pov_hops`라는 뜻이라(`MAX_HOP`은 위에서 이미 갈렸다) `remaining`은 0 이상이다.
+            # 줄을 받는 판은 meta가 `hop_header`로 선언한다(`prompt_loader` docstring) - v2·v3는
+            # 바이트 그대로다.
+            if load_prompt(Role.POV, current.version).hop_header:
+                followup = f"{_pov_hop_line(hop + 1, pov_hops)}\n{followup}"
             prev = current
             hop += 1
 
 
+def _pov_hop_line(hop: int, last_hop: int) -> str:
+    """followup 맨 앞 줄 - 모델이 지금 답하는 홉(`hop`)·마지막 홉(`last_hop`)·그 뒤 남은 홉 수.
+
+    기계가 읽는 모양이라 키 이름과 순서를 바꾸면 prefix(`prompts/pov/v4/prefix.md`의 「홉 예산」)와
+    `tests/test_pov_prompt_v4.py`가 같이 움직여야 한다. `_pov_observation`의 출력에 넣지 않는다 -
+    그쪽의 v2 바이트 동일이 핀이다."""
+    return f"hop={hop} last_hop={last_hop} remaining={last_hop - hop}"
+
+
 def _pov_observation(
-    action: str, evidence: Evidence, *, read_payload: ReadPayload, wide: bool = True
+    action: str,
+    evidence: Evidence,
+    *,
+    read_payload: ReadPayload,
+    wide: bool = True,
+    poc: bytes | None = None,
 ) -> str:
     """도구 결과를 다음 홉 user 턴으로 보낼 관측 텍스트(비지 않아야 한다 — `Prompt.body`).
 
@@ -2015,22 +2508,36 @@ def _pov_observation(
     수명주기 줄이 뒤에 온다. 앞을 자르면 컴파일 잡음만 남는다.
 
     ⚠ **`read_payload`가 `None`을 주는 것은 정상 상태다**(`dev_fake`는 로그 파일을 안 쓴다 —
-    `context.read_payload` 주석). 그때는 전 판과 **바이트가 같은** 한 줄이다.
+    `context.read_payload` 주석). 그때는 한 줄이고, 입력이 없으면 전 판과 **바이트가 같다**.
     🔴 **참조 PoC(`/tmp/poc`) 바이트가 이 경로로 프롬프트에 들어가면 run이 무효다.** 여기 실리는
-    것은 도구 **stdout/stderr 로그**이고 PoC 바이트 자체가 아니다 — 그 분리는 payload를 쓰는 쪽
-    (`container_tools`)이 지킨다.
+    것은 도구 **stdout/stderr 로그**와 모델 자신의 PoC의 크기·digest이고 PoC 바이트 자체가
+    아니다 — 로그의 분리는 payload를 쓰는 쪽(`container_tools`)이 지킨다.
 
-    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 판, 지금은 v2)면 **꼬리를 안 싣는다** — v2
+    `wide=False`(`pov._WIDE_INPUT_VERSIONS`에 없는 이전 판 v2)면 **꼬리를 안 싣는다** — v2
     prefix.md는 여전히 "관측 한 줄"이라 서술하고(`prompts/pov/v2/prefix.md:7`), 전 판과 바이트가
     같아야 한다(적대적 리뷰 2026-10-02 MEDIUM-4). `_run_pov_hops`가 설정된 pov 버전을 보고 정한다.
+
+    ⏵ **#386 ① — 직전 `gen`의 PoC 크기와 sha256을 싣는다**(`poc` — `pov.run_tool`이 도구 요청에
+    실은 바이트, 맨 hex라 trace의 `poc_sha256`과 바로 대조된다). `gen` 홉의 도구는 `poc`라
+    그 결과도 PoC의 함수지만(ADR 0014) `inspect` 홉의 셋은 아니고, 이 줄은 **어느 홉에서나**
+    PoC의 함수라 되먹임이 어느 PoC에 대한 것인지 가른다. 필드 이름이 `last_gen_*`인 것은
+    일부러다 — ⏵ 2026-10-09: 처음 이유는 *"`input_*`는 도구가 받았다고 읽히는데 prefix가 그 반대를
+    적는다"*였고 그것은 **낡았다**(v5부터 받는다고 적는다). 이름을 그대로 두는 이유는 이 줄이
+    **직전 `gen`**의 바이트를 가리킨다는 것이고(`inspect` 홉에서도 그렇다) `input_*`는 그 홉의
+    도구가 받은 것으로 읽힌다. 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
+    `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
+    `wide=False`면 안 싣는다(꼬리와 같은 경계).
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
         f"tool={evidence.source} action={action} ok={evidence.ok} "
-        f"exit={evidence.exit_code} kind={evidence.kind.value}{detail}"
+        f"exit={evidence.exit_code} kind={evidence.kind.value}"
     )
     if not wide:
-        return head
+        return head + detail
+    if poc is not None:
+        head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
+    head += detail
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
@@ -2347,7 +2854,8 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
     rank 1을 두는 이유는 같은 파일의 두 번째 히트를 신호 없는 심볼 아래로 안 내리기
-    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다.
+    위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다
+    (artifact에 STATIC 신호가 있을 때 — 없으면 0).
     """
     plan.collected.sort(
         key=lambda item: (
@@ -2775,6 +3283,8 @@ def _emit_scout_hop(
         data["fixable_count"] = resolution.fixable_count
         data["unfilled"] = ",".join(item_.reason.value for item_ in resolution.unfilled)
         data["truncated"] = ",".join(resolution.truncated)
+        # 색인이 없어 조회를 안 했는지 — `nothing_resolved`의 두 원인을 가른다(#315).
+        data["index_available"] = resolution.index_available
     ctx.trace.emit(
         EventKind.SCOUT_HOP,
         stage=Stage.SCOUT,
@@ -2924,7 +3434,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
     # **8단계 PoV가 같은 문자열을 다시 쓰기 때문**이다(아래 `state.finding_sources`).
     source = (
-        None
+        _Once(partial(ctx.read_source, expanded.target))
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
@@ -2964,10 +3474,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 슬라이스가 걸친 함수 전부를 보는데 **바이트를 써야 하는 쪽이 그보다 좁게 봤다.** CyberGym
     # Level 1의 지배적 실패가 "취약 경로 미도달"이고 그것을 가르는 것이 앞단 파서의 포맷 조건이라,
     # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
-    # 슬라이스 타깃이 아니면(`ref is None`) 안 싣는다 — 그때는 Auditor도 캡슐 대상을 그대로 읽어
-    # PoV의 기존 갈래와 같은 문자열이다.
-    if source is not None:
-        state.finding_sources[finding.finding_id] = source
+    # 비슬라이스도 Auditor가 처음 읽은 문자열을 재사용한다(사용자 선택 B 보완안, 2026-10-05).
+    state.finding_sources[finding.finding_id] = source
     return True
 
 
@@ -3062,9 +3570,14 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 25,045자) SOURCE 상한이 토큰이 됐다 — 그
 # 계산은 `config/models.yaml`의 `qwen3.8-27b` 항목이
 # 든다. v7 입력 토큰도 미실측이다.
+# ⏵ 2026-10-09 — 서빙 판은 v10이다(prefix 56,906자 — v7의 2.2배). 같은 식의 hop0 상한은
+# 33,462~64,489토큰(계산값 · 그 계산은 `config/models.yaml`의 같은 항목, #556)이라 입력 몫 196,608
+# 안이다. 도구 루프는 홉마다 history가 쌓여 뒤 홉이 더 크다. v10 입력 토큰도 미실측이다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
+# ⏵ 2026-10-04 — FACTS의 evidence 항목마다 `location` 키(없으면 `null`)가 더 실린다(이슈 #475) —
+# 위 합에 미산입이다. 수치는 바꾸지 않았다(새 계산값을 지어내지 않는다).
 # ponytail: registry가 서빙 `--max-model-len`을 들게 되면 거기서 유도한다(40,960 기동이면 커진다).
 _AUDITOR_SOURCE_CHARS = 15_000
 
@@ -3075,9 +3588,16 @@ _AUDITOR_CALLEE_CHARS = 4_000
 # ⚠ 이 상한과 아래 `_AUDITOR_DEFINITION_CHARS`는 `auditor_source_tokens`가 양수여도 **글자**다 —
 # 하나가 너무 큰지를 거르는 값이고, 전체 상한만 토큰으로 센다.
 
-# 정의(매크로·타입·파일 변수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일 때만). 큰
-# 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
+# 정의(매크로·타입·파일 변수·enum 상수) 하나의 글자 상한(#349 (f) — `auditor_definitions`가 1일
+# 때만). 큰 구조체·초기화 테이블이 상한을 먹는 것을 막는다. **정한 값이지 잰 값이 아니다.**
 _AUDITOR_DEFINITION_CHARS = 2_000
+# 큰 enum(상한을 넘는 enum 상수의 정의)은 통째로 버리지 않고 머리 줄 · 물은 상수마다 그 줄
+# 앞뒤 이 줄 수 · 닫는 줄만 남겨 싣는다(`_trim_enum`). index-v4가 enum 상수를 enum 정의 전체로 싣자
+# 「크기 초과로 버림」이 29 -> 142로 늘었다(2026-10-04 로컬 274표본 · run ID 없음). **정한
+# 값이지 잰 값이 아니다.**
+_AUDITOR_ENUM_CONTEXT_LINES = 5
+# `_trim_enum`이 enum 정의인지 보는 머리 패턴 — 첫 `{` 앞에 `enum` 낱말.
+_ENUM_HEAD = re.compile(r"\benum\b")
 # entry 함수를 줄일 때(#349 — `auditor_entry_trim`이 1이고 entry 함수가 상한을 넘을 때만) 슬라이스
 # 줄·entry 줄 앞뒤로 남기는 줄 수. 함수 머리(여는 `{`까지, 앞 `_AUDITOR_ENTRY_HEAD_LINES`줄 안)와
 # 닫는 줄은 늘 남긴다. **정한 값이지 잰 값이 아니다.**
@@ -3144,14 +3664,33 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
     `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
 
+    **GUARDS(`auditor_guards`)** — 1이고 sink를 아는 슬라이스(Case B)면 entry 함수 **바로 뒤에**
+    `source_guards`가 훑은 sink 앞 가드 블록을 붙인다. entry 함수 몫이라 상한에 밀려 빠지지
+    않고, 대신 그 크기를 **먼저** 세어 뒤에 붙는 함수가 그만큼 덜 든다(「+N more」 줄도 블록의
+    일부다). 줄이기(`auditor_entry_trim`) **전**의 원문을 훑는다 — 잘려 안 보이는 검사도 행으로
+    남는다. 함수가 아니라 `functions`에 안 들고, `guards`·`guards_dropped`가 따로 센다. **안 붙이는
+    경우**(Case A · 품는 함수를 모르는 창 앵커 · 줄이 어긋날 수 있는 파일 · sink를 못 찾음)는 사유를
+    `guards_skipped`가 든다. 0이면 이 단계가 없다.
+    ⚠ **PoV도 이 블록을 받는다** — 아래 `_step_auditor`가 이 SOURCE 문자열을
+    `state.finding_sources`로 물려 주고 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서
+    그대로 프롬프트에 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
+
     **정의(#349 (f))** — `auditor_definitions`가 1이면 위 함수들 바로 뒤(피호출 함수보다 앞)에,
-    실린 함수가 쓰는 매크로·타입·파일 변수의 정의(`ctx.definitions_of`)를 붙인다. 정의 하나가
-    `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다. 조회하는 이름은 코드
-    자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드 전용
-    이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
-    먼저다. 이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
+    실린 함수가 쓰는 매크로·타입·파일 변수·enum 상수의 정의(`ctx.definitions_of`)를 붙인다. 정의
+    하나가 `_AUDITOR_DEFINITION_CHARS`를 넘으면 안 싣고 전체 상한은 같이 받는다 — 단 **enum**은
+    통째로 버리지 않고, 물은 상수마다 앞뒤 `_AUDITOR_ENUM_CONTEXT_LINES`줄만 남겨 블록 하나로 싣는다
+    (`_trim_enum` — 같은 enum의 상수가 더 오면 그 블록을 넓힌다). 조회하는 이름은
+    코드 자리의 것만이고(주석·문자열 속 낱말은 뺀다) 함수마다 **그 함수의** 지역·파라미터와 필드
+    전용 이름도 뺀 것이며(`source_definitions.definition_names`), 슬라이스 줄에 나온 이름의 정의가
+    먼저다. **조회는 본문의 파일마다 그 파일 기준(`near_file`)이다**(`_definitions_by_file`) — 한
+    이름이 파일마다 다른 정의로 풀리면 둘 다 싣고, 본문이 모두 앵커 파일이면 본 조회는 한 번
+    부른다(별칭 라운드는 따로다 — 별칭 대상은 그 별칭 매크로 정의를 푼 파일의 기준으로만 조회한다).
+    이미 실린 enum 블록에서 줄 머리 상수가 아닌 이름(typedef 이름·태그)은 낱말로 보이면 보이는
+    것으로 보고 세지 않는다(정의가 아니라 언급이어도 — `widen_enum`의 한계).
+    이 위생은 `auditor_definitions`를 켠 run만 쓴다 — 정의·피호출·호출자 조회가 모두
     비제품 경로(`tests/`·`examples/` 등)를 한 단계 낮춰 「하나뿐」을 정한다(`demote_nonproduct`).
-    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 든다. 0이면 이 단계가 없고 `SOURCE`·
+    붙인 수·뺀 수는 `definitions`·`definitions_dropped`가 들고, 그중 잘라 실은 enum 수는
+    `definitions_trimmed`가 든다(SOURCE에 실린 것만 센다). 0이면 이 단계가 없고 `SOURCE`·
     이벤트는 옛 모양 그대로다.
 
     **피호출 함수 본문(#349 (a))** — `auditor_callee_hops`가 1이면 위 함수들 뒤에, 실린 함수의 본문
@@ -3205,6 +3744,14 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         else:
             spanned[symbol] = None
     anchor_text = ctx.read_source(anchor)
+    # GUARDS(`auditor_guards`)는 줄이기 **전**의 원문을 훑는다 — 아래 `_trim_entry`가 잘라 낸 검사도
+    # 행으로 남는다. 켜지 않았으면 `guard_scan`이 `None`이라 블록도 이벤트 필드도 없다.
+    guard_scan = (
+        scan_guards(ref, anchor, anchor_text, ctx.read_source, ctx.read_raw)
+        if ctx.config.thresholds.auditor_guards
+        else None
+    )
+    guard_blocks = [guard_scan.block] if guard_scan and guard_scan.block else []
     # 상한의 단위(#349 (c)): `auditor_source_tokens`가 0이면 글자(`_AUDITOR_SOURCE_CHARS`), 아니면
     # Auditor 모델 토크나이저로 센 토큰(`counter_for_role`). 토크나이저가 없으면(CI·dev) 기본 근사
     # (`estimate_tokens`)로 세고 이벤트가 그것을 밝힌다.
@@ -3226,6 +3773,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 리뷰). 위치를 같이 든다: 지역·파라미터는 함수마다 따로 빼야 해서다(`source_definitions`).
     bodies = [(anchor, _OMITTED_LINE.sub("", anchor_text))]
     size, dropped = measure(blocks[0]), 0
+    # GUARDS는 entry 함수 몫이라 상한에 안 밀리지만 크기는 먼저 센다 — 뒤에 붙는 함수가 그만큼
+    # 덜 든다.
+    size += sum(1 + measure(block) for block in guard_blocks)
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
@@ -3253,43 +3803,116 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     aliases: set[str] = set()
     # 정의를 조회한 이름(정의 단계가 채운다) — 별칭 함수 조회가 이 안에서만 찾는다.
     asked: set[str] = set()
+    # 별칭 대상 → 그 별칭 매크로의 **정의를 푼 파일들**(먼저 나온 순). 정의 조회는 **본문의 파일
+    # 마다** 부르고(`_definitions_by_file` — 앵커 파일 하나로 부르면 다른 파일에서 실린 함수의
+    # 이름이 앵커의 include 그래프로 풀린다, PR #485 리뷰 P2-3), 별칭 대상은 그 별칭을 가진
+    # 정의를 푼 파일들의 기준으로만 조회한다 — 그 매크로를 쓴 모든 파일로 귀속하면 `MODE`가 다른
+    # 정의(상수 5)로 풀린 파일의 기준으로도 대상을 찾아 무관한 정의가 붙는다(2라운드 F3).
+    alias_files: dict[str, list[str]] = {}
 
-    def carry_definition(definition: Location) -> bool:
-        nonlocal size, definitions, definitions_dropped
+    definitions_trimmed = 0
+    trimmed_enums: dict[tuple[str, int | None, int | None], _TrimmedEnum] = {}
+
+    def widen_enum(definition: Location, cut: _TrimmedEnum) -> bool:
+        """이미 잘라 실은 enum에 그 enum의 다른 상수를 더한다 — 블록을 그 자리에서 다시 만든다.
+        합친 블록이 정의 하나의 상한이나 전체 상한을 넘거나 그 상수가 줄 머리에 안 나오면 이미 실린
+        블록은 그대로 두고 못 더한 상수 하나를 `definitions_dropped`가 센다. 단 줄 머리 상수가 아닌
+        이름(typedef 이름·태그·한 줄 다중 상수의 둘째)이 **이미 실린 블록에 낱말로 있으면** 보이는
+        것으로 보고 조용히 `False`다 — 보이는 정의를 못 실었다고 세면 `DEFINITION_DROPPED` 게이트
+        사유가 거짓 양성이다(2라운드 F1). 판정한 이름은 `cut.settled`에 둔다.
+        ⚠ **한계(수정 전과 같은 침묵 — 미해결)**: 낱말이 있다는 것이 그 이름의 **정의**가 있다는
+        뜻은 아니다. 끝줄 값(`AAA_ALIAS = OP005_B,`)이나 창 안 주석이 언급만 해도 보이는 것으로
+        세므로, 그 정의가 SOURCE에 없는데도 `definitions_dropped`가 **과소 집계**될 수 있다. 특성화
+        테스트: `test_limitation_a_constant_only_mentioned_in_the_block_counts_as_shown`."""
+        nonlocal size, definitions_dropped
+        name = definition.symbol
+        if not name or name in cut.names or name in cut.settled:
+            return False
+        names = [*cut.names, name]
+        trimmed = _trim_enum(cut.text, names)
+        shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일 이름의 낱말은 정의가 아니다
+        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", shown):
+            cut.settled.add(name)
+            return False
+        block = _block(definition, trimmed, end=cut.end) if trimmed is not None else None
+        if (
+            block is None
+            or len(block) > _AUDITOR_DEFINITION_CHARS
+            or size + measure(block) - measure(blocks[cut.index]) > cap
+        ):
+            cut.settled.add(name)
+            definitions_dropped += 1
+            return False
+        size += measure(block) - measure(blocks[cut.index])
+        blocks[cut.index] = block
+        cut.names = names
+        return True
+
+    def carry_definition(definition: Location, resolved_by: list[str]) -> bool:
+        """`resolved_by`는 이 정의를 푼 조회의 파일들이다 — 별칭 대상이 그 기준을 물려받는다."""
+        nonlocal size, definitions, definitions_dropped, definitions_trimmed
+        key = (definition.file, definition.line_start, definition.line_end)
+        if (cut := trimmed_enums.get(key)) is not None:
+            return widen_enum(definition, cut)
         if any(_overlaps(definition, other) for other in seen):
             return False
         seen.append(definition)
         text = ctx.read_source(definition)
         block = _block(definition, text)
+        # 상한을 넘는 enum은 물은 상수 주변만 남겨 다시 잰다(`_trim_enum`) — 통째로 버리지 않는다
+        end = (definition.line_start or 1) + text.count("\n")
+        is_trimmed = False
+        if len(block) > _AUDITOR_DEFINITION_CHARS and definition.symbol:
+            trimmed = _trim_enum(text, [definition.symbol])
+            if trimmed is not None:
+                block = _block(definition, trimmed, end=end)
+                is_trimmed = True
         if len(block) > _AUDITOR_DEFINITION_CHARS or size + 1 + measure(block) > cap:
             definitions_dropped += 1
             return False
         blocks.append(block)
         size += 1 + measure(block)
         definitions += 1
+        if is_trimmed:  # 실린 것만 센다 — 줄여 놓고 상한에 걸려 못 실은 enum은 위에서 dropped다
+            definitions_trimmed += 1
+            trimmed_enums[key] = _TrimmedEnum(text, end, [definition.symbol or ""], len(blocks) - 1)
         if wrappers and (target := macro_alias_target(text)) is not None:
             aliases.add(target)
+            files = alias_files.setdefault(target, [])
+            files += [file for file in resolved_by if file not in files]
         return True
 
     if with_definitions:
-        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수 정의(#349 (f)). 정의는 작고 판단
-        # 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그 함수의
-        # 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
-        used = definition_names(bodies, ctx.locals_of)
-        found = ctx.definitions_of(used, anchor.file, **hygiene) or []
-        for definition in slice_names_first(found, ctx.read_source, ref.lines):
-            carry_definition(definition)
+        # 실린 함수 원문이 쓰는 이름 → 매크로·타입·파일 변수·enum 상수 정의(#349 (f)). 정의는 작고
+        # 판단 가치가 커서(버퍼 크기·필드 배치) 피호출 함수보다 먼저 싣는다. 이름은 함수마다 그
+        # 함수의 지역·파라미터·필드 전용 이름을 뺀 것이고, 슬라이스 줄에 나온 이름의 정의가 먼저다.
+        # 조회는 본문의 파일마다 그 파일 기준이다 — 본문이 모두 앵커 파일이면 **이 본 조회**는 한
+        # 번 부르는 예전 호출 그대로다(아래 별칭 라운드는 예전부터 라운드마다 추가 호출이다).
+        by_file: dict[str, set[str]] = {}
+        for body in bodies:
+            by_file.setdefault(body[0].file, set()).update(definition_names([body], ctx.locals_of))
+        found = _definitions_by_file(ctx, by_file, hygiene)
+        for definition in slice_names_first(list(found), ctx.read_source, ref.lines):
+            carry_definition(definition, found[definition])
         # 별칭 라운드(C4) — `ND_TCHECK` → `ND_TCHECK2`처럼 실은 매크로가 이름만 바꿔 넘기면 그
         # 대상의 정의를 한 번 더 찾는다. 대상이 다시 별칭이면 `_AUDITOR_ALIAS_ROUNDS`까지 간다.
-        # 이미 조회한 이름은 다시 안 찾는다. `asked`가 정의를 조회한 이름이다 — 아래 피호출 단계도
-        # 이 이름들의 함수만 찾는다(마지막 라운드가 새로 낸 대상은 한 단계 더 간 것이라 뺀다).
-        asked = set(used)
+        # 이미 조회한 이름은 다시 안 찾는다(파일 기준 — 다른 파일에서 쓴 같은 이름은 그 파일
+        # 기준으로 한 번 더). `asked`가 정의를 조회한 이름이다 — 아래 피호출 단계도 이 이름들의
+        # 함수만 찾는다(마지막 라운드가 새로 낸 대상은 한 단계 더 간 것이라 뺀다).
+        asked_in = {(name, file) for file, file_names in by_file.items() for name in file_names}
+        asked = {name for name, _ in asked_in}
         for _ in range(_AUDITOR_ALIAS_ROUNDS):
-            wanted, asked = aliases - asked, asked | aliases
+            wanted: dict[str, set[str]] = {}
+            for target in sorted(aliases):
+                for file in alias_files[target]:
+                    if (target, file) not in asked_in:
+                        wanted.setdefault(file, set()).add(target)
             if not wanted:
                 break
-            for definition in ctx.definitions_of(wanted, anchor.file, **hygiene) or []:
-                if carry_definition(definition):
+            asked_in |= {(target, file) for file, targets in wanted.items() for target in targets}
+            asked |= set().union(*wanted.values())
+            for definition, resolved_by in _definitions_by_file(ctx, wanted, hygiene).items():
+                if carry_definition(definition, resolved_by):
                     alias_definitions += 1
     hops = ctx.config.thresholds.auditor_callee_hops
     indirect = ctx.config.thresholds.auditor_indirect_callees
@@ -3410,6 +4033,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             size += 1 + measure(block)
             write_windows += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
+    # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
+    # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
+    blocks[1:1] = guard_blocks
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
@@ -3417,7 +4043,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         subject_kind="candidate",
         subject_id=candidate_id,
         slice_id=ref.slice_id,
-        functions=len(blocks) - definitions - callers - write_windows,
+        # 함수가 아닌 블록을 전부 뺀다 — 정의·호출자 창·쓰기 지점 창·GUARDS(0 또는 1). 래퍼·별칭·
+        # 간접 피호출은 함수 본문이라 센다. 옵션마다 따로 더한 식이 합쳐질 때 하나가 빠지면
+        # `functions`가 조용히 틀린다.
+        functions=len(blocks) - definitions - callers - write_windows - len(guard_blocks),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -3459,11 +4088,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             {
                 "definitions": definitions,
                 "definitions_dropped": definitions_dropped,
+                "definitions_trimmed": definitions_trimmed,
                 **({"alias_definitions": alias_definitions} if wrappers else {}),
             }
             if with_definitions
             else {}
         ),
+        **(guard_scan.event_fields() if guard_scan else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
@@ -3615,6 +4246,91 @@ def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:
 def _spans(location: Location, line: int) -> bool:
     start = location.line_start
     return start is not None and start <= line <= (location.line_end or start)
+
+
+def _definitions_by_file(
+    ctx: RunContext, names_by_file: dict[str, set[str]], hygiene: dict
+) -> dict[Location, list[str]]:
+    """파일마다 그 파일 본문이 쓰는 이름을 **그 파일 기준**(`near_file`)으로 조회해 이은 정의 위치
+    → 그 정의를 **푼 파일들**(별칭 대상이 그 파일들의 기준으로만 조회된다). 같은 위치는 한 번이고,
+    같은 이름이 파일마다 다른 정의로 풀리면 둘 다 든다 — 블록 배너에 위치가 있어 구별되고, 하나로
+    합치면 한쪽 본문이 틀린 정의를 본다. 순서는 파일 순(각 조회가 정한 순서 그대로)이다 — 본문이 한
+    파일뿐이면 `ctx.definitions_of` 한 번의 결과 그대로다.
+    ponytail: 비제품 강등(`demote_nonproduct`)은 **한 조회 안에서만** 순서를 정한다 — 파일 사이는
+    파일 순 first-fit이라, 앞 파일 조회의 `tests/` 정의가 뒤 파일 조회의 제품 정의보다 앞서 상한을
+    먹을 수 있다. 코드 줄(`found`는 파일 순 연결 · `slice_names_first`는 슬라이스 줄 이름만
+    당긴다)로 입증했을 뿐 실행하거나 재지 않았다. 필요하면 조회들을 모은 뒤 `is_nonproduct_path`로
+    한 번 더 정렬한다(그 함수는 `src/adapters/` 쪽에 있어 러너가 직접 못 쓴다)."""
+    found: dict[Location, list[str]] = {}
+    for file, names in names_by_file.items():
+        for definition in ctx.definitions_of(names, file, **hygiene) or []:
+            files = found.setdefault(definition, [])
+            if file not in files:
+                files.append(file)
+    return found
+
+
+@dataclass
+class _TrimmedEnum:
+    """`SOURCE`에 잘라 실은 enum 하나 — 같은 enum의 다른 상수를 나중에 물으면(같은 묶음의 다음
+    상수 · 별칭 라운드) `blocks[index]`를 그 상수까지 넓혀 다시 만든다. 첫 상수 주변만 싣고
+    둘째를 겹친다며 건너뛰면 둘째 정의가 사라진다(PR #485 리뷰 P2-4).
+
+    ⚠ **한계(수정 전과 같은 선행 결함 — 미해결)**: 이 기억은 enum이 **줄 머리 상수로** 먼저 실렸을
+    때만 선다. 같은 범위의, 줄 머리 상수가 아닌 이름(typedef 이름·태그·비머리 상수)이 줄 머리
+    상수보다 **먼저 처리되면** `_trim_enum`이 `None`이라 enum이 통째로 `dropped`되고 그 범위가
+    `seen`에 올라, 뒤따르는 상수는 겹침으로 안 실린다(조용히 사라진다). 처리 순서는 정의 조회의
+    이름 정렬(`definitions_of`는 `sorted(set(names))`) 다음에 슬라이스 줄에 나온 이름을 앞으로 당긴
+    것이라 ① 슬라이스 줄에 타입 이름만 있고 상수는 다른 줄일 때뿐 아니라 ② 타입·태그 이름이 상수보다
+    **정렬상 앞서는** enum(`enum AVPixelFormat` ↔ `AV_PIX_FMT_…` — `AVP` < `AV_`)은 타입과 상수가
+    모두 슬라이스 줄에 있어도 난다 — **이 PR이 겨냥한 FFmpeg 꼴에서 상수 주변만 싣는 기능이 걸리지
+    않는다.** ③ 줄마다 상수가 여럿인 enum에서 비머리 상수가 먼저 물려도 같다. 특성화 테스트:
+    `test_limitation_a_type_name_asked_first_drops_the_whole_enum_and_hides_its_constants`(①) ·
+    `test_limitation_a_type_name_that_sorts_before_its_constants_hides_them_on_the_slice`(②).
+    후속 수정 방향(설계 변경이라 이 PR에서 안 한다): 크기로 dropped된 타입 이름 행을 `seen`에 안
+    올려 상수 행이 먼저 시도하게 한다."""
+
+    text: str  # 줄이기 전 enum 원문
+    end: int  # 줄이기 전 끝 줄 — 배너가 든다
+    names: list[str]  # 지금 블록에 든 상수들 — `_trim_enum`에 넘기는 목록이다
+    index: int  # `blocks`에서의 자리
+    # 이미 판정한 이름 — 블록에 낱말로 보이는 이름(typedef 이름·태그·한 줄 다중 상수의 둘째 —
+    # 정의가 아니라 언급일 수도 있다, `widen_enum`의 한계)과 못 더해 `dropped`로 센 상수. 같은
+    # 이름을 또 물어도 세지 않는다. **`names`와 따로 둔다** — 줄
+    # 머리 상수가 아닌 이름이 `names`에 들어가면 `_trim_enum`이 `None`을 내 그 뒤 상수가 못
+    # 더해진다.
+    settled: set[str] = field(default_factory=set)
+
+
+def _trim_enum(text: str, names: list[str]) -> str | None:
+    """상한을 넘는 enum 정의를 머리(여는 `{`까지) · `names` 상수마다 그 줄 앞뒤
+    `_AUDITOR_ENUM_CONTEXT_LINES`줄 · 닫는 줄만 남겨 줄인다 — 창이 겹치면 한 구간이다. 뺀 구간마다
+    `_OMITTED` 한 줄 — 줄 번호는 배너와 그 표시로 되짚는다. enum이 아니거나(첫 `{` 앞에 `enum`이
+    없다) 그 이름 **하나라도** 줄 머리 상수로 안 나오면 `None`(줄이지 않는다 — 일부만 싣고 다 실은
+    것처럼 보이지 않게).
+    ⚠ 값을 안 적은 상수는 앞 상수에서 하나씩 세는데, 뺀 구간이 그 앞이면 모델이 값을 못 센다."""
+    lines = text.split("\n")
+    head = next((i for i, line in enumerate(lines) if "{" in line), None)
+    if head is None or not _ENUM_HEAD.search("\n".join(lines[: head + 1])):
+        return None
+    width = _AUDITOR_ENUM_CONTEXT_LINES
+    keep = set(range(head + 1)) | {len(lines) - 1}
+    for name in names:
+        own = re.compile(rf"\s*{re.escape(name)}\b")
+        hit = next((i for i, line in enumerate(lines) if i > head and own.match(line)), None)
+        if hit is None:
+            return None
+        keep |= set(range(max(0, hit - width), hit + width + 1))
+    out, gap = [], 0
+    for i, line in enumerate(lines):
+        if i in keep:
+            if gap:
+                out.append(_OMITTED.format(gap))
+                gap = 0
+            out.append(line)
+        else:
+            gap += 1
+    return "\n".join(out)
 
 
 def _block(location: Location, text: str, end: int | None = None) -> str:
@@ -4117,6 +4833,7 @@ def _drop_finding(
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).
     """
     state.critic_failed += 1
+    state.critic_failed_ids.add(finding.finding_id)
     ctx.trace.emit(
         EventKind.CRITIC_FAILED,
         stage=Stage.CRITIC,
@@ -4243,6 +4960,24 @@ def _triage_one(
     return resolved_item
 
 
+def _recorded_thresholds(config: HarnessConfig) -> dict[str, float]:
+    """`RunRecord.thresholds` — 설정값이 아니라 **실제로 도는 값**이다.
+
+    `auditor_tool_hops`는 프로필 공통이라 Fake Auditor를 쓰는 프로필에도 걸리는데, 그 좌석은
+    `Finding` 한 방 판이라 루프를 안 돈다(`nodes.auditor.loop_problem`의 면제). 그대로 싣으면
+    manifest는 「켰다」인데 `auditor_hop`은 0건이라 「켰는데 한 번에 answer했다」로 읽힌다 —
+    안 도는 값은 키를 뺀다(`Thresholds.flatten`이 꺼진 상한을 적는 방식).
+    """
+    thresholds = config.thresholds.flatten()
+    looped = Role.AUDITOR.value in config.profile.roles and auditor.tool_hops_in_effect(
+        config.model_for(Role.AUDITOR.value).prompt_template_version,
+        config.thresholds.auditor_tool_hops,
+    )
+    if not looped:
+        thresholds.pop("auditor_tool_hops", None)
+    return thresholds
+
+
 def _new_record(
     spec: RunSpec,
     config: HarnessConfig,
@@ -4282,12 +5017,16 @@ def _new_record(
         # config가 아니라 spec에서 온다 — 장비 라벨은 설정이 아니라 이 실행의 사실이다.
         device=spec.device,
         budget=config.budget,
-        thresholds=config.thresholds.flatten(),
+        thresholds=_recorded_thresholds(config),
         seed=config.seed,
         # 하네스가 **보낸** 샘플링.
         sampling=config.sampling,
         # 각 실서빙 모델이 `generation_config.json`에 **선언한** 샘플링 (#99). 서버가
         # 모델 파일에서 적용하는 `top_k` 등을 하네스는 안 보내므로 이 필드로만 기록에 남는다.
+        # ⏵ 2026-10-08 — 위 줄(2026-08-29)은 낡았다. registry `sampling`을 선언한 모델은
+        # `temperature`·`top_p`·`top_k`·`min_p`·`presence_penalty`를 요청에 싣고(#261, `top_k`는
+        # 2026-09-26 선언부터) 그 값은 아래 `model_request_params`에 남는다. `repetition_penalty`는
+        # 여전히 안 보낸다.
         # 어댑터가 읽어 factory가 `deps`에 실은 값이다 — 러너는 `src/adapters/`를 import 하지
         # 않으므로(계층 규칙) `tool_images`와 같은 경로로 받는다.
         model_sampling=model_sampling,
@@ -4393,7 +5132,19 @@ def incomplete_fields(
     """
     warnings = []
     if not record.tool_images:
-        warnings.append("tool_images가 비어 있다 (컨테이너 없이 실행). 모델 비교표에서 제외한다")
+        # Fake 런타임이면 컨테이너가 정말 없다. 그 밖의 런타임에서 비는 것은 「이미지 digest를
+        # 못 기록했다」다 - `tool_images`는 run 시작 전(`build_deps`)에 `images()`가 채우므로 도구
+        # 단계에 닿았는지와 무관하고, 비는 사유는 이미지가 로컬에 없음 · 런타임에 못 닿음 ·
+        # sif 없음이다(보고서 4절의 WSL run은 Docker 소켓이 없었다). 「컨테이너 없이 실행」이라
+        # 쓰면 설정 오류로 읽힌다(#479 (e)).
+        runtime = record.tool_runner
+        why = (
+            "컨테이너 없이 실행"
+            if runtime == "fake"
+            else f"{runtime} 런타임인데 도구 이미지 digest를 기록하지 못했다 - "
+            "이미지가 없거나 런타임에 닿지 못했다"
+        )
+        warnings.append(f"tool_images가 비어 있다 ({why}). 모델 비교표에서 제외한다")
     if served_models:
         # **Fake 역할은 호출자가 이미 빼고 준다.** Fake 모델의 checksum 0은 빠진 값이
         # 아니라 **맞는 값**이다 — `FakeModelClient`는 프로세스 안에서 도는 코드라 해시할

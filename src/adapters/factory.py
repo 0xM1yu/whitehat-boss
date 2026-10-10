@@ -15,7 +15,11 @@ from functools import partial
 from pathlib import Path
 from typing import Any
 
-from src.adapters.container_tools import ContainerToolRunner, index_output_path
+from src.adapters.container_tools import (
+    ContainerToolRunner,
+    PocTarget,
+    index_output_path,
+)
 from src.adapters.fake_model import FakeModelClient
 from src.adapters.fake_retriever import CacheHook, FakeRetriever
 from src.adapters.fake_tools import FakeToolRunner
@@ -192,7 +196,8 @@ class Deps:
     # (index-v3 `writes`·`assigns`·`field_assigns`, #304 · C5(a)). Auditor `SOURCE`의 쓰기 지점 창.
     writes_of: Callable[[str, str], list[Location] | None] = lambda _name, _file: None
     field_writes_of: Callable[[str, str], list[Location] | None] = lambda _field, _file: None
-    # (이름들, 가까운 파일) → 매크로·타입·파일 변수의 정의 위치(#349 (f)). `callees_of`와 같은 자리.
+    # (이름들, 가까운 파일) → 매크로·타입·파일 변수·enum 상수의 정의 위치(#349 (f)). `callees_of`와
+    # 같은 자리.
     definitions_of: Callable[..., list[Location] | None] = lambda _names, _file, **_kw: None
     # (파일, 함수 이름) → 그 함수의 지역·파라미터 이름(`locals` 표). 정의 조회가 본문 이름에서
     # 이것을 뺀다(`runner._auditor_source`). 기본값 `None`("v2 표 없음")은 뺄 것이 없다는 뜻이다.
@@ -241,6 +246,9 @@ class Deps:
     # (`cli._oracle_for`). 기본 `None`이 「제출 안 함」이고 그것이 이 필드 없이 조립된 `Deps`의 옛
     # 동작이다.
     oracle: Oracle | None = None
+    # 그 채점기가 기댄 카나리 보고서의 `{canary_path, canary_sha256}`(#487). `slicer`와 같이 러너가
+    # 만들지 않고 받는다 - `RunRecord.oracle` 요약에 합쳐진다. `None`이면 안 합친다.
+    canary_ref: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -256,6 +264,11 @@ class _BuildArgs:
     run_id: str
     source_root: Path
     artifacts_root: Path
+    # `poc` 도구가 돌릴 과제 `-vul` 이미지 (ADR 0014). `None`이면 그 도구가 **거절한다** —
+    # 폴백을 지어내지 않는다. 🔴 **배선 자리가 오라클과 같다**: 카나리 선행
+    # (`cli._canary_gate` → `canary_report.canary_refusal`)이 `vm.mmap_rnd_bits > 28`과 미측정을
+    # 이미 거부하므로 ASLR 게이트를 두 벌 두지 않는다. 두 벌 두면 두 벌이 갈린다.
+    poc_target: PocTarget | None = None
     on_cache: CacheHook | None = None
     on_truncate: TruncateHook | None = None
     on_usage: UsageHook | None = None
@@ -367,6 +380,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
     "podman": _Wiring(
@@ -377,6 +391,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
     "singularity": _Wiring(
@@ -387,6 +402,7 @@ _TOOL_RUNNERS: dict[str, _Wiring] = {
             run_id=a.run_id,
             root=a.source_root,
             artifacts_root=a.artifacts_root,
+            poc_target=a.poc_target,
         ),
     ),
 }
@@ -446,6 +462,8 @@ def build_deps(
     slices_path: Path | None = None,
     device: str | None = None,
     oracle: Oracle | None = None,
+    canary_ref: dict[str, str] | None = None,
+    poc_target: PocTarget | None = None,
 ) -> Deps:
     """프로필 하나에 대응하는 어댑터 묶음을 만든다.
 
@@ -480,6 +498,7 @@ def build_deps(
         slice_signature=loaded.run_signature if loaded is not None else None,
         slice_lines=_slice_lines(loaded),
         graph=graph,
+        poc_target=poc_target,
     )
     # 프롬프트를 받는 역할에만 ModelClient를 만든다. 전 역할을 돌면 embedding·reranker
     # 엔드포인트를 향해 `/chat/completions`를 쏘는 클라이언트가 생긴다 — 아무도 부르지
@@ -550,6 +569,7 @@ def build_deps(
     return Deps(
         # 채점기(#386) — factory가 만들지 않고 받는다. 서버 주소와 과제 신원을 아는 것은 CLI다.
         oracle=oracle,
+        canary_ref=canary_ref,
         models=RoutingModelClient(clients),
         retriever=_build("retriever", args),
         tools=tools,
@@ -561,8 +581,12 @@ def build_deps(
         # 같은 이유로 구현에게 묻는다 (#74). Fake는 빈 조건을 내고, 그 빈 값은
         # `RunRecord.compile_flags`의 `None`(옛 manifest)과 구분된다.
         compile_flags=tools.compile_flags(),
-        # 실서빙 모델 파일에서 선언 샘플링을 읽는다. Fake·source 없는 모델은 빠지고, 전부
-        # 그러면 빈 dict다 — `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
+        # 실서빙 모델 파일에서 선언 샘플링을 읽는다. 맵에서 빠지는 길은 둘이다.
+        # (a) 읽기 시도 없음 -> `PROMPTED_ROLES` 밖(embedding·reranker)·서빙 모델 없음(Fake 포함,
+        #     `served_models()`에 없음). `read_declared_sampling`을 안 부른다.
+        # (b) 읽었으나 `None` -> `source` 없음·경로 리졸브 실패·파일 없음·파일 깨짐.
+        # 읽었으나 선언이 0개면 빈 `ModelSampling()`으로 남는다. 전부 빠지면 빈 dict다 —
+        # `RunRecord.model_sampling`의 `None`(옛 manifest)과 구분된다.
         model_sampling=declared_sampling_by_role(config),
         # Retriever가 캡슐의 그래프 섹션을 채우는 것과 **같은 로더**다. 따로 파싱하면
         # 후보의 근사와 그래프의 근사가 갈리고 그 차이가 어느 기록에도 안 남는다.

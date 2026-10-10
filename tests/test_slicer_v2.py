@@ -497,6 +497,30 @@ def test_context_query_reassembles_the_same_points_at_runtime():
     assert json.loads(rebuilt) == [list(p) for p in points]
 
 
+def test_case_a_priority_list_survives_the_jvm_string_constant_limit():
+    """The priority list is interpolated into the Scala source like the context points are, and a
+    long list (every file of a big repo) must not become one oversized string constant."""
+    files = [f"examples/some/rather/long/path/source_{n}.c" for n in range(1, 6001)]
+    query = queries.candidates_a_query(files, "/work/repo")
+    literals = SCALA_STRING.findall(query)
+    assert literals, "no string literals found; the extraction regex is wrong"
+    assert max(len(s.encode("utf-8")) for s in literals) <= 65535
+    # the list itself is longer than one constant could hold: it really is split
+    assert len(re.search(r"val prioFiles = (.*?)\.mkString", query, re.DOTALL)[1]) > 65535
+
+
+def test_case_a_priority_list_reassembles_the_same_files_at_runtime():
+    """Chunking and escaping must not change the value: the joined literals re-read as the sorted
+    list, quotes, backslashes and non-ASCII names included."""
+    files = ['a"b.c', "back\\slash.c", "한글/파일.c", "\U0001f600/x.c"]
+    files += [f"d/f{n}.c" for n in range(3000)]
+    query = queries.candidates_a_query(files, "/work/repo")
+    chunks = re.search(r"val prioFiles = (.*?)\.mkString\.split", query, re.DOTALL)
+    assert chunks, "the list is no longer rebuilt with mkString.split(...)"
+    rebuilt = "".join(json.loads(s) for s in SCALA_STRING.findall(chunks.group(1)))
+    assert rebuilt.split("\n") == sorted(files)
+
+
 def run_shards(monkeypatch, repo, tmp_path, data, count):
     databases = []
     for index in range(count):
@@ -1553,6 +1577,119 @@ def test_priority_files_are_refused_with_export_only_or_unreadable(repo, tmp_pat
         slicer.main([*base, "--priority-files", str(tmp_path / "missing.txt")])
 
 
+def case_a_query(transport):
+    """The case_a discovery query as it was sent, with the client's payload path put back to the
+    token `candidates_a_query` carries, so it compares to the builder's own text."""
+    for request, _ in transport.requests:
+        query = json.loads(request.data)["query"]
+        if '"__SLICER_case_a__"' in query:
+            return re.sub(r'Paths\.get\("[^"]*"\)', f"Paths.get({queries.OUT_PATH_TOKEN})", query)
+    raise AssertionError("no case_a query was sent")
+
+
+def test_priority_case_a_sends_the_list_to_the_case_a_query(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# hint\n\n./main.c\n", encoding="utf-8")
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing), "--priority-case-a",
+    )
+    assert code == 0, result.get("error")
+    # the list as the run normalized it (`./main.c` -> `main.c`) and this run's repo prefix
+    expected = queries.candidates_a_query(["main.c"], two_file_repo.resolve().as_posix())
+    assert case_a_query(transport) == expected
+    assert 'val prioFiles = List("main.c").mkString.split("\\n").toSet' in expected
+    assert result["settings"]["priority_case_a"] is True
+    assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
+
+
+def test_a_priority_list_without_the_flag_leaves_discovery_alone(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """`--priority-files` alone orders only: the case_a query is the default one, to the byte."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--priority-files", str(listing)
+    )
+    assert code == 0, result.get("error")
+    assert case_a_query(transport) == queries.candidates_a_query()
+    assert result["settings"]["priority_case_a"] is False
+
+
+def test_priority_case_a_is_refused_without_a_list(repo, tmp_path, capsys):
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), "--priority-case-a"])
+    assert "--priority-case-a needs --priority-files" in capsys.readouterr().err
+
+
+def test_priority_case_a_is_refused_with_a_list_that_names_no_file(repo, tmp_path, capsys):
+    """A list of comments and blank lines is a list, but it names nothing: the discovery would be
+    the default one while `settings.priority_case_a` says it was steered. Refused, like no list."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("# only a note\n\n   \n", encoding="utf-8")
+    out = tmp_path / "s.json"
+    with pytest.raises(SystemExit):
+        slicer.main([
+            "--repo", str(repo), "--out", str(out),
+            "--priority-files", str(listing), "--priority-case-a",
+        ])
+    assert "--priority-case-a needs a --priority-files that names a file" in capsys.readouterr().err
+    assert not out.exists()  # refused before any run state was written
+
+
+def test_resuming_without_the_priority_case_a_flag_is_a_contract_mismatch(
+    monkeypatch, two_file_repo, tmp_path
+):
+    """The flag changes which candidates exist, so it is part of the run contract: a shard or a
+    resume that forgets it is refused and the message names the setting."""
+    database = tmp_path / "state.db"
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    first = ("--checkpoint", str(database), "--priority-files", str(listing))
+    code, _, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), *first, "--priority-case-a"
+    )
+    assert code == 0
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), *first, "--resume"
+    )
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.priority_case_a" in result["error"]
+
+
+def test_resuming_without_the_import_include_root_flag_is_a_contract_mismatch(
+    monkeypatch, repo, tmp_path
+):
+    """The include root changes the graph c2cpg builds, so the run contract carries it: a resume
+    (or a shard) that forgets it is refused, and the message names the setting."""
+    options = checkpoint_options(tmp_path)
+    data = payloads(case_a=[candidate()])
+    code, _, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--import-include-root")
+    assert code == 0
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, *options, "--resume")
+    assert code != 0 and "Checkpoint mismatch: run_contract" in result["error"]
+    assert "settings.import_include_root" in result["error"]
+
+
+def test_the_case_a_cap_note_follows_the_order_the_run_used(monkeypatch, two_file_repo, tmp_path):
+    """The note says how the cut was ordered: with the flag on the listed files came first, and
+    with it off the note keeps the words it always had."""
+    monkeypatch.setattr(queries, "CASE_A_CANDIDATE_CAP", 1)
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    on = ("--priority-files", str(listing), "--priority-case-a")
+    notes = []
+    for name, extra in (("off", ()), ("on", on)):
+        folder = tmp_path / name
+        folder.mkdir()
+        _, result, _ = run_cli(monkeypatch, two_file_repo, folder, two_file_payloads(), *extra)
+        notes.append(result["measurement_notes"]["candidates_case_a"])
+    assert "api: write-context methods first, then traversal order" in notes[0]
+    assert "priority" not in notes[0]
+    assert "api: priority-file methods first, then write-context methods" in notes[1]
+
+
 def flows_file_order(transport):
     """The repo file of each flows query, in the order they were sent to the server.
 
@@ -1640,17 +1777,37 @@ def test_a_poison_streak_degrades_a_different_set_with_a_list(monkeypatch, two_f
     assert with_list["counters"]["candidates_degraded"] == 3
 
 
+def three_candidates_two_files():
+    """a.c's candidate plus two in main.c: the priority, id and candidate_key orders all differ.
+
+    two_file_payloads()' two keys happen to sort in the priority order, so a key-sorted manifest
+    read as a kept one there -- and once the list reorders two candidates, their key order must be
+    the priority or the id order. `third` is at line 4 for its key (at line 5 the keys sorted in the
+    priority order again)."""
+    data = two_file_payloads()
+    data["case_a"] = response(
+        "case_a", [in_file(candidate(), "a.c"), candidate("other", 3), candidate("third", 4)]
+    )
+    return data
+
+
 def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_file_repo, tmp_path):
-    """HIGH-1: the list survives a shard -> merge -> export round trip.
+    """HIGH-1: the list survives a shard -> merge -> export round trip -- but not in the manifest.
 
     Two p%%N shards with the SAME list, merged and exported, give exactly the single prioritized
-    run's slices, and the exported candidate_manifest keeps the priority insertion order."""
+    run's slices, and the merged checkpoint's `candidates` keep the priority order. The exported
+    candidate_manifest does not (#434): export reads it back from the checkpoint baseline, which
+    Checkpoint.set stores key-sorted (canonical, sort_keys=True), so it is in candidate_key order.
+    A candidate_manifest is in the priority order only when its run discovered the candidates
+    itself, as the single run did (with a checkpoint), and --export-dir writes it in that order."""
     listing = tmp_path / "priority.txt"
     listing.write_text("main.c\n", encoding="utf-8")
     whole = tmp_path / "whole"
     whole.mkdir()
     _, single, _ = run_cli(
-        monkeypatch, two_file_repo, whole, two_file_payloads(), "--priority-files", str(listing)
+        monkeypatch, two_file_repo, whole, three_candidates_two_files(),
+        "--checkpoint", str(whole / "state.db"), "--export-dir", str(whole / "exported"),
+        "--priority-files", str(listing),
     )
     databases = []
     for index in range(2):
@@ -1658,7 +1815,7 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
         folder.mkdir()
         databases.append(folder / "state.db")
         code, result, _ = run_cli(
-            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            monkeypatch, two_file_repo, folder, three_candidates_two_files(),
             "--checkpoint", str(databases[-1]), "--shard", f"{index}/2",
             "--priority-files", str(listing),
         )
@@ -1668,11 +1825,64 @@ def test_priority_round_trips_through_shard_merge_and_export(monkeypatch, two_fi
     export = tmp_path / "export"
     export.mkdir()
     _, exported, transport = run_cli(
-        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only"
+        monkeypatch, two_file_repo, export, {}, "--checkpoint", str(merged), "--export-only",
+        "--export-dir", str(export / "exported"),
     )
     assert transport.stages == []
     assert exported["slices"] == single["slices"]
-    assert list(exported["candidate_manifest"]) == list(single["candidate_manifest"])
+    with Checkpoint(merged, resume=True) as store:
+        bound = store.get("candidates")
+    # listed file first, collect()'s order in each tier -- not read back from the code under test
+    entries = [(c["entry"]["file"], c["entry"]["line"]) for c in bound]
+    assert entries == [("main.c", 3), ("main.c", 4), ("a.c", 1)]
+    priority = [c["candidate_key"] for c in bound]
+    by_id = [c["candidate_key"] for c in sorted(bound, key=lambda c: c["id"])]
+    # The fixture must keep the three orders apart, or a key-sorted manifest passes as a kept one.
+    assert len({tuple(priority), tuple(by_id), tuple(sorted(priority))}) == 3, "re-pick `third`"
+    assert list(single["candidate_manifest"]) == priority
+    written = (whole / "exported" / "candidate-manifest.json").read_text(encoding="utf-8")
+    assert list(json.loads(written)) == priority
+    assert list(exported["candidate_manifest"]) == sorted(priority)
+    written = (export / "exported" / "candidate-manifest.json").read_text(encoding="utf-8")
+    assert list(json.loads(written)) == sorted(priority)
+
+
+@pytest.mark.parametrize(
+    ("extra", "expected"), [((), 0), (("--shard", "0/2"), 2)], ids=["whole", "shard"]
+)
+def test_a_cpg_run_reads_the_manifest_back_in_key_order(
+    monkeypatch, two_file_repo, tmp_path, extra, expected
+):
+    """#434: a --cpg run takes the prepare run's discovery (restore_discovery), so its own
+    candidate_manifest comes back key-sorted as an export's does. The gate is --cpg alone, with or
+    without --shard (`slice_sharded.py --shards N>1` passes `--shard I/N`, `--shards 1` does not);
+    a shard's exit code is 2 (partial). `candidates` keep the priority."""
+    listing = tmp_path / "priority.txt"
+    listing.write_text("main.c\n", encoding="utf-8")
+    prep = tmp_path / "prep"
+    prep.mkdir()
+    cpg = prep / "cpg.bin"
+    data = three_candidates_two_files()
+    data["save_cpg"] = _saving(cpg)
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, prep, data, "--checkpoint", str(prep / "state.db"),
+        "--prepare-only", "--cpg-out", str(cpg), "--priority-files", str(listing),
+    )
+    assert code == 2 and result["prepare_only"] is True, result.get("error")
+    seeded = _seed(prep / "state.db", tmp_path / "run")
+    data = three_candidates_two_files()
+    del data["case_a"], data["case_b"]  # a rediscovery would fail
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, seeded.parent, data, "--checkpoint", str(seeded),
+        "--resume", "--cpg", str(cpg), "--priority-files", str(listing), *extra,
+    )
+    assert code == expected, result.get("error")
+    with Checkpoint(seeded, resume=True) as store:
+        bound = store.get("candidates")
+    assert [c["entry"]["file"] for c in bound] == ["main.c", "main.c", "a.c"]
+    priority = [c["candidate_key"] for c in bound]
+    assert priority != sorted(priority)
+    assert list(result["candidate_manifest"]) == sorted(priority)
 
 
 def test_matching_is_exact_not_substring_or_basename(repo):
@@ -1773,11 +1983,155 @@ def test_a_dropped_priority_list_on_resume_names_the_field(monkeypatch, two_file
     assert "settings.priority_files" in result["error"]
 
 
-# T1 -- --case-order: which case is sliced first. Order only, bound into the checkpoint.
+# -- --skip-candidates: keys this process does not slice (slice_sharded --restart-on-deadline) -----
 
 
-def test_collect_puts_case_b_first_when_asked(repo):
-    """The case is the first sort key: `ab` (the default) is every A then every B, `ba` the reverse.
+def _candidate_keys(monkeypatch, repo, tmp_path):  # noqa: ANN001, ANN202
+    """(the three candidate keys of `three_candidates()` in candidate order, the case-B one)."""
+    folder = tmp_path / "learn"
+    folder.mkdir()
+    _, result, _ = run_cli(monkeypatch, repo, folder, three_candidates())
+    manifest = result["candidate_manifest"]
+    return list(manifest), next(k for k, c in manifest.items() if c["case"] == "B")
+
+
+def _skipping(tmp_path, *keys):  # noqa: ANN002, ANN202
+    listing = tmp_path / "skip.txt"
+    listing.write_text("\n".join(keys) + "\n", encoding="utf-8")
+    return str(listing)
+
+
+def test_a_skipped_candidate_is_degraded_without_a_server_query(monkeypatch, repo, tmp_path):
+    """The restarted shard must not re-attempt the candidate whose query hit the deadline: it gets
+    the anchor-only slice a poison streak gives, nothing is sent to Joern for it, and the result
+    says it was not sliced (a degraded slice in an `ok` result would read as complete)."""
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(folder / "state.db"),
+        "--skip-candidates", _skipping(tmp_path, b_key),
+        "--progress", str(folder / "progress.jsonl"),
+    )
+    assert transport.stages.count("flows") == 2 and "backward" not in transport.stages
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    skipped = [e["candidate_key"] for e in events if e["event"] == "candidate_skipped"]
+    assert skipped == [b_key]                       # the progress log names what was left out
+    assert code == 2 and result["status"] == "partial"
+    assert "--skip-candidates: 1 candidate not sliced" in result["error"]
+    degraded = [s for s in result["slices"] if s.get("degraded")]
+    assert [s["candidate_key"] for s in degraded] == [b_key]
+    assert "--skip-candidates" in degraded[0]["measurement_notes"]["degraded"]
+    assert result["counters"]["candidates_degraded"] == 1
+    assert result["counters"]["candidates_failed"] == 0
+
+
+def test_without_the_list_the_degraded_note_still_names_the_poison_streak(
+    monkeypatch, repo, tmp_path
+):
+    """The flag off changes nothing: what a poison streak leaves unsliced is noted as that, never
+    as a --skip-candidates skip, and the progress log has no candidate_skipped event."""
+    cands = [candidate("c" + str(i), i + 1) for i in range(6)]
+    bad = payloads(case_a=cands, flow_count=2)
+    bad["flows"] = lambda query: {"success": True, "stdout": "java.lang.StackOverflowError",
+                                  "stderr": ""}
+    folder = tmp_path / "streak"
+    folder.mkdir()
+    _, result, _ = run_cli(monkeypatch, repo, folder, bad,
+                           "--progress", str(folder / "progress.jsonl"))
+    notes = [s["measurement_notes"]["degraded"] for s in result["slices"]]
+    assert notes and all("(poison streak)" in note for note in notes)
+    assert not any("--skip-candidates" in note for note in notes)
+    assert "--skip-candidates" not in result["error"]
+    events = [json.loads(line) for line in (folder / "progress.jsonl").read_text().splitlines()]
+    assert "candidate_skipped" not in {e["event"] for e in events}
+
+
+def test_a_skipped_candidate_stays_unsaved_so_resume_slices_it(monkeypatch, repo, tmp_path):
+    keys, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    state = folder / "state.db"
+    run_cli(monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state),
+            "--skip-candidates", _skipping(tmp_path, b_key))
+    with Checkpoint(state, resume=True) as store:
+        saved = {row[0] for row in store.conn.execute("SELECT candidate_key FROM stages")}
+    assert saved == set(keys) - {b_key}
+    code, result, transport = run_cli(monkeypatch, repo, folder, three_candidates(),
+                                      "--checkpoint", str(state), "--resume")
+    assert code == 0, result.get("error")
+    assert transport.stages.count("backward") == 1 and "flows" not in transport.stages
+    counters = result["counters"]
+    assert counters["candidates_reused"] == 2 and counters["candidates_degraded"] == 0
+
+
+def test_a_skipped_candidate_that_is_already_complete_is_reused_not_degraded(
+    monkeypatch, repo, tmp_path
+):
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    folder = tmp_path / "skip"
+    folder.mkdir()
+    state = folder / "state.db"
+    run_cli(monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state))
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(state), "--resume",
+        "--skip-candidates", _skipping(tmp_path, b_key),
+    )
+    assert code == 0 and "flows" not in transport.stages and "backward" not in transport.stages
+    assert result["counters"]["candidates_degraded"] == 0 and "error" not in result
+
+
+def test_a_claim_shard_skips_a_candidate_it_owns_without_giving_it_away(
+    monkeypatch, repo, tmp_path
+):
+    """The skipped candidate stays claimed by this shard: no other shard takes it (the doc'd
+    no-lease rule), and a later plain `--resume` of the same I/N slices it."""
+    from slicer_claims import read_claims
+
+    _, b_key = _candidate_keys(monkeypatch, repo, tmp_path)
+    claims = tmp_path / "claims.db"
+    folder = tmp_path / "claim0"
+    folder.mkdir()
+    code, result, transport = run_cli(
+        monkeypatch, repo, folder, three_candidates(), "--checkpoint", str(folder / "state.db"),
+        "--shard", "0/2", "--claim-db", str(claims),
+        "--skip-candidates", _skipping(tmp_path, b_key),
+    )
+    assert "backward" not in transport.stages and transport.stages.count("flows") == 2
+    assert read_claims(claims)[b_key][0] == "0/2"
+    assert result["counters"]["candidates_degraded"] == 1
+
+
+@pytest.mark.parametrize("mode", ["export", "prepare"])
+def test_skip_candidates_with_export_or_prepare_is_refused(repo, tmp_path, capsys, mode):
+    """Neither slices a candidate, so the list would change nothing -- said, not ignored."""
+    flags = ["--export-only"] if mode == "export" else [
+        "--prepare-only", "--cpg-out", str(tmp_path / "c.bin")]
+    with pytest.raises(SystemExit):
+        slicer.main(["--repo", str(repo), "--out", str(tmp_path / "s.json"), *flags,
+                     "--checkpoint", str(tmp_path / "state.db"),
+                     "--skip-candidates", _skipping(tmp_path, "k")])
+    assert "--skip-candidates has no effect" in capsys.readouterr().err
+
+
+def test_a_skip_list_reads_like_a_priority_list(monkeypatch, repo, tmp_path):
+    """One key per line; blank lines and `#` lines are skipped; a BOM does not stick to line 1."""
+    keys, _ = _candidate_keys(monkeypatch, repo, tmp_path)
+    listing = tmp_path / "skip.txt"
+    bom = chr(0xFEFF)
+    listing.write_text(
+        bom + "# deadline hits\n\n" + f"{keys[0]}\n  {keys[1]}  \n", encoding="utf-8"
+    )
+    assert slicer.read_skip_keys(listing) == frozenset(keys[:2])
+
+
+# --case-order: which case is sliced first. The default is `ba`; `ab` is the order before `ba`
+# became the default and stays selectable. Bound into the checkpoint.
+
+
+def test_collect_orders_the_cases_by_case_order_and_defaults_to_ba(repo):
+    """The case is the first sort key: `ba` (the default) is every B then every A, `ab` -- the
+    order before `ba` became the default -- the reverse, with the old numbering.
 
     The files are laid out so a sort by file alone (a.c, b.c, y.c, z.c) would be a third order, and
     inside a case nothing moves. ids are numbered after the sort, so `ba` gives B the low numbers;
@@ -1787,17 +2141,51 @@ def test_collect_puts_case_b_first_when_asked(repo):
         "B": [in_file(candidate("b1", 1), "b.c"), in_file(candidate("b2", 1), "y.c")],
     }
     default = collect(rows, repo)
+    assert default == collect(rows, repo, "ba")
     assert [(c["case"], c["entry"]["file"]) for c in default] == [
-        ("A", "a.c"), ("A", "z.c"), ("B", "b.c"), ("B", "y.c"),
-    ]
-    assert collect(rows, repo, "ab") == default
-    first_b = collect(rows, repo, "ba")
-    assert [(c["case"], c["entry"]["file"]) for c in first_b] == [
         ("B", "b.c"), ("B", "y.c"), ("A", "a.c"), ("A", "z.c"),
     ]
-    assert [c["id"] for c in first_b] == ["slice_0001", "slice_0002", "slice_0003", "slice_0004"]
+    assert {c["entry"]["symbol"]: c["id"] for c in default} == {
+        "b1": "slice_0001", "b2": "slice_0002", "a1": "slice_0003", "a2": "slice_0004",
+    }
+    first_a = collect(rows, repo, "ab")
+    assert [(c["case"], c["entry"]["file"]) for c in first_a] == [
+        ("A", "a.c"), ("A", "z.c"), ("B", "b.c"), ("B", "y.c"),
+    ]
+    assert {c["entry"]["symbol"]: c["id"] for c in first_a} == {
+        "a1": "slice_0001", "a2": "slice_0002", "b1": "slice_0003", "b2": "slice_0004",
+    }
     keys = {c["entry"]["symbol"]: c["candidate_key"] for c in default}
-    assert {c["entry"]["symbol"]: c["candidate_key"] for c in first_b} == keys
+    assert {c["entry"]["symbol"]: c["candidate_key"] for c in first_a} == keys
+
+
+def test_the_default_case_order_is_ba_in_the_cli_and_the_library():
+    import inspect
+
+    from slicer_candidates import DEFAULT_CASE_ORDER, prioritize
+
+    assert DEFAULT_CASE_ORDER == "ba"
+    assert slicer.parser().parse_args(["--repo", "r", "--out", "o"]).case_order == "ba"
+    for function in (collect, prioritize):
+        assert inspect.signature(function).parameters["case_order"].default == "ba"
+
+
+def test_a_settings_dict_without_case_order_is_read_as_ab(repo):
+    """A contract written before --case-order existed (#441) has no `case_order` key, and that run
+    sliced Case A first. The pipeline reads the missing key as `ab`, not as today's default `ba`.
+    The CLI always fills the key, so this only shows when a settings dict reaches the pipeline some
+    other way (a contract's settings, a hand-built job)."""
+    rows = {"case_a": [candidate()], "case_b": [candidate("sprintf", 5)]}
+    job = slicer.Slicer(repo, 0.95, None, slicer.JoernClient("unused", None))
+    job.query = lambda stage, _query: (rows[stage], "")
+    for settings, expected in (
+        ({}, ["A", "B"]),
+        ({"case_order": "ab"}, ["A", "B"]),
+        ({"case_order": "ba"}, ["B", "A"]),
+    ):
+        job.settings = settings
+        job.collect_candidates()
+        assert [c["case"] for c in job.candidates] == expected, settings
 
 
 def test_prioritize_is_tier_first_under_ab_and_case_first_under_ba(repo):
@@ -1850,20 +2238,21 @@ def random_rows(seed):
 
 
 def test_prioritize_under_ab_is_what_377_shipped(repo):
-    """`ab` keeps the tier-first order byte for byte: against the old body, on random inputs."""
+    """`ab` keeps the tier-first order byte for byte -- it was the default when #377 (b) shipped it
+    and is still selectable: against the old body, on random inputs."""
     from slicer_candidates import prioritize
 
     for seed in range(60):
         rows, files = random_rows(seed)
-        ordered = collect(rows, repo)
-        expected = legacy_prioritize(ordered, files)
-        assert prioritize(ordered, files) == expected, seed
-        assert prioritize(ordered, files, "ab") == expected, seed
+        ordered = collect(rows, repo, "ab")
+        assert prioritize(ordered, files, "ab") == legacy_prioritize(ordered, files), seed
 
 
 def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
     """The same rule written the other way round (a model, not the code's own loop): the B group
-    then the A group, listed files first inside each, collect()'s order kept, ids untouched."""
+    then the A group, listed files first inside each, the input's order kept inside a group, ids
+    untouched. The input is not always what collect(..., "ba") gave -- the A-first list (`ab`) and
+    a shuffled one go in too: the case order is `ba`'s, not whichever case the input starts with."""
     from slicer_candidates import prioritize
 
     def touched(c):
@@ -1871,16 +2260,18 @@ def test_prioritize_under_ba_is_case_first_whatever_the_input(repo):
 
     for seed in range(60):
         rows, files = random_rows(seed)
-        ordered = collect(rows, repo, "ba")
-        expected = []
-        for case in "BA":
-            members = [c for c in ordered if c["case"] == case]
-            expected += [c for c in members if files & touched(c)]
-            expected += [c for c in members if not files & touched(c)]
-        moved, first, matched = prioritize(ordered, files, "ba")
-        assert moved == expected, seed
-        assert first == sum(bool(files & touched(c)) for c in ordered), seed
-        assert matched == files & set().union(*[touched(c) for c in ordered]), seed
+        shuffled = collect(rows, repo, "ba")
+        random.Random(seed).shuffle(shuffled)
+        for ordered in (collect(rows, repo, "ba"), collect(rows, repo, "ab"), shuffled):
+            expected = []
+            for case in "BA":
+                members = [c for c in ordered if c["case"] == case]
+                expected += [c for c in members if files & touched(c)]
+                expected += [c for c in members if not files & touched(c)]
+            moved, first, matched = prioritize(ordered, files, "ba")
+            assert moved == expected, seed
+            assert first == sum(bool(files & touched(c)) for c in ordered), seed
+            assert matched == files & set().union(*[touched(c) for c in ordered]), seed
 
 
 def two_file_both_cases_payloads():
@@ -1934,53 +2325,67 @@ def test_priority_files_follow_the_case_order_in_the_pipeline(
     assert executed_candidates(transport) == queries
 
 
-def test_the_default_case_order_is_ab_and_is_recorded(monkeypatch, repo, tmp_path):
+@pytest.mark.parametrize(("extra", "recorded", "ids"), [
+    ((), "ba", {"B": "slice_0001", "A": "slice_0002"}),  # the default
+    (("--case-order", "ba"), "ba", {"B": "slice_0001", "A": "slice_0002"}),
+    (("--case-order", "ab"), "ab", {"A": "slice_0001", "B": "slice_0002"}),  # the order before `ba`
+])
+def test_case_order_defaults_to_ba_and_ab_keeps_the_previous_numbering(
+    monkeypatch, repo, tmp_path, extra, recorded, ids
+):
+    """Without the flag a run is sliced B first and numbered that way (the old default was A first);
+    `--case-order ab` still gives the old order and the old ids, and the setting is recorded."""
     database = tmp_path / "state.db"
     data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
-    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data, "--checkpoint", str(database))
+    code, result, _ = run_cli(
+        monkeypatch, repo, tmp_path, data, "--checkpoint", str(database), *extra
+    )
     assert code == 0, result.get("error")
-    assert result["settings"]["case_order"] == "ab"
+    assert result["settings"]["case_order"] == recorded
     with Checkpoint(database, resume=True) as store:
-        assert [c["case"] for c in store.get("candidates")] == ["A", "B"]
+        candidates = store.get("candidates")
+    assert [c["case"] for c in candidates] == list(ids)  # the bound (= processing) order
+    assert {c["case"]: c["id"] for c in candidates} == ids
 
 
 def test_case_order_changes_the_query_execution_order(monkeypatch, repo, tmp_path):
     """The flag must change the order queries are SENT, not only the bound list (the trap
-    --priority-files already had): the first per-candidate query is flows under `ab`, backward
-    under `ba`."""
+    --priority-files already had): the first per-candidate query is backward under the default
+    `ba`, flows under `ab`."""
     def per_candidate(transport):
         return [stage for stage in transport.stages if stage in ("flows", "backward")]
 
     sent = {}
-    for name, extra in (("plain", ()), ("ba", ("--case-order", "ba"))):
+    for name, extra in (("default", ()), ("ab", ("--case-order", "ab"))):
         folder = tmp_path / name
         folder.mkdir()
         data = payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
         _, _, sent[name] = run_cli(monkeypatch, repo, folder, data, *extra)
-    assert per_candidate(sent["plain"]) == ["flows", "backward"]
-    assert per_candidate(sent["ba"]) == ["backward", "flows"]
+    assert per_candidate(sent["default"]) == ["backward", "flows"]
+    assert per_candidate(sent["ab"]) == ["flows", "backward"]
 
 
 def test_case_order_is_part_of_the_run_contract(monkeypatch, repo, tmp_path):
     """The order is bound into the checkpoint's candidates, so it is part of the contract: the
-    same order resumes, another one -- or leaving the flag out -- is refused by name."""
+    same order resumes, another one -- or leaving the flag out, which means the default `ba` -- is
+    refused by name. `ab`, the non-default value, is the one that has to be given again."""
     options = ["--checkpoint", str(tmp_path / "state.db")]
 
     def data():
         return payloads(case_a=[candidate()], case_b=[candidate("sprintf", 5)], flow_count=1)
 
-    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data(), *options, "--case-order", "ba")
+    code, result, _ = run_cli(monkeypatch, repo, tmp_path, data(), *options, "--case-order", "ab")
     assert code == 0, result.get("error")
-    assert result["settings"]["case_order"] == "ba"
-    assert [s["case"] for s in result["slices"]] == ["B", "A"]  # slices[] is in id order
+    assert result["settings"]["case_order"] == "ab"
+    assert [s["case"] for s in result["slices"]] == ["A", "B"]  # slices[] is in id order
     with Checkpoint(tmp_path / "state.db", resume=True) as store:
-        assert store.get("run_contract")["settings"]["case_order"] == "ba"
-        assert [c["case"] for c in store.get("candidates")] == ["B", "A"]
+        assert store.get("run_contract")["settings"]["case_order"] == "ab"
+        assert [c["case"] for c in store.get("candidates")] == ["A", "B"]
     code, resumed, _ = run_cli(
-        monkeypatch, repo, tmp_path, data(), *options, "--resume", "--case-order", "ba"
+        monkeypatch, repo, tmp_path, data(), *options, "--resume", "--case-order", "ab"
     )
     assert code == 0, resumed.get("error")
-    for another in ((), ("--case-order", "ab")):  # no flag = the default `ab`
+    for another in ((), ("--case-order", "ba")):  # no flag = the default `ba`
         code, refused, _ = run_cli(
             monkeypatch, repo, tmp_path, data(), *options, "--resume", *another
         )
@@ -1990,7 +2395,7 @@ def test_case_order_is_part_of_the_run_contract(monkeypatch, repo, tmp_path):
 
 def test_shards_with_different_case_orders_are_not_merged(monkeypatch, repo, tmp_path):
     databases = []
-    for index, extra in enumerate((("--case-order", "ba"), ())):
+    for index, extra in enumerate((("--case-order", "ab"), ())):  # the second is the default `ba`
         folder = tmp_path / f"shard{index}"
         folder.mkdir()
         databases.append(folder / "state.db")
@@ -2005,13 +2410,14 @@ def test_shards_with_different_case_orders_are_not_merged(monkeypatch, repo, tmp
 
 def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypatch, repo, tmp_path):
     """tools/slice_sharded.py hands the same arguments to the prepare run and to every shard and
-    none to the export, which reads the run contract. Two shards that carried the flag, merged and
-    exported WITHOUT it, give exactly the single `ba` run's slices and candidates, ids included."""
+    none to the export, which reads the run contract. `ab` is the non-default value, so the flag has
+    to reach every stage for the contracts to match: two shards that carried it, merged and
+    exported WITHOUT it, give exactly the single `ab` run's slices and candidates, ids included."""
     whole = tmp_path / "whole"
     whole.mkdir()
-    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates(), "--case-order", "ba")
+    _, single, _ = run_cli(monkeypatch, repo, whole, three_candidates(), "--case-order", "ab")
     state, cpg, code, _, _ = _prepare(
-        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ab")
     )
     assert code == 2
     databases = []
@@ -2019,7 +2425,7 @@ def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypat
         databases.append(_seed(state, tmp_path / f"seeded{index}"))
         code, result, _ = _shard_on(
             monkeypatch, repo, databases[-1].parent, cpg, "--shard", f"{index}/2",
-            "--case-order", "ba",
+            "--case-order", "ab",
         )
         assert code == 2 and result["shard"] == {"index": index, "count": 2}, result.get("error")
     merged = tmp_path / "merged.db"
@@ -2029,18 +2435,20 @@ def test_case_order_reaches_the_prepare_run_every_shard_and_the_export(monkeypat
     _, exported, _ = run_cli(
         monkeypatch, repo, export, {}, "--checkpoint", str(merged), "--export-only"
     )
-    assert exported["settings"]["case_order"] == "ba"
+    assert exported["settings"]["case_order"] == "ab"
     assert exported["slices"] == single["slices"]
     # The manifest dict comes back from the checkpoint key-sorted (canonical JSON), so only its
     # content is compared; the order a run sliced in is the checkpoint's `candidates` list.
     assert exported["candidate_manifest"] == single["candidate_manifest"]
     with Checkpoint(merged, resume=True) as store:
-        assert [c["case"] for c in store.get("candidates")] == ["B", "A", "A"]
+        assert [c["case"] for c in store.get("candidates")] == ["A", "A", "B"]
 
 
 def test_a_shard_that_forgot_the_case_order_is_refused(monkeypatch, repo, tmp_path):
+    """A shard without the flag runs with the default `ba`, so it is refused when the prepare run
+    was `ab`; the other way round (both default) is what every other shard test already runs."""
     state, cpg, _, _, _ = _prepare(
-        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ba")
+        monkeypatch, repo, tmp_path, three_candidates(), extra=("--case-order", "ab")
     )
     seeded = _seed(state, tmp_path / "seeded")
     code, result, transport = _shard_on(monkeypatch, repo, seeded.parent, cpg)

@@ -1,9 +1,10 @@
 """배포 전 검증 체크리스트(model-serving.md §3)를 실제 엔드포인트에 대고 잰다.
 
-**`bench`가 접속하는 유일한 커맨드다.** `doctor`는 설정과 저장소 상태만 보고 소켓을 열지
-않는다(`src/cli.py` 모듈 docstring). 그 경계는 GPU 없는 팀원의 진단이 네트워크 오류로
-실패하지 않게 하려는 것이고, 여기서 한 번 더 못박는다 — bench는 서버가 있는 장비에서만
-의미가 있으며, 없으면 "측정 못 함"을 사유와 함께 출력하고 끝낸다.
+**진단 명령 중 모델 서버에 요청을 보내는 것은 `bench`뿐이다.** `doctor`는 설정과 저장소 상태만
+보고 소켓을 열지 않는다(`src/cli.py` 모듈 docstring). 그 경계는 GPU 없는 팀원의 진단이 네트워크
+오류로 실패하지 않게 하려는 것이고, 여기서 한 번 더 못박는다 — bench는 서버가 있는 장비에서만
+의미가 있으며, 없으면 "측정 못 함"을 사유와 함께 출력하고 끝낸다. (`preflight`(#534)는
+ssh·TCP 연결·`docker run`까지만 한다. `run`도 그 서버에 닿지만 파이프라인이지 진단이 아니다.)
 
 측정에는 `OpenAICompatModelClient`를 **그대로** 쓴다. bench 전용 HTTP 경로로 잰 수치는
 운영 성능이 아니다. 특히 prefix를 system 메시지로 분리하는 `_request_payload`의 동작이
@@ -108,9 +109,11 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
     # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
     Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
-    # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit)을 낸다(PoV 툴 루프, prompts/pov/v2).
+    # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit)을 낸다(PoV 툴 루프, `prompts/pov/`).
     # `gen`이 실은 `PovSpec`은 순수 조립기가 바이트로 만든다. `_render`에 pov 분기가 있다
     # (FINDING·TARGET·SOURCE·FACTS). 실측은 서빙 호스트 확보 뒤(checksum·benchmark 0).
+    # ⏵ 2026-10-08 — 호스트는 생겼다(`--device vastai-remote`, #417). checksum·benchmark는
+    # 여전히 0이다(`config/models.yaml`의 `feyospace-v1-small`).
     Role.POV: (PovAction, CapsuleLevel.EXPANDED),
 }
 
@@ -160,15 +163,19 @@ _POV_FINDING = (
 def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
     """실제 렌더 경로. 자리표시자 누락은 `render()`가 잡는다."""
     if role is Role.CRITIC:
+        # 합성 벤치도 프롬프트의 원문 블록·FACTS를 함께 채운다. 앞 판의 바이트는 유지한다.
+        source_fields = {"source": filler} if "{{SOURCE}}" in template.body else {}
         facts = build_facts(
             run_id=_BENCH_RUN_ID,
             ids={"finding_id": "find_0001", "decision_id": "dec_0001"},
+            **source_fields,
         )
         return template.render(
             facts=facts,
             claim="검증 없는 memcpy (CWE-787)",
             path="parse_header -> memcpy",
             evidence=filler,
+            **source_fields,
         )
     if role is Role.POV:
         # PoV body는 FINDING·TARGET·SOURCE·FACTS를 받는다(캡슐 섹션이 아니라 Auditor의 Finding).

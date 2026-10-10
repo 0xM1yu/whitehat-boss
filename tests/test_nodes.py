@@ -28,8 +28,8 @@ from src.interfaces.model_client import (
     SchemaParseError,
     Usage,
 )
-from src.interfaces.tool_runner import SandboxSpec, ToolArgs, ToolRunner
-from src.orchestrator import prompt_loader, runner
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER, SandboxSpec, ToolArgs, ToolRunner
+from src.orchestrator import gate, prompt_loader, runner
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import (
@@ -70,6 +70,7 @@ from src.schemas import (
     Verdict,
 )
 from src.schemas.candidate import Candidate, SliceRef
+from src.schemas.decision import Decision
 from src.schemas.enums import ScoutSignal
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
@@ -471,7 +472,13 @@ def _set_synthesize(ctx: RunContext, value: int) -> None:
 
 
 def test_synthesize_off_leaves_an_empty_repro_spec(ctx: RunContext) -> None:
-    """#S7 기본(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈추던 종전 동작. 합성 이벤트 없음."""
+    """#S7 끈 경우(0): 모델이 명세를 비워 내면 그대로 비어 F-9로 멈춘다. 합성 이벤트 없음.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `synthesize_repro_spec: 1`을 선언해 **기본값이 1로
+    바뀌었다.** 그래서 이 검사는 커밋된 기본값에 기대지 않고 0을 **주입한다** — 무는 명제는
+    「켜짐/꺼짐 중 어느 것이 기본인가」가 아니라 「0이면 비는 채로 멈춘다」다.
+    """
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
 
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
@@ -900,6 +907,304 @@ def test_pov_is_handed_the_finding_as_validate_run_left_it(
     assert handed == [FindingState.QUEUED], f"pov가 validate.run 전 사본을 받았다: {handed}"
 
 
+# --- 8단계 pov의 대상 ② — `validated` 밖의 상위 N (⏵ 2026-10-04, 이슈 #386 ①의 후속) -----------
+#
+# 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다 — Level 1이 재현 명세의 근거를
+# 주지 않아 F-9가 Finding을 `hypothesized`에 세우고 8단계 진입 시점의 `validated`가 비어 있었다.
+# PoC가 없으면 채점 점수가 없다. `thresholds.pov_attempt_top_n`이 그 밖에서도 상위 몇 건을 시도하게
+# 한다 — **0이 종전 동작이고** 미실측 표시가 아니다(`config/budgets.yaml`).
+
+
+def _outside_validated(
+    ctx: RunContext, specs: list[tuple[str, float]]
+) -> tuple[runner._Accumulator, list[Finding]]:
+    """`VALIDATED`로 들어오지 **않은** Finding들과 그 캡슐 — `pov_attempt_top_n`의 **후보 풀**이다
+    (그 풀에서 Critic이 밀어 낸 것을 거른 것이 대상이다 — `runner._pov_targets`). 여기 담는 것은
+    판정이 없는 `HYPOTHESIZED`뿐이라 거르개에 안 걸린다.
+
+    `_finding`의 기본 상태가 `HYPOTHESIZED`다(재현 명세가 없어 F-9가 세우는 자리와 같은 상태).
+    """
+    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    state = runner._Accumulator()
+    findings = []
+    for finding_id, confidence in specs:
+        finding = _finding(finding_id, confidence=confidence)
+        state.update(finding)
+        state.finding_capsules[finding.finding_id] = capsule
+        findings.append(finding)
+    return state, findings
+
+
+def _with_top_n(ctx: RunContext, limit: int) -> None:
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(pov_attempt_top_n=limit)
+    )
+
+
+def _pov_subjects(ctx: RunContext) -> list[str | None]:
+    return [e.subject_id for e in ctx.trace.events if e.kind is EventKind.POV_GENERATED]
+
+
+def test_pov_does_not_run_outside_validated_while_the_threshold_is_zero(ctx: RunContext) -> None:
+    """`pov_attempt_top_n: 0`이면 `validated` 밖의 Finding은 PoV를 **안** 돈다.
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 8을 선언해 **기본값이 올라갔다.** 전 판은 여기서
+    `thresholds.pov_attempt_top_n == 0`을 단언해 기본값 자체를 묶었는데, 그 단언은 「0이면 안
+    돈다」를 무는 것이 아니라 「기본이 0이다」를 물었다. 0을 **주입**해 명제를 원래 자리로 되돌린다.
+    짝 검사 `test_pov_runs_outside_validated_when_the_threshold_is_set`이 양수 쪽을 문다.
+    """
+    state, _ = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 0)
+    assert ctx.config.thresholds.pov_attempt_top_n == 0, "주입이 안 먹었다"
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == []
+
+
+def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -> None:
+    """🔴 임계가 양수면 `validated`가 **0건이어도** PoV가 돈다 — 실측 run이 막힌 자리다.
+
+    `validated`가 비어 있을 때 아예 루프에 안 들어가던 `if validated and ...` 게이트도 같이
+    바뀌었다. 그 게이트를 되돌리면 이 검사가 빨개진다.
+    """
+    state, (finding,) = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [finding.finding_id]
+    assert state.findings[finding.finding_id].state is FindingState.HYPOTHESIZED, (
+        "pov는 추가형이다 — 상태를 바꾸지 않는다"
+    )
+
+
+def test_the_extra_pov_targets_are_cut_by_confidence_then_finding_id(ctx: RunContext) -> None:
+    """자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
+
+    `confidence` 0.9 둘 + 0.3 하나를 넣고 상한을 1로 둔다. 넣는 순서를 **0.3 → 큰 id → 작은
+    id**로 해서 ①자리로 고르는 구현(첫째 = 0.3)과 ②동점을 뒤 id로 가르는 구현이 각각 빨개지게
+    한다. 정렬이 흔들리면 재현 실행이 갈라진다.
+    """
+    state, _ = _outside_validated(
+        ctx, [("find_0003", 0.3), ("find_0002", 0.9), ("find_0001", 0.9)]
+    )
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == ["find_0001"]
+
+
+def test_the_threshold_adds_targets_and_never_removes_a_validated_one(
+    ctx: RunContext,
+) -> None:
+    """**더하기만 한다.** 상한이 1인데 `validated`가 1건 + 밖이 2건이면 시도는 **2건**이다 —
+    `validated`는 상한에 들지 않는다. 상한을 전체 대상 수로 읽는 구현은 1건만 시도해 빨개진다.
+
+    그래서 이 상한이 잘라 낸 Finding은 **종전에도 PoV를 안 돌던 것**이고, **상한 자체가** 무언가를
+    조용히 잃게 하지는 않는다(`runner._pov_targets` docstring — 추가 대상이 예산을 더 쓰는 것은
+    별개이고 `tests/test_oracle_wiring.py`가 문다).
+    """
+    state, demoted = _demoted_at_validate(ctx)
+    outside, _ = _outside_validated(ctx, [("find_0002", 0.9), ("find_0003", 0.8)])
+    for finding in outside.findings.values():
+        state.update(finding)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [demoted.finding_id, "find_0002"]
+
+
+def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> None:
+    """🔴 **E4 게이트는 안 넓어진다.** `validate.run`은 유일한 결정론 E4 게이트이고 `from=validated`
+    를 요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓힌 것은 PoV 쪽뿐이다.
+
+    `validated` 1건 + 밖 2건에 상한 2를 두고, 8단계 `gate_eval`의 대상이 **`validated` 하나**인지
+    본다. `_pov_targets`를 `validate.run` 루프에도 꽂는 변이가 여기서 빨개진다.
+    """
+    state, demoted = _demoted_at_validate(ctx)
+    outside, _ = _outside_validated(ctx, [("find_0002", 0.9), ("find_0003", 0.8)])
+    for finding in outside.findings.values():
+        state.update(finding)
+    state.finding_capsules.update(outside.finding_capsules)
+    _with_top_n(ctx, 2)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    gated = [
+        e.subject_id
+        for e in ctx.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert gated == [demoted.finding_id]
+    assert len(_pov_subjects(ctx)) == 3, "PoV 쪽은 넓어졌다(전제)"
+
+
+# --- 추가 대상 풀에서 Critic이 밀어 낸 Finding을 뺀다 (적대적 리뷰 #490 MEDIUM-2) ---------------
+#
+# 정렬 키가 Auditor `confidence` 하나라 반박돼도 그대로다 - 풀에 두면 반박된 Finding이 「재현
+# 명세가 없어 멈춘」 Finding의 자리를 밀어내고, 최종 지정 사슬은 등급 상한이 같으면
+# `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이
+# 될 수 있다. 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
+# 반박·보류(`need_evidence`)로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다. Critic을
+# **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과 재현 명세가
+# 없어 멈춘 것(F-9)은 든다.
+
+
+def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> Decision:
+    return Decision(
+        decision_id="dec_0001",
+        run_id=RUN_ID,
+        finding_id=finding_id,
+        verdict=verdict,
+        rationale="근거 서술",
+        evidence_refs=["ev_0001"] if grounded else [],
+        produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+    )
+
+
+@pytest.mark.parametrize(
+    ("finding_state", "verdict", "grounded", "dropped", "in_pool"),
+    [
+        pytest.param(
+            FindingState.QUEUED, Verdict.REBUT, True, False, False, id="critic_rebutted_F6"
+        ),
+        pytest.param(
+            FindingState.QUEUED, Verdict.NEED_EVIDENCE, False, False, False,
+            id="critic_asked_for_evidence_F7",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, None, False, True, False,
+            id="critic_call_failed_and_the_finding_was_dropped",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, Verdict.UPHOLD, True, False, True,
+            id="upheld_but_held_for_a_missing_repro_spec_F9",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, Verdict.REBUT, False, False, True,
+            id="an_ungrounded_rebuttal_is_normalized_to_uphold",
+        ),
+        pytest.param(
+            FindingState.HYPOTHESIZED, None, False, False, True,
+            id="cut_by_critic_top_n_the_critic_never_judged_it",
+        ),
+        pytest.param(
+            FindingState.QUEUED, None, False, False, True,
+            id="gate_queued_it_as_E0_before_the_critic_F2",
+        ),
+    ],
+)
+def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
+    ctx: RunContext,
+    finding_state: FindingState,
+    verdict: Verdict | None,
+    grounded: bool,
+    dropped: bool,
+    in_pool: bool,
+) -> None:
+    """풀 판정표 - 상태가 아니라 **Critic이 이 Finding에 무엇을 했나**로 가른다. `QUEUED`는
+    F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6·F-7(Critic이 밀어 냈다)이 섞인 상태라 상태만으로는
+    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `uphold`로 바꾸므로 정책이 `QUEUED`로 안
+    보내고(`HYPOTHESIZED` F-9) 풀에 든다 - 정규화가 한 곳(`gate.normalize`)에서만 일어난다는 전제를
+    같이 문다.
+
+    ⚠ 판정표 일곱은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
+    절단 · `_drop_finding`)에서 골랐다 - 지어낸 상태가 아니다."""
+    finding = _finding("find_0001", state=finding_state, confidence=0.9)
+    state = runner._Accumulator()
+    state.update(finding)
+    if verdict is not None:
+        state.decisions[finding.finding_id] = (
+            _critic_decision(finding.finding_id, verdict, grounded=grounded),
+        )
+    if dropped:
+        runner._drop_finding(ctx, state, finding, "schema_parse_failed", SchemaParseError("bad"))
+    _with_top_n(ctx, 1)
+
+    targets = runner._pov_targets(ctx, state, [])
+
+    assert [f.finding_id for f in targets] == (["find_0001"] if in_pool else [])
+
+
+def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing_repro_spec(
+    ctx: RunContext,
+) -> None:
+    """리뷰의 시나리오 그대로다 - 반박된 Finding이 `confidence`가 더 높아도 상한 1의 자리는 F-9로
+    멈춘 Finding이 받는다. 풀에서 안 빼면 정렬 키(`confidence` 내림차순)가 반박된 쪽을 먼저
+    고른다."""
+    rebutted = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
+    held = _finding("find_0002", state=FindingState.HYPOTHESIZED, confidence=0.5)
+    state = runner._Accumulator()
+    state.update(rebutted)
+    state.update(held)
+    state.decisions[rebutted.finding_id] = (
+        _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
+    )
+    state.decisions[held.finding_id] = (
+        _critic_decision(held.finding_id, Verdict.UPHOLD, grounded=True),
+    )
+    _with_top_n(ctx, 1)
+
+    assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
+
+
+def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: RunContext) -> None:
+    """위 둘이 보는 `_pov_targets`가 **`_analyze`에 실제로 꽂혀 있다** - 상한 1에 반박된 Finding이
+    더 높은 `confidence`로 있어도 PoV는 재현 명세가 없어 멈춘 쪽에 돈다."""
+    state, (held,) = _outside_validated(ctx, [("find_0001", 0.5)])
+    rebutted = _finding("find_0002", state=FindingState.QUEUED, confidence=0.99)
+    state.update(rebutted)
+    state.finding_capsules[rebutted.finding_id] = state.finding_capsules[held.finding_id]
+    state.decisions[rebutted.finding_id] = (
+        _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
+    )
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == [held.finding_id]
+
+
+def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**실제 7단계가 쓴 `state.decisions`가 풀 필터에 읽힌다** - 위 검사들은 `decisions`를 손으로
+    꽂는다. 여기서는 `critic.run`의 모델 호출(`_ask_model`)만 갈아 끼워 한 Finding에 근거 있는
+    `rebut`를 내게 하고, 정책이 그것을 `QUEUED`(F-6)로 내린 뒤 PoV가 안 도는지 본다.
+    `confidence`는 반박된 쪽이 더 높다 - 필터가 안 이어졌으면 상한 1의 자리를 그쪽이 가져간다.
+    `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
+    state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
+
+    def ask(
+        ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list, source=None
+    ) -> Decision:
+        verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
+        return Decision(
+            decision_id=decision_id,
+            run_id=RUN_ID,
+            finding_id=finding.finding_id,
+            verdict=verdict,
+            rationale="근거 서술",
+            evidence_refs=["ev_0001"],
+            produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+        )
+
+    monkeypatch.setattr(critic, "_ask_model", ask)
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert state.findings[rebutted.finding_id].state is FindingState.QUEUED, (
+        "전제 - 실제 7단계가 이 Finding을 F-6으로 내려야 한다"
+    )
+    assert _pov_subjects(ctx) == [kept.finding_id]
+
+
+
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
 
 
@@ -1088,6 +1393,9 @@ def test_stamp_issued_revalidates_instead_of_copying(ctx: RunContext, state: Fin
     초록이었다(D83 리뷰 변이 ⑤). 그 검증기를 직접 태운다 — 재현 명세 없는 `validated`·`proven`은
     만들어질 수 없어야 한다.
     """
+    # ⏵ 2026-10-05 — `synthesize_repro_spec` 기본값이 1이 되어 Auditor가 명세를 **채운다.**
+    # 이 검사의 전제는 「명세 없는 Finding」이라 그 스위치를 끄고 만든다(아래 단언이 전제를 묶는다).
+    _set_synthesize(ctx, 0)
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
     assert finding.repro_spec is None, "픽스처 전제 — 재현 명세 없는 Finding이어야 검증기가 문다"
@@ -1256,6 +1564,65 @@ def test_build_facts_evidence_body_is_opt_in() -> None:
     assert with_body["evidence"][0]["truncated"] is False
 
 
+def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
+    """`evidence_locations`를 켠 호출(content-aware **판**)은 Evidence마다 `location`을 싣는다.
+
+    위치는 **판단 보조**다 — 게이트 등급을 이 값이 정하지 않는다(`gate.evaluate`의
+    `p1 = static_ok or location_ok`에서 Evidence에 위치를 싣는 곳이 semgrep(STATIC) 하나라
+    인용하면 `static_ok`가 이미 참이다 · `container_tools.first_hit_location` docstring). 그 위치는
+    semgrep `results[0]`(첫 히트) 하나다. 위치를 싣는 것이 모델의 인용을 늘리는지는 미실측이다
+    (이슈 #563). ⏵ **2026-10-09 — 「돈 run 0건」은 더 이상 참이 아니다**: `run_20261007_0001`이
+    위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를
+    싣는 판으로 돌았다) **인용은 0/5**였다. 단 그 run의 semgrep 히트
+    (`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를 보여 주면
+    인용이 느는가」는 여전히 0회다 — 그 축이 #563이다.
+
+    **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
+    (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
+    위치가 없는 Evidence는 `null`로 싣는다 — 바로 위 `target`과 같은 관례이고, 키가 아예 없으면
+    「위치가 없는 도구」와 「이 판은 위치를 안 싣는다」가 구별되지 않는다(CLAUDE.md §0).
+    끄면(Scout, content-aware가 아닌 판) 키가 없다 — 프롬프트 바이트가 종전과 같다.
+    """
+    located = _evidence("evidence_0001", "r1").model_copy(
+        update={"location": Location(file="a.c", line_start=1086, line_end=1087)}
+    )
+    bodies = {"evidence_0001": {"body": "semgrep hit", "truncated": False}}
+    shown = {"file": "a.c", "symbol": None, "line_start": 1086, "line_end": 1087}
+
+    with_body = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies=bodies, evidence_locations=True
+    )
+    assert with_body["evidence"][0]["location"] == shown
+
+    # payload가 없어 본문이 빠져도(맵이 빔) 같은 판이면 위치는 나간다 — 본문과 별개다.
+    no_body = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies={}, evidence_locations=True
+    )
+    assert no_body["evidence"] == [
+        {"evidence_id": "evidence_0001", "kind": "sanitizer", "ok": True, "location": shown}
+    ]
+
+    # 위치 없는 Evidence도 키는 나간다 — `null`이 "도구가 위치를 안 줬다"는 사실이다.
+    plain_ev = _evidence("evidence_0001", "r1")
+    no_loc = build_facts(
+        run_id=RUN_ID, ids={}, evidences=[plain_ev], evidence_bodies=bodies, evidence_locations=True
+    )
+    assert no_loc["evidence"][0]["location"] is None
+
+    # 끄면 본문이 있어도 위치는 안 나간다(바이트 동일 — opt-in) · 본문만 종전 모양이다.
+    off = build_facts(run_id=RUN_ID, ids={}, evidences=[located], evidence_bodies=bodies)
+    assert off["evidence"] == [
+        {
+            "evidence_id": "evidence_0001",
+            "kind": "sanitizer",
+            "ok": True,
+            "body": "semgrep hit",
+            "truncated": False,
+        }
+    ]
+    assert "location" not in build_facts(run_id=RUN_ID, ids={}, evidences=[located])["evidence"][0]
+
+
 def test_describe_evidence_appends_body_when_present() -> None:
     ev = _evidence("evidence_0001", "r1")
     assert "heap-overflow" not in critic._describe_evidence([ev])
@@ -1263,6 +1630,50 @@ def test_describe_evidence_appends_body_when_present() -> None:
         [ev], {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
     )
     assert "heap-overflow" in described and "[truncated]" in described
+
+
+def test_describe_evidence_location_is_opt_in_by_version() -> None:
+    """Critic 근거 줄의 위치 토막은 `with_location`(content-aware **판**)일 때만 붙는다.
+
+    **꺼진 쪽(v1)은 main의 렌더와 바이트 동일해야 한다**(적대적 리뷰 #480 HIGH-1) — 아래 기대
+    문자열은 main(`origin/main`)의 `_describe_evidence`가 같은 입력에 낸 실제 출력이다(2026-10-04
+    그 함수를 직접 돌려 대조했다). `bodies`가 `{}`든 `None`이든 같다.
+
+    켜면 위치가 줄에 `file:start-end`로 붙는다. 위치 없는 Evidence는 **줄에 아무것도 더하지
+    않는다** — 산문 한 줄이라 `null`을 적으면 노이즈다(FACTS JSON 블록은 키 부재가 뜻을 흐려서
+    `null`을 싣는다). 위치는 Critic의 판단 보조이고 게이트 등급 근거가 아니다 — 근거는
+    `test_build_facts_evidence_location_is_opt_in_by_version` docstring.
+    """
+    loc = Location(file="a.c", line_start=1086, line_end=1087)
+    located = _evidence("evidence_0001", "r1").model_copy(update={"location": loc})
+    bodies = {"evidence_0001": {"body": "heap-overflow", "truncated": True}}
+    main_line = "- evidence_0001 · sanitizer · ok · asan"
+
+    # v1 — 위치가 있어도 main과 같은 줄이다.
+    assert critic._describe_evidence([located]) == main_line
+    assert critic._describe_evidence([located], {}) == main_line
+    assert (
+        critic._describe_evidence([located], bodies)
+        == f"{main_line}\n    heap-overflow [truncated]"
+    )
+
+    # content-aware 판 — 위치가 붙고, 본문이 있으면 그 앞 줄 끝에 붙는다.
+    on = critic._describe_evidence([located], with_location=True)
+    assert on == f"{main_line} · a.c:1086-1087"
+    on_body = critic._describe_evidence([located], bodies, with_location=True)
+    assert on_body == f"{main_line} · a.c:1086-1087\n    heap-overflow [truncated]"
+
+    # 위치 없는 Evidence는 켜도 종전과 같은 한 줄이다.
+    plain = _evidence("evidence_0001", "r1")
+    assert critic._describe_evidence([plain], with_location=True) == main_line
+
+
+def test_location_text_never_prints_a_missing_value() -> None:
+    """줄 필드는 선택이다 — 없는 값을 `None`이라 적지 않는다(CLAUDE.md §0)."""
+    assert critic._location_text(Location(file="a.c")) == "a.c"
+    assert critic._location_text(Location(file="a.c", line_start=7)) == "a.c:7"
+    assert critic._location_text(Location(file="a.c", line_start=7, line_end=7)) == "a.c:7"
+    assert critic._location_text(Location(file="a.c", line_start=7, line_end=9)) == "a.c:7-9"
 
 
 def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> None:
@@ -1276,6 +1687,83 @@ def test_critic_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> Non
 
     prompt = ctx.models.last_for(Role.CRITIC)
     assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def _critic_prompt_at(ctx: RunContext, version: str, payload: str | None):  # noqa: ANN202
+    """dev_fake Critic을 `version`으로 바꿔 한 번 돌리고 (프롬프트, 인용한 Evidence)를 준다."""
+    key = ctx.config.model_key_for(Role.CRITIC.value)
+    models = {
+        **ctx.config.models,
+        "fake_critic_probe": ctx.config.models[key].transition(prompt_template_version=version),
+    }
+    roles = {**ctx.config.profile.roles, Role.CRITIC.value: "fake_critic_probe"}
+    ctx.config = ctx.config.transition(
+        models=models, profile=ctx.config.profile.transition(roles=roles)
+    )
+    ctx.read_payload = lambda _ref: payload
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    finding, missings = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    graded, _ = gate_node.run(ctx, finding=finding, evidences=evidences, missings=tuple(missings))
+
+    critic.run(ctx, finding=graded, evidences=evidences, missings=tuple(missings))
+
+    return ctx.models.last_for(Role.CRITIC), gate.evidences_for(graded, evidences)
+
+
+def _facts_of(body: str) -> dict:  # noqa: ANN202
+    return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+
+
+def test_critic_v1_prompt_does_not_carry_the_evidence_location(ctx: RunContext) -> None:
+    """dev_fake의 v1 Critic은 기존 metadata 렌더를 유지한다 — 위치를 싣지 않는다.
+
+    `_CONTENT_AWARE_VERSIONS`가 v1을 뺀 것은 v1이 바이트 동일이라 재측정(evaluation §2.3)이 안
+    걸리게 하려는 것이다(#237 HIGH-1). 위치 토막이 그 문 밖에서 붙으면 판 번호 변화 없이 실서빙
+    프롬프트가 바뀐다 — 적대적 리뷰 #480 HIGH-1이 `_describe_evidence([위치 든 Evidence], {})`로
+    재현했다(main `… · asan` / PR `… · asan · a.c:1086-1087`).
+
+    핀 샘플은 **노드를 거쳐 실제로 인용된** Evidence다(fake semgrep이 실도구
+    `first_hit_location`처럼 위치를 싣는다) — 지어낸 샘플이 아니다. 기대 줄은 main의
+    `_describe_evidence`가 내던 꼴이다.
+    """
+    prompt, own = _critic_prompt_at(ctx, "v1", "SANITIZER heap-buffer-overflow at parse_header")
+    located = [ev for ev in own if ev.location is not None]
+    assert located, "전제: 위치를 든 Evidence가 인용돼야 이 핀이 의미가 있다"
+
+    for ev in own:
+        main_line = (
+            f"- {ev.evidence_id} · {ev.kind.value} · {'ok' if ev.ok else 'failed'} · {ev.source}"
+        )
+        assert f"{main_line}\n" in prompt.body or prompt.body.endswith(main_line)
+        assert f"{main_line} · " not in prompt.body  # 위치 토막이 이어 붙지 않는다
+    assert all("location" not in item for item in _facts_of(prompt.body)["evidence"])
+
+
+# 판 목록은 노드의 상수에서 읽는다 — 집합에 판이 들어오면 이 검사가 자동으로 늘어난다(손으로 베낀
+# 목록은 상수와 갈라진다). 제외한 판 없음 — 집합의 모든 판이 dev_fake 렌더에서 돈다.
+@pytest.mark.parametrize("version", sorted(critic._CONTENT_AWARE_VERSIONS))
+@pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
+def test_critic_content_aware_prompt_carries_the_evidence_location(
+    ctx: RunContext, version: str, payload: str | None
+) -> None:
+    """content-aware 판은 위치를 EVIDENCE 줄과 FACTS 양쪽에 싣는다 — **payload가 없어도.**
+
+    위치 노출은 판의 성질이지 payload 유무의 성질이 아니다. `read_payload`가 None이면
+    `evidence_summaries`가 그 Evidence를 맵에서 뺀다(파일 부재·미배선). 위치를 본문과 같은 조건에
+    묶으면 그때 FACTS에서 키가 사라지고 Critic 줄에는 남아 **두 자리가 서로 다른 값**을 든다
+    (적대적 리뷰 #480 LOW-1).
+    """
+    prompt, own = _critic_prompt_at(ctx, version, payload)
+    located = [ev for ev in own if ev.location is not None]
+    assert located, "전제: 위치를 든 Evidence가 인용돼야 이 핀이 의미가 있다"
+
+    facts_by_id = {item["evidence_id"]: item for item in _facts_of(prompt.body)["evidence"]}
+    for ev in located:
+        shown = facts_by_id[ev.evidence_id]["location"]
+        assert shown == ev.location.model_dump(mode="json")
+        assert f"{critic._location_text(ev.location)}" in prompt.body
+    for ev in own:
+        assert ("body" in facts_by_id[ev.evidence_id]) is (payload is not None)
 
 
 def test_critic_includes_evidence_body_when_version_is_content_aware(
@@ -1318,12 +1806,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_and_v5() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_and_v6() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert {"v3", "v4", "v5"} <= critic._CONTENT_AWARE_VERSIONS
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -1346,6 +1834,64 @@ def test_auditor_v1_omits_evidence_body_even_with_payload(ctx: RunContext) -> No
 
     prompt = ctx.models.last_for(Role.AUDITOR)
     assert "heap-buffer-overflow" not in prompt.body  # v1 stays metadata-only (byte-identical)
+
+
+def _auditor_evidence_facts(ctx: RunContext, version: str, payload: str | None):  # noqa: ANN202
+    """dev_fake Auditor를 `version`으로 돌리고 (FACTS의 evidence 항목, 넘긴 Evidence)를 준다."""
+    fake_entry = ctx.config.models["fake"].transition(prompt_template_version=version)
+    ctx.config = ctx.config.transition(
+        models={**ctx.config.models, "fake_probe": fake_entry},
+        profile=ctx.config.profile.transition(
+            roles={**ctx.config.profile.roles, "auditor": "fake_probe"}
+        ),
+    )
+    ctx.read_payload = lambda _ref: payload
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    # **첫** Auditor 프롬프트(hop0)를 읽는다 — 한 방 판은 하나뿐이라 마지막과 같고, 도구 루프 판은
+    # 홉마다 프롬프트를 남겨 마지막이 후속 홉의 도구 관측이라 FACTS가 없다. FACTS를 싣는 것은 hop0
+    # 하나다(`auditor._render_hop0`). 마지막을 읽으면 `_CONTENT_AWARE_VERSIONS`에 루프 판이 들어오는
+    # 순간(#491의 v8) 이 검사가 IndexError로 죽는다 — 어느 PR도 단독으로는 안 깨져 CI가 못 잡는다.
+    hop0 = next(prompt for seen, prompt in ctx.models.prompts if seen is Role.AUDITOR)
+    return _facts_of(hop0.body)["evidence"], evidences
+
+
+def test_auditor_v1_facts_carry_no_evidence_location(ctx: RunContext) -> None:
+    """v1 Auditor의 FACTS는 위치를 안 싣는다 — content-aware가 아닌 판은 바이트가 종전과 같다.
+
+    본문·위치 둘 다 판이 정하는 opt-in이다(`_CONTENT_AWARE_VERSIONS`). 핀 샘플은 노드가 실제로
+    넘긴 Evidence이고 그중 위치를 든 것(fake semgrep)이 있어야 의미가 있다.
+    """
+    items, evidences = _auditor_evidence_facts(
+        ctx, "v1", "SANITIZER heap-buffer-overflow at parse_header"
+    )
+
+    assert any(ev.location is not None for ev in evidences), "전제: 위치 든 Evidence가 있어야 한다"
+    assert all(set(item) == {"evidence_id", "kind", "ok"} for item in items)
+
+
+# 판 목록은 노드의 상수에서 읽는다(위 Critic 검사와 같은 이유). `v4_t1`도 든다 — 손으로 쓴 옛 목록이
+# 빠뜨렸던 판이고 dev_fake 렌더에서 돈다. 제외한 판 없음.
+@pytest.mark.parametrize("version", sorted(auditor._CONTENT_AWARE_VERSIONS))
+@pytest.mark.parametrize("payload", ["SANITIZER heap-buffer-overflow at parse_header", None])
+def test_auditor_content_aware_facts_carry_the_evidence_location(
+    ctx: RunContext, version: str, payload: str | None
+) -> None:
+    """content-aware 판은 Evidence마다 `location`을 싣는다 — payload가 없어도(리뷰 #480 LOW-1).
+
+    위치는 판단 보조이고 게이트 등급 근거가 아니다(`build_facts` 주석). 위치 없는 Evidence(그래프)는
+    `null`이다. 본문은 payload가 있을 때만 실린다.
+    """
+    items, evidences = _auditor_evidence_facts(ctx, version, payload)
+
+    assert any(ev.location is not None for ev in evidences), "전제: 위치 든 Evidence가 있어야 한다"
+    by_id = {item["evidence_id"]: item for item in items}
+    for ev in evidences:
+        expected = ev.location.model_dump(mode="json") if ev.location else None
+        assert by_id[ev.evidence_id]["location"] == expected
+        assert ("body" in by_id[ev.evidence_id]) is (payload is not None)
 
 
 def test_auditor_includes_evidence_body_when_version_is_content_aware(
@@ -1377,7 +1923,7 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
-        {"v3", "v4", "v4_t1", "v5", "v6", "v7"}
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
@@ -1426,14 +1972,18 @@ def test_critic_prompt_is_content_conditional(version: str) -> None:
     assert "contain no body text" in prefix
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_evidence_completeness_wording(role: str) -> None:
     """#346 M1/M2: v5를 v4 텍스트로 되돌리면 실패하는 철자 핀이지 모델 행동 검증은 아니다.
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
-    변이는 못 잡으므로 실제 모델의 근거 사용·과보류는 활성화 전 별도 측정한다.
+    변이는 못 잡는다. 실제 모델의 근거 사용·과보류는 별도 측정 대상이며
+    배선된 v6 활성화 전에 그 측정을 했다는 기록은 없다(agent-contracts §4).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
     for text in (
@@ -1457,10 +2007,13 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
         assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
     """러너·노드의 별도 호출 경계를 명시하는 문구 핀; 실제 모델 행동 검증은 아니다."""
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     if role == "auditor":
         assert "does not receive Scout's `analysis_summary`" in normalized
@@ -1473,7 +2026,7 @@ def test_v5_cross_stage_input_boundaries_wording(role: str) -> None:
         assert "does not automatically retrieve missing material and retry" in normalized
 
 
-@pytest.mark.parametrize("role", ["auditor", "critic"])
+@pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
 def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     """#346 M2 잔여: 부분 본문 규칙 2·3과 Critic §1 범위 문단의 판정 **방향** 문장 철자 핀.
 
@@ -1485,7 +2038,10 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
     §4 규칙 5).
     """
-    prefix = (PROMPTS_DIR / role / "v5" / "prefix.md").read_text(encoding="utf-8")
+    version = load_config("harness_pool").model_for("critic").prompt_template_version \
+        if role == "wired_critic" else "v5"
+    role = "critic" if role == "wired_critic" else role
+    prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
         "What a partial body does not show is unknown, not absent: a missing guard, caller, "
@@ -1514,13 +2070,16 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
         assert text in normalized, text
 
 
-def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(version: str) -> None:
     """#346 sumin0218 M1: 기존 보류 규칙에 판정을 좌우하는 누락 조건이 붙어 있다.
 
     출처: critic/v5/prefix.md Review procedure §1·§3. 이 핀은 이 문구의 회귀를 잡을 뿐
     모든 의미 반전이나 실제 모델의 규칙 우선순위 준수를 검증하지 않는다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "cannot be checked from supplied content and the verdict depends on" in normalized
     condition = "unresolved fact that could change the verdict and required material is absent"
@@ -1529,7 +2088,10 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional() -> N
     assert "need_evidence is required when a rebuttal is plausible" not in normalized
 
 
-def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
+@pytest.mark.parametrize(
+    "version", ["v5", load_config("harness_pool").model_for("critic").prompt_template_version]
+)
+def test_critic_v5_role_summary_states_the_decisive_fact_condition(version: str) -> None:
     """#346 sumin0218 M1 잔여: 「세 결과」 요약도 보류를 판정을 좌우하는 반박으로 한정한다.
 
     v4에서 상속된 무한정 문구 「the path or a possible rebuttal cannot be decided」는 잘린
@@ -1539,7 +2101,7 @@ def test_critic_v5_role_summary_states_the_decisive_fact_condition() -> None:
     돌아오거나 한정·꼬리가 바뀌면 빨개지고, 이 줄을 남긴 채 무한정 조건을 다른 문장으로
     덧붙이는 변이는 못 잡는다. 모델이 어느 쪽을 따르는지는 안 쟀다.
     """
-    prefix = (PROMPTS_DIR / "critic" / "v5" / "prefix.md").read_text(encoding="utf-8")
+    prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "the path or a possible rebuttal cannot be decided" not in normalized
     summary = "need_evidence: the path, or a specific rebuttal that could change the verdict,"
@@ -1688,6 +2250,99 @@ def test_successful_repro_attaches_evidence_and_proves(ctx: RunContext) -> None:
     assert after.state is FindingState.PROVEN
     assert {ev.evidence_id for ev in evidences} <= set(after.evidence_refs)
     assert any(ev.kind is EvidenceKind.SANITIZER for ev in evidences)
+
+
+class _CallRecorder:
+    """`ToolRunner` 대역 — 불린 요청을 기록하고 실제 러너에 그대로 위임한다."""
+
+    def __init__(self, inner: ToolRunner) -> None:
+        self._inner = inner
+        self.calls: list[tuple[str, ToolArgs]] = []
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        self.calls.append((tool, args))
+        return self._inner.run(tool, args, sandbox)
+
+
+def test_a_step_equal_to_the_input_placeholder_is_refused_not_fatal(ctx: RunContext) -> None:
+    """🔴 모델이 쓴 `repro_spec.steps`는 argv에 그대로 들어간다(`validate._call`). 원소가 예약
+    자리표와 **같으면** `ToolArgs`가 `ValidationError`를 던졌고 그 루프에는 try가 없어 run 전체가
+    죽었다(독립 검토가 `stopped_after=8`로 실증). 이제는 도구에 가기 전에 `ok=False` Evidence로
+    남긴다.
+
+    ⚠ **현재 동작을 고정한다**: `ok=False`라 `repro_failed`(F-11, `queued`)로 간다 — 실행할 수 없는
+    명세를 `tool_policy_violation`(F-12)으로 가르는 갈래(위 `test_unmappable_signal_…`)와 다르다.
+    어느 쪽이 옳은지는 이 검사가 정하지 않는다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+    assert finding.repro_spec is not None
+    finding = finding.transition(
+        repro_spec=ReproSpec(
+            steps=["./build.sh", INPUT_PLACEHOLDER],
+            expected_signal=finding.repro_spec.expected_signal,
+        )
+    )
+    recorder = _CallRecorder(ctx.tools)
+    refusing = dataclasses.replace(ctx, tools=recorder)
+
+    after, evidences = validate.run(refusing, finding=finding, workdir="parser.c")
+
+    assert recorder.calls == [], "거절한 요청이 도구까지 갔다"
+    assert [(ev.source, ev.kind) for ev in evidences] == [
+        ("build", EvidenceKind.BUILD),
+        ("asan", EvidenceKind.SANITIZER),
+    ]
+    for ev in evidences:
+        assert (ev.ok, ev.exit_code) == (False, None), "안 돈 것을 돈 것처럼 적었다"
+        assert INPUT_PLACEHOLDER in (ev.error or "") and "실행하지 않았다" in (ev.error or "")
+        assert refusing.store.get("evidence", ev.evidence_id) == ev
+    assert {ev.evidence_id for ev in evidences} <= set(after.evidence_refs)
+    calls = [e for e in refusing.trace.events if e.kind is EventKind.TOOL_CALL]
+    assert [(e.data["tool"], e.data["ok"]) for e in calls] == [("build", False), ("asan", False)]
+    keys = {"tool", "argv", "ok", "exit_code", "error", "finding_id"}
+    assert all(set(e.data) == keys for e in calls), "거절의 tool_call이 실행의 키 집합과 다르다"
+    assert after.state is FindingState.QUEUED
+    transition = next(e for e in refusing.trace.events if e.kind is EventKind.TRANSITION)
+    assert transition.data["reason"] == ReasonCode.REPRO_FAILED.value
+
+
+def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
+    """거절 Evidence의 `kind`는 `validate`가 든 사본이다 — 어댑터는 못 import해서 복제했다
+    (`prompt_loader`의 도구 이름 사본과 같은 사정). 화이트리스트가 움직이면 여기서 빨개지고, 이
+    노드가 부르는 도구(`build` + `_SIGNAL_TOOLS`)가 사본에서 빠지면 `_refuse`가 BUILD로 조용히
+    떨어지므로 그것도 문다."""
+    from src.adapters.fake_tools import TOOL_KINDS
+
+    called = {validate.BUILD_TOOL, *(tool for _, tool in validate._SIGNAL_TOOLS)}
+    assert called <= set(validate.REFUSED_KINDS), "이 노드가 부르는 도구가 사본에서 빠졌다"
+    assert validate.REFUSED_KINDS == {tool: TOOL_KINDS[tool] for tool in validate.REFUSED_KINDS}
+
+
+def test_validate_refusal_stamp_mirrors_both_adapter_defaults(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """거절 Evidence의 관측 시각 `_REFUSED_AT`은 어댑터 기본값의 사본이다 — 노드는 어댑터를 못
+    import해서 복제했다(위 `kind` 사본과 같은 사정). 정상 run의 Evidence는 전부 그 고정 도장이라
+    갈라지면 거절 Evidence만 다른 시각을 단다.
+
+    **어댑터 둘 다 본다.** 컨테이너 러너는 런타임이 PATH에 없으면 `SandboxUnavailable`을 던지므로
+    `shutil.which`를 가로채 띄운다(`tests/test_container_tools.py`의 `spy` 선례) — 한쪽만 보면 다른
+    쪽 기본값이 갈라져도 초록이다. `observed_at`을 주지 않아 **기본값**이 나오게 한다."""
+    from src.adapters import container_tools as ct
+    from src.adapters.fake_tools import FakeToolRunner
+    from src.ids import IdFactory
+
+    fake = FakeToolRunner(ids=IdFactory("run_stamp"), run_id="run_stamp", root=Path("target"))
+    monkeypatch.setattr(ct.shutil, "which", lambda name: f"/usr/bin/{name}")
+    container = ct.ContainerToolRunner(
+        ids=IdFactory("run_stamp"),
+        run_id="run_stamp",
+        root=Path("target"),
+        artifacts_root=tmp_path,
+        runtime="docker",
+    )
+
+    assert validate._REFUSED_AT == fake.observed_at
+    assert validate._REFUSED_AT == container.observed_at
 
 
 class _CleanExitTools:
@@ -1892,7 +2547,8 @@ def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> Non
 def test_render_says_nothing_about_pov_when_pov_did_not_run(ctx: RunContext) -> None:
     """PoV가 시도되지 않은 run(`pov_results`가 빔)에는 그 줄이 없다 — 0건일 때 줄이 나오면 장식이다
     (`ne_absorbed`·`deferred`가 비면 줄을 안 내는 것과 같은 자리). 빈 맵은 8단계 앞에서 멈췄거나,
-    8단계에 든 VALIDATED가 0건이거나, 프로필에 pov 좌석이 없다는 뜻이다."""
+    PoV 대상이 0건이거나(VALIDATED가 0건이고 `pov_attempt_top_n`이 0이거나 그 추가 대상 풀이
+    비었다), 프로필에 pov 좌석이 없다는 뜻이다."""
     finding = _finding("find_0001", state=FindingState.VALIDATED)
 
     rendered = report.run(ctx, findings=[finding]).render()  # pov_results 안 넘김
@@ -2299,12 +2955,19 @@ def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: R
     assert kept == [5, 8]  # entry 5에 가까운 둘, 듬성한 번호 보존
 
 
-def test_scout_slice_trim_defaults_off_and_is_absent_from_flatten() -> None:
-    """#375 M-3/M-4 — 기본값 0이고, 0이면 `flatten()`에 키가 없다(#349/#351 선례)."""
+def test_scout_slice_trim_is_absent_from_flatten_when_off() -> None:
+    """#375 M-3/M-4 — 0이면 `flatten()`에 키가 없고 1이면 실린다(#349/#351 선례).
+
+    ⏵ 2026-10-05 — `config/budgets.yaml`이 `scout_slice_trim: 1`을 선언해 **기본값이 1이 됐다.**
+    전 판은 커밋된 기본값이 0이라고 단언했고 그 줄에 *"기본값 1로 바꾸면 깨진다(M16)"*라고
+    적혀 있었다 — 그날이 왔다. 무는 명제는 **기본값이 아니라 `flatten()`의 모양**이라 두 값을
+    직접 만들어 양쪽을 문다. 이름의 `defaults_off`도 떼었다(거짓이 됐다).
+    """
     thresholds = load_config("dev_fake").thresholds
-    assert thresholds.scout_slice_trim == 0  # 기본값 1로 바꾸면 깨진다(M16)
-    assert "scout_slice_trim" not in thresholds.flatten()
-    on = thresholds.model_copy(update={"scout_slice_trim": 1})
+    off = thresholds.transition(scout_slice_trim=0)
+    on = thresholds.transition(scout_slice_trim=1)
+
+    assert "scout_slice_trim" not in off.flatten()
     assert on.flatten()["scout_slice_trim"] == 1.0  # 켜면 기록에 실린다
 
 
