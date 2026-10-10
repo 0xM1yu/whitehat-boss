@@ -142,15 +142,42 @@ def test_breaker_trip_transition_is_a_storm_even_below_k() -> None:
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is True
 
 
-def test_no_storm_when_one_target_fails_across_pool_members() -> None:
-    """N2: 대상 하나가 풀 멤버 셋에서 각 1회씩 죽는 것은 storm 아니다 — 자리별로 세면
-    각 카운터가 1이라 차단기도 안 터진다(K=3=풀크기라 예전엔 전체 3으로 오탐)."""
+def test_the_live_flag_counts_per_member_so_one_target_across_members_is_not_a_storm() -> None:
+    """N2: 대상 하나가 풀 멤버 셋에서 각 1회씩 죽는 것은 **라이브 판정이** storm으로 안 본다 —
+    자리별로 세면 각 카운터가 1이다(K=3=풀크기라 예전엔 전체 3으로 오탐).
+
+    ⚠ 차단기도 안 터진다는 뜻이 아니다 — 차단기의 run 카운터는 자리를 안 가르고 센다(#197). 그
+    미탐은 아래 검사가 박제한다.
+    """
     events = [
         _ev("target_skipped", age_s=12, seq=1, reason=_REASON_SCHEMA, member="scout_memory"),
         _ev("target_skipped", age_s=11, seq=2, reason=_REASON_SCHEMA, member="scout_boundary"),
         _ev("target_skipped", age_s=10, seq=3, reason=_REASON_SCHEMA, member="scout_injection"),
     ]
     assert _derive(heartbeat=_hb(2), events=events)["error_storm"] is False
+
+
+def test_a_run_counter_stop_is_invisible_to_the_live_flag_until_the_transition_lands() -> None:
+    """**한계 박제 (PR #584 리뷰 §2).** 풀 세 자리가 전부 죽는 장애를 러너는 첫 대상의 세 자리 뒤
+    둘째 대상의 첫 실패(자리별 2·1·1)에서 세운다. 라이브 판정은 자리별 K 미만이라 침묵하고,
+    종료 전이 사유가 trace에 뜬 뒤에야 참이다.
+
+    이 검사는 **미탐이 있다는 사실**을 고정한다 — 라이브에서 자리를 안 가르는 둘째 카운트를 넣어
+    고치면 첫 단언을 뒤집는다(그때 임계값 실측이 선행이다, `_error_storm` docstring).
+    """
+    failures = [
+        _ev("target_skipped", age_s=20 - i, seq=i, reason=_REASON_SCHEMA, member=member)
+        for i, member in enumerate(
+            ("scout_memory", "scout_boundary", "scout_injection", "scout_memory"), start=1
+        )
+    ]
+    assert _derive(heartbeat=_hb(2), events=failures)["error_storm"] is False
+
+    stopped = [
+        *failures,
+        _ev("transition", age_s=1, seq=9, reason="consecutive_target_failures", subject="run"),
+    ]
+    assert _derive(heartbeat=_hb(2), events=stopped)["error_storm"] is True
 
 
 def test_storm_when_one_member_fails_k_times() -> None:

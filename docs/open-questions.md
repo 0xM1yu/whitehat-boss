@@ -124,7 +124,7 @@
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
 | D71 | ~~공유 캡슐의 토큰 예산이 첫 멤버의 토크나이저로만 강제된다 — 로스터는 풀 세 자리를 서로 다른 세 모델로 정해 두었다~~ (갈림 실측 후 예산 마진 0.90 — 옵션 A) | 닫힘 | [본문](open-questions/D/D71.md) |
 | D72 | ~~역할별 출력 상한에 위쪽 한계가 없다~~ (로드가 실서빙 역할의 상한 ≥ 그 모델 registry 창을 거부해 해소 — 선택지 (a)) | 닫힘 | [본문](open-questions/D/D72.md) |
-| D73 | 역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다 | 열림 | [본문](open-questions/D/D73.md) |
+| D73 | ~~역할별 연속 폐기 차단기가 `item.role`(4단계 자리)를 키로 잡는다 — 교차역할 전역 장애를 N배 늦게 잡고, 5·6단계 장애를 4단계 자리로 나눠 센다~~ (run 카운터 + (단계, 자리) 카운터) | 닫힘 | [본문](open-questions/D/D73.md) |
 | D74 | ~~Joern 슬라이스를 캡슐 본문으로 쓰면 Progressive Context Expansion이 확장할 것을 잃는다~~ ((a) 후보 열거에만 → ADR 0012가 대체) | 닫힘 | [본문](open-questions/D/D74.md) |
 | D75 | 실험1이 확증한 Scout CWE→Agent 세부 목록이 로스터·프롬프트의 목록과 다르다 — 어느 것을 정본으로 할지 미결 | 닫힘 | [본문](open-questions/D/D75.md) |
 | D76 | ~~하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다~~ | 닫힘 | [본문](open-questions/D/D76.md) |
