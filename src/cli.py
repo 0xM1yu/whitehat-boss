@@ -1879,6 +1879,9 @@ def _sarif_result(finding: Finding) -> dict:
         "properties": {
             "findingId": finding.finding_id,
             "confidence": finding.confidence,
+            # ⚠ 2026-10-08부터 **모델이 인용한 것이 아니라 하네스가 관측해 붙인 것**이 섞인다
+            # (이슈 #552 — 6단계 `gate_node.attach_observed`). 실패 기록(`ok=False`)도 센다.
+            # 키 이름은 외부 소비자 계약이라 유지한다.
             "evidenceRefs": list(finding.evidence_refs),
         },
     }
