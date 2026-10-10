@@ -10,8 +10,8 @@ null이라 그 데이터로 학습한 Auditor를 서빙하면 구조화 출력�
    동일하다(sha256).
 2. **v12 스키마** — `audit` non-null · 값 셋(`none` · `not_applicable` · `no_candidate`)은
    `no_signal`에서만, `no_signal`이면 셋 다 · `cwe` 규칙은 v11 그대로.
-3. **배선** — meta 선언 → 봉투 · 허용집합 · `_CONTENT_AWARE_VERSIONS` · Fake 빌더 · 서빙 판은 그대로
-   v11.
+3. **배선** — meta 선언 → 봉투 · 허용집합 · `_CONTENT_AWARE_VERSIONS` · Fake 빌더 · 서빙 좌석은
+   v12를 안 고른다.
 4. **노드** — `_answer_observed`가 `no_candidate`에서 안 죽고, `_finding_from_procedure`가
    `no_signal`의 경로를 `Finding.path`로 안 옮기며, 저장 왕복이 같은 Finding을 낸다.
 5. **산문** — v11 대비 바뀐 줄이 `audit` 서술뿐이고, 산문의 값 집합 · 짝 표 · 경로 규칙이 스키마와
@@ -361,9 +361,10 @@ def test_v12_meta_matches_v11_except_the_envelope() -> None:
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_auditor_stays_on_v11(profile: str) -> None:
-    """v12는 FT Auditor를 서빙할 때 고를 판이다 — 그 전환은 이 PR의 결정이 아니다(이슈 #578)."""
-    assert load_config(profile).model_for("auditor").prompt_template_version == "v11"
+def test_no_serving_auditor_selects_v12(profile: str) -> None:
+    """v12는 FT Auditor를 서빙할 때 고를 판이다 — 그 전환은 이 PR의 결정이 아니다(이슈 #578).
+    서빙 판 이름을 박지 않는다 — 다른 PR이 서빙 판을 올려도(`!= "v12"`) 이 핀은 안 깨진다."""
+    assert load_config(profile).model_for("auditor").prompt_template_version != "v12"
 
 
 def test_the_fake_builder_answers_with_the_v12_procedure() -> None:
@@ -533,3 +534,31 @@ def test_the_v12_prose_names_the_statuses_whose_path_must_not_be_empty() -> None
 
     assert required is not None
     assert tuple(required.group(1).split("/")) == auditor._PATH_REQUIRED_STATUSES
+    # 반대쪽 — 「may be `[]` for X and for Y」의 빈 경로 허용 상태가 나머지 전부다.
+    empty = re.search(r"may be `\[\]` for ([\w ]+?), and is non-empty", line)
+    assert empty is not None
+    assert set(empty.group(1).split(" and for ")) == set(_STATUSES) - set(
+        auditor._PATH_REQUIRED_STATUSES
+    )
+
+
+def test_the_v12_prose_names_the_no_signal_only_values_the_validator_enforces() -> None:
+    """`no_signal` 전용 값 셋의 **이름**이 스키마(`NO_SIGNAL_ONLY_AUDIT_VALUES`)와 같다 — 값 집합
+    핀은 예시 JSON의 세 줄만 읽어 이 문장을 안 본다(적대적 리뷰 #1 · M2·M2b). ⚠ 「no_signal 전용 ·
+    셋 다」라는 양화는 구문으로 읽을 길이 없어 철자로 묶는다."""
+    (line,) = [x for x in _lines("v12") if "`audit` records the candidate that came closest" in x]
+    named = re.findall(r"`(category|defense\.status|refutation\.result)` `(\w+)`", line)
+
+    assert dict(named) == NO_SIGNAL_ONLY_AUDIT_VALUES and len(named) == 3
+    assert "go with no_signal only" in line and "always uses all three" in line
+
+
+def test_the_v12_example_tail_fills_audit_with_the_no_signal_only_values() -> None:
+    """출력 계약 끝의 「For no_signal, …」 문장: `audit`를 채우라 하고(생략·null 지시 없음), 세 값이
+    스키마와 같고, `cwe`만 null이다(적대적 리뷰 #1 · M0·M1)."""
+    (line,) = [x for x in _lines("v12") if x.startswith("For no_signal,")]
+    values = dict(re.findall(r'"(category|status|result)": "(\w+)"', line))
+
+    assert values == {k.split(".")[-1]: v for k, v in NO_SIGNAL_ONLY_AUDIT_VALUES.items()}
+    assert '"cwe": null' in line
+    assert not re.search(r"omit|null", line.replace('"cwe": null', ""))

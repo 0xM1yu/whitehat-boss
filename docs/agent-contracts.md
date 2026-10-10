@@ -851,7 +851,7 @@ v10(`prompts/auditor/v10/`)의 `answer` 액션이 `procedure`에 싣는 **모델
 
 | 필드 | 타입 · 제약 | 비고 |
 | --- | --- | --- |
-| `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 |
+| `audit` | `AuditBlock` 또는 `null` | **`null`인 것과 `trigger_status`가 `no_signal`인 것은 같다** — 검증기가 어긋난 쪽을 거절한다 (⏵ 2026-10-10 v10·v11의 것 — v12는 모든 상태에서 non-null이다, 아래 「v12」 절) |
 | `trigger_status` | 닫힌 다섯 — `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal` | `Finding.trigger_status`(`str` 또는 `None`)와 달리 닫혀 있다 |
 | `confidence` | 0.0 이상 1.0 이하 | 상태별 구간은 산문이 쥔다 |
 | `cwe` | `CWE-<숫자>` 꼴 — **`null`이 안 된다, `no_signal`에서도** | ⚠ 아래 「한계」 · ⏵ 2026-10-09 v11의 `AuditProcedureNullableCwe`는 `no_signal`에서만 `null`이 된다(아래 「v11」) |
@@ -920,7 +920,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
   문단). 나머지 prefix·body는 v10과 바이트 동일이다(`tests/test_nullable_cwe.py`).
 - 읽는 자리 -> CWE가 있으면 렌더가 종전과 바이트 동일, `null`일 때만 다르다: SARIF는 `ruleId`를 CWE 꼴이 아닌 센티넬 `no-cwe`로 둔다(`ruleId`는 스키마상 선택, 규범 본문은 조건부 SHALL — OASIS SARIF 2.1.0 §3.27.5 *"If `rule.id` is absent, `ruleId` SHALL be present"*, 이 결과는 `rule`을 안 싣는다) · 보고서 항목 줄은
   `CWE 없음` · Critic `CLAIM`은 `<제목> (CWE 없음)` · PoV 서술은 `CWE: (없음)`. 보고서 중복 제거 키는 `null`을 그대로 쓰고 셋째 칸을 후보 ID로 둔다 — `no_signal`은 `path=[]`라 대상 함수 대신 모델이 쓴 제목이 들어가 다른 후보가 제목만 같아도 묶였을 자리다.
-- 관측 -> v11 `answer` 홉이 `no_signal`인데 `cwe`가 있으면 `cwe_present_on_no_signal` 키가 생긴다(`nodes/auditor._answer_observed` — v8~v10은 안 센다).
+- 관측 -> v11 `answer` 홉이 `no_signal`인데 `cwe`가 있으면 `cwe_present_on_no_signal` 키가 생긴다(`nodes/auditor._answer_observed` — v8~v10은 안 센다 · ⏵ 2026-10-10 v12 답도 센다: `AuditProcedureAuditAlways`가 그 서브클래스다).
 - v11로 돈 run은 0건이다 — 모델이 `no_signal`에서 실제로 `null`을 내는지는 미측정이다.
 
 #### v12 — `audit`를 모든 상태에서 채운다 (⏵ 2026-10-10)
