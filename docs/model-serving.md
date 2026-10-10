@@ -352,8 +352,9 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   `src/adapters/model_swap.py` 모듈 docstring이 든다. 기동마다 vLLM 출력을 새 파일
   `$SERVE_DIR/logs/<key>.<run_id>.<UTC>.log`로 받는다 — 아래 「서버 stdout은 파일로 받는다」 규약을 명령이 지킨다.
 - **장비 파일** — `config/serving/<device>.yaml`이 모델별 util · `max_num_seqs` · 창 · 추가 인자 · 환경 · 준비
-  상한을 든다. `run --device <device>`가 고르고, 창은 registry `context_limit` 그대로여야 run이 시작한다
-  (`check_serving`). 포트·체크포인트·revision은 registry가 든다.
+  상한을 든다. `run --device <device>`가 고르고, 창은 registry `context_limit` 그대로여야 교대 프로필의 run이
+  시작한다(`check_serving`). 교대를 선언할 수 없는 `harness_pool_hybrid`는 이 점검 밖이다. 포트·체크포인트·
+  revision은 registry가 든다.
 
   | 장비 | 메모리 판정 | 값의 성격 |
   | --- | --- | --- |
