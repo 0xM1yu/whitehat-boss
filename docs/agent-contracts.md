@@ -660,7 +660,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
   아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
   접근 로그에도 제출마다 앞선 읽기 8건이 있다).
-  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 best-of 압력이 N개 gen으로 넓어졌다 — FAQ Q3 범위 확인은 여전히 미해결(위 「읽기(사용자 확인 필요)」).
+  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 선택이 「마지막에서 멈추는 순차」에서 「낸 gen 중 사후 선택」으로 바뀌었다(시도 수 상한 `pov_tool_hops`는 그대로) — FAQ Q3 범위 확인은 여전히 미해결(위 「읽기(사용자 확인 필요)」).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
