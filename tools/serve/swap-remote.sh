@@ -97,5 +97,5 @@ if [ -n "${SWAP_SSH_PORT:-}" ]; then
   port=(-p "$SWAP_SSH_PORT")
 fi
 # -n: stdin을 안 읽는다 · -T: TTY 없음 · BatchMode: 암호를 묻지 않는다(하네스는 프롬프트에 답할 수 없어
-# 마감까지 매달린다). 호스트 키 검사는 사용자의 ssh 설정을 따른다 — 여기서 끄지 않는다.
-exec ssh -n -T -o BatchMode=yes -o ServerAliveInterval=10 ${port[@]+"${port[@]}"} -- "$SWAP_SSH_HOST" "$remote"
+# 마감까지 매달린다). ServerAliveCountMax 12: 기본 3 × 10 s = 30초 무응답에 스스로 끊는다(vast-tunnel.sh 머리 주석). 호스트 키 검사는 사용자의 ssh 설정을 따른다 — 여기서 끄지 않는다.
+exec ssh -n -T -o BatchMode=yes -o ServerAliveInterval=10 -o ServerAliveCountMax=12 -o TCPKeepAlive=yes ${port[@]+"${port[@]}"} -- "$SWAP_SSH_HOST" "$remote"
