@@ -1,7 +1,7 @@
 # 실서빙 run 다섯 번 — arvo:1065 · vast RTX PRO 6000 Blackwell(홍콩/일본)
 
 > **무엇이 처음인가.** 5~7단계가 실모델·실도구로 **이 과제(`arvo:1065`)에서 처음 끝까지 돌았다** — Auditor 도구 홉이 후보당 최대
-> 일곱까지 돌고, Critic(`gpt-oss-20b`)이 **이 과제에서 처음 판정을 냈다**(5건 — 실모델 Critic 판정 자체는 [09-29 ATOM 스모크](2026-09-29-stage-swap-smoke-atom.md)가 먼저다 · 2호출 · 둘 다 rebut). 그리고 그 run은
+> 일곱까지 돌고, Critic(`gpt-oss-20b`)이 **이 과제에서 처음 판정을 냈다**(5건 — 실모델 Critic 판정 자체는 이 과제 밖에서 먼저 있었다: [09-24 로스터 스모크](2026-09-24-roster-smoke-atom.md) 4건 전부 rebut · [09-28 benign 스모크](2026-09-28-ne-loop-smoke-benign-atom.md) §5 2호출 · [09-29 교대 스모크](2026-09-29-stage-swap-smoke-atom.md) 2호출). 그리고 그 run은
 > `R-1 finished`로 **완주했는데 채점기 제출이 0건이다** — Critic이 5건 전부를 `need_evidence`로
 > 판정하고 PoV 풀이 그 판정을 설계상 빼기 때문이다
 > ([#604](https://github.com/0xM1yu/whitehat-boss/issues/604)).
@@ -30,18 +30,20 @@
 | 채점기 | 저자 소스 `c6fe202` · `127.0.0.1:8666` · **새 `--db_path`** `C:\w\oracle-run08\poc.db` · rate limit 기본 20회/60초 |
 | 카나리 | `canary-arvo-1065-20261011.json` — **이 부팅에서 재측정**(`verdict: pass` · 네 조합 ×10 · `139` 0건 · `vm.mmap_rnd_bits 28` · `boot_id a94d7c1e…`) |
 | preflight | **ERROR 0 · WARN 1 · OK 13** — WARN은 `model_checksums` — scout 셋·auditor·pov가 0이고 critic·embedding·reranker는 실해시다(`run_manifest.json`) |
-| 🔴 비교표 적격 | **아니다** — 실서빙 역할 중 scout 셋·auditor·pov의 `checksum`이 0이다(critic은 실해시 · [CLAUDE.md](../../../CLAUDE.md) §0) |
+| 🔴 비교표 적격 | **아니다** — manifest 기준 scout 셋·auditor·pov의 `checksum`이 0이다(critic은 실해시 · pov 좌석은 이 run에서 서빙되지 않았다 · [CLAUDE.md](../../../CLAUDE.md) §0) |
 | 산출물 보존 | `C:\w\s14-results\`(15 MB · run 다섯 + 채점기 DB·로그 + **원격 서빙 로그 25개 파일**) — 🔴 **저장소 밖이고 커밋되지 않는다.** 이 보고서의 run 수치(토큰·시간·호출·판정)는 그 디렉터리가 원천이다. **박스 사양·단가·대여 시각·§7 비용·§6의 운영 시간은 vastai CLI 출력과 세션 기록이 원천이고 그 디렉터리에 없다** |
 
 ## 1. run 다섯 번 — 어디서 죽었나
 
-| run | 끝난 단계 | 종료 사유 | 원인 |
-| --- | --- | --- | --- |
-| `run_20261010_0001` | 4 교대 중 | `model_swap_failed` | 로컬 인터넷 전환 — 교대 ssh·터널 동시 `Connection reset by peer` |
-| `run_20261010_0002` | 5 Auditor 첫 호출 | `model_gateway_unavailable` | 같음(터널 재차 끊김 — Auditor 요청 중 `RemoteDisconnected`) |
-| `run_20261010_0003` | **7 Critic 교대** | `model_swap_failed` | **콜드 기동 상한** — `gpt-oss-20b`가 `ready_timeout_s: 300`에 2회 다 걸렸다(#571) |
-| `run_20261010_0004` | 5 Auditor hop 7 | `model_gateway_unavailable` | 로컬 인터넷 끊김 — `RemoteDisconnected` + 내림 ssh `Connection timed out` |
-| **`run_20261011_0001`** | **9 리포트(완주)** | **`R-1 finished`** | — · 🔴 **제출 0건**(§3) |
+| run | 끝난 단계 | Auditor v13 호출 | 종료 사유 | 원인 |
+| --- | --- | --- | --- | --- |
+| `run_20261010_0001` | 4 교대 중 | 0 | `model_swap_failed` | 로컬 인터넷 전환 — 교대 ssh·터널 동시 `Connection reset by peer` |
+| `run_20261010_0002` | 5 Auditor 첫 호출 | 1(실패) | `model_gateway_unavailable` | 같음(터널 재차 끊김 — Auditor 요청 중 `RemoteDisconnected`) |
+| `run_20261010_0003` | **7 Critic 교대** | 14 | `model_swap_failed` | **콜드 기동 상한** — `gpt-oss-20b`가 `ready_timeout_s: 300`에 2회 다 걸렸다(#571) |
+| `run_20261010_0004` | 5 Auditor hop 7 | 8(마지막 1 실패) | `model_gateway_unavailable` | 로컬 인터넷 끊김 — `RemoteDisconnected` + 내림 ssh `Connection timed out` |
+| **`run_20261011_0001`** | **9 리포트(완주)** | 20(실패 1) | **`R-1 finished`** | — · 🔴 **제출 0건**(§3) |
+
+**Auditor v13 호출이 있는 run은 넷이고 0~9단계 완주는 하나다**(`trace.jsonl`의 `model_call role=auditor` 계수 · 판은 전부 `v13`).
 
 **셋은 하네스 결함이 아니다.** 사용자가 세션 중 인터넷을 바꿨고 그 순간 수립된 ssh가 전부 끊겼다
 (02:57 · 03:33 · 09:29). 원격 vLLM은 그때도 살아 있었다 — `run_20261010_0002`의 Auditor 요청은
@@ -64,9 +66,9 @@
 
 **콜드 2회 TIMEOUT ↔ 따뜻한 35 s는 사실이고, 그 차이가 선취 때문인지는 미검증이다.** `run_20261011_0001` 전에 `hf_transfer`를 깔고 PoV 가중치(`feyospace-v1-small`
 약 55 GB)를 **선취**해 뒀다 — 8단계가 돌지 않아 그 선취의 효과는 **미검증**이지만, Critic 좌석은
-같은 선취 상태에서 **35초**에 떴고 그 전 run은 같은 좌석에서 죽었다 — 다만 그 35 s는 앞 run(`run_20261010_0003`)이 가중치를 이미 받아 둔 캐시 뒤의 값이라 `hf_transfer` 선취의 효과와 분리되지 않는다.
+같은 선취 상태에서 **35초**에 떴고 그 전 run은 같은 좌석에서 죽었다 — 다만 그 35 s는 앞 run(`run_20261010_0003`)·warmprobe(62 s)가 가중치를 이미 받아 둔 뒤의 값이라 `hf_transfer` 선취의 효과와 분리되지 않는다[추론 — 로그에 다운로드 줄이 없고 attempt 2도 TIMEOUT이었다].
 
-⚠ 따뜻한 값은 각 **n=1**이다. 선취는 이미지에 `hf_transfer`가 없어 수동 단계다(#571 선택지 (a)·(f)).
+⚠ 따뜻한 값의 표본 수는 칸마다 다르다 — `qwen3.8-27b` n=3 · `qwen3-14b` n=4 · `seccoderx-8b` n=3 · `gpt-oss-20b`의 run 값 35 s는 **n=1**(warmprobe 62 s는 별도). 선취는 이미지에 `hf_transfer`가 없어 수동 단계다(#571 선택지 (a)·(f)).
 
 ## 3. 🔴 완주했는데 제출이 0건이다
 
@@ -131,17 +133,17 @@
 🔴 **뒤 셋이 6초에 600토큰대다.** 그 셋이 무엇을 보고 보류를 냈는지는 **응답이 저장되지 않아
 모른다**([#603](https://github.com/0xM1yu/whitehat-boss/issues/603)). 5/5가 같은 판정인 것이
 모델 판단인지 입력 구조 때문인지 이 run만으로는 **안 갈린다 — 미실측**이고, 비교할 Critic 분포도
-없다(이 과제의 앞 run들은 7단계에 닿지 못했다 · 09-29 ATOM 스모크의 Critic 2호출은 다른 과제·판이라 비교 대상이 아니다).
+없다(이 과제의 앞 run들은 7단계에 닿지 못했다 · ATOM 스모크들(09-24·09-28·09-29)의 Critic 판정은 다른 과제·판이라 비교 대상이 아니다).
 
 ## 6. 운영에서 걸린 것
 
 - **vast ssh 프록시로는 터널이 유지되지 않았다.** `ssh3/ssh8.vast.ai` 경유에서 두 번 끊겼고
-  직결(`public_ipaddr:direct_port_start`)로 바꾼 뒤 3시간 54분 run이 **끊김 0**으로 돌았다.
+  직결(`public_ipaddr:direct_port_start`)로 바꾼 뒤 3시간 54분 run이 **하네스가 본 전송 끊김 0**으로 돌았다(`trace.jsonl`에 `RemoteDisconnected`·게이트웨이 오류 0건). 터널 루프는 그 사이 ssh를 한 번 재시작했다(세션 기록 · 아래).
   ⚠ 인터넷 전환이 겹쳤으므로 **프록시가 원인이라는 분리 실험은 없다** — n=1의 상관이다.
 - **터널 기본값이 30초에 스스로 끊는다.** `tools/serve/vast-tunnel.sh`가 `ServerAliveInterval=10`만
   주고 `ServerAliveCountMax`를 안 줘서 기본 3이 된다. 이 run에서는 `~/.ssh/config`에 그 호스트만
   `ServerAliveCountMax 12`를 줘 덮었다(저장소 밖이라 `repo_dirty` 아님).
-- **터널을 자동 재연결 루프로 감쌌다**(세션 스크래치패드) — run 중 한 번 되살아났다.
+- **터널을 자동 재연결 루프로 감쌌다**(세션 스크래치패드) — run 중 ssh가 한 번 끊겨 되살아났고 그때 하네스 요청은 끊기지 않았다(세션 기록 · trace에 전송 오류 0건).
 - **이미지 내려받기가 박스마다 크게 다르다.** 일본 박스(다운 856 Mbps 광고)는 **48분**에도
   `loading`이었고, 홍콩 박스는 생성 **2.5분**에 ssh가 열렸다(이미지 캐시 선재). 둘을 병렬로 빌려
   먼저 뜬 쪽을 쓰고 나머지를 즉시 삭제했다 — 겹친 과금 약 $0.1.
@@ -159,8 +161,7 @@
 | 합계 | ≈ **$19** |
 | 그중 쓸모 있는 run | `run_20261011_0001` 3.9시간 — 약 **$5.6** |
 
-비용은 전부 **계산값**(대여 시간 × 시급 · 시간은 vastai 대여 기록). **버려진 시간의 사인**(세션 기록 기준 어림값 · 산출물에 없다): 이미지 내려받기 1.5시간 · 가중치 콜드 다운로드 약 1시간 · 끊김으로 죽은
-run 셋 약 2.5시간 · 대기·조사 약 3시간.
+비용은 전부 **계산값**(대여 시간 × 시급 · 시간은 vastai 대여 기록). **버려진 시간의 사인**: 끊김으로 죽은 run 셋 **약 2.0시간**(manifest `started_at`→`finished_at` 0.10 + 0.43 + 1.44 h · 계산값) · 콜드 기동으로 죽은 `run_20261010_0003` **4.24시간**(같은 계산) · 이미지 내려받기·가중치 콜드 다운로드·대기 합 **약 2.3시간**(박스 12.4 h − run 합 10.1 h · 계산값 — 셋의 내역은 세션 기록 기준 어림값이라 산출물에 없다).
 
 ## 8. 이 run이 낸 결함
 
