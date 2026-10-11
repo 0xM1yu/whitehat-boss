@@ -980,7 +980,8 @@ def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -
 
 
 def test_the_extra_pov_targets_are_cut_by_confidence_then_finding_id(ctx: RunContext) -> None:
-    """자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
+    """판정이 없는 시나리오다 — 그러면 정렬 키의 첫 성분(Critic 판정 계단)이 전부 0이라 자르는
+    순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
 
     `confidence` 0.9 둘 + 0.3 하나를 넣고 상한을 1로 둔다. 넣는 순서를 **0.3 → 큰 id → 작은
     id**로 해서 ①자리로 고르는 구현(첫째 = 0.3)과 ②동점을 뒤 id로 가르는 구현이 각각 빨개지게
@@ -1045,7 +1046,8 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 
 # --- 추가 대상 풀에서 Critic이 밀어 낸 Finding을 뺀다 (적대적 리뷰 #490 MEDIUM-2) ---------------
 #
-# 정렬 키가 Auditor `confidence` 하나라 반박돼도 그대로다 - 풀에 두면 반박된 Finding이 「재현
+# 정렬 키(판정 계단 → `confidence` → id)에서 반박은 계단 0이라 `confidence`만으로 앞서고 반박돼도
+# 그대로다 - 풀에 두면 반박된 Finding이 「재현
 # 명세가 없어 멈춘」 Finding의 자리를 밀어내고, 최종 지정 사슬은 등급 상한이 같으면
 # `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이
 # 될 수 있다. 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이

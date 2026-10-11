@@ -1423,14 +1423,16 @@ def _pov_targets(
     5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
     보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
     2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
-    파서 폴백 0건 — 모델 판단(trace 계수 2026-10-11).
+    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
+    입력 구조 탓인지는 미실측).
     ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
     (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
     Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
     명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
     판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
 
-    **왜 빼나.** 정렬 키가 Auditor `confidence` 하나라 반박돼도 값이 그대로다 — 풀에 두면 반박된
+    **왜 빼나.** 정렬 키(판정 계단 → `confidence` → `finding_id`)에서 반박은 계단이 0이라
+    `confidence`만으로 앞서고 반박돼도 그 값이 그대로다 — 풀에 두면 반박된
     Finding이 더 높은 값으로 다른 Finding의 자리를 밀어내고, 최종 지정 사슬(`_designation_key`)은
     등급 상한이 같으면 `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가
     공식 최종 제출이 될 수 있다.** 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를 uphold·미경유
@@ -1493,7 +1495,8 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
     보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
     2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
-    파서 폴백 0건 — 모델 판단(trace 계수 2026-10-11).
+    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
+    입력 구조 탓인지는 미실측).
 
     ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
     **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
@@ -2123,8 +2126,8 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
 
 def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
     """Finding별 `confidence`. **`_grades_by_finding`과 키 집합이 같다** — 둘 다 `state.findings`를
-    전수로 돈다. 최종 PoC 지정이 이 둘을 나란히 읽고, 한쪽에만 있는 `finding_id`는 지정이
-    `grade_unknown`으로 거부한다(`_designate_final`).
+    전수로 돈다. 최종 PoC 지정이 이 둘과 `_verdict_ranks_by_finding`(같은 전수)을 나란히 읽고,
+    셋 중 어느 하나에만 없는 `finding_id`는 지정이 `grade_unknown`으로 거부한다(`_designate_final`).
 
     ⚠ **`confidence`는 모델이 적은 수다** — 게이트가 계산한 등급과 다른 종류의 값이고, 그래서
     지정 사슬에서 등급 **뒤**에 온다. 채점기 응답에서는 안 나온다(Auditor가 Finding에 적는다) —

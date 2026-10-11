@@ -1619,8 +1619,9 @@ def test_a_candidate_with_an_unknown_confidence_is_refused_the_same_way() -> Non
     """`confidence`를 모르는 후보도 같은 거부다 - 사슬의 ②가 읽는 값이고, 없는 것을 0.0으로 깔면
     **없는 근거로** 나머지를 고른다(위 검사와 같은 §0 논법).
 
-    현 러너에서는 두 사전이 같은 `state.findings`에서 나와 키 집합이 같다
-    (`_grades_by_finding`·`_confidences_by_finding`) - 그래서 이것도 **방어 분기**다.
+    현 러너에서는 세 사전이 같은 `state.findings`에서 나와 키 집합이 같다
+    (`_grades_by_finding`·`_confidences_by_finding`·`_verdict_ranks_by_finding`) - 그래서 이것도
+    **방어 분기**다.
     """
     known = _attempt("f_known", b"\x01known\xff")
     other = _attempt("f_other", b"\x02other\xfe")
@@ -1802,8 +1803,9 @@ def test_finalize_oracle_does_not_read_oracle_fields_either(
     for finding_id in ids:
         state.oracle_ledger.add_attempt(_trap_attempt(finding_id))
     monkeypatch.setattr(runner, "_grades_by_finding", lambda _state: grades)
-    # 두 사전은 현 러너에서 같은 `state.findings`에서 나와 키 집합이 같다 - 여기서는 등급 사전을
-    # 손으로 꽂으므로 `confidence`도 같은 키로 깔아 준다(안 깔면 전 분기가 `grade_unknown`이다).
+    # 세 사전은 현 러너에서 같은 `state.findings`에서 나와 키 집합이 같다 - 여기서는 등급 사전을
+    # 손으로 꽂으므로 `confidence`·판정 계단도 같은 키로 깔아 준다(안 깔면 전 분기가
+    # `grade_unknown`이다).
     monkeypatch.setattr(runner, "_confidences_by_finding", lambda _state: _flat(*ids))
     monkeypatch.setattr(runner, "_verdict_ranks_by_finding", lambda _state: dict.fromkeys(ids, 0))
     ctx.oracle = _OracleThatReadsNothingItIsGiven()
