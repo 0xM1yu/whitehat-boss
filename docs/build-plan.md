@@ -315,7 +315,7 @@ ADR 0012 결정 6이 폐기한다** — 부족한 맥락은 4단계 need_evidenc
 >    명령이 CLI에 없다(`src/cli.py`의 서브커맨드는 `doctor`·`estimate`·`run`·`bench`·`gc`).
 >    ⏵ 2026-10-08 — 그중 `finish_reason`은 이슈 #550으로 `ModelResult.attempt_log`에 시도별로 남고, 성공한 시도의
 >    원문은 2026-09-26부터 `ModelResult.raw_text`가 든다(`src/interfaces/model_client.py`). 안 남는 것은
->    `reasoning`과 실패한 시도의 원문이다. ⏵ 2026-10-12 — 뒤의 것은 서지 않는다: 스키마 소진·게이트웨이 거절로 끝난
+>    `reasoning`과 실패한 시도의 원문이다. ⏵ 2026-10-11 — 뒤의 것은 서지 않는다: 스키마 소진·게이트웨이 거절로 끝난
 >    호출의 시도별 원문은 `prompts/…_response*.txt`로 남는다(#603). 재시도가 성공한 호출의 앞 시도 원문은 여전히 안 남는다.
 >
 > **아래 본문은 2026-09-13 판 그대로 둔다** — 그 ADR은 승인됐다(2026-09-25) — 본문은 아직이다.
