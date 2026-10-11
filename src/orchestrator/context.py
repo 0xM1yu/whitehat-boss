@@ -346,7 +346,8 @@ class RunContext:
             # 실패분 청구(#82)의 우회로다. 재시도 많은 run이 곧 디스크를 채우는 run이라 무작위
             # 실패도 아니다. 실패하면 `sent_sha256` 대신 사유(예외 이름·errno)를 싣고 청구·원
             # 예외는 그대로 간다. ⚠ 같은 파일시스템이 차서 trace 쓰기(`emit`)까지 실패하면 그
-            # 예외가 원 예외를 덮는다 — 이 가드는 재시도 기록 쓰기 하나만 막는다.
+            # 예외가 원 예외를 덮는다 — 이 재시도 기록 가드(`OSError`)는 재시도 기록 쓰기 하나만
+            # 막는다.
             # 성공 경로는 건드리지 않는다 — 거기서는 쓰기 실패가 호출 자체를 멈춘다.
             try:
                 retry_fields = self._record_retries(
@@ -358,6 +359,15 @@ class RunContext:
                 retry_fields = {
                     "retry_record_error": f"{type(record_exc).__name__}(errno={record_exc.errno})"
                 }
+            # 실패한 시도의 응답 원문도 남긴다(#603) — 별도 `try`의 `except Exception` 가드다
+            # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출은 안 쓴다.
+            try:
+                response_fields = self._record_failed_responses(
+                    role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
+                )
+            except Exception as record_exc:  # 원 예외·청구를 가리면 안 된다
+                errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
+                response_fields = {"response_record_error": f"{type(record_exc).__name__}{errno}"}
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -370,6 +380,7 @@ class RunContext:
                 hop=hop,
                 **prompt_fields,
                 **retry_fields,
+                **response_fields,
                 schema=schema.__name__,
                 ok=False,
                 error=type(exc).__name__,
@@ -604,6 +615,39 @@ class RunContext:
                 history=history,
             )
         return {"sent_sha256": last_digest}
+
+    def _record_failed_responses(
+        self, *, role: Role, stage: Stage, raw_texts: tuple[str | None, ...], hop: int = 0
+    ) -> dict[str, TraceValue]:
+        """스키마 실패한 시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
+
+        **실패 경로만 부른다** — 성공 응답은 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
+        이벤트 키가 늘지 않는다. 쓰다가 중간에 실패하면 앞서 쓴 파일은 참조가 안 남은 고아로 남는다.
+
+        **`None` 칸은 파일을 안 쓰고 refs·sha의 그 자리가 JSON `null`이다** — `content: null`은 받은
+        문자열이 없는 것이라 0바이트 파일이나 빈 문자열의 해시를 남기면 안 잰 값이 잰 값처럼 보인다
+        (`_attempt_fields`와 같은 관례, CLAUDE.md §0). `index`는 칸 위치 그대로라 `_retryK`
+        번호는 시도 번호와 정렬된다. 칸이 전부 `None`이어도 비어 있지 않으므로 `[null]`이 나가
+        시도 칸과 맞는다.
+        """
+        if not raw_texts or self.prompts is None:
+            return {}
+        written = [
+            None
+            if text is None
+            else self.prompts.write_response(
+                role=role.value, stage=int(stage), index=index, hop=hop, text=text
+            )
+            for index, text in enumerate(raw_texts)
+        ]
+        return {
+            "response_refs": json.dumps(
+                [w[0] if w else None for w in written], separators=(",", ":")
+            ),
+            "response_sha256": json.dumps(
+                [w[1] if w else None for w in written], separators=(",", ":")
+            ),
+        }
 
     # --- 도구 ---
 
