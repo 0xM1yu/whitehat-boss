@@ -3,10 +3,11 @@
 v13(#591)은 같은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT
 정답은
 v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 판으로 세웠다 — v13은 머지된 판이라
-바이트를 고치지 않는다(agent-contracts §4 규칙 1). 묶는 것은 넷이다.
+바이트를 고치지 않는다(agent-contracts §4 규칙 1). 묶는 것은 다섯이다.
 
 1. **v14 산문은 v12에서 두 줄만 다르다** — body의 Facts 머리 문장 · prefix의 `FACTS.source` 한 자리.
-   줄 전체 등식(`old.replace(was, now) == new`)이라 덧붙이기·지우기가 다 죽는다. body는 v13과
+   줄 전체 등식(`old.replace(was, now) == new`)이라 덧붙이기·지우기가 다 죽고, 파일 바이트 등식이
+   끝 개행·CRLF·U+2028 변이도 죽인다. body는 v13과
    바이트 동일이다(v12 body = v11 body라 v13 body와 같은 한 줄 차이다).
 2. **봉투는 v12 것이다** — `AuditorProcedureAuditAlwaysAction`(v13의
 `AuditorProcedureNullableCweAction`이
@@ -16,6 +17,9 @@ v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 �
    한 번만 실린다. `auditor.run`이 config에서 판을 골라 돈 hop0도 같다.
 4. **곁가지** — Fake가 산문 블록에서 원문을 읽어 v12와 같은 판정을 내고, bench가 노드와 같은 FACTS와
    v12 봉투를 요청한다.
+5. **서빙 판 봉투 규칙** — config가 고른 판의 봉투가 `no_signal` ⟺ 세 값 · null `audit` 금지를
+   집행하고 산문 짝표가 노드의 표와 같다(`tests/test_auditor_prompt_v10.py`가 v10 전용으로 옮긴 두
+   검사의 서빙 판 몫).
 
 판에 무관한 검사(서빙 좌석 성질 · 로더 거절 · `build_facts` 기본값 · `facts_source: false`인 판
 목록)는
@@ -30,16 +34,19 @@ import json
 import re
 
 import pytest
+from pydantic import ValidationError
 
 from src import bench, bench_report
 from src.adapters import fake_model
+from src.config import load_config
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.schemas.auditor import AuditorProcedureAuditAlwaysAction
 from src.schemas.enums import Role
-from src.schemas.finding import Finding
+from src.schemas.finding import NO_SIGNAL_ONLY_AUDIT_VALUES, Finding
 from tests import test_nodes
+from tests.test_auditor_v12 import _NOT_NO_SIGNAL, _STATUSES, _audit, _payload, _with
 from tests.test_nodes import VULN_TARGET, _triage
 
 # 같은 픽스처를 이 모듈 이름으로 등록한다(`test_auditor_v13_facts.py`와 같은 방식).
@@ -63,6 +70,11 @@ def _lines(version: str, name: str) -> list[str]:
     return (PROMPTS_DIR / "auditor" / version / name).read_text(encoding="utf-8").splitlines()
 
 
+def _bytes(version: str, name: str) -> bytes:
+    """`splitlines` 비교가 못 보는 끝 개행 · CRLF · U+2028 변이를 잡으려고 바이트로 읽는다."""
+    return (PROMPTS_DIR / "auditor" / version / name).read_bytes()
+
+
 @pytest.mark.parametrize(
     ("name", "change"), [("body.md", _BODY_CHANGE), ("prefix.md", _PREFIX_CHANGE)]
 )
@@ -77,11 +89,16 @@ def test_v14_differs_from_v12_in_exactly_one_line_per_file(
     (old, new), (was, now) = changed[0], change
     assert old.count(was) == 1, was
     assert old.replace(was, now) == new, now
+    # 바이트 등식 — 파일 전체가 `was` → `now` 한 자리 치환뿐이다(끝 개행 · CRLF · U+2028도 죽는다).
+    v12_bytes = _bytes("v12", name)
+    assert v12_bytes.count(was.encode()) == 1, was
+    assert v12_bytes.replace(was.encode(), now.encode()) == _bytes("v14", name), name
 
 
 def test_v14_body_is_the_v13_body() -> None:
     """user 턴 틀은 v13과 같다 — v13 형식으로 만든 FT 입력이 v14에도 그대로 맞는다."""
     assert _lines("v14", "body.md") == _lines("v13", "body.md")
+    assert _bytes("v14", "body.md") == _bytes("v13", "body.md")
 
 
 def test_no_v14_prompt_text_says_facts_carries_the_source_or_is_complete() -> None:
@@ -106,6 +123,43 @@ def test_v14_keeps_the_v12_envelope_tools_and_source_options() -> None:
     assert v14.facts_source is False
     assert auditor._loop_envelope(v14) is auditor._loop_envelope(v12)
     assert "v14" in auditor._CONTENT_AWARE_VERSIONS
+
+
+def _served_auditor_template():  # noqa: ANN202
+    version = load_config("harness_pool").model_for("auditor").prompt_template_version
+    return load_prompt(Role.AUDITOR, version)
+
+
+def test_the_served_auditor_keeps_the_no_signal_envelope_rule() -> None:
+    """서빙 좌석(config)이 고른 판의 봉투 규칙 — `no_signal` ⟺ `category` `none` ·
+    `defense.status` `not_applicable` · `refutation.result` `no_candidate`, 그리고 `audit`는 어느
+    상태에서도 null이 아니다.
+    `tests/test_auditor_prompt_v10.py`의 v10 전용 두 검사(result↔status 짝 · null `audit`↔status
+    짝)가 서빙 판에서 빠지며 비는 자리를 **성질로** 문다: 서빙 판의 산문 짝표가 노드의 표와 같고,
+    서빙 판 봉투를 상태마다 돌려 받는 답의 집합을 센다(철자 비교가 아니다)."""
+    template = _served_auditor_template()
+    (line,) = [x for x in template.prefix.splitlines() if "↔ trigger_status:" in x]
+    assert dict(re.findall(r"(\w+)→(\w+)", line)) == auditor._STATUS_BY_RESULT
+
+    envelope = auditor._loop_envelope(template)
+    assert envelope is not None
+
+    def accepted(status: str, **override: object) -> bool:
+        body = {"action": "answer", "procedure": _payload(status, **override), "rationale": "r"}
+        try:
+            envelope.model_validate(body)
+        except ValidationError:
+            return False
+        return True
+
+    assert {s for s in _STATUSES if accepted(s)} == set(_STATUSES), "채운 audit은 다섯 다 받는다"
+    assert not {s for s in _STATUSES if accepted(s, audit=None)}, "null audit은 어느 상태도 못 낸다"
+    for status in _NOT_NO_SIGNAL:
+        for key, value in NO_SIGNAL_ONLY_AUDIT_VALUES.items():
+            assert not accepted(status, audit=_with(_audit(status), key, value)), (status, key)
+    for key in NO_SIGNAL_ONLY_AUDIT_VALUES:
+        other = {"category": "spatial_bounds", "defense.status": "absent"}.get(key, "defeated")
+        assert not accepted("no_signal", audit=_with(_audit("no_signal"), key, other)), key
 
 
 # === 3. 노드 렌더 ==============================================================================
