@@ -1431,12 +1431,12 @@ def _pov_targets(
     명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
     판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
 
-    **왜 빼나.** 정렬 키(판정 계단 → `confidence` → `finding_id`)에서 반박은 계단이 0이라
-    `confidence`만으로 앞서고 반박돼도 그 값이 그대로다 — 풀에 두면 반박된
-    Finding이 더 높은 값으로 다른 Finding의 자리를 밀어내고, 최종 지정 사슬(`_designation_key`)은
-    등급 상한이 같으면 `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가
-    공식 최종 제출이 될 수 있다.** 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를 uphold·미경유
-    **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 첫 계단).
+    **왜 빼나.** 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출이 될
+    수 있다** — 다른 후보가 없으면(`sole_candidate`) 그것이 최종이고, 상한이 남으면 반박도 풀에
+    든다. 정렬 키(판정 계단 → `confidence` → `finding_id`)는 반박을 맨 뒤(3)에 두지만
+    (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
+    **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
+    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 첫 계단).
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -1465,7 +1465,7 @@ def _pov_targets(
     과제 이미지에 먹이게 됐지만 **게이트 전이는 별건이다**(`p4`가 종료 코드까지 본다 — #232).
     이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
 
-    자르는 순서는 Critic 판정(보류가 뒤) 다음 `critic.select`와 **같은 키**다 —
+    자르는 순서는 Critic 판정(uphold → 미경유 → 보류) 다음 `critic.select`와 **같은 키**다 —
     `confidence` 내림차순, 동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
     ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한 값이 아니다** — 그래서 이것은
     등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
@@ -2137,21 +2137,38 @@ def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
 
 
 def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
-    """Finding별 Critic 판정 계단 — 0 = uphold 또는 판정 없음(미경유), 1 = 보류(`need_evidence`).
-    추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은
-    `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
-    판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다). 판정이 둘(uphold +
-    need_evidence)이면 이 함수는 1이고 `gate.evaluate`의 `upheld`는 True라 갈린다 — 지금은
-    `state.decisions[...] = (decision,)` 한 자리 대입이라 닿지 않는다."""
-    return {
-        f.finding_id: int(
-            any(
-                gate.normalize(d) is Verdict.NEED_EVIDENCE
-                for d in state.decisions.get(f.finding_id, ())
-            )
+    """Finding별 Critic 판정 계단 - **0 = uphold · 1 = 판정 없음(미경유) ·
+    2 = 보류(`need_evidence`) · 3 = 반박(`rebut`)**이다. 이슈 #604 (b)가 제안한 순서
+    (`uphold > 미경유 > need_evidence`) 그대로고 반박이 맨 뒤다. 추가 풀 정렬(`_pov_targets`)과
+    최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은 `gate.normalize` 뒤 값이고, 키
+    집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
+
+    ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(@sumin0218 리뷰): 미경유는 6단계 E0
+    `QUEUED`와 `critic_top_n` 절단분이라 Critic이 **보증한** 것이 아닌데 uphold와 동점이 돼
+    등급이 가렸다.
+
+    **반박(3)은 지금 정렬에 닿지 않는 값이다** - `_pov_targets`가 `_critic_set_aside`로 반박을
+    풀에서 먼저 빼고, 최종 후보는 그 풀의 PoC뿐이다. 그래도 값을 3으로 둔 것은 풀 필터가 풀리거나
+    다른 호출처가 생겨도 반박이 보류 **앞**에 서지 않게 하는 방어 심층이다(`test_nodes.py`가 값을
+    문다).
+
+    **uphold를 먼저 본다.** 판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다).
+    둘 이상이 되면 `gate.evaluate`의 `upheld`가 `any(normalize == UPHOLD)`라 uphold가 하나라도
+    있으면 게이트는 그 Finding을 uphold로 읽으므로 이 함수도 0으로 맞춘다 - 다음은 반박, 그다음
+    보류다. 지금은 `state.decisions[...] = (decision,)` 한 자리 대입이라 닿지 않는다."""
+    ranks: dict[str, int] = {}
+    for f in state.findings.values():
+        verdicts = {gate.normalize(d) for d in state.decisions.get(f.finding_id, ())}
+        ranks[f.finding_id] = (
+            0
+            if Verdict.UPHOLD in verdicts
+            else 3
+            if Verdict.REBUT in verdicts
+            else 2
+            if Verdict.NEED_EVIDENCE in verdicts
+            else 1
         )
-        for f in state.findings.values()
-    }
+    return ranks
 
 
 # 최종 PoC 지정 사슬의 단계 이름. **`_designation_key`가 내는 튜플과 자리가 하나씩 맞다** — 앞에서
@@ -2174,11 +2191,12 @@ def _designation_key(
 ) -> tuple[int, int, float, int, str]:
     """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값뿐이다.
 
-    ⓪Critic 판정(uphold·미경유 0 < 보류 1) ①등급 내림차순 ②`confidence` 내림차순 ③PoC 바이트
-    **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
+    ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
+    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
     「모르겠다」고 한 PoC가 등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604).
-    판정 계단이 등급보다 앞서므로 **등급이 낮은 uphold·미경유 PoC가 등급이 높은 보류 PoC를
-    이긴다**(E0 미경유 > E4 보류) — 의도한 것이다.
+    판정 계단이 등급보다 앞서므로 **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 >
+    E4 보류, E2 uphold > E3 미경유) — 의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은
+    계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰, `_verdict_ranks_by_finding`).
 
     🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
@@ -2201,7 +2219,7 @@ def _designate_final(
     ledger: oracle_log.OracleLedger,
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
-    verdicts: Mapping[str, int] | None = None,
+    verdicts: Mapping[str, int],
 ) -> tuple[oracle_log.VulAttempt | None, str, str | None]:
     """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
 
@@ -2225,7 +2243,8 @@ def _designate_final(
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
       `designation`이다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
-      `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) 안 주면 전부 0이다.
+      `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
+      기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, @sumin0218 리뷰).
 
     ⏵ **2026-10-04 — 동점 거부를 없앴다.** 2026-10-03 동결 규칙은 「내부 근거 등급 최댓값 ·
     동점이면 거부」였고 이 함수가 `grade_tie`를 냈다. 그 규칙이 실측에서 **점수를 0으로
@@ -2263,8 +2282,6 @@ def _designate_final(
         return None, "", ledger.none_reason()
     if len(candidates) == 1:
         return candidates[0], oracle_log.DESIGNATION_SOLE_CANDIDATE, None
-    if verdicts is None:
-        verdicts = dict.fromkeys(grades, 0)
     # 등급·confidence·판정 계단 중 모르는 값이 있는 후보가 하나라도 있으면 거부한다 —
     # 모르는 값을 0으로 깔면 **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은
     # 0이 아니라 미실측 표시다).
