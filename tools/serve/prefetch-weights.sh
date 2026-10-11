@@ -19,8 +19,14 @@ roles=all
 dry=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --profile) profile=${2:?"--profile에 값이 없다"}; shift 2 ;;
-    --roles) roles=${2:?"--roles에 값이 없다"}; shift 2 ;;
+    --profile | --roles)
+      if [ $# -lt 2 ]; then
+        echo "prefetch-weights: $1에 값이 없다" >&2
+        exit 2
+      fi
+      if [ "$1" = --profile ]; then profile=$2; else roles=$2; fi # 빈 값은 파이썬이 거부한다
+      shift 2
+      ;;
     --dry-run) dry=1; shift ;;
     *)
       echo "prefetch-weights: 알 수 없는 인자 '$1'" >&2

@@ -95,6 +95,8 @@ n=$((n + 1))
 echo "$n" > "$STUB_DIR/calls"
 printf '%s\\n' "$@" > "$STUB_DIR/argv.$n"
 case " $* " in *" -n "*) ;; *) cat > /dev/null ;; esac
+[ "$n" = "${FAIL_AT:-0}" ] && exit 1
+exit 0
 """
 
 
@@ -196,3 +198,78 @@ def test_a_source_whose_rev_is_not_a_full_commit_hash_is_refused(tmp_path: Path,
 @pytest.mark.parametrize("roles", ["", ",", " "])
 def test_an_empty_roles_list_is_refused_not_a_silent_no_op(roles: str) -> None:
     assert prefetch_weights.main(["--roles", roles]) == 2
+
+
+# --- 스크립트 수준: 실패·인자 -------------------------------------------------------------
+
+
+@needs_bash
+def test_a_failing_pip_step_stops_the_script_after_one_ssh_call(tmp_path: Path) -> None:
+    done = _run_script(
+        "--roles", "all", tmp_path=tmp_path, SWAP_SSH_HOST="root@203.0.113.9", FAIL_AT="1"
+    )
+    assert done.returncode != 0
+    assert (tmp_path / "calls").read_text().strip() == "1"
+
+
+@needs_bash
+def test_a_failing_download_stops_the_script_without_further_ssh_calls(tmp_path: Path) -> None:
+    done = _run_script(
+        "--roles", "all", tmp_path=tmp_path, SWAP_SSH_HOST="root@203.0.113.9", FAIL_AT="3"
+    )
+    assert done.returncode != 0
+    assert (
+        tmp_path / "calls"
+    ).read_text().strip() == "3"  # pip 1 + 내려받기 2(실패) - 더 부르지 않는다
+
+
+@needs_bash
+def test_an_unknown_role_exits_2_through_the_script() -> None:
+    done = _run_script("--dry-run", "--roles", "nope")
+    assert done.returncode == 2
+    assert "nope" in done.stderr
+    assert done.stdout == ""
+
+
+@needs_bash
+def test_an_empty_roles_value_exits_2_with_a_message_naming_the_option() -> None:
+    done = _run_script("--dry-run", "--roles", "")
+    assert done.returncode == 2
+    assert "--roles" in done.stderr and "line" not in done.stderr
+
+
+@needs_bash
+def test_a_roles_option_without_a_value_exits_2() -> None:
+    done = _run_script("--roles")
+    assert done.returncode == 2
+    assert "--roles" in done.stderr
+
+
+@needs_bash
+def test_roles_pov_prints_exactly_the_feyospace_pair() -> None:
+    done = _run_script("--dry-run", "--roles", "pov")
+    assert done.returncode == 0, done.stderr
+    lines = done.stdout.splitlines()
+    assert lines[0] == _PIP
+    assert len(lines) == 2
+    found = _DOWNLOAD.fullmatch(lines[1])
+    assert found and found[1] == "feyospace/feyospace-v1-small"
+
+
+@needs_bash
+def test_a_profile_without_hf_sources_prints_nothing_and_exits_0() -> None:
+    done = _run_script("--dry-run", "--profile", "dev_fake")
+    assert done.returncode == 0, done.stderr
+    assert done.stdout == ""
+
+
+@needs_bash
+def test_a_python_failure_propagates_and_no_ssh_is_called(tmp_path: Path) -> None:
+    bad = tmp_path / "badpython"
+    bad.write_text("#!/bin/sh\necho boom >&2\nexit 3\n", encoding="utf-8", newline="\n")
+    bad.chmod(0o755)
+    done = _run_script(
+        "--roles", "all", tmp_path=tmp_path, SWAP_SSH_HOST="h", PREFETCH_PYTHON=bad.as_posix()
+    )
+    assert done.returncode == 3, done.stderr
+    assert not (tmp_path / "calls").exists()
