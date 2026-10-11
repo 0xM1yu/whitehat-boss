@@ -767,3 +767,20 @@ def test_a_non_os_error_while_recording_keeps_the_original_error_and_names_itsel
     (call,) = _model_calls(ctx)
     assert call["response_record_error"] == type(error).__name__
     assert ctx.ledger.input_tokens == 300
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit], ids=["ctrl_c", "exit"])
+def test_an_interrupt_while_recording_is_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt: type[BaseException]
+) -> None:
+    """가드는 `Exception`까지다 — `BaseException`으로 넓히면 Ctrl-C·TERM이 기록 쓰기에 삼켜진다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise interrupt()
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    with pytest.raises(interrupt):
+        _call_failing(ctx)

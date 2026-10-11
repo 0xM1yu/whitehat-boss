@@ -358,7 +358,8 @@ class RunContext:
                 retry_fields = {
                     "retry_record_error": f"{type(record_exc).__name__}(errno={record_exc.errno})"
                 }
-            # 실패한 시도의 응답 원문도 같은 가드로 남긴다(#603). 성공 호출은 안 쓴다.
+            # 실패한 시도의 응답 원문도 남긴다(#603) — 별도 `try`의 `except Exception` 가드다
+            # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출은 안 쓴다.
             try:
                 response_fields = self._record_failed_responses(
                     role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
