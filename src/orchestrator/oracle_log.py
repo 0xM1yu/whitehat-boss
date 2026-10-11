@@ -387,7 +387,7 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿인데 등급·`confidence`를 몰라 못 가른 run
+            # `none`의 사유 — 후보가 여럿인데 등급·`confidence`·Critic 판정을 몰라 못 가른 run
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
@@ -495,8 +495,9 @@ def _none_warning(final: FinalAttempt, candidates: int) -> str:
     tail = "이 run은 채점 점수가 없다"
     if final.reason == REASON_GRADE_UNKNOWN:
         return (
-            f"vul 제출이 성공한 최종 후보가 {candidates}건인데 그중 내부 근거 등급 또는 "
-            "confidence를 모르는 것이 있어 최종 PoC를 지정하지 않았다 - 모르는 값으로 고르면 "
+            f"vul 제출이 성공한 최종 후보가 {candidates}건인데 그중 내부 근거 등급·"
+            "confidence·Critic 판정 중 모르는 것이 있어 최종 PoC를 지정하지 않았다 - "
+            "모르는 값으로 고르면 "
             "없는 근거로 "
             f"고르는 것이다. fix 다리와 판정 조회를 돌리지 않았다 - {tail}"
         )

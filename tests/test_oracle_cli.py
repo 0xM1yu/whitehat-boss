@@ -350,7 +350,7 @@ def test_the_target_is_printed_before_the_run_and_the_key_is_not(
     # 규칙은 하네스 내부 값의 전순위다(⏵ 2026-10-04에 「동점이면 거부」가 사슬로 바뀌었다) -
     # 이 두 줄이 `_oracle_for`의 출력과 함께 움직인다.
     assert "내부 근거 등급 > confidence > 작은 바이트 > PoC 해시" in out.out
-    assert "등급을 모르는 후보가 있으면 보내지 않는다" in out.out
+    assert "Critic 판정 중 모르는 값이 있는 후보가 있으면 보내지 않는다" in out.out
     assert _KEY not in out.out + out.err
 
 

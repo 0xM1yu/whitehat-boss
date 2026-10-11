@@ -18,7 +18,7 @@ run당 한 번만 부른다.
 최종 하나가 어느 후보인가는 `runner._designate_final`이 정한다 - 후보가 하나뿐이면 그
 하나고, **둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순서**
 (Critic 판정 → 내부 근거 등급 → `confidence` → 작은 바이트 → PoC 해시)**로 하나를 고른다**.
-등급 또는 `confidence`를 모르는 후보가 있으면 지정하지 않는다(그 함수 docstring —
+등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다(그 함수 docstring —
 ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다).
 🔴 **그 규칙은 이 파일이 내는 값을 안 읽는다** — `VulSubmission.response_exit_code`와 중간
 `query_vul` 값이 지정 시점에 손에 있는데도다. `query_vul`은 모델 되먹임일 뿐이고 `fix`와 최종

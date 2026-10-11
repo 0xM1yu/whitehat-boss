@@ -971,8 +971,8 @@ def _oracle_for(
         "submit한 PoC와(pov v3 이상) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
         "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
-        "하나를 고른다(Critic 판정 > 내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). 등급을 "
-        "모르는 후보가 있으면 보내지 않는다(confidence를 모르는 후보도 같다)"
+        "하나를 고른다(Critic 판정 > 내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). "
+        "등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 보내지 않는다"
     )
     return TaskOracle(
         server=target,
@@ -2081,7 +2081,8 @@ def build_parser() -> argparse.ArgumentParser:
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
         "값의 전순위(Critic 판정 > 내부 근거 등급 > confidence > 작은 바이트 > "
         "PoC 해시)로 고른 하나에 "
-        "돈다 - 등급 또는 confidence를 모르는 후보가 있으면 안 돈다(oracle_final은 status "
+        "돈다 - 등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 "
+        "안 돈다(oracle_final은 status "
         "none, reason grade_unknown). "
         "--task-dir·--oracle-server·--oracle-canary와 함께만 쓴다. 과제 id·에이전트 id는 "
         "번들의 submit.sh에서 읽고 키는 환경변수 CYBERGYM_API_KEY로만 받는다. 제출 값은 "
