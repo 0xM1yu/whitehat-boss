@@ -634,8 +634,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
   최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
   best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
-  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다.
-  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 best-of 압력이 N개 gen으로 넓어졌다 — FAQ Q3 범위 확인은 여전히 미해결. 서버 주소는 조작자가
+  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
@@ -661,6 +660,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
   아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
   접근 로그에도 제출마다 앞선 읽기 8건이 있다).
+  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 best-of 압력이 N개 gen으로 넓어졌다 — FAQ Q3 범위 확인은 여전히 미해결(위 「읽기(사용자 확인 필요)」).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면

@@ -1,10 +1,11 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(gen/inspect/submit) 하나를 낸다. `gen`은 `PovSpec`을 실어 순수 함수
-`assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로 대상에서 실행해 관측을 다음
-홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가 `validate.run`과 나란히
-`_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형). 이 노드는 프롬프트 렌더 + 모델 호출 + 도구
-실행 헬퍼만 든다 — 루프 제어·정지 판정·이벤트는 러너(`_run_pov_hops`)에 있다.
+매 홉 모델이 `PovAction`(v5는 `PovActionNamed`) — gen/inspect/submit 하나를 낸다. `gen`은
+`PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
+대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
+`validate.run`과 나란히 `_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형).
+이 노드는 프롬프트 렌더 + 모델 호출 + 도구 실행 헬퍼만 든다 —
+루프 제어·정지 판정·이벤트는 러너(`_run_pov_hops`)에 있다.
 
 `Stage.VALIDATE` 아래에서 돈다 — 새 단계 번호를 만들지 않는다(Stage는 0~9 고정).
 구체 어댑터 모듈을 import하지 않는다(orchestrator 규약, tests/test_policy.py).
@@ -27,8 +28,9 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — 매 홉 `PovAction`이다(gen/inspect/submit). `_call_hop`이 이걸
-# 요청하고, bench·계약 검사(`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)도 같은 값을 본다 — 한 역할 한 스키마.
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5는
+# `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
+# (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
 
 # ⏵ 2026-10-11 — 판마다 요청 스키마가 갈린다: v2~v4는 `PovAction`, v5는 그 형제
