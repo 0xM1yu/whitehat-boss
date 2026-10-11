@@ -24,6 +24,10 @@ def targets(
     config = load_config(profile, config_dir)
     mapping = config.profile.roles
     wanted = list(mapping) if roles == "all" else [r for r in roles.split(",") if r]
+    if not wanted:
+        raise ValueError(
+            f"--roles가 비었다 - 역할 이름을 쉼표로 주거나 all (있는 것: {sorted(mapping)})"
+        )
     unknown = [r for r in wanted if r not in mapping]
     if unknown:
         raise ValueError(f"프로필 {profile!r}에 없는 역할 {unknown} — 있는 것: {sorted(mapping)}")
@@ -46,9 +50,10 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--profile", default="harness_pool")
     parser.add_argument("--roles", default="all")
+    parser.add_argument("--config-dir", type=Path, default=CONFIG_DIR)
     args = parser.parse_args(argv)
     try:
-        pairs = targets(args.profile, args.roles)
+        pairs = targets(args.profile, args.roles, args.config_dir)
     except (ConfigError, ValueError) as err:
         print(f"prefetch-weights: {err}", file=sys.stderr)
         return 2
