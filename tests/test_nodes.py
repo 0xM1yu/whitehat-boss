@@ -618,17 +618,27 @@ def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> 
 def test_run_pov_records_a_skip_on_a_schema_parse_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """모델이 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
+    """모델이 매 홉 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
 
-    루프가 hop 호출 예외를 흡수한다(`_pov_classify_exception`) — 홉을 여는 `pov.open_hop`을
-    스텁해 hop0에서 실패시킨다."""
+    파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다(#550 (c)) — 홉을 여는 `pov.open_hop`을 항상 실패하게
+    스텁하면 **`pov_tool_hops + 1`번** 불리고(마지막 홉에서만 종단) 뒤에 parse_failed로 남는다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "open_hop", _raise(SchemaParseError("bad pov json")))
+    calls: list[int] = []
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+
+    def _always_bad(*_args: object, **kwargs: object) -> object:
+        calls.append(int(kwargs.get("hop", 0)))  # type: ignore[call-overload]
+        if len(calls) > pov_hops + 1:  # 울타리 — 홉이 안 올라가는 변이가 무한히 돌지 않게 한다
+            raise RuntimeError("pov_tool_hops + 1번보다 더 열었다")
+        raise SchemaParseError("bad pov json")
+
+    monkeypatch.setattr(runner.pov, "open_hop", _always_bad)
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
     assert skipped and skipped[-1].data["reason"] == "parse_failed"
+    assert calls == list(range(pov_hops + 1))  # 실패 홉마다 다음 홉 번호로 다시 연다
 
 
 def test_run_pov_records_a_skip_on_a_droppable_gateway_error(
