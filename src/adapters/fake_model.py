@@ -9,7 +9,7 @@
 
 프롬프트 본문의 마지막 ```json 펜스가 모델이 읽는 사실이다(`FakeContext`). 실제 모델도
 같은 블록을 읽으므로 이 계약은 Fake 전용 우회로가 아니다. ⏵ 2026-10-10 — 단 `facts_source: false` 판
-(Auditor v13)은 `source`가 펜스에 없고 Fake가 산문 원문 블록에서 읽는다.
+(Auditor v13·v14)은 `source`가 펜스에 없고 Fake가 산문 원문 블록에서 읽는다.
 
 아래 가중치는 **정책 임계값이 아니라 테스트 대역의 휴리스틱**이라 config가 아니라 여기 있다.
 실제 판정 임계값(`scout_threshold`)은 config에서 오고 이 어댑터는 그것을 모른다.
@@ -218,9 +218,9 @@ class FakeModelClient:
         )
 
 
-# FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13 · 이슈 #67)의 원문 자리. 그
-# 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`의 이 머리와 다음 `### Facts`
-# 사이).
+# FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13·v14, 이슈 #67)의 원문 자리.
+# 그 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`·`v14/body.md`의 이 머리와
+# 다음 `### Facts` 사이).
 _PROSE_SOURCE = re.compile(
     r"^### Target under analysis — original source code\n\n(?P<source>.*)\n\n### Facts\n",
     re.DOTALL | re.MULTILINE,
