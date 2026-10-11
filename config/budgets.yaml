@@ -566,6 +566,11 @@ thresholds:
     # 좌석 `request_timeout_s`도 900 -> 3,600으로 같이 올렸다(`config/models.yaml`) —
     # 32,768 ÷ 12 tok/s ≈ 2,731초(계산값 · 12는 그 파일이 적는 **안 잰 가정**이다).
     # 미실측: 32,768로 돈 run 0건 · 폭주가 이 상한에서 얼마나 비싸지는지 0건.
+    # ⏵ 2026-10-12 — 위 두 줄은 낡았다. `run_20261011_0001`(vast)의 Critic 호출 1이 32,768에서 `length`로 잘렸고(1차) 2차 25,388에서 `stop`으로 끝났다
+    # (trace `model_call` `attempt_output_tokens` [32768,25388] · `attempt_finish_reasons` ["length","stop"] · 두 시도 합 58,156 · 벽시계 515 s).
+    # 속도는 58,156 토큰 ÷ 515.4 s ≈ 113 tok/s(계산값 — 두 시도 합 ÷ 벽시계, 시도별 시간은 trace에 없다)이고 12 tok/s 가정과 어긋난다.
+    # 상한을 채운 것은 1차뿐이고 2차는 25,388에서 끝났다 — 폭주가 이 상한에서 얼마나 비싸지는지는 이 호출 하나(n=1)가 전부다.
+    # 원천: docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §5.
     critic: 32768
     # PoV — 사고를 켠 8단계 모델(feyospace, Auditor와 같은 베이스)이라 같은 32,768을 준다.
     # `thinking_token_budget`(28,672 < 32,768, `config/models.yaml`)이 사고를 묶어 답 자리를 남긴다.
