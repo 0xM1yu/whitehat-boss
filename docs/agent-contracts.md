@@ -565,7 +565,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   재시도와 같은 자리)에, **hop≥1 재질문이면 followup의 머리**(홉 줄 → 노트 → 아직 못 받은 직전 도구 관측)에
   붙는다. `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패일 때만이다 — 이슈 #550.
   게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는 `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직
-  서술하지 않는다 — 다음 판에서 한 줄 적는다), 서버 쪽 사건(상태 없음·5xx·버릴 수
+  서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
