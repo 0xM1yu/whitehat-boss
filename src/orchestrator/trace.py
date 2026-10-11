@@ -525,18 +525,20 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 여섯이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
+    # **`designation`은 일곱이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
     # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
-    # 갈랐다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — 하네스가 만든 값의
-    # 전순서다). 등급 또는 `confidence`를 모르는 후보가 있으면 지정하지 않는다(`status=none` ·
+    # 갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
+    # 하네스가 만든 값의 전순서다). 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
+    # 지정하지 않는다(`status=none` ·
     # `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이
     # 아니다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
     # `reason`이 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(후보가 없다) ·
-    # `grade_unknown`(후보가 둘 이상인데 그중 등급 또는 `confidence`를 모르는 것이 있다)).
+    # `grade_unknown`(후보가 둘 이상인데 그중 등급·`confidence`·Critic 판정 셋 중 모르는 것이
+    # 있다 - ⏵ 2026-10-11 전엔 판정이 없어 둘이었다)).
     # **`none`은 실패가
     # 아니다** — 「최종 PoC가 없다」와
     # 「최종 PoC가 실패했다」를 섞지 않는다. `subject_id`는 지정된 finding이다(`none`이면 없다).

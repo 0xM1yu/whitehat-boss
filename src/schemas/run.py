@@ -338,8 +338,8 @@ class RunRecord(UtcModel):
     # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)가
     # 붙는다.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
-    # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급 또는
-    # `confidence`를 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
+    # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급·
+    # `confidence`·Critic 판정 중 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
     # `all_vul_submissions_failed`·`rate_limited`·`grade_unknown`) ·
     # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 예산·서버 쪽 게이트웨이
     # 오류로 끊겨도 이미 낸 최종 후보가 있거나 추가 PoV 대상에서 끊긴 run은 최종 단계를 부르고
