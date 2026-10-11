@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -143,7 +143,7 @@ agent:
 - 목적: 선택된 후보에 대해 취약점 가설과 근거 경로를 세운다.
 - 입력: 확장 Context Capsule + `Candidate` + 대상 원본 소스(`ctx.read_source()`). 표현은 원본 소스다 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 1-b(2026-09-25 팀 합의, 넓은 (i))이고 Auditor 프롬프트가
-  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body는 v6·v9와 바이트 동일)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67)은
+  그것을 선언한다(`prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body는 v6·v9와 바이트 동일)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67 · ⏵ 2026-10-11 지금 배선된 판은 **v14**다 — v12 + 같은 FACTS 변경, PR #601)은
   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다).
   슬라이스 타깃이면 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 —
   인덱스가 없거나 그 줄이 어느 정의에도 안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창(`_AUDITOR_WINDOW_LINES`))가 먼저이고,
@@ -158,7 +158,7 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS` 아홉 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). ⏵ 2026-10-11 — 지금 배선된 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578, 옵션 서술은 v12와 바이트 동일, PR #601). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS` 아홉 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
@@ -274,7 +274,7 @@ agent:
 **이 절은 도구 루프 Auditor 프롬프트 판이 지켜야 하는 계약이다.** 판 번호는 프롬프트 레인이 정한다 —
 ~~main의 Auditor `v6` 판(#418)은 `output_schema: Finding`의 **한 방 판**이라 이 절의 판이 아니다(루프 판은
 그 다음 번호다).~~ ⏵ 2026-10-04 — 루프 판은 **v8**(`prompts/auditor/v8/` ·
-`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06 v9(v8 + `auditor_guards` 서술)를 거쳐 2026-10-07에 v10(v7 전면 재작성 · 봉투가 다르다 — 아래 「봉투가 둘이다」)이 배선됐고(⏵ 2026-10-10 정정: 전에는 「같은 날부터」로 적었다, #557) ⏵ 2026-10-09부터 **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 · 셋째 봉투 — 아래 「봉투가 셋이다」). ⏵ 2026-10-10부터 **지금 배선된 판은 v13**이다(v11 + FACTS에서 `source` 사본을 뺀다 · 봉투는 v11의 셋째와 같다 — 이슈 #67). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
+`output_schema: AuditorAction` · v7 + 홉 프로토콜, #419)이고 ⏵ 2026-10-06 v9(v8 + `auditor_guards` 서술)를 거쳐 2026-10-07에 v10(v7 전면 재작성 · 봉투가 다르다 — 아래 「봉투가 둘이다」)이 배선됐고(⏵ 2026-10-10 정정: 전에는 「같은 날부터」로 적었다, #557) ⏵ 2026-10-09부터 **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 · 셋째 봉투 — 아래 「봉투가 셋이다」). ⏵ 2026-10-10부터 **지금 배선된 판은 v13**이다(v11 + FACTS에서 `source` 사본을 뺀다 · 봉투는 v11의 셋째와 같다 — 이슈 #67). ⏵ 2026-10-11부터 **지금 배선된 판은 v14**다(v12 + FACTS에서 `source` 사본을 뺀다 · 봉투는 v12의 넷째와 같다 — 이슈 #67 · #578, PR #601). v6·v7은 `output_schema: Finding`의 **한 방 판**이라
 이 절의 판이 아니다. 프롬프트 판은 별 레인이 쓰고 코드가 이 절보다 먼저 섰다 —
 `src/schemas/auditor.py`(`AuditorAction` · `AuditorProcedureAction`)와 `src/orchestrator/nodes/auditor.py`(`_run_hops`)를 열어 대조해 적었다
 (CLAUDE.md §2.1). 코드가 바뀌면 이 절이 낡는다 — 바꾸는 PR이 같이 고친다.
@@ -297,6 +297,7 @@ agent:
 ⏵ **2026-10-10 — 봉투가 넷이다.** v12는 넷째 `AuditorProcedureAuditAlwaysAction`을 요청한다 -> `procedure`가 `no_signal`에도 `audit`를 채우는
 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의 서브클래스)다(이슈 #578 · §3 「AuditProcedure」의 「v12」). 같은 규칙이 넷째에도 걸린다.
 v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 registry는 v11을 고른다.
+⏵ 2026-10-11 — 위 줄의 「registry는 v11」은 그날까지다(그 뒤 v13 → v14). 서빙 판 v14는 v12 봉투(넷째)를 그대로 쓰고 FACTS에서 `source` 사본만 뺐다(이슈 #67).
 
 **켜는 조건은 둘이고 어긋나면 서지 않는다.** ① `thresholds.auditor_tool_hops`가 양수 ② 배선된 판의 meta가
 `output_schema`로 루프 봉투(`AuditorAction` · `AuditorProcedureAction`)를 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
@@ -495,7 +496,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -775,7 +776,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v13"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v14"}
 }
 ```
 
@@ -835,6 +836,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > v10과 같다. 위 Finding 예시의 `prompt_version`도 v11로 고쳤다(`test_doc_examples.py`가 registry와 대조한다) — 예시의 값 자체는 v10 계약에도 맞는다.
 > ⏵ 2026-10-10 — **지금 고르는 것은 v13**이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · [D17](open-questions/D/D17.md)). 출력 계약은 v11과 같다.
 > 위 Finding 예시의 `prompt_version`도 v13으로 고쳤다.
+> ⏵ 2026-10-11 — **지금 고르는 것은 v14**다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578). 출력 계약은 v12와 같다(`no_signal`에도 `audit`).
+> 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -941,6 +944,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 
 이슈 #578 · 팀 결정 2026-10-10. FT 데이터 Teacher v4가 `no_signal`에도 `audit`를 채운다 -> v10·v11 계약(`no_signal`이면 `audit` null)으로는
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
+⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
@@ -1000,7 +1004,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v13", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v14", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1131,7 +1135,10 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **v13**(이슈 #67 · 저장소 소유자 결정 · v11 + FACTS에서 `source` 사본을 뺀다). v13은 산문 지시가 두 줄만 다르다 —
 > body의 Facts 머리 문장(JSON을 「the complete set of facts」라 부르던 줄)과 prefix의 `FACTS.source` 한 자리다(`tests/test_auditor_v13_facts.py`).
 > 그래도 규칙 1이 걸린다 — 같은 입력에서 hop0 user 턴이 원문의 JSON 이스케이프 사본만큼 짧아진다. **v12는 건너뛰었다** — 2026-10-10 열린
-> PR #580(FT Auditor 계약)이 그 번호를 쓴다. v11·v13으로 돈 run은 0건이고 규칙 5·재측정은 이번에도 돌지 않았다.
+> PR #580(FT Auditor 계약)이 그 번호를 쓴다. ~~v11·v13으로 돈 run은 0건이고~~ ⏵ **2026-10-11 — v13 Auditor 호출이 있는 run은 넷이 됐다**(`run_20261010_0002`·`0003`·`0004` · `run_20261011_0001` — Auditor `model_call` 1·14·8·20건 · [10-11 run](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §1 · `checksum` 0이라 전부 비교표 밖 · 0~9단계 완주는 `run_20261011_0001` 하나). v11은 그대로 0건이다. 규칙 5·재측정은 이번에도 돌지 않았다.
+> ⏵ **2026-10-11 — v13 → v14.** v13은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT 정답은
+> v12 계약(#580 머지)이라 **v14 = v12 + FACTS `source` 제거**를 새 판으로 세웠다 — v13의 요청 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 규칙 1).
+> v14 body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`tests/test_auditor_v14_facts.py`). v14로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-11).
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
