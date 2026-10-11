@@ -1235,10 +1235,10 @@ def test_an_empty_pov_pool_with_a_pov_seat_lands_in_the_run_warnings_with_its_br
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류 0 · 판정 실패 0 · Critic 미경유 0"
-        " · pov_attempt_top_n 8."
+        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
-    assert "8단계는 돌지 않았다" in message
+    assert "8단계 PoV는 한 건도 시도되지 않았다" in message
 
 
 def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: RunContext) -> None:
@@ -1256,14 +1256,14 @@ def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류 2 · 판정 실패 1 · Critic 미경유 4"
-        " · pov_attempt_top_n 0."
+        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백 포함) 2 · 판정 실패 1"
+        " · Critic 미경유 4 · pov_attempt_top_n 0."
     ), message
     assert "상한 0" in message
 
 
 def test_an_empty_pov_pool_stays_silent_without_a_pov_seat(ctx: RunContext) -> None:
-    """좌석이 없는 프로필은 `_pov_targets`가 0건이어도 8단계가 원래 안 돈다 — 문장이 없다."""
+    """좌석이 없는 프로필은 `_pov_targets`가 0건이어도 PoV가 원래 안 돈다 — 문장이 없다."""
     _with_top_n(ctx, 8)
     seatless = {k: v for k, v in ctx.config.profile.roles.items() if k != Role.POV.value}
     ctx.config = ctx.config.transition(profile=ctx.config.profile.transition(roles=seatless))
@@ -1299,9 +1299,25 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
 
     assert state.pov_pool_empty is not None
     assert state.pov_pool_empty.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류 1 · 판정 실패 1 · Critic 미경유 1"
-        " · 업홀드 미승격 2 · pov_attempt_top_n 0."
+        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백 포함) 1 · 판정 실패 1"
+        " · Critic 미경유 1 · 업홀드 미승격 2 · pov_attempt_top_n 0."
     ), state.pov_pool_empty
+
+
+def test_an_empty_pov_pool_with_no_findings_at_all_still_warns(ctx: RunContext) -> None:
+    """Finding이 0건인 run도 경고가 나간다 - 좌석이 있는데 대상이 0건이면 사유가 무엇이든 침묵이
+    문제라는 것이 #357 명제이고, Finding 0건은 Scout·Auditor가 아무것도 못 낸 경우라 문장의
+    「Critic이 모두 밀어 냈거나 없다」의 「없다」로 읽힌다. 호출 조건에 `and state.findings`를
+    붙이는 변이를 이 핀이 문다."""
+    _with_top_n(ctx, 8)
+
+    message = _empty_pool_message(ctx, [])
+
+    assert message is not None
+    assert message.startswith(
+        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        " · Critic 미경유 0 · pov_attempt_top_n 8."
+    ), message
 
 
 def test_an_empty_pov_pool_stays_silent_when_a_target_exists(ctx: RunContext) -> None:

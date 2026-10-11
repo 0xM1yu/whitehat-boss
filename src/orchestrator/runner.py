@@ -1501,10 +1501,17 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
     왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
-    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는 지금은
-    밀어 내는 쪽이지만 #604가 들이는 쪽으로 바꾸면 K>0에서 보류 칸은 항상 0이 된다(K=0에서는 정보
-    칸). `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`."""
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는
+    K>0에서 풀에 들므로(PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
+    정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
+
+    ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
+    채점기를 붙인 run은 대상이 0건이어도 `_finalize_oracle`이 8단계 span 안에서 `oracle_final`을
+    남긴다(리뷰 #606)."""
     # 풀이 비면 `validated`도 비므로 이 칸(`validated {len}`)은 구조상 0이다 — 방어로 둔다.
+    # 보류 칸에는 verdict 파서 폴백이 섞인다 — 못 읽은 verdict는 `to_decision`이 `need_evidence`로
+    # 보낸다(`schemas/decision.py`). 가르는 값은 trace `critic_verdict_unmapped` 건수다(계수기는
+    # 두지 않는다: K>0에서 이 칸은 0이다).
     inside = {f.finding_id for f in validated}
     rebut = hold = failed = unjudged = other = 0
     for finding_id in state.findings:
@@ -1529,9 +1536,10 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
         else "validated 밖 후보도 Critic이 모두 밀어 냈거나 없다"
     )
     return (
-        f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut} · 보류 {hold}"
-        f" · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest} · pov_attempt_top_n {limit}. "
-        f"8단계는 돌지 않았다({why})"
+        f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
+        f" · 보류(파서 폴백 포함) {hold} · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest}"
+        f" · pov_attempt_top_n {limit}. "
+        f"8단계 PoV는 한 건도 시도되지 않았다({why})"
     )
 
 
