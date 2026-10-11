@@ -1421,8 +1421,9 @@ def _pov_targets(
     반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류(`need_evidence`, F-7)는
     **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
     5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
-    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 어제 run의 5/5 보류가
-    모델 판단인지 파서 폴백인지는 미확인(#603이 응답을 남기면 가려진다).
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
+    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
+    파서 폴백 0건 — 모델 판단(trace 계수 2026-10-11).
     ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
     (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
     Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
@@ -1490,8 +1491,9 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     뒤로 간다(`_verdict_ranks_by_finding`). ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). 판정은
     `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야 `QUEUED`(F-6)와
     이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
-    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 어제 run의 5/5 보류가
-    모델 판단인지 파서 폴백인지는 미확인(#603이 응답을 남기면 가려진다).
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
+    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
+    파서 폴백 0건 — 모델 판단(trace 계수 2026-10-11).
 
     ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
     **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
@@ -2135,7 +2137,9 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
     """Finding별 Critic 판정 계단 — 0 = uphold 또는 판정 없음(미경유), 1 = 보류(`need_evidence`).
     추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은
     `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
-    판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다)."""
+    판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다). 판정이 둘(uphold +
+    need_evidence)이면 이 함수는 1이고 `gate.evaluate`의 `upheld`는 True라 갈린다 — 지금은
+    `state.decisions[...] = (decision,)` 한 자리 대입이라 닿지 않는다."""
     return {
         f.finding_id: int(
             any(
@@ -2240,8 +2244,8 @@ def _designate_final(
     안 나온다(`_grades_by_finding`).
 
     `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
-    `==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급 또는 `confidence` 미상 · 후보 하나)
-    문다.
+    `==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단 미상 ·
+    후보 하나) 문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring), `verdicts` 사전(`_verdict_ranks_by_finding` 안에서 채점기 장부를 읽는 변이는
@@ -2258,8 +2262,9 @@ def _designate_final(
         return candidates[0], oracle_log.DESIGNATION_SOLE_CANDIDATE, None
     if verdicts is None:
         verdicts = dict.fromkeys(grades, 0)
-    # 등급이나 confidence를 모르는 후보가 하나라도 있으면 거부한다 — 모르는 값을 0으로 깔면
-    # **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은 0이 아니라 미실측 표시다).
+    # 등급·confidence·판정 계단 중 모르는 값이 있는 후보가 하나라도 있으면 거부한다 —
+    # 모르는 값을 0으로 깔면 **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은
+    # 0이 아니라 미실측 표시다).
     if any(
         attempt.finding_id not in grades
         or attempt.finding_id not in confidences
