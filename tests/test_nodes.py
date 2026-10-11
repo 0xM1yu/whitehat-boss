@@ -560,10 +560,19 @@ def test_pov_open_hop_reads_the_source_override(ctx: RunContext) -> None:
     assert marker in ctx.models.last_for(Role.POV).body
 
 
-def _raise(exc: Exception):  # noqa: ANN202
-    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
+def _raise(exc: Exception, *, fence: int = 40):  # noqa: ANN202
+    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용.
+
+    ⏵ 2026-10-11 (#550) 파싱 실패는 루프가 계속 도는 예외라 `hop`이 안 오르면 **끝없이 돈다**.
+    `fence`번째 호출은 `exc` 대신 `RuntimeError`를 던져 그 회귀가 멈추지 않고 빨갛게 되게 한다 —
+    `pov_tool_hops + 1`번만 부르는 정상 코드는 닿지 않는다(파싱 실패 자리는 `pov_tool_hops + 2`)."""
+    calls = 0
 
     def _fn(*_args: object, **_kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls >= fence:
+            raise RuntimeError(f"fence: {fence}번째 호출 — 루프가 안 멈춘다")
         raise exc
 
     return _fn
@@ -618,17 +627,28 @@ def test_run_pov_records_a_skip_when_the_capsule_is_missing(ctx: RunContext) -> 
 def test_run_pov_records_a_skip_on_a_schema_parse_error(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """모델이 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
+    """모델이 매 홉 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
 
-    루프가 hop 호출 예외를 흡수한다(`_pov_classify_exception`) — 홉을 여는 `pov.open_hop`을
-    스텁해 hop0에서 실패시킨다."""
+    파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다(#550 (c)) — 홉을 여는 `pov.open_hop`을 항상 실패하게
+    스텁하면 **`pov_tool_hops + 1`번** 불리고(절단 기록이 없는 실패라 마지막 홉에서 종단) 뒤에
+    parse_failed로 남는다."""
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(runner.pov, "open_hop", _raise(SchemaParseError("bad pov json")))
+    calls: list[int] = []
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+
+    def _always_bad(*_args: object, **kwargs: object) -> object:
+        calls.append(int(kwargs.get("hop", 0)))  # type: ignore[call-overload]
+        if len(calls) > pov_hops + 1:  # 울타리 — 홉이 안 올라가는 변이가 무한히 돌지 않게 한다
+            raise RuntimeError("pov_tool_hops + 1번보다 더 열었다")
+        raise SchemaParseError("bad pov json")
+
+    monkeypatch.setattr(runner.pov, "open_hop", _always_bad)
 
     runner._run_pov(ctx, state, finding)
 
     skipped = [e for e in ctx.trace.events if e.kind is EventKind.POV_SKIPPED]
     assert skipped and skipped[-1].data["reason"] == "parse_failed"
+    assert calls == list(range(pov_hops + 1))  # 실패 홉마다 다음 홉 번호로 다시 연다
 
 
 def test_run_pov_records_a_skip_on_a_droppable_gateway_error(
