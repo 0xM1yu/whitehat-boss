@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -297,6 +297,7 @@ agent:
 ⏵ **2026-10-10 — 봉투가 넷이다.** v12는 넷째 `AuditorProcedureAuditAlwaysAction`을 요청한다 -> `procedure`가 `no_signal`에도 `audit`를 채우는
 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의 서브클래스)다(이슈 #578 · §3 「AuditProcedure」의 「v12」). 같은 규칙이 넷째에도 걸린다.
 v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 registry는 v11을 고른다.
+⏵ 2026-10-11 — 위 줄의 「registry는 v11」은 그날까지다(그 뒤 v13 → v14). 서빙 판 v14는 v12 봉투(넷째)를 그대로 쓰고 FACTS에서 `source` 사본만 뺐다(이슈 #67).
 
 **켜는 조건은 둘이고 어긋나면 서지 않는다.** ① `thresholds.auditor_tool_hops`가 양수 ② 배선된 판의 meta가
 `output_schema`로 루프 봉투(`AuditorAction` · `AuditorProcedureAction`)를 선언. 상한이 0이면 종전 한 방 경로이고 **요청 바이트가 같다**(hop0 렌더
@@ -495,7 +496,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -763,7 +764,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v13"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v14"}
 }
 ```
 
@@ -823,6 +824,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > v10과 같다. 위 Finding 예시의 `prompt_version`도 v11로 고쳤다(`test_doc_examples.py`가 registry와 대조한다) — 예시의 값 자체는 v10 계약에도 맞는다.
 > ⏵ 2026-10-10 — **지금 고르는 것은 v13**이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · [D17](open-questions/D/D17.md)). 출력 계약은 v11과 같다.
 > 위 Finding 예시의 `prompt_version`도 v13으로 고쳤다.
+> ⏵ 2026-10-11 — **지금 고르는 것은 v14**다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578). 출력 계약은 v12와 같다(`no_signal`에도 `audit`).
+> 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -929,6 +932,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 
 이슈 #578 · 팀 결정 2026-10-10. FT 데이터 Teacher v4가 `no_signal`에도 `audit`를 채운다 -> v10·v11 계약(`no_signal`이면 `audit` null)으로는
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
+⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
@@ -988,7 +992,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v13", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v14", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1120,6 +1124,9 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > body의 Facts 머리 문장(JSON을 「the complete set of facts」라 부르던 줄)과 prefix의 `FACTS.source` 한 자리다(`tests/test_auditor_v13_facts.py`).
 > 그래도 규칙 1이 걸린다 — 같은 입력에서 hop0 user 턴이 원문의 JSON 이스케이프 사본만큼 짧아진다. **v12는 건너뛰었다** — 2026-10-10 열린
 > PR #580(FT Auditor 계약)이 그 번호를 쓴다. v11·v13으로 돈 run은 0건이고 규칙 5·재측정은 이번에도 돌지 않았다.
+> ⏵ **2026-10-11 — v13 → v14.** v13은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT 정답은
+> v12 계약(#580 머지)이라 **v14 = v12 + FACTS `source` 제거**를 새 판으로 세웠다 — v13은 머지된 판이라 규칙 1로 그 자리에서 안 고쳤다.
+> v14 body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`tests/test_auditor_v14_facts.py`). v14로 돈 run은 0건이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

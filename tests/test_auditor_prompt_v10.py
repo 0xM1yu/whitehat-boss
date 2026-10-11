@@ -96,6 +96,12 @@ _V10_ONLY = frozenset(
         "test_the_v10_prose_never_lets_cwe_be_null_because_the_schema_refuses_it",
         "test_the_v10_prefix_length_is_the_number_four_other_places_copy",
         "test_every_place_that_copies_the_v10_prefix_length_carries_the_measured_number",
+        # ⏵ 2026-10-11 — 서빙 판이 v14(v12 계열 · `audit`를 모든 상태에서 채움)가 되며 v10 전용으로
+        # 옮겼다: `audit` null ⟺ no_signal과 넷짜리 result 짝은 v10·v11의 문장이다. v12 계열의 그
+        # 자리는 `tests/test_auditor_v12.py`가 문고, v14는 v12와 두 줄만 다르다
+        # (`tests/test_auditor_v14_facts.py`).
+        "test_the_v10_prose_pairs_each_refutation_result_with_the_status_the_node_expects",
+        "test_the_v10_prose_pairs_a_null_audit_with_the_status_the_validator_pairs_it_with",
     }
 )
 
@@ -1385,7 +1391,9 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # 같다(`tests/test_auditor_v12.py`가 그 줄이 안 바뀐 것을 문다). 서빙 판이 아니라 지금은 안 고른다.
 # ⏵ 같은 날 v13(이슈 #67)도 같다 — v11에서 FACTS `source` 서술 두 줄만 바꿨다
 # (`tests/test_auditor_v13_facts.py`가 차이를 그 두 줄로 묶는다).
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13"})
+# ⏵ 2026-10-11 v14(이슈 #67 · #578)도 같다 — v12에서 FACTS `source` 서술 두 줄만 바꿨다
+# (`tests/test_auditor_v14_facts.py`).
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14"})
 
 
 def _profiles_serving_v10() -> list[str]:
