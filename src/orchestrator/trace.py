@@ -30,8 +30,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 토큰 계상 방식 | `token_counter` | 역할별 `real`/`approx`와 그 사유. run당 **정확히 1건** |
 | 스키마 파싱 실패율 | `model_call`(`attempts`·`ok`·`error`) | 시도 단위 — 산식 아래 (#83) |
 | 시도별 출력 토큰·종료 사유 | `model_call`의 `attempt_*` 둘 | 시도 순서 — 아래 (#550) |
-| 실패 응답 원문 | `model_call`의 `response_refs`·`response_sha256` | 스키마 소진
-호출만(시도 순서의 JSON 배열 문자열). **키 부재 = 성공이거나 받은 응답 없음** — 쓰기 실패는
+| 실패 응답 원문 | `model_call`의 `response_refs`·`response_sha256` | 스키마 소진·게이트웨이
+거절로 끝난 호출의 스키마 실패 시도(JSON 배열 문자열, 시도 순서). **키 부재 = 성공 · 재시도가 성공해
+앞 시도 원문이 안 남은 호출 · PromptLog 없음** 셋(받은 응답이 없던 호출도 부재). 쓰기 실패는
 `response_record_error` (#603) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |

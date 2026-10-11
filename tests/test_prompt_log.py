@@ -564,3 +564,169 @@ def test_a_failed_response_write_keeps_the_original_error_and_lands_as_a_reason(
     assert call["ok"] is False
     assert call["response_record_error"] == "OSError(errno=28)"
     assert "response_refs" not in call
+
+
+# --- 실패 응답 기록의 경계 (#603 라운드 2) -----------------------------------
+
+
+class _RaisingClient:
+    """대본의 예외를 그대로 던진다 — 소비(`usage`)는 예외가 들고 있다."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        raise self._exc
+
+
+def _exhausted(raw_texts: tuple[str, ...]) -> SchemaParseError:
+    return SchemaParseError(
+        "소진",
+        usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+        gpu_ms=1000,
+        gpu_ms_source="request_wall_clock",
+        attempts=max(len(raw_texts), 1),
+        raw_texts=raw_texts,
+    )
+
+
+def _call_failing(ctx: RunContext, *, hop: int = 0) -> None:
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(
+            role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT, hop=hop
+        )
+
+
+def test_failed_response_files_carry_the_hop_in_their_names(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted(("a", "b"))))
+
+    _call_failing(ctx, hop=3)
+
+    (call,) = _model_calls(ctx)
+    assert json.loads(call["response_refs"]) == [
+        f"{DIR_NAME}/0001_scout_hop3_response.txt",
+        f"{DIR_NAME}/0001_scout_hop3_response_retry1.txt",
+    ]
+
+
+def test_a_lone_surrogate_in_a_response_is_written_and_keeps_the_original_error(
+    tmp_path: Path,
+) -> None:
+    """모델 JSON의 외톨이 서로게이트가 쓰기를 터뜨려 원 예외·청구를 가리면 안 된다."""
+    raw = "앞" + chr(0xD800) + "뒤"  # 리터럴 이스케이프는 pytest 재작성이 못 쓴다
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted((raw,))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == raw.encode("utf-8", errors="surrogatepass")
+    assert "response_record_error" not in call
+    assert ctx.ledger.input_tokens == 300
+
+
+def test_no_raw_text_means_no_response_key_and_no_file(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted(())))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" not in call and "response_sha256" not in call
+    assert "response_record_error" not in call
+    assert not list(tmp_path.rglob("*_response*"))
+
+
+def test_without_a_prompt_log_the_original_error_propagates_and_no_response_key() -> None:
+    ctx = _context(prompts=None, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" not in call and "response_record_error" not in call
+    assert ctx.ledger.input_tokens == 300
+
+
+def test_any_error_while_recording_responses_keeps_the_original_error_and_the_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError만이 아니다 — 어떤 예외든 사유로 남기고 원 예외·청구·이벤트는 산다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise AttributeError("x")
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_record_error"] == "AttributeError"
+    assert ctx.ledger.input_tokens == 300
+
+
+def _scripted_adapter(monkeypatch: pytest.MonkeyPatch, replies: list[object]):  # noqa: ANN202
+    """실 어댑터(`complete`)를 대본 응답으로 돌린다 — `raw_texts`가 예외에 실리는 길까지 잰다."""
+    from src.adapters.openai_compat import OpenAICompatModelClient, PostedResponse
+    from src.interfaces.model_client import ModelGatewayError
+
+    queue = list(replies)
+
+    def fake_post(self, payload: dict):  # noqa: ANN001, ANN202, ARG001
+        reply = queue.pop(0)
+        if reply == "gateway":
+            raise ModelGatewayError("거절", status=400, detail="x")
+        usage = Usage(input_tokens=5, output_tokens=5, cached_tokens=0)
+        return PostedResponse(
+            content=reply, usage=usage, finish_reason="stop", output_tokens_reported=True
+        )
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+    return OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="t", temperature=0.0, top_p=1.0,
+        max_tokens=64, seed=1, retries=1,
+    )
+
+
+def test_a_null_content_attempt_does_not_mask_the_schema_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 `content=None`·2차 검증 실패 — 원 `SchemaParseError`·이벤트 하나·청구가 산다.
+    기록은 두 칸이고 1차 파일은 비어 있다."""
+    client = _scripted_adapter(monkeypatch, [None, '{"x": 1}'])
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)  # 정확히 하나
+    refs = json.loads(call["response_refs"])
+    assert len(refs) == 2
+    assert (tmp_path / refs[0]).read_bytes() == b""
+    assert (tmp_path / refs[1]).read_bytes() == b'{"x": 1}'
+    assert ctx.ledger.input_tokens == 10
+
+
+def test_a_gateway_error_after_a_schema_failure_still_leaves_the_first_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 스키마 실패·2차 게이트웨이 거절 — 1차 원문 하나가 남는다. 1차 거절이면 안 남는다."""
+    from src.interfaces.model_client import ModelGatewayError
+
+    ctx = _context(
+        prompts=PromptLog(tmp_path), models=_scripted_adapter(monkeypatch, ['{"x": 1}', "gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == b'{"x": 1}'
+
+    other = tmp_path / "first"
+    ctx2 = _context(
+        prompts=PromptLog(other), models=_scripted_adapter(monkeypatch, ["gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx2.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (call2,) = _model_calls(ctx2)
+    assert "response_refs" not in call2
+    assert not list(other.rglob("*_response*"))
