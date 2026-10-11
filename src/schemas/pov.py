@@ -17,6 +17,7 @@ council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내�
 넓히거나 generator-script를 별도로 검토한다.
 """
 
+import re
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -141,8 +142,12 @@ class PovSpec(HarnessModel):
 _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
     "gen": ("spec",),
     "inspect": ("tool",),
-    "submit": (),
+    "submit": ("poc_sha256",),
 }
+
+# `submit`이 지명하는 gen의 digest — `sha256:` 접두는 있어도 없어도 되고, 맨 hex 8~64자(접두 허용).
+# JSON 스키마의 `pattern`이 아니라 검증기에서 건다(구조화 출력 문법에 정규식을 안 싣는다).
+_POC_DIGEST_RE = re.compile(r"(?:sha256:)?[0-9a-fA-F]{8,64}")
 
 
 # ⚠ **이 클래스의 docstring은 `response_format.json_schema.schema.description`으로 모델 요청
@@ -170,7 +175,8 @@ class PovAction(HarnessModel):
       취약 빌드에 먹인다** — 그 관측은 당신 바이트의 결과다. 나머지 셋(`asan`·`build`·`gdb`)은
       대상 소스를 빌드·실행할 뿐이고 그 바이트를 **입력으로 받지 않는다** — 그 셋의 관측은 대상
       자체의 상태다.
-    - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보.
+    - `submit`: 루프를 끝낸다 — 마지막 gen의 PoC가 final 후보. 앞선 gen을 최종 후보로 하려면
+      `poc_sha256`에 그 gen의 SHA-256(관측의 `last_gen_sha256` 값, 8자 이상 접두 허용)을 적는다.
 
     ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
     포맷은 이 스펙으로 도달 못 한다 — 그때 `spec` 자리에 generator-script 대안을 더한다(별도
@@ -190,6 +196,8 @@ class PovAction(HarnessModel):
     # 않지만(위 한계), 이 Literal 자체로 v2 입력이 바뀌는 것은 막지 못한다(적대적 리뷰
     # 2026-10-02 MEDIUM-4가 든 한계).
     tool: Literal["asan", "build", "gdb", "poc"] | None = None
+    # `submit`만 쓴다 — 이미 낸 gen 중 최종 후보로 지명할 것. 없으면 마지막 gen이다.
+    poc_sha256: str | None = None
     rationale: NonEmptyStr
 
     @model_validator(mode="after")
@@ -197,6 +205,8 @@ class PovAction(HarnessModel):
         required = {"gen": "spec", "inspect": "tool"}.get(self.action)
         if required is not None and getattr(self, required) is None:
             raise ValueError(f"{self.action} 액션은 {required}가 필요하다")
+        if self.poc_sha256 is not None and not _POC_DIGEST_RE.fullmatch(self.poc_sha256):
+            raise ValueError("poc_sha256은 16진 8~64자여야 한다(앞에 `sha256:`은 있어도 된다)")
         allowed = set(_FIELDS_BY_ACTION[self.action])
         stray = sorted(
             name

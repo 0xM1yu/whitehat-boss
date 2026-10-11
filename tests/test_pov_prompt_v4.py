@@ -29,7 +29,7 @@ v4가 v3와 다른 넷: ① 채점기 `vul` 종료 코드를 읽는 규칙(#549)
   만들면 초록이다. 참인지는 아래 *행동* 핀이 하네스가 실제로 하는 일로 묻는다: 반복은
   `test_the_loop_ends_on_a_repeat_of_any_earlier_gen`·
   `test_the_loop_compares_assembled_bytes_not_the_spec_encoding`, 지정은
-  `test_submit_designates_the_last_gen_even_when_an_earlier_gen_was_the_crash`·
+  `test_submit_can_name_an_earlier_gen_and_the_last_gen_is_only_the_default`·
   `test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate`·
   `test_the_final_slot_goes_by_confidence_not_by_which_poc_crashed`, 홉 줄과 마지막 홉은
   `test_every_followup_opens_with_the_hop_it_is_answered_on`·
@@ -80,6 +80,7 @@ v4가 v3와 다른 넷: ① 채점기 `vul` 종료 코드를 읽는 규칙(#549)
 
 import dataclasses
 import difflib
+import hashlib
 import json
 import re
 import shutil
@@ -244,7 +245,8 @@ _PINNED_BLOCKS: dict[str, str] = {
         ' 법은 아래 「크래시 판독」). 이 원칙의 예외는 하나다: 그 줄이 `unavailable`이면 값이 '
         '없어 원칙을 적용할 수 없다 — 그때의 요건은 아래 「홉 예산」의 마지막 홉 항목이 한 번만'
         ' 적는다. `submit`은 바이트를 싣지 않는다 — `submit`하면 **마지막 `gen`**의 PoC가 이 Fi'
-        'nding의 최종 후보가 된다.'
+        'nding의 최종 후보가 된다. 앞선 `gen`을 후보로 하려면 `poc_sha256`에 그 `gen`의 '
+        '`last_gen_sha256` 값(8자 이상 접두 허용)을 적는다 — 적지 않으면 마지막 `gen`이다.'
     ),
     "limit-split-headline": (
         '⚠ **도구 넷이 둘로 갈린다 — `poc`는 당신의 PoC를 받고 나머지 셋은 안 받는다.**'
@@ -312,7 +314,8 @@ _PINNED_BLOCKS: dict[str, str] = {
     "final-hop": (
         "- **`remaining=0`이면 이번이 마지막 홉이다.** 마지막 홉에 낸 `gen`·`inspect`는 헛수고다 — "
         "하네스가 실행은 하지만 그 관측을 읽을 다음 턴이 없고, 마지막 홉의 `gen`은 최종 후보도 "
-        "되지 못한다. 마지막 홉에서 `submit`은 그 앞에서 낸 마지막 `gen`을 최종 후보로 지정한다. "
+        "되지 못한다. 마지막 홉에서 `submit`은 (`poc_sha256`을 안 적으면) 그 앞에서 낸 "
+        "마지막 `gen`을 최종 후보로 지정한다. "
         "그 `gen`의 `oracle_vul` 줄로 가른다. 읽을 줄은 마지막 `gen` **다음 턴**의 관측에 붙은 "
         "줄이다 — 그 뒤에 `inspect`만 냈다면 지금 관측에는 그 줄이 없고 앞선 턴에 있으니 거슬러 "
         "올라가 읽는다. 줄이 안 보인다고 `unavailable`인 것이 아니다. - 제외 코드 `0`·`71`·`300` "
@@ -404,8 +407,9 @@ _PINNED_BLOCKS: dict[str, str] = {
         "않는다 — 기록을 남기게 할 뿐이다."
     ),
     "trap": (
-        "- ⚠ **함정 — `submit`은 바이트를 싣지 않고 마지막 `gen`을 지정한다.** 셋 밖의 코드를 본 "
-        "뒤 `gen`을 또 내면 그 새 바이트가 마지막 `gen`이 된다 — 이후 `submit`하면 이긴 바이트가 "
+        "- ⚠ **함정 — `submit`은 바이트를 싣지 않고 (`poc_sha256`을 안 적으면) 마지막 `gen`을 "
+        "지정한다.** 셋 밖의 코드를 본 뒤 `gen`을 또 내면 그 새 바이트가 마지막 `gen`이 된다 — "
+        "이후 `submit`하면 (`poc_sha256`을 안 적으면) 이긴 바이트가 "
         "아니라 새 바이트가 지정된다(그 `gen`이 이미 낸 바이트와 같으면 반복으로, 마지막 홉이면 홉 "
         "소진으로 루프가 서서 후보가 아예 없다). 그러니 셋 밖의 코드를 본 뒤에는 `gen`을 또 내지 "
         "않는다."
@@ -881,25 +885,196 @@ def test_a_code_outside_the_three_is_only_the_vul_leg_not_the_score() -> None:
     assert _verdict(77, fix=300).success is False
 
 
-# --- ① 함정과 변형 처방: submit은 마지막 gen을 지정한다 ----------------------------------------
+# --- ① 함정과 변형 처방: 이름 없는 submit은 마지막 gen을 지정한다 --------------------------------
 
 
-def test_submit_designates_the_last_gen_even_when_an_earlier_gen_was_the_crash(
+def _submit_naming(poc: bytes, *, form: str = "full") -> PovAction:
+    """`poc_sha256`으로 그 바이트의 gen을 지명하는 submit. `form` — `full`(`sha256:`+64) ·
+    `bare`(관측의 `last_gen_sha256` 그대로 64자) · `prefix8`(맨 hex 앞 8자) · `prefixed8`."""
+    hexdigest = hashlib.sha256(poc).hexdigest()
+    named = {
+        "full": f"sha256:{hexdigest}",
+        "bare": hexdigest,
+        "prefix8": hexdigest[:8],
+        "prefixed8": f"sha256:{hexdigest[:8]}",
+    }[form]
+    return PovAction(action="submit", rationale="name the winner", poc_sha256=named)
+
+
+def _submit_digests(scripted) -> list[object]:  # noqa: ANN001
+    return [
+        e.data.get("submit_digest")
+        for e in scripted.trace.events
+        if e.kind is EventKind.POV_HOP and e.data.get("action") == "submit"
+    ]
+
+
+def test_submit_can_name_an_earlier_gen_and_the_last_gen_is_only_the_default(
     ctx,  # noqa: ANN001, F811
 ) -> None:
     """프롬프트의 함정 경고의 근거 — 실 run에서 이긴 6바이트를 hop 1에, 진 1바이트를 hop 2에
-    냈다. `submit`이 바이트를 싣지 않으므로 지정되는 것은 **마지막 gen**이다. 이긴 쪽(77)이
-    먼저, 진 쪽(0)이 나중이면 최종 한 장은 진 쪽이다. (이 상태에서 `submit`하지 않는 것이 변형
-    처방의 「셋 안이면 `submit`하지 않는다」다.)"""
-    oracle = ReadingOracle(codes=(77, 0))
+    냈다. `submit`이 `poc_sha256`을 안 실으면 지정되는 것은 **마지막 gen**이다(진 쪽, 아래 둘째
+    검사). 같은 상태에서 이긴 쪽의 digest를 싣으면 지정은 이긴 쪽이다 — 하네스가 채점기 값을 읽어
+    고른 것이 아니라 **모델이 이름 붙인** 것이다."""
     winner, loser = _gen(count=3), _gen(count=1)
+    winner_poc = assemble_poc(winner.spec)
+    oracle = ReadingOracle(codes=(77, 0))
 
-    scripted, state, _ = _feedback_run(ctx, oracle, [winner, loser, _SUBMIT], version=VERSION)
+    scripted, state, _ = _feedback_run(
+        ctx, oracle, [winner, loser, _submit_naming(winner_poc)], version=VERSION
+    )
     runner._finalize_oracle(scripted, state)
 
     bodies = _pov_bodies(scripted)
     assert "oracle_vul exit_code=77" in bodies[1] and "oracle_vul exit_code=0" in bodies[2]
+    assert [poc for poc, _ in oracle.final_calls] == [winner_poc]
+    assert _submit_digests(scripted) == ["matched"]
+    generated = [e for e in scripted.trace.events if e.kind is EventKind.POV_GENERATED]
+    assert [e.data["poc_sha256"] for e in generated] == [hashlib.sha256(winner_poc).hexdigest()]
+
+
+def test_an_unnamed_submit_still_designates_the_last_gen_even_when_an_earlier_gen_won(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """이름이 없으면 종전 동작이다 — 이긴 쪽(77)이 먼저, 진 쪽(0)이 나중이면 최종 한 장은 진 쪽이다.
+    (이 상태에서 `submit`하지 않는 것이 변형 처방의 「셋 안이면 `submit`하지 않는다」다.)"""
+    winner, loser = _gen(count=3), _gen(count=1)
+    oracle = ReadingOracle(codes=(77, 0))
+
+    scripted, state, _ = _feedback_run(ctx, oracle, [winner, loser, _SUBMIT], version=VERSION)
+    runner._finalize_oracle(scripted, state)
+
     assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(loser.spec)]
+    assert _submit_digests(scripted) == ["absent"]
+
+
+@pytest.mark.parametrize("form", ["full", "bare", "prefix8", "prefixed8"])
+def test_submit_names_a_gen_by_the_full_digest_or_a_unique_prefix(
+    ctx, form: str  # noqa: ANN001, F811
+) -> None:
+    """관측의 `last_gen_sha256`(맨 hex 64자)을 그대로 · `sha256:` 접두를 붙여 · 8자 접두로 —
+    넷 다 같은 gen을 가리킨다."""
+    winner, loser = _gen(count=3), _gen(count=1)
+    winner_poc = assemble_poc(winner.spec)
+    oracle = ReadingOracle(codes=(77, 0))
+
+    scripted, state, _ = _feedback_run(
+        ctx, oracle, [winner, loser, _submit_naming(winner_poc, form=form)], version=VERSION
+    )
+    runner._finalize_oracle(scripted, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [winner_poc]
+    assert _submit_digests(scripted) == ["matched"]
+
+
+def test_a_digest_that_matches_no_gen_falls_back_to_the_last_gen_and_says_so(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """환각한 해시는 조용히 지금 동작(마지막 gen)으로 돌아간다 — 대신 `submit_digest="unknown"`이
+    trace에 남아 불일치 비율을 센다."""
+    winner, loser = _gen(count=3), _gen(count=1)
+    oracle = ReadingOracle(codes=(77, 0))
+    ghost = PovAction(action="submit", rationale="r", poc_sha256="deadbeef" * 8)
+
+    scripted, state, _ = _feedback_run(ctx, oracle, [winner, loser, ghost], version=VERSION)
+    runner._finalize_oracle(scripted, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(loser.spec)]
+    assert _submit_digests(scripted) == ["unknown"]
+
+
+def test_an_ambiguous_prefix_is_unknown_and_never_picks_a_gen() -> None:
+    """접두가 둘 이상의 gen에 맞으면 어느 쪽도 고르지 않는다 — 순수 해석기를 합성 digest로 문다
+    (8자 접두 충돌은 실 바이트로 만들 수 없다)."""
+    seen = {"sha256:" + "ab" * 4 + "0" * 56: b"first", "sha256:" + "ab" * 4 + "1" * 56: b"second"}
+
+    assert runner._resolve_submit_digest("ab" * 4, seen) == (None, "unknown")
+    assert runner._resolve_submit_digest("ab" * 4 + "0" * 8, seen) == (b"first", "matched")
+    assert runner._resolve_submit_digest(None, seen) == (None, "absent")
+    assert runner._resolve_submit_digest("ABABABAB00", seen) == (b"first", "matched")  # 대소문자
+
+
+def test_submit_without_a_name_traces_exactly_as_before(ctx) -> None:  # noqa: ANN001, F811
+    """`poc_sha256`을 안 실은 submit은 지정 바이트가 종전과 같다 — 마지막 gen. 새로 생긴 것은 submit
+    홉 이벤트의 `submit_digest="absent"` 하나뿐이다."""
+    first, last = _gen(count=3), _gen(count=1)
+    oracle = ReadingOracle(codes=(77, 0))
+
+    scripted, state, _ = _feedback_run(ctx, oracle, [first, last, _SUBMIT], version=VERSION)
+    runner._finalize_oracle(scripted, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(last.spec)]
+    submit_hop = [
+        e for e in scripted.trace.events
+        if e.kind is EventKind.POV_HOP and e.data.get("action") == "submit"
+    ][0]
+    assert submit_hop.data["submit_digest"] == "absent"
+    assert all(
+        "submit_digest" not in e.data
+        for e in scripted.trace.events
+        if e.kind is EventKind.POV_HOP and e.data.get("action") != "submit"
+    )
+
+
+def test_the_excluded_code_tuple_matches_the_adapter() -> None:
+    """오케스트레이터는 `src.adapters`를 못 읽어 제외 코드 튜플을 `oracle_log`에 따로 든다 —
+    어댑터의 것과 어긋나면 계측 플래그가 다른 셋을 센다."""
+    assert oracle_log.NO_CRASH_VUL_EXIT_CODES == _NO_CRASH_EXIT_CODES
+
+
+def _terminal_flags(scripted) -> list[object]:  # noqa: ANN001
+    return [
+        e.data.get("last_gen_excluded_while_earlier_not")
+        for e in scripted.trace.events
+        if e.kind in (EventKind.POV_GENERATED, EventKind.POV_SKIPPED)
+    ]
+
+
+def test_the_log_flags_a_last_gen_that_lost_after_an_earlier_one_won(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """v5 규율(「셋 밖이면 다음 턴에 submit」) 준수를 사후에 세는 로그다 — **지정 입력이 아니다**.
+    [winner(77), loser(0), submit]은 True."""
+    scripted, _, _ = _feedback_run(
+        ctx, ReadingOracle(codes=(77, 0)), [_gen(count=3), _gen(count=1), _SUBMIT], version=VERSION
+    )
+
+    assert _terminal_flags(scripted) == [True]
+
+
+def test_the_log_is_false_when_the_only_gen_is_the_winner(ctx) -> None:  # noqa: ANN001, F811
+    """[gen(77), submit]은 False — 이긴 gen을 그대로 냈다."""
+    scripted, _, _ = _feedback_run(
+        ctx, ReadingOracle(codes=(77,)), [_gen(count=3), _SUBMIT], version=VERSION
+    )
+
+    assert _terminal_flags(scripted) == [False]
+
+
+def test_the_log_counts_a_gen_without_a_code_as_excluded_and_reads_only_wide_versions() -> None:
+    """코드가 없는 마지막 gen(마지막 홉의 gen · 조회 실패)은 제외 코드와 같이 진 쪽으로 센다.
+    코드를 안 읽는 판(v2)은 필드를 싣지 않는다 — 순수 함수를 직접 문다."""
+    key = "last_gen_excluded_while_earlier_not"
+
+    assert runner._terminal_fields(True, [77, None]) == {key: True}
+    assert runner._terminal_fields(True, [77, 71]) == {key: True}
+    assert runner._terminal_fields(True, [None, 77]) == {key: False}
+    assert runner._terminal_fields(True, [None, 0]) == {key: False}
+    assert runner._terminal_fields(True, []) == {key: False}
+    assert runner._terminal_fields(False, [77, 0]) == {}
+
+
+def test_the_log_does_not_flag_when_no_earlier_gen_was_outside_the_excluded_set(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """앞 gen도 제외 코드(0)·코드 없음이면 False — 「앞 gen은 이겼는데」가 아니다."""
+    a, b = _gen(count=3), _gen(count=1)
+
+    lost_both, _, _ = _feedback_run(
+        ctx, ReadingOracle(codes=(0, 71)), [a, b, _SUBMIT], version=VERSION
+    )
+
+    assert _terminal_flags(lost_both) == [False]
 
 
 def test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate(
@@ -927,9 +1102,9 @@ def test_a_variant_that_lands_inside_the_set_cannot_bring_the_winner_back(
     ctx,  # noqa: ANN001, F811
 ) -> None:
     """변형 처방의 마지막 반쪽 — 변형(`gen`)이 셋 **안**(여기서는 71)이면 이긴 바이트는 `seen`
-    안에 영영 있고(다시 내면 `REPEAT_SPEC`) 마지막 `gen`은 진 변형이다. 그 상태의 `submit`은 진
-    변형을 지정한다 — 프롬프트가 「`submit`하지 않는다」고 쓰는 이유다. 변형이 `remaining=0`
-    홉에서 나가면 아예 헛수고다(`test_a_gen_on_the_final_hop_is_wasted`)."""
+    안에 영영 있고(다시 내면 `REPEAT_SPEC`) 마지막 `gen`은 진 변형이다. 그 상태의 이름 없는
+    `submit`은 진 변형을 지정한다 — 프롬프트가 「`submit`하지 않는다」고 쓰는 이유다. 변형이
+    `remaining=0` 홉에서 나가면 아예 헛수고다(`test_a_gen_on_the_final_hop_is_wasted`)."""
     oracle = ReadingOracle(codes=(77, 71))
     winner, variant = _gen(count=3), _gen(count=4)
 
@@ -1161,9 +1336,9 @@ def test_a_gen_on_the_final_hop_is_wasted(ctx) -> None:  # noqa: ANN001, F811
 
 def test_a_winner_submitted_on_the_final_hop_is_kept(ctx) -> None:  # noqa: ANN001, F811
     """프롬프트가 마지막 홉의 `submit`을 **정하는 갈래 중 첫째** — 마지막 `gen`의 `oracle_vul`
-    줄이 제외 코드 밖이다(여기서는 77). 그때 `remaining=0` 홉의 `submit`은 받아들여지고 그 앞의
-    마지막 `gen`이 최종 후보가 된다. (셋째 갈래 `unavailable`은 아래 테스트, 둘째 갈래는 그 다음
-    두 테스트다.)"""
+    줄이 제외 코드 밖이다(여기서는 77). 그때 `remaining=0` 홉의 이름 없는 `submit`은 받아들여지고
+    그 앞의 마지막 `gen`이 최종 후보가 된다. (셋째 갈래 `unavailable`은 아래 테스트, 둘째 갈래는
+    그 다음 두 테스트다.)"""
     oracle = ReadingOracle(codes=(77,) * 10)
     gens = _final_hop_gens()
 
@@ -1182,9 +1357,9 @@ def test_a_loser_submitted_on_the_final_hop_still_becomes_the_candidate(
     ctx,  # noqa: ANN001, F811
 ) -> None:
     """🔴 프롬프트가 마지막 홉의 `submit`에 **조건을 거는 이유**. 하네스는 `submit`의 코드를 안
-    거른다 — 마지막 `gen`이 300(타임아웃)이어도 `submit`하면 그 PoC가 지정 후보가 되어 run의 최종
-    한 장 자리에 선다(`final_calls`가 그 PoC다). 이 테스트가 **옛 v4가 허용하던 행동**이다: 규칙이
-    없으면 이 일이 모델의 손에 남는다."""
+    거른다 — 마지막 `gen`이 300(타임아웃)이어도 이름 없이 `submit`하면 그 PoC가 지정 후보가 되어
+    run의 최종 한 장 자리에 선다(`final_calls`가 그 PoC다). 이 테스트가 **옛 v4가 허용하던
+    행동**이다: 규칙이 없으면 이 일이 모델의 손에 남는다."""
     oracle = ReadingOracle(codes=(300,) * 10)
     gens = _final_hop_gens()
 
