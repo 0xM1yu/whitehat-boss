@@ -229,7 +229,8 @@ def _hops(ctx: RunContext) -> list[object]:  # noqa: F811
 
 
 def test_pov_loop_runs_gen_then_submit_and_returns_the_last_poc(ctx: RunContext) -> None:  # noqa: F811
-    """dev_fake: hop0 gen → hop1 submit. 마지막 gen의 PoC를 돌려주고 SUBMITTED로 선다.
+    """dev_fake: hop0 gen → hop1 submit(이름 없는 submit). 마지막 gen의 PoC를 돌려주고 SUBMITTED로
+    선다.
 
     POV_HOP가 홉마다(0=gen, 1=submit) 나고, submit 홉이 stop_reason=submitted다. 최종
     POV_GENERATED **하나**가 그 PoC 바이트 크기를 싣는다(submit 종단만 GENERATED)."""
@@ -1872,7 +1873,14 @@ def test_pov_action_description_in_the_request_has_no_repo_internal_references()
 
     ⚠ **못 막는 것**: 번호 없이 쓴 내부 서술(「기각된 A안」처럼 이 저장소만 아는 말)은 모양이
     없어 안 걸린다. 그 축은 리뷰가 본다."""
-    description = PovAction.model_json_schema().get("description", "")
+    # ⏵ 2026-10-11 — v5가 싣는 형제 `PovActionNamed`의 서술(클래스 docstring + `poc_sha256` 설명)도
+    # 같은 모양으로 본다.
+    named_schema = PovActionNamed.model_json_schema()
+    description = "\n".join((
+        PovAction.model_json_schema().get("description", ""),
+        named_schema.get("description", ""),
+        named_schema["properties"]["poc_sha256"].get("description", ""),
+    ))
 
     patterns = {
         "이슈·PR 번호": r"#\d+",
