@@ -33,9 +33,14 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
   사실 블록만 남기면 #67이 지적한 산문 자리표시자
   (`{{TARGET}}`·`{{CAPSULE_SECTIONS}}`·`{{SOURCE}}`)가 기록에서 사라지는데, **정확히 그
   블록이 W1이 채운 자리**다.
-- **응답은 남기지 않는다.** `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로
-  들어가고 usage·`gpu_ms`는 `model_call`에 있다. 사본을 만들면 정본을 물어야 한다.
-  예외 하나 — hop>0 파일의 history에는 앞 홉의 응답 원문(assistant 턴)이 실린다. 응답을
+- **응답은 남기지 않는다**(⏵ 2026-10-11 — 예외: 스키마 소진·게이트웨이 거절로 끝난 호출의 스키마
+  실패 시도 원문은 `write_response`가 `…_response[_retryK].txt`로 남긴다. 재시도가 성공한 호출의 앞
+  시도 원문과 성공 응답은 여전히 안 남는다, #603. `content`가 `null`인 시도는 받은 문자열이 없어
+  파일도 없다 — 호출자가 그 칸을 `write_response`로 부르지 않는다).
+  `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로 들어가고 usage·`gpu_ms`는
+  `model_call`에 있다. 성공 응답은 사본을 만들면 정본을 물어야 해서 안 남긴다 — 실패한 응답에는
+  정본(파싱된 값)이 없어 그 이유가 적용되지 않는다.
+  또 하나 — hop>0 파일의 history에는 앞 홉의 응답 원문(assistant 턴)이 실린다. 응답을
   기록하려는 것이 아니라 그 홉에 **입력으로** 간 바이트라서다.
 - **호출이 실패해도 남는다.** 호출자가 모델을 부르기 **전에** 쓴다 — 실패 분기가
   "스키마 파싱 실패율"의 분자(시도 단위 `attempts`, 정본은 `trace.py`)에 드는데
@@ -65,7 +70,7 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
 from collections.abc import Sequence
 from pathlib import Path
 
-from src.ids import sha256_text
+from src.ids import sha256_digest, sha256_text
 from src.interfaces.model_client import ChatTurn, Prompt
 
 # run_dir 아래 디렉터리 이름. `eval/leakage/__main__.py`의 스캔 glob이 이 이름을 안다.
@@ -187,3 +192,25 @@ class PromptLog:
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_text(text, encoding="utf-8", newline="\n")
         return f"{DIR_NAME}/{name}", sha256_text(text)
+
+    def write_response(
+        self, *, role: str, stage: int, index: int, hop: int = 0, text: str
+    ) -> tuple[str, str]:
+        """**실패한** 시도(`index`=0 1차, 1.. 재시도)의 응답 원문을 직전 `write`의 순번으로 남긴다.
+
+        `000N_role[_hopK]_response.txt` · `…_response_retry{index}.txt`. 카운터를 안 올린다
+        (`write_retry`와 같은 이유). 원문은 **바이트 그대로**다 — 개행을 바꾸지 않고, 모델이 낸
+        외톨이 서로게이트도 `surrogatepass`로 써서 `UnicodeEncodeError`가 원 예외를 덮지 않게 한다.
+        `stage`는 파일명에 안 쓰이고 `write_retry`와 호출 모양만 맞춘다. 호출자는 받은 문자열이 없는
+        칸(`content: null`)을 부르지 않는다 — 그 칸은 파일이 없다.
+
+        **누출 스캔에 넣지 않는다.** `eval/leakage`의 `RUN_GLOBS`(`*/prompts/*.md`)가 `.txt`를 안
+        부르고, 이것은 모델 입력이 아니라 모델 출력이라 그 스캐너가 지키는 것의 매개가 아니다.
+        """
+        suffix = f"_hop{hop}" if hop else ""
+        retry = f"_retry{index}" if index else ""
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_response{retry}.txt"
+        data = text.encode("utf-8", errors="surrogatepass")
+        self._dir.mkdir(parents=True, exist_ok=True)
+        (self._dir / name).write_bytes(data)
+        return f"{DIR_NAME}/{name}", sha256_digest(data)
