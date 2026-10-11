@@ -100,6 +100,8 @@ def test_auditor_source_limits_match_the_runner_contract(version: str) -> None:
     동일이고 같은 서빙 판 핀이 문다.
     ⏵ 2026-10-10 — 서빙 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다, 이슈 #67) — 옵션 서술은
     v11과 바이트 동일이고 같은 서빙 판 핀이 문다.
+    ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + 같은 FACTS 변경) — 옵션 서술은 v12와 바이트 동일이고
+    같은 서빙 판 핀이 문다.
     """
     prefix = (PROMPTS_DIR / "auditor" / version / "prefix.md").read_text(encoding="utf-8")
 
