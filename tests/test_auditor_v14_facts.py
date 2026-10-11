@@ -2,8 +2,8 @@
 
 v13(#591)은 같은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT
 정답은
-v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 판으로 세웠다 — v13은 머지된 판이라
-바이트를 고치지 않는다(agent-contracts §4 규칙 1). 묶는 것은 다섯이다.
+v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 판으로 세웠다 — v13의 요청
+바이트·봉투는 그대로다(meta 주석만 바뀌었다 · agent-contracts §4 규칙 1). 묶는 것은 다섯이다.
 
 1. **v14 산문은 v12에서 두 줄만 다르다** — body의 Facts 머리 문장 · prefix의 `FACTS.source` 한 자리.
    줄 전체 등식(`old.replace(was, now) == new`)이라 덧붙이기·지우기가 다 죽고, 파일 바이트 등식이
@@ -21,9 +21,10 @@ v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 �
    집행하고 산문 짝표가 노드의 표와 같다(`tests/test_auditor_prompt_v10.py`가 v10 전용으로 옮긴 두
    검사의 서빙 판 몫).
 
-판에 무관한 검사(서빙 좌석 성질 · 로더 거절 · `build_facts` 기본값 · `facts_source: false`인 판
-목록)는
-`tests/test_auditor_v13_facts.py`가 든다.
+판 이름에 묶이지 않은 검사는 `tests/test_auditor_v13_facts.py`가 든다 — 서빙 좌석이 고른 판의
+FACTS(`test_the_served_auditor_seat_renders_a_facts_without_the_source`) · `facts_source: false`인
+판의 디스크 전체 집합(`{v13, v14}`) · `build_facts` 기본값 · 로더 거절. 이 파일의 5(서빙 판
+봉투 규칙)는 봉투이고 그 FACTS 쪽이 아니다.
 
 ⚠ 철자·구조 핀이다 — 모델이 산문 SOURCE 블록을 FACTS 없이도 같은 무게로 읽는지는 미측정이다.
 """
