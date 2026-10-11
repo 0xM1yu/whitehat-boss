@@ -460,6 +460,8 @@ def _exit_case(pov_hops: int, name: str) -> tuple[list[object], PovStopReason, b
             PovStopReason.REPEAT_SPEC,
             b"A" * 3,
         ),
+        # ⏵ 2026-10-11 (#550) — 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다. 스크립트가 끝 항목을
+        # 반복해 **매 홉** 실패하므로 마지막 홉에서 PARSE_FAILED로 서고, 파일은 마지막 gen이다.
         "absorbed_hop1_failure": (
             [_gen(count=8), SchemaParseError("bad at hop1")],
             PovStopReason.PARSE_FAILED,
@@ -499,6 +501,7 @@ def test_every_exit_that_holds_a_poc_files_the_last_gen_and_names_it_in_the_even
 
 _NO_POC_EXITS = {
     "inspect_then_submit": ([_INSPECT, _SUBMIT], PovStopReason.SUBMITTED),
+    # ⏵ 2026-10-11 (#550) — 실패가 매 홉 반복돼(스크립트의 마지막 항목 반복) 마지막 홉에서 선다.
     "hop0_parse_failure": ([SchemaParseError("bad at hop0")], PovStopReason.PARSE_FAILED),
 }
 
