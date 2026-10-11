@@ -2,12 +2,14 @@
 2026-10-06).
 
 ⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). ⏵ 같은 날 — **v13이 됐다**(이슈 #67 — v11 +
-FACTS에서 `source` 사본을 뺀다. 아래 「서빙 판」은 config에서 읽으므로 v13을 문다). v10 파일은
-동결이라 그것만 읽는 핀은 다시 빨개질 수
-없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 넷을 빼고 **v10과 config의 서빙 판** 둘에서
-돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와 같은 장치). v10
-전용 넷(봉투 이름 · `cwe` null 금지 · 글자 수 둘)의 서빙 판 쪽은 `tests/test_nullable_cwe.py`가
-문다.
+FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12 + 같은 변경, PR #601). 아래
+「서빙 판」은 config에서 읽으므로 지금은 v14를 문다. v10 파일은 동결이라 그것만 읽는 핀은 다시
+빨개질 수 없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 여섯을 빼고 **v10과 config의 서빙
+판** 둘에서 돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와
+같은 장치). v10 전용 여섯(봉투 이름 · `cwe` null 금지 · 글자 수 둘 · result↔status 짝 ·
+null `audit`↔status 짝)의 서빙 판 쪽은 앞 넷을 `tests/test_nullable_cwe.py`가, 뒤 둘을
+`tests/test_auditor_v14_facts.py`의 서빙 판 핀
+(`test_the_served_auditor_keeps_the_no_signal_envelope_rule`)이 문다.
 
 v8·v9는 「앞 판과 바이트 동일」을 세는 핀 파일(`test_auditor_prompt_v8.py` · `_v9.py`)이 있고, 그
 핀의 절반은 노드 상수·러너 문구와 산문을 묶는 것이다. **그 둘은 자기 판 파일만 읽는다** — v10은
@@ -86,8 +88,9 @@ def _served_auditor_version() -> str:
 
 # 이 파일의 핀이 읽는 판 — v10(동결 기록)과 **서빙 판**(config). 같으면 하나다.
 # 아래 `_V10_ONLY`에 없는 검사는 전부 두 판에서 돈다(`pytest_generate_tests`). 서빙 판이 v10과
-# 다른 문장을 의도로 든 검사(출력 봉투 이름 · `cwe` null 규칙 · 글자 수)만 v10 전용이고, 서빙 판의
-# 그 자리는 `tests/test_nullable_cwe.py`가 문다.
+# 다른 문장을 의도로 든 검사(출력 봉투 이름 · `cwe` null 규칙 · 글자 수 · result↔status 짝 · null
+# `audit`↔status 짝)만 v10 전용이고, 서빙 판의 그 자리는 `tests/test_nullable_cwe.py`(앞 넷)와
+# `tests/test_auditor_v14_facts.py`(뒤 둘)가 문다.
 SERVED = _served_auditor_version()
 _VERSIONS = tuple(sorted({"v10", SERVED}, key=lambda v: int(v.lstrip("v"))))
 _V10_ONLY = frozenset(
@@ -1397,7 +1400,7 @@ _V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14"})
 
 
 def _profiles_serving_v10() -> list[str]:
-    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11·v13)을 고르는
+    """`config/profiles.yaml`에서 Auditor 좌석이 v10(또는 그 약속을 그대로 든 v11·v13·v14)을 고르는
     프로필 — 판 이름을 이 검사가 쥐지 않고 **설정에서 읽는다**(배선한 프로필이 늘면 같이
     따라온다)."""
     text = (CONFIG_DIR / "profiles.yaml").read_text(encoding="utf-8")
@@ -1445,7 +1448,7 @@ def test_the_v10_repro_spec_promise_matches_the_switch_and_the_node() -> None:
         assert phrase in flat, f"산문에 {phrase!r}가 없다"
 
     serving = _profiles_serving_v10()
-    assert serving, "전제 — v10·v11·v13을 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
+    assert serving, "전제 — v10·v11·v13·v14를 고르는 프로필이 없으면 이 검사가 아무것도 안 묻는다"
     for profile in serving:
         assert load_config(profile).thresholds.synthesize_repro_spec == 1, profile
 
