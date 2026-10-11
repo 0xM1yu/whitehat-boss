@@ -228,6 +228,8 @@ class OpenAICompatModelClient:
         # 아닌 서버의 직접 확인이다(`AttemptRecord`) — 합 65,536처럼 상한의 2배면 두 시도가 정확히
         # 상한이라는 것까지는 산술로 이미 나온다.
         attempt_log: list[AttemptRecord] = []
+        # 스키마 검증에 실패한 시도의 응답 원문 — 소진·게이트웨이 거절 때 예외에 실어 올린다(#603).
+        raw_texts: list[str | None] = []
         attempt = 0
         for attempt in range(1, self.retries + 2):
             if attempt > 1:
@@ -253,6 +255,8 @@ class OpenAICompatModelClient:
                 exc.attempts = attempt
                 exc.retry_bodies = tuple(retry_bodies)
                 exc.attempt_log = tuple(attempt_log)
+                # 앞 시도가 스키마 실패였다면 그 원문도 올린다(#603).
+                exc.raw_texts = tuple(raw_texts)
                 raise
             gpu_ms += int((time.monotonic() - started) * 1000)
             raw, usage = posted.content, posted.usage
@@ -270,6 +274,10 @@ class OpenAICompatModelClient:
                 value = schema.model_validate_json(raw)
             except ValidationError as exc:
                 last_error = exc
+                # `content`가 `null`(또는 비문자열)이면 그 칸은 `None`이다 — 모델이 **빈 응답을
+                # 낸 것이 아니라 받은 문자열이 없는 것**이라 `""`와 다르다(CLAUDE.md §0: 안 잰
+                # 값을 잰 값으로 쓰지 않는다). 칸은 지켜 시도 순서와 정렬을 유지한다.
+                raw_texts.append(raw if isinstance(raw, str) else None)
                 # 재요청에는 스키마 오류 메시지만 덧붙인다(agent-contracts.md §1).
                 # 이전 응답 원문을 다시 넣으면 같은 오류를 반복하게 만든다.
                 #
@@ -333,6 +341,7 @@ class OpenAICompatModelClient:
             model_error_text=_bounded_error_text(
                 last_error.errors(include_url=False, include_input=False)
             ),
+            raw_texts=tuple(raw_texts),
         )
 
     def _request_payload(
