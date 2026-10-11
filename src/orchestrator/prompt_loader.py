@@ -59,7 +59,7 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 
 `false`면 그 판의 FACTS에 `source` 키가 **없다** — 분석 대상 코드는 산문 `{{SOURCE}}` 블록 하나로만
 간다 (이슈 #67 · 2026-10-10 저장소 소유자 결정: 산문 블록을 남기고 FACTS의 같은 사본을 걷는다).
-없으면 `true`라 그 전 판(Auditor v1~v11 · 다른 역할 전부)은 FACTS가 바이트 그대로다. 노드의 이름
+없으면 `true`라 그 전 판(Auditor v1~v12 · 다른 역할 전부)은 FACTS가 바이트 그대로다. 노드의 이름
 목록이 아니라 여기 둔 것은 위 「버전 이름으로 분기하지 않는 이유」와 같다 — 그 사본을 안 싣는다고
 적는 body 문장과 그 선언이 같은 디렉터리에 있어야 갈리지 않는다. `false`인데 body에 `{{SOURCE}}`가
 없으면 로드에서 거절한다 — 코드가 프롬프트 어디에도 안 실린다. **불리언이 아니면
@@ -81,7 +81,7 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
-v13)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드는 산문
+v13·v14)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드는 산문
 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈 #67). ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.
@@ -123,7 +123,7 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
-# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13)이 뺀다.
+# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14)이 뺀다.
 # 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
 # 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
@@ -671,9 +671,10 @@ def build_facts(
     evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
     `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
-    `facts_source: false`를 선언한 경우(Auditor v13 — 이슈 #67)에만 노드가 `False`를 준다. 그때 키가
-    **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은 「원문을 못
-    읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트 그대로다.
+    `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67)에만 노드가 `False`를 준다.
+    그때 키가 **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은
+    「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트
+    그대로다.
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -688,7 +689,7 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
-        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13)은 `source`를 여기 안 싣고 body가
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14)은 `source`를 여기 안 싣고 body가
         # 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도 싣는다.
         "capsule_sections": [
             {
