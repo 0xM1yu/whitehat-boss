@@ -1067,3 +1067,98 @@ def test_declared_request_params_ride_the_payload_and_undeclared_add_no_key(
     assert declared["top_k"] == 20
     assert declared["thinking_token_budget"] == 30720
     assert declared["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+# --- 실패한 응답 원문을 실어 올린다 (#603) ------------------------------------
+#
+# 스키마 소진 때 서버가 준 원문은 이 변경 전까지 어디에도 안 남았다(`error_detail`은 pydantic
+# 메시지의 잘린 조각뿐 — ⏵ 2026-10-11 #603이 예외에 실어 올려 상위가 쓴다). 어댑터는 파일을 못
+# 쓰므로 `retry_bodies`처럼 예외에 싣는다.
+
+
+def test_a_schema_parse_error_carries_every_attempts_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """소진한 호출의 예외가 시도 순서대로 **서버가 준 원문**을 든다."""
+    raws = iter(('{"nope": 1}', '{"also": "bad"}'))
+
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
+        return _posted(next(raws), Usage(input_tokens=1, output_tokens=1, cached_tokens=0))
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ('{"nope": 1}', '{"also": "bad"}')
+
+
+def test_a_first_attempt_gateway_rejection_has_no_raw_text_to_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 시도가 게이트웨이 거절(400)이면 받은 응답이 없어 `raw_texts`는 `()`다."""
+    _raise_http(monkeypatch, _http_error(400, _OVERFLOW))
+
+    with pytest.raises(ModelGatewayError) as gateway:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert gateway.value.raw_texts == ()
+
+
+def _scripted_post(monkeypatch: pytest.MonkeyPatch, replies: list[object]) -> None:
+    """`_post`를 갈아 끼운다 — 회차마다 다음 것을 낸다(`PostedResponse`면 반환, 예외면 던진다)."""
+    queue = list(replies)
+
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
+        reply = queue.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+
+_USAGE = Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+
+
+def test_a_null_content_attempt_keeps_its_slot_as_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`message.content`가 `null`인 시도도 칸을 지킨다 — `""`가 아니라 `None`이다(받은 게 없다)."""
+    null_content = PostedResponse(
+        content=None,  # type: ignore[arg-type]
+        usage=_USAGE,
+        finish_reason="length",
+        output_tokens_reported=True,
+    )
+    _scripted_post(monkeypatch, [null_content, _posted('{"nope": 1}', _USAGE)])
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == (None, '{"nope": 1}')
+
+
+def test_a_gateway_error_after_a_schema_failure_keeps_the_earlier_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 스키마 실패 뒤 2차가 게이트웨이 거절이어도 1차 원문은 예외에 실려 올라간다.
+    1차가 게이트웨이 거절이면 올릴 원문이 없다."""
+    _scripted_post(
+        monkeypatch,
+        [_posted('{"nope": 1}', _USAGE), ModelGatewayError("거절", status=400, detail="x")],
+    )
+    with pytest.raises(ModelGatewayError) as late:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    assert late.value.raw_texts == ('{"nope": 1}',)
+
+    _scripted_post(monkeypatch, [ModelGatewayError("거절", status=400, detail="x")])
+    with pytest.raises(ModelGatewayError) as first:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    assert first.value.raw_texts == ()
+
+
+def test_a_gateway_error_built_outside_the_adapter_still_declares_raw_texts() -> None:
+    """어댑터가 속성을 덧붙이지 않아도 `ModelGatewayError`는 `raw_texts`를 가진다."""
+    assert ModelGatewayError("x").raw_texts == ()
+    assert ModelGatewayError("x", raw_texts=("a",)).raw_texts == ("a",)
