@@ -272,7 +272,7 @@ def test_the_real_loop_stopped_by_a_repeated_poc_does_not_send_its_partial_poc(c
     assert oracle.vul_calls == []
 
 
-def test_the_real_loop_stopped_by_a_parse_failure_does_not_send_its_partial_poc(ctx) -> None:  # noqa: ANN001, F811
+def test_the_real_loop_stopped_by_parse_failures_to_the_cap_sends_no_partial_poc(ctx) -> None:  # noqa: ANN001, F811
     from src.interfaces.model_client import SchemaParseError
 
     # ⏵ 2026-10-11 (#550) — 파싱 실패는 홉을 쓰고 루프가 계속 돈다. 스크립트는 마지막 항목을 반복해

@@ -560,10 +560,19 @@ def test_pov_open_hop_reads_the_source_override(ctx: RunContext) -> None:
     assert marker in ctx.models.last_for(Role.POV).body
 
 
-def _raise(exc: Exception):  # noqa: ANN202
-    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용."""
+def _raise(exc: Exception, *, fence: int = 40):  # noqa: ANN202
+    """`pov.open_hop`을 대신할 예외 발생기 — 실패 갈래 단위 테스트용.
+
+    ⏵ 2026-10-11 (#550) 파싱 실패는 루프가 계속 도는 예외라 `hop`이 안 오르면 **끝없이 돈다**.
+    `fence`번째 호출은 `exc` 대신 `RuntimeError`를 던져 그 회귀가 멈추지 않고 빨갛게 되게 한다 —
+    `pov_tool_hops + 1`번만 부르는 정상 코드는 닿지 않는다(파싱 실패 자리는 `pov_tool_hops + 2`)."""
+    calls = 0
 
     def _fn(*_args: object, **_kwargs: object) -> object:
+        nonlocal calls
+        calls += 1
+        if calls >= fence:
+            raise RuntimeError(f"fence: {fence}번째 호출 — 루프가 안 멈춘다")
         raise exc
 
     return _fn
