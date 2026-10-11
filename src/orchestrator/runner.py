@@ -1500,8 +1500,9 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
-    풀을 떠난 길을 센다. `_critic_set_aside`와 같은 판정(`gate.normalize` 뒤 값)이되 그 함수를
-    부르지 않고 독립으로 센다: 판정 실패 · 반박 · 보류 · 판정 없음 · 업홀드 미승격."""
+    왜 대상이 못 됐는지 센다(판정 실패 · 반박 · 보류 · 판정 없음 · 업홀드 미승격). 판정은
+    `gate.normalize` 뒤 값이다. `_critic_set_aside`와 독립으로 같은 네 갈래를 센다 — 그 함수가
+    바뀌어도 이 helper는 따로 본다(보류는 #604 뒤 K>0에서 항상 0이 되고 K=0에서만 정보 칸)."""
     inside = {f.finding_id for f in validated}
     rebut = hold = failed = unjudged = other = 0
     for finding_id in state.findings:
@@ -1872,7 +1873,7 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     ② **PoC가 「터지는가」는 아무것도 안 말한다.** 여기서 센 것은 바이트의 존재와 회수
     가능성뿐이다. 그 판정은 오라클이 낸다(범위 밖).
 
-    ⏵ 2026-10-12 — 빈 맵 중 「좌석은 있는데 대상 0건」은 `pov_pool_empty`가 따로 말한다
+    ⏵ 2026-10-11 — 빈 맵 중 「좌석은 있는데 대상 0건」은 `pov_pool_empty`가 따로 말한다
     (이 함수는 그대로 `None`을 돌려준다).
     """
     # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
@@ -1883,7 +1884,7 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
     # 대상이 0건」을 따로 말하려면 필드가 하나 더 필요하다(범위 밖 — 이 경고의 명제는 「PoV를
     # 시도한 run」에 한정이다).
-    # ⏵ 2026-10-12 — `_Accumulator.pov_pool_empty`가 ② 갈래(좌석 있음 · 대상 0건)를 따로 말한다
+    # ⏵ 2026-10-11 — `_Accumulator.pov_pool_empty`가 ② 갈래(좌석 있음 · 대상 0건)를 따로 말한다
     # (`_pov_pool_empty_reason`). ①③은 이 맵으로도 여전히 못 가른다.
     if not results:
         return None
