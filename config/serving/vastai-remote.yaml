@@ -140,5 +140,5 @@ servers:
     env: *vllm_env
     probe: chat
     # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh` · #571) — 10-06 프로브에서 **첫(콜드) 기동이 이 600 s 상한에 걸렸다**
-    # (n=1 · 다운로드 23 MB/s · 그 보고서 결함 4) · 캐시 뒤 따뜻한 319 s(53% · `Model loading took 51.1 GiB`) · 10-11 run에서는 8단계가 안 돌아 미기동.
+    # (n=1 · 다운로드 23 MB/s · 그 보고서 결함 4) · 캐시 뒤 따뜻한 319 s(상한의 53% — 계산값 · `Model loading took 51.1 GiB`) · 10-11 run에서는 8단계가 안 돌아 미기동.
     ready_timeout_s: 600
