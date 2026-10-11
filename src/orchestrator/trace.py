@@ -473,6 +473,10 @@ class EventKind(StrEnum):
     # 오류)에서 잃은 PoC를 특정하는 흔적이다 — 그 홉 자신의 도구 호출이 예산에서 끊겨도 루프가 이
     # 이벤트(`error=BudgetExhausted`)를 내고 다시 던진다(#394). 그 밖의 형으로 끊기면 없다(`poc_log`
     # 모듈 docstring의 「한계」).
+    # ⏵ 2026-10-11 — **`submit` 홉은 `submit_digest`를 싣는다**(`absent` | `matched` | `unknown`) —
+    # 모델이 `poc_sha256`으로 앞선 gen을 지명했는지와 하네스가 그것을 풀었는지다
+    # (`runner._resolve_submit_digest`). `unknown`은 지명이 안 풀려 마지막 gen으로 돌아갔다는
+    # 뜻이다. 다른 홉에는 이 키가 없다.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대
@@ -487,13 +491,19 @@ class EventKind(StrEnum):
     # `poc_write_error_detail`을 싣고(종단 사유·종류는 그대로), `ctx.pocs`가 없는 run(단위 테스트·
     # `--dry-run`)에는 **키 넷 모두 없다**.
     # submit이 아닌 종단(max_hop·repeat·흡수된 예외·gen 없는 submit)은 여기가 아니라 POV_SKIPPED다.
+    # ⏵ 2026-10-11 — 코드를 읽는 판(v3 이상)의 submit·repeat_spec·max_hop 종단은
+    # `last_gen_excluded_while_earlier_not`(bool)도 싣는다 — 마지막 gen의 `vul` 코드가 제외 코드
+    # (0·71·300)이거나 없는데 앞선 gen 중에 제외 코드 밖이 있었는가. 로그이고 지정 입력이 아니다.
+    # ⚠ **같은 run의 `submit_digest=matched`와 함께 읽는다** — 모델이 이긴 gen을 지명했으면 이 값이
+    # True여도 위반이 아니다. 흡수된 예외 종단과 v2는 이 키가 없다.
     POV_GENERATED = "pov_generated"
     # PoV가 최종 PoC 없이 끝난 기록. `reason`이 `capsule_missing`(캡슐 없음)이거나 정지 사유
     # (`PovStopReason`: `parse_failed`·`gateway_error`·`context_overflow`·`repeat_spec`·`max_hop`·
     # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`과 함께 POV_GENERATED와
     # **같은 사이드카 키**(`poc_ref`·`poc_digest` 또는 `poc_write_error*`)도 싣는다 — 종단 사유로
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
-    # pov 실패는 finding을 안 죽이고 여기 남긴다.
+    # pov 실패는 finding을 안 죽이고 여기 남긴다. ⏵ 2026-10-11 — repeat_spec·max_hop 종단도
+    # `last_gen_excluded_while_earlier_not`를 싣는다(조건은 POV_GENERATED 주석).
     POV_SKIPPED = "pov_skipped"
     # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **제출마다
     # 1행**이다 - 중간 gen(`designatable=False`, pov v3 이상의 되먹임)과 모델이 submit한 PoC

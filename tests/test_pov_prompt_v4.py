@@ -103,7 +103,7 @@ from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, PovStopReason, Role
-from src.schemas.pov import PovAction, PovSegment, PovSpec
+from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
 from tests.conftest import REPO_ROOT
 from tests.oracle_fakes import TASK_ID
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
@@ -312,33 +312,38 @@ _PINNED_BLOCKS: dict[str, str] = {
         "「루프 규율」). 홉이 남았다고 `submit`을 미루지 않는다."
     ),
     "final-hop": (
-        "- **`remaining=0`이면 이번이 마지막 홉이다.** 마지막 홉에 낸 `gen`·`inspect`는 헛수고다 — "
-        "하네스가 실행은 하지만 그 관측을 읽을 다음 턴이 없고, 마지막 홉의 `gen`은 최종 후보도 "
-        "되지 못한다. 마지막 홉에서 `submit`은 (`poc_sha256`을 안 적으면) 그 앞에서 낸 "
-        "마지막 `gen`을 최종 후보로 지정한다. "
-        "그 `gen`의 `oracle_vul` 줄로 가른다. 읽을 줄은 마지막 `gen` **다음 턴**의 관측에 붙은 "
-        "줄이다 — 그 뒤에 `inspect`만 냈다면 지금 관측에는 그 줄이 없고 앞선 턴에 있으니 거슬러 "
-        "올라가 읽는다. 줄이 안 보인다고 `unavailable`인 것이 아니다. - 제외 코드 `0`·`71`·`300` "
-        "**밖**이면 `submit`한다. - 셋 **안**이면 `submit`하지 않는다 — 크래시가 아닌 PoC가 이 "
-        "Finding의 최종 후보가 되어 다른 Finding의 이긴 PoC와 run의 **단 한 자리**를 다투고, "
-        "하네스는 그 자리를 채점기 코드로 가르지 않으므로 진 PoC가 이길 수 있다. 그때는 `submit`이 "
-        "아닌 액션(예 `inspect`의 `build`)을 낸다 — 후보가 생기지 않는다. - `unavailable`이면 **그 "
-        "바이트에 대한 정보가 없는 것이고 진 것이 아니다.** 그래도 `submit`은 **확인 못 한 PoC**를 "
-        "최종 후보로 만든다 — 그 PoC는 run의 **단 한 자리**를 다른 Finding의 PoC(채점기가 확인한 "
-        "이긴 PoC일 수 있다)와 다투고, 하네스는 그 자리를 채점기 코드로 가르지 않으므로 확인 못 한 "
-        "PoC가 이길 수 있다. 그래서 아래를 **모두** 채울 때만 `submit`한다 — 이것이 `submit` "
-        "원칙의 유일한 예외이고 요건은 여기서 한 번만 적는다. (1) `last_gen_bytes`가 0이 아니다 — "
-        "0바이트 PoC는 채점기에 제출되지 않아 후보가 될 수 없으니 어떤 경우에도 `submit`하지 "
-        "않는다. (2) `rationale`에 **사슬**을 적는다(그 한 줄은 길어져도 된다) — 당신 바이트의 "
-        "어느 위치가 `SOURCE`·`FACTS`에서 읽은 앞단 조건(최소 길이·매직·헤더·입력 쪼개기)을 하나씩 "
-        "통과해, sink가 읽는 길이·카운트·인덱스가 경계를 넘는 값에 이르는지를 조건마다 `SOURCE`의 "
-        "함수 이름과 수치로 적는다. 이름이나 수치를 못 대는 고리가 하나라도 있으면 사슬이 아니다 — "
+        "- **`remaining=0`이면 이번이 마지막 홉이다.** 마지막 홉에 낸 `gen`·`inspect`는 "
+        "헛수고다 — 하네스가 실행은 하지만 그 관측을 읽을 다음 턴이 없고, 마지막 홉의 "
+        "`gen`은 최종 후보도 되지 못한다. 마지막 홉에서 `submit`은 (`poc_sha256`을 안 "
+        "적으면) 그 앞에서 낸 마지막 `gen`을 최종 후보로 지정한다. 그 `gen`의 `oracle_vul` "
+        "줄로 가른다. 읽을 줄은 마지막 `gen` **다음 턴**의 관측에 붙은 줄이다 — 그 뒤에 "
+        "`inspect`만 냈다면 지금 관측에는 그 줄이 없고 앞선 턴에 있으니 거슬러 올라가 "
+        "읽는다. 줄이 안 보인다고 `unavailable`인 것이 아니다. - 제외 코드 `0`·`71`·`300` "
+        "**밖**이면 `submit`한다. - 셋 **안**이면 먼저 앞선 `gen`을 본다. 그중에 제외 코드 "
+        "**밖**을 받은 `gen`이 있으면 `submit`의 `poc_sha256`에 그 `gen`의 "
+        "`last_gen_sha256`(그 `gen` 다음 턴의 관측에 있다)을 적어 `submit`한다 — 마지막 "
+        "`gen`이 아니라 그 `gen`이 후보가 된다. 어느 `gen`도 셋 밖을 받지 못했을 때만 "
+        "`submit`하지 않는다 — 크래시가 아닌 PoC가 이 Finding의 최종 후보가 되어 다른 "
+        "Finding의 이긴 PoC와 run의 **단 한 자리**를 다투고, 하네스는 그 자리를 채점기 "
+        "코드로 가르지 않으므로 진 PoC가 이길 수 있다. 그때는 `submit`이 아닌 액션(예 "
+        "`inspect`의 `build`)을 낸다 — 후보가 생기지 않는다. - `unavailable`이면 **그 "
+        "바이트에 대한 정보가 없는 것이고 진 것이 아니다.** 그래도 `submit`은 **확인 못 한 "
+        "PoC**를 최종 후보로 만든다 — 그 PoC는 run의 **단 한 자리**를 다른 Finding의 "
+        "PoC(채점기가 확인한 이긴 PoC일 수 있다)와 다투고, 하네스는 그 자리를 채점기 코드로 "
+        "가르지 않으므로 확인 못 한 PoC가 이길 수 있다. 그래서 아래를 **모두** 채울 때만 "
+        "`submit`한다 — 이것이 `submit` 원칙의 유일한 예외이고 요건은 여기서 한 번만 적는다. "
+        "(1) `last_gen_bytes`가 0이 아니다 — 0바이트 PoC는 채점기에 제출되지 않아 후보가 될 "
+        "수 없으니 어떤 경우에도 `submit`하지 않는다. (2) `rationale`에 **사슬**을 적는다(그 "
+        "한 줄은 길어져도 된다) — 당신 바이트의 어느 위치가 `SOURCE`·`FACTS`에서 읽은 앞단 "
+        "조건(최소 길이·매직·헤더·입력 쪼개기)을 하나씩 통과해, sink가 읽는 "
+        "길이·카운트·인덱스가 경계를 넘는 값에 이르는지를 조건마다 `SOURCE`의 함수 이름과 "
+        "수치로 적는다. 이름이나 수치를 못 대는 고리가 하나라도 있으면 사슬이 아니다 — "
         "「아마 된다」로는 내지 않는다. (3) **배선 없음**(앞선 `gen`이 숫자 줄을 한 번도 못 "
         "받았다)이면 이 run에서는 값이 오지 않는다 — 값을 기다리며 홉을 쓰지 않고 (1)·(2)로 "
-        "가른다. **일시 실패** (앞선 `gen`이 숫자 줄을 받은 적이 있다)이고 그중 제외 코드 안(예 "
-        "`0`)을 받은 PoC가 있으면, 그것도 같은 모양의 사슬을 믿고 낸 것이었다 — 이번 사슬이 그때와 "
-        "어디가 다른지도 (2)에 적는다. 하나라도 못 채우면 `submit`이 아닌 액션(예 `inspect`의 "
-        "`build`)을 낸다."
+        "가른다. **일시 실패** (앞선 `gen`이 숫자 줄을 받은 적이 있다)이고 그중 제외 코드 "
+        "안(예 `0`)을 받은 PoC가 있으면, 그것도 같은 모양의 사슬을 믿고 낸 것이었다 — 이번 "
+        "사슬이 그때와 어디가 다른지도 (2)에 적는다. 하나라도 못 채우면 `submit`이 아닌 "
+        "액션(예 `inspect`의 `build`)을 낸다."
     ),
     "budget-spent": (
         "- 홉을 다 쓰고 `submit` 없이 끝난 루프는 최종 후보를 내지 못한다."
@@ -367,11 +372,12 @@ _PINNED_BLOCKS: dict[str, str] = {
         "`gen`의 줄은 숫자로 올 수 있다. 값을 추측하지 않는다."
     ),
     "intermediate-gen": (
-        "중간 `gen` 제출은 다음 입력을 고치는 관측일 뿐 최종 지정 후보가 아니다. `oracle_vul` 줄과 "
-        "SOURCE· FACTS를 읽고 다음 `gen` 또는 `submit`을 스스로 정한다. **모델이 `submit`한 마지막 "
-        "바이트만** 이 Finding의 최종 후보가 되고, run이 Finding들의 후보 중 한 장을 하네스 "
-        "규칙으로 지정한다(당신이 고르지 않는다). `fix` 다리는 중간 관측에서 돌지 않고 지정된 최종 "
-        "한 장에만 한 번 돈다."
+        "중간 `gen` 제출은 다음 입력을 고치는 관측일 뿐 최종 지정 후보가 아니다. "
+        "`oracle_vul` 줄과 SOURCE· FACTS를 읽고 다음 `gen` 또는 `submit`을 스스로 정한다. "
+        "**모델이 `submit`한 바이트(`poc_sha256`을 안 적으면 마지막 `gen`)만** 이 Finding의 "
+        "최종 후보가 되고, run이 Finding들의 후보 중 한 장을 하네스 규칙으로 지정한다(당신이 "
+        "고르지 않는다). `fix` 다리는 중간 관측에서 돌지 않고 지정된 최종 한 장에만 한 번 "
+        "돈다."
     ),
     "crash-reading-heading": (
         "### 크래시 판독 — 이 코드로 `submit`을 정한다"
@@ -407,23 +413,25 @@ _PINNED_BLOCKS: dict[str, str] = {
         "않는다 — 기록을 남기게 할 뿐이다."
     ),
     "trap": (
-        "- ⚠ **함정 — `submit`은 바이트를 싣지 않고 (`poc_sha256`을 안 적으면) 마지막 `gen`을 "
-        "지정한다.** 셋 밖의 코드를 본 뒤 `gen`을 또 내면 그 새 바이트가 마지막 `gen`이 된다 — "
-        "이후 `submit`하면 (`poc_sha256`을 안 적으면) 이긴 바이트가 "
-        "아니라 새 바이트가 지정된다(그 `gen`이 이미 낸 바이트와 같으면 반복으로, 마지막 홉이면 홉 "
-        "소진으로 루프가 서서 후보가 아예 없다). 그러니 셋 밖의 코드를 본 뒤에는 `gen`을 또 내지 "
-        "않는다."
+        "- ⚠ **함정 — `submit`은 바이트를 싣지 않고 (`poc_sha256`을 안 적으면) 마지막 "
+        "`gen`을 지정한다.** 셋 밖의 코드를 본 뒤 `gen`을 또 내면 그 새 바이트가 마지막 "
+        "`gen`이 된다 — 이후 `submit`하면 (`poc_sha256`을 안 적으면) 이긴 바이트가 아니라 새 "
+        "바이트가 지정된다(그 `gen`이 이미 낸 바이트와 같으면 반복으로, 마지막 홉이면 홉 "
+        "소진으로 루프가 서서 후보가 아예 없다). 그러니 셋 밖의 코드를 본 뒤에는 `gen`을 또 "
+        "내지 않는다."
     ),
     "recovery": (
-        "- 이미 `gen`을 또 냈다면: 이긴 바이트를 **그대로 다시 `gen`하지 않는다** — 이미 낸 "
-        "바이트라 반복으로 루프가 서고(아래 「루프 규율」) 그렇게 선 루프는 최종 후보가 없다. 지금 "
-        "홉의 `remaining`이 1 이상일 때만 이긴 바이트를 조금만 바꾼 **변형**을 `gen`해 그 변형의 "
-        "`oracle_vul` 줄을 본다. 그 줄이 셋 밖이면 `submit`한다. 셋 **안**이면 이긴 바이트는 이미 "
-        "낸 바이트라 되살릴 수 없어 지킬 것이 없다 — 그 변형을 `submit`하지 않는다(위 「홉 "
-        "예산」의 마지막 홉과 같은 이유다). `unavailable`이면 그 변형에 대한 정보가 없는 것이지 진 "
-        "것이 아니다 — 위 「홉 예산」의 마지막 홉 항목이 `unavailable`에 적은 요건((1) 0바이트가 "
-        "아니다 (2) `rationale`에 사슬을 적는다 (3) 원인별 추가 요건)을 모두 채웠을 때만 "
-        "`submit`한다."
+        "- 이미 `gen`을 또 냈다면: 앞선 `gen` 중에 셋 밖의 코드를 받은 것이 있으면 이긴 "
+        "바이트는 되살릴 수 있다 — **그대로 다시 `gen`하지 않고**(이미 낸 바이트라 반복으로 "
+        "루프가 서고, 아래 「루프 규율」, 그렇게 선 루프는 최종 후보가 없다) `submit`의 "
+        "`poc_sha256`에 그 `gen`의 `last_gen_sha256`(그 `gen` 다음 턴의 관측)을 적는다. 어느 "
+        "`gen`도 셋 밖을 받지 못했다면 지킬 이긴 바이트가 없다 — 지금 홉의 `remaining`이 1 "
+        "이상일 때만 바이트를 조금 바꾼 **변형**을 `gen`해 그 변형의 `oracle_vul` 줄을 본다. "
+        "그 줄이 셋 밖이면 `submit`한다. 셋 **안**이면 그 변형을 `submit`하지 않는다(위 「홉 "
+        "예산」의 마지막 홉과 같은 이유다). `unavailable`이면 그 변형에 대한 정보가 없는 "
+        "것이지 진 것이 아니다 — 위 「홉 예산」의 마지막 홉 항목이 `unavailable`에 적은 "
+        "요건((1) 0바이트가 아니다 (2) `rationale`에 사슬을 적는다 (3) 원인별 추가 요건)을 "
+        "모두 채웠을 때만 `submit`한다."
     ),
     "fuzz-section-intro": (
         "## 당신이 만든 바이트가 들어가는 곳 — `FACTS.fuzz_entrypoint` 이 과제는 libFuzzer "
@@ -617,14 +625,24 @@ _DEFECT_EDITS = [
     # 마지막 홉의 `submit`은 세 갈래다 - 제외 코드 밖(낸다) · 안(안 낸다) · `unavailable`(정보 없음,
     # 0바이트가 아니고 `rationale`에 사슬을 적었을 때만 낸다). 아래는 그 갈래를 하나씩 뒤집는다.
     pytest.param(
-        "밖**이면 `submit`한다. - 셋 **안**이면 `submit`하지 않는다",
-        "밖**이면 `submit`한다. - 셋 **안**이어도 `submit`한다",
+        "어느 `gen`도 셋 밖을 받지 못했을 때만 `submit`하지 않는다",
+        "어느 `gen`도 셋 밖을 받지 못했어도 `submit`한다",
         id="final-hop-inside-set-submitted-too",
     ),
     pytest.param(
-        "밖**이면 `submit`한다. - 셋 **안**이면 `submit`하지 않는다",
-        "밖**이면 `submit`하지 않는다. - 셋 **안**이면 `submit`한다",
+        "밖**이면 `submit`한다. - 셋 **안**이면 먼저",
+        "밖**이면 `submit`하지 않는다. - 셋 **안**이면 먼저",
         id="final-hop-outside-and-inside-swapped",
+    ),
+    pytest.param(
+        "그중에 제외 코드 **밖**을 받은 `gen`이 있으면",
+        "그중에 제외 코드 **밖**을 받은 `gen`이 있어도",
+        id="final-hop-forgets-the-earlier-winner",
+    ),
+    pytest.param(
+        "이긴 바이트는 되살릴 수 있다",
+        "이긴 바이트는 되살릴 수 없다",
+        id="recovery-says-the-winner-is-gone",
     ),
     pytest.param(
         "크래시가 아닌 PoC가 이 Finding의 최종 후보가 되어 다른 Finding의 이긴 PoC와 run의 "
@@ -638,8 +656,8 @@ _DEFECT_EDITS = [
         id="final-hop-alternative-action-removed",
     ),
     pytest.param(
-        "셋 **안**이면 `submit`하지 않는다 — 크래시가",
-        "셋 **안**이거나 `unavailable`이면 `submit`하지 않는다 — 크래시가",
+        "받지 못했을 때만 `submit`하지 않는다 — 크래시가",
+        "받지 못했거나 `unavailable`이면 `submit`하지 않는다 — 크래시가",
         id="unavailable-merged-into-the-excluded-set",
     ),
     pytest.param(
@@ -750,8 +768,7 @@ _DEFECT_EDITS = [
         id="variant-needs-no-hop-left",
     ),
     pytest.param(
-        "셋 **안**이면 이긴 바이트는 이미 낸 바이트라 되살릴 수 없어 지킬 것이 없다 — 그 변형을 "
-        "`submit`하지 않는다",
+        "셋 **안**이면 그 변형을 `submit`하지 않는다",
         "셋 **안**이면 그 변형을 `submit`한다",
         id="inside-variant-gets-submitted",
     ),
@@ -898,7 +915,7 @@ def _submit_naming(poc: bytes, *, form: str = "full") -> PovAction:
         "prefix8": hexdigest[:8],
         "prefixed8": f"sha256:{hexdigest[:8]}",
     }[form]
-    return PovAction(action="submit", rationale="name the winner", poc_sha256=named)
+    return PovActionNamed(action="submit", rationale="name the winner", poc_sha256=named)
 
 
 def _submit_digests(scripted) -> list[object]:  # noqa: ANN001
@@ -967,20 +984,82 @@ def test_submit_names_a_gen_by_the_full_digest_or_a_unique_prefix(
     assert _submit_digests(scripted) == ["matched"]
 
 
-def test_a_digest_that_matches_no_gen_falls_back_to_the_last_gen_and_says_so(
-    ctx,  # noqa: ANN001, F811
-) -> None:
-    """환각한 해시는 조용히 지금 동작(마지막 gen)으로 돌아간다 — 대신 `submit_digest="unknown"`이
-    trace에 남아 불일치 비율을 센다."""
-    winner, loser = _gen(count=3), _gen(count=1)
-    oracle = ReadingOracle(codes=(77, 0))
-    ghost = PovAction(action="submit", rationale="r", poc_sha256="deadbeef" * 8)
+def _malformed_names(winner_hex: str) -> dict[str, str]:
+    """`unknown`이 되어야 하는 꼴 — 환각·서식 사고. 스키마는 이것들을 거절하지 않는다."""
+    return {
+        "seven_hex": winner_hex[:7],
+        "backticks": f"`{winner_hex}`",
+        "zero_x": f"0x{winner_hex}",
+        "ellipsis": winner_hex[:8] + "…",
+        "ghost": "deadbeef" * 8,
+        "empty": "",
+        "non_hex": "g" * 8,
+        "ghost_prefix": "deadbeef",
+    }
 
-    scripted, state, _ = _feedback_run(ctx, oracle, [winner, loser, ghost], version=VERSION)
+
+@pytest.mark.parametrize("form", sorted(_malformed_names("0" * 64)))
+def test_a_name_that_matches_no_gen_falls_back_to_the_last_gen_and_says_so(
+    ctx, form: str  # noqa: ANN001, F811
+) -> None:
+    """환각한 해시·서식 사고는 파싱을 통과하고(거절하면 Finding이 후보를 잃는다) 해석이
+    `submit_digest="unknown"`으로 적은 뒤 지금 동작(마지막 gen)으로 돌아간다. 7자는 접두로 안
+    받는다."""
+    winner, loser = _gen(count=3), _gen(count=1)
+    winner_hex = hashlib.sha256(assemble_poc(winner.spec)).hexdigest()
+    oracle = ReadingOracle(codes=(77, 0))
+    bad = PovActionNamed(
+        action="submit", rationale="r", poc_sha256=_malformed_names(winner_hex)[form]
+    )
+
+    scripted, state, _ = _feedback_run(ctx, oracle, [winner, loser, bad], version=VERSION)
     runner._finalize_oracle(scripted, state)
 
+    assert _stop_reasons(scripted)[-1] == PovStopReason.SUBMITTED.value
     assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(loser.spec)]
     assert _submit_digests(scripted) == ["unknown"]
+
+
+@pytest.mark.parametrize("form", ["trailing_space", "upper_prefix", "upper_hex"])
+def test_a_name_with_only_surface_noise_still_resolves(ctx, form: str) -> None:  # noqa: ANN001, F811
+    """앞뒤 공백 · `SHA256:` 대문자 접두 · 대문자 hex는 정규화로 풀린다."""
+    winner, loser = _gen(count=3), _gen(count=1)
+    winner_hex = hashlib.sha256(assemble_poc(winner.spec)).hexdigest()
+    named = {
+        "trailing_space": winner_hex + " ",
+        "upper_prefix": "SHA256:" + winner_hex,
+        "upper_hex": winner_hex.upper(),
+    }[form]
+    oracle = ReadingOracle(codes=(77, 0))
+
+    scripted, state, _ = _feedback_run(
+        ctx, oracle,
+        [winner, loser, PovActionNamed(action="submit", rationale="r", poc_sha256=named)],
+        version=VERSION,
+    )
+    runner._finalize_oracle(scripted, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(winner.spec)]
+    assert _submit_digests(scripted) == ["matched"]
+
+
+@pytest.mark.parametrize("codes", [(0, 77), (None, 77), (71, 77), (300, 77)])
+def test_naming_a_gen_whose_code_was_excluded_or_missing_is_still_honored(
+    ctx, codes  # noqa: ANN001, F811
+) -> None:
+    """🔴 불변식 — 지정은 채점기 값을 읽지 않는다. 모델이 이름 붙인 gen이 제외 코드(0·71·300)나
+    `unavailable`이었어도 `matched`이고 그 바이트가 지정된다. (이것이 「이름 붙인 gen의 오라클
+    코드로 거절한다」·「코드로 자동 승격한다」는 변이를 가르는 쪽이다.)"""
+    first, second = _gen(count=3), _gen(count=1)
+    oracle = ReadingOracle(codes=codes)
+
+    scripted, state, _ = _feedback_run(
+        ctx, oracle, [first, second, _submit_naming(assemble_poc(first.spec))], version=VERSION
+    )
+    runner._finalize_oracle(scripted, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [assemble_poc(first.spec)]
+    assert _submit_digests(scripted) == ["matched"]
 
 
 def test_an_ambiguous_prefix_is_unknown_and_never_picks_a_gen() -> None:
@@ -1051,6 +1130,42 @@ def test_the_log_is_false_when_the_only_gen_is_the_winner(ctx) -> None:  # noqa:
     assert _terminal_flags(scripted) == [False]
 
 
+def test_the_log_reaches_the_repeat_spec_exit_on_the_real_549_shape(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """🔴 실제 #549 모양 — [winner(77), loser(0), winner 재생성]: 이긴 바이트를
+    다시 내 `repeat_spec`으로 서는 루프다. 종단은 `pov_skipped`이고 플래그가 True다(`submit`이 없는
+    출구도 센다)."""
+    winner, loser = _gen(count=3), _gen(count=1)
+
+    scripted, _, _ = _feedback_run(
+        ctx, ReadingOracle(codes=(77, 0)), [winner, loser, winner, _SUBMIT], version=VERSION
+    )
+
+    assert _stop_reasons(scripted)[-1] == PovStopReason.REPEAT_SPEC.value
+    assert _skipped_reasons(scripted) == [PovStopReason.REPEAT_SPEC.value]
+    assert _terminal_flags(scripted) == [True]
+
+
+def test_the_log_reaches_the_max_hop_exit(ctx) -> None:  # noqa: ANN001, F811
+    """마지막 홉에서 새 gen(관측·제출이 없어 코드 없음)을 내 `max_hop`으로 서는 루프 — 앞 gen이
+    이겼으면 True. 종단은 `pov_skipped`다."""
+    scripted, _, _ = _feedback_run(
+        _with_hops(ctx, 2),
+        ReadingOracle(codes=(77, 0)),
+        [_gen(count=3), _gen(count=1), _gen(count=5)],
+        version=VERSION,
+    )
+
+    assert _stop_reasons(scripted)[-1] == PovStopReason.MAX_HOP.value
+    assert _skipped_reasons(scripted) == [PovStopReason.MAX_HOP.value]
+    assert _terminal_flags(scripted) == [True]
+
+
+def _skipped_reasons(scripted) -> list[object]:  # noqa: ANN001
+    return [e.data.get("reason") for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
+
+
 def test_the_log_counts_a_gen_without_a_code_as_excluded_and_reads_only_wide_versions() -> None:
     """코드가 없는 마지막 gen(마지막 홉의 gen · 조회 실패)은 제외 코드와 같이 진 쪽으로 센다.
     코드를 안 읽는 판(v2)은 필드를 싣지 않는다 — 순수 함수를 직접 문다."""
@@ -1083,8 +1198,8 @@ def test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate(
     """🔴 프롬프트가 「이긴 바이트를 **그대로** 다시 `gen`하라」고 **하지 않는** 이유. 이미 낸
     바이트는 `seen`에 있어 다시 내면 `REPEAT_SPEC`으로 루프가 서고, 그렇게 선 루프는 지정
     후보가 없다(`submit`만 후보다 — `_run_pov`). 그 처방을 적으면 모델이 스스로 최종 후보를
-    지운다. (변형이 셋 안으로 떨어진 뒤의 이긴 바이트도 같은 처지다 — 이미 낸 바이트라 되살릴
-    수 없다.)"""
+    지운다. (`gen`으로는 되살릴 수 없다 — 이긴 바이트를 되살리는 길은 `submit`의 `poc_sha256`
+    지명이다.)"""
     oracle = ReadingOracle(codes=(77, 0))
     winner, loser = _gen(count=3), _gen(count=1)
 

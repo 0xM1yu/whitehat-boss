@@ -2215,9 +2215,9 @@ def _designate_final(
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
     아니다(그 run의 경고가 실패 건수를 알린다).
 
-    ⏵ **2026-10-11 — 위 「읽지 않는다」는 하네스 코드의 제약이다.** 어느 gen이 후보가 되는지는
-    모델의 `submit`이 정한다(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면 마지막 gen).
-    모델이 관측의 `oracle_vul` 줄을 읽고 고르는 것은 이 범위 밖이 아니라 v5가 이미 하는 일이다.
+    ⏵ **2026-10-11 — 위 「읽지 않는다」는 하네스 코드를 묶는 제약이다.** 어느 gen이 후보가 되는지는
+    모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면 마지막 gen) 그것은 이
+    제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이 제약이 막지 않는다(council).
     """
     candidates = ledger.candidates
     if not candidates:
@@ -2390,7 +2390,8 @@ def _run_pov_hops(
     앞**에 홉 줄을 더 받는다(`_pov_hop_line` · #511) - 그 줄이 있어야 모델이 마감을 안다. 여기서는
     홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서
     **최종 후보 PoC(보통 마지막 `gen`)를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
-    종단 이벤트는 `last_gen_excluded_while_earlier_not`(`_terminal_fields` — 로그)를 단다.
+    종단 이벤트는 `last_gen_excluded_while_earlier_not`(`_terminal_fields` — 로그)를 단다: 코드를
+    읽는 판(v3 이상)의 submit·repeat_spec·max_hop 출구만이고, 흡수된 예외 출구와 v2에는 없다.
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
     도구 호출에서 난 `BudgetExhausted`는 그 홉의 `pov_hop`을 낸 **뒤에** 올린다(#394).
@@ -2473,7 +2474,8 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                named_poc, submit_digest = _resolve_submit_digest(action.poc_sha256, seen)
+                named = getattr(action, "poc_sha256", None)  # v5 봉투(`PovActionNamed`)만 든다
+                named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
@@ -2579,6 +2581,8 @@ def _run_pov_hops(
             hop += 1
 
 
+# 접두 지명의 최소 길이 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 가리키는 것을 막는다.
+_MIN_DIGEST_PREFIX = 8
 _ORACLE_VUL_CODE = re.compile(r"oracle_vul exit_code=(-?\d+)")
 
 
@@ -2593,13 +2597,19 @@ def _resolve_submit_digest(
 ) -> tuple[bytes | None, str]:
     """`submit`의 `poc_sha256`을 이미 낸 gen에 푼다 → (지명된 바이트 또는 `None`, `submit_digest`).
 
-    `sha256:` 접두는 떼고 대소문자는 무시하며, 전체나 **유일하게 맞는** 접두만 `matched`다.
-    지명이 없으면 `absent`, 어느 gen에도 안 맞거나 둘 이상에 맞으면 `unknown`이고 바이트는
-    `None`이다 — 호출부가 마지막 gen으로 돌아간다. 채점기 값은 읽지 않는다.
+    스키마는 형식을 검증하지 않으므로(`PovActionNamed`) **여기서 정규화한다** — 앞뒤 공백을 떼고
+    소문자로 바꾸고 `sha256:` 접두를 뗀 뒤, 8자 이상이고 **정확히 한 gen의 digest에** 전체나 접두로
+    맞을 때만 `matched`다. 지명이 없으면 `absent`, 그 밖(7자 이하·16진 밖 글자·어느 gen에도 안 맞음·
+    둘 이상에 맞음)은 전부 `unknown`이고 바이트는 `None`이다 — 호출부가 마지막 gen으로 돌아간다.
+
+    **`seen`만 본다.** 채점기 값(`state.oracle_ledger`)을 읽지 않는다는 것은 이 docstring의
+    보장이다 — 장부로 고르는 변이는 테스트가 못 가른다(결과가 같은 입력들이 있다).
     """
     if named is None:
         return None, "absent"
-    want = named.lower().removeprefix("sha256:")
+    want = named.strip().lower().removeprefix("sha256:")
+    if len(want) < _MIN_DIGEST_PREFIX:
+        return None, "unknown"
     hits = [poc for digest, poc in seen.items() if digest.removeprefix("sha256:").startswith(want)]
     return (hits[0], "matched") if len(hits) == 1 else (None, "unknown")
 
