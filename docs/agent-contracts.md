@@ -609,7 +609,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 일곱이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
   갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓪Critic 판정
-  (보류가 뒤) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가
