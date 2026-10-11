@@ -72,8 +72,8 @@ SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> SWAP_REMOTE_ROOT=/root/har
   SWAP_REMOTE_PYTHON=/usr/bin/python3 bash tools/serve/vast-bootstrap.sh
 # 2) 원격 감시자 — run마다 하나
 ssh -p <포트> root@<호스트> 'cd /root/harness && MAX_HOURS=10 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &'
-# 4) 터널 — 별도 창, run 동안 둔다
-SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/vast-tunnel.sh
+# 4) 터널 — 별도 창, run 동안 둔다. --loop: ssh가 끊기면 5초 뒤 다시 잇는다
+SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/vast-tunnel.sh --loop
 ```
 
 3) 교대는 손으로 안 한다 -> run이 단계마다 장비 파일 `command`(`swap-remote.sh`)로 원격 `swap.sh`를 부른다. 손으로 띄운 서버가 남으면 다음 run 교대가 ABORT한다([2026-10-04 보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md) §3.1) -> 원격에서 `HARNESS_RUN_ID=<그 run id> bash tools/serve/swap.sh`로 내린다.
@@ -94,6 +94,13 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
   --slices <slices.json> --task-dir <번들> --task-work-dir <빈 디렉터리> --artifacts-root <저장소 밖> `
   --oracle-canary <카나리.json> --oracle-submit --oracle-server http://127.0.0.1:8666
 ```
+
+**run 전에 더하는 것 넷** — 2026-10-11 실서빙 run이 겪은 것이다(그날의 기록은 `docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md` §6·§9, 정본은 여기다).
+
+1. **직결 ssh를 쓴다** — `vastai ssh-url <id>`가 주는 `root@<public_ipaddr>:<direct_port_start>`를 위 `SWAP_SSH_HOST`·`SWAP_SSH_PORT`에 준다. `sshN.vast.ai` 프록시 경유에서는 터널이 두 번 끊겼고 직결로 바꾼 뒤 3시간 54분 run이 끊김 0이었다. ⚠ 인터넷 전환이 겹쳐 프록시가 원인이라는 분리 실험은 없다 — n=1의 상관이다. 직결이어도 `vast-tunnel.sh`·`swap-remote.sh`가 `ServerAliveCountMax=12`를 준다(기본 3은 30초 무응답에 터널이 스스로 끊는다).
+2. **가중치를 선취한다** — 박스를 띄운 뒤 run 전에 `SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/prefetch-weights.sh --roles auditor,critic,pov`(`--roles all`은 프로필의 전 좌석, `--dry-run`은 명령만 찍는다). PoV 좌석(`feyospace-v1-small`)이 약 55 GB이고 8단계까지 갈 작정이면 포함한다. 장비 파일의 `ready_timeout_s`는 이 선취를 전제한다 — 이 run에서 선취 없이 `gpt-oss-20b`(상한 300 s)가 콜드 2회 TIMEOUT이었고 따뜻하게는 35 s에 떴다. ⚠ 그 차이가 선취 때문인지는 미검증이다(35 s는 앞 run이 이미 받아 둔 캐시 뒤의 값이라 선취의 효과와 분리되지 않는다).
+3. **오라클 카나리를 이 부팅에서 다시 잰다** — Docker를 재기동하면 `boot_id`가 달라져 preflight가 ERROR다. `python tools/oracle_canary.py <과제> --out <카나리.json>`(컨테이너 40회, 몇 분)을 이 부팅에서 돌려 그 파일을 `--oracle-canary`에 준다.
+4. **`--task-work-dir`는 run마다 빈 디렉터리다** — 앞 run의 해제 트리가 남아 있으면 비어 있지 않다며 exit 2로 거부된다.
 
 - 원격 커밋 점검은 `ssh -o BatchMode=yes`다 -> 암호를 묻는 키면 ERROR. 키를 에이전트에 올려 둔다.
 - `<slices.json>`의 경로에는 `src-vul/` 접두어가 있어야 한다 -> [slicer-README.md](slicer-README.md) 「`--task-dir`로 쓸 슬라이스」.

@@ -57,6 +57,7 @@ servers:
       NCCL_SOCKET_IFNAME: lo
       GLOO_SOCKET_IFNAME: lo
     probe: chat
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
     ready_timeout_s: 400
 
   qwen3-14b:
@@ -68,6 +69,7 @@ servers:
     extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
     env: *vllm_env
     probe: chat
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
     ready_timeout_s: 550
 
   # --- 5단계 Auditor — 단독 ---
@@ -91,6 +93,7 @@ servers:
       - xgrammar
     env: *vllm_env
     probe: chat
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
     ready_timeout_s: 600
 
   # --- 7단계 Critic — 단독 ---
@@ -115,6 +118,7 @@ servers:
       <<: *vllm_env
       VLLM_SYSTEM_START_DATE: "2026-09-29"
     probe: chat
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
     ready_timeout_s: 300
 
   # --- 8단계 PoV — 단독 ---
@@ -135,4 +139,5 @@ servers:
       - xgrammar
     env: *vllm_env
     probe: chat
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
     ready_timeout_s: 600
