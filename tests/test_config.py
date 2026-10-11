@@ -83,6 +83,9 @@ SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHE
 # 모델 `AuditProcedure`는 허용집합에 **없다** — 집합은 「코드가 보내는 것」만 든다.
 AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
 
+# pov도 판마다 갈린다(⏵ 2026-10-11 · 이슈 #549): v2~v4=`PovAction`, v5=형제 `PovActionNamed`.
+POV_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in pov_node.ALLOWED_OUTPUT_SCHEMAS}
+
 
 # --- 참조 정합성 ------------------------------------------------------------
 
@@ -364,6 +367,15 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
         assert template.output_schema in AUDITOR_ALLOWED_SCHEMA_NAMES, (
             f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
             f"auditor 자리가 낼 수 있는 것은 {sorted(AUDITOR_ALLOWED_SCHEMA_NAMES)}뿐이다"
+        )
+        return
+
+    # pov도 집합 소속이다(`nodes/pov.py`의 `resolve_output_schema`) — 어느 판이 어느 봉투인지는
+    # `tests/test_pov_loop.py`가 문다.
+    if role is Role.POV:
+        assert template.output_schema in POV_ALLOWED_SCHEMA_NAMES, (
+            f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "
+            f"pov 자리가 낼 수 있는 것은 {sorted(POV_ALLOWED_SCHEMA_NAMES)}뿐이다"
         )
         return
 

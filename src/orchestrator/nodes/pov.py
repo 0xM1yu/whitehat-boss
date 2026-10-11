@@ -1,10 +1,11 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(gen/inspect/submit) 하나를 낸다. `gen`은 `PovSpec`을 실어 순수 함수
-`assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로 대상에서 실행해 관측을 다음
-홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가 `validate.run`과 나란히
-`_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형). 이 노드는 프롬프트 렌더 + 모델 호출 + 도구
-실행 헬퍼만 든다 — 루프 제어·정지 판정·이벤트는 러너(`_run_pov_hops`)에 있다.
+매 홉 모델이 `PovAction`(v5는 `PovActionNamed`) — gen/inspect/submit 하나를 낸다. `gen`은
+`PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
+대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
+`validate.run`과 나란히 `_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형).
+이 노드는 프롬프트 렌더 + 모델 호출 + 도구 실행 헬퍼만 든다 —
+루프 제어·정지 판정·이벤트는 러너(`_run_pov_hops`)에 있다.
 
 `Stage.VALIDATE` 아래에서 돈다 — 새 단계 번호를 만들지 않는다(Stage는 0~9 고정).
 구체 어댑터 모듈을 import하지 않는다(orchestrator 규약, tests/test_policy.py).
@@ -18,18 +19,38 @@ from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_target
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.capsule import ContextCapsule
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding
-from src.schemas.pov import PovAction
+from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — 매 홉 `PovAction`이다(gen/inspect/submit). `_call_hop`이 이걸
-# 요청하고, bench·계약 검사(`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)도 같은 값을 본다 — 한 역할 한 스키마.
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5는
+# `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
+# (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
+
+# ⏵ 2026-10-11 — 판마다 요청 스키마가 갈린다: v2~v4는 `PovAction`, v5는 그 형제
+# `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
+# 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
+# `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
+# 값(`PovAction`)으로 남는다.
+ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
+_SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
+
+
+def resolve_output_schema(name: str) -> type[PovAction]:
+    """프롬프트 meta의 `output_schema` 이름을 이 역할이 허용하는 스키마로 푼다."""
+    try:
+        return _SCHEMA_BY_NAME[name]
+    except KeyError:
+        raise PromptError(
+            f"pov meta의 output_schema `{name}`은 이 역할이 낼 수 없다 — "
+            f"허용: {sorted(_SCHEMA_BY_NAME)}"
+        ) from None
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
@@ -181,7 +202,7 @@ def _call_hop(
     result = ctx.call_model(
         role=ROLE,
         prompt=prompt,
-        schema=OUTPUT_SCHEMA,
+        schema=resolve_output_schema(load_prompt(ROLE, prompt.prompt_version).output_schema),
         stage=Stage.VALIDATE,
         subject_kind="finding",
         subject_id=finding.finding_id,
@@ -226,8 +247,8 @@ def run_tool(
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
-    러너가 마지막 gen의 PoC를 run 산출물 사이드카(`pov_poc/`, #355)로 쓴다. ⚠ 루프가 종단에 닿기
-    전에 끊기면 바이트는 안 남는다(#394). 예산이 이 도구 호출 자신에서 소진되면
+    러너가 최종 후보(보통 마지막 gen)의 PoC를 run 산출물 사이드카(`pov_poc/`, #355)로 쓴다.
+    ⚠ 루프가 종단에 닿기 전에 끊기면 바이트는 안 남는다(#394). 예산이 이 도구 호출 자신에서 소진되면
     (`ctx.call_tool`의 `ensure`) 이 함수는 `BudgetExhausted`를 그대로 올리고, 루프가 그것을 받아
     그 홉의 gen 이벤트(`poc_sha256`)를 낸 뒤 다시 던진다 — 해시는 남는다(`docs/agent-contracts.md`).
     """
