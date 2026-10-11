@@ -503,8 +503,9 @@ class EventKind(StrEnum):
     # gen 없는 `submitted`)다. 부분 PoC가 있으면 `poc_bytes`·`poc_sha256`과 함께 POV_GENERATED와
     # **같은 사이드카 키**(`poc_ref`·`poc_digest` 또는 `poc_write_error*`)도 싣는다 — 종단 사유로
     # 안 가른다(회수가 목적이다). **추가형이라 finding 상태는 `validate.run`이 이미 정했으므로**
-    # pov 실패는 finding을 안 죽이고 여기 남긴다. ⏵ 2026-10-11 — repeat_spec·max_hop 종단도
-    # `last_gen_excluded_while_earlier_not`를 싣는다(조건은 POV_GENERATED 주석).
+    # pov 실패는 finding을 안 죽이고 여기 남긴다. ⏵ 2026-10-11 — repeat_spec·max_hop 종단과 gen 없는
+    # `submitted` 종단(값은 False)도 `last_gen_excluded_while_earlier_not`를 싣는다
+    # (조건은 POV_GENERATED 주석).
     POV_SKIPPED = "pov_skipped"
     # PoV가 낸 PoC 하나를 채점기(oracle)의 `vul` 다리에 내보낸 기록 (#386). **제출마다
     # 1행**이다 - 중간 gen(`designatable=False`, pov v3 이상의 되먹임)과 모델이 submit한 PoC

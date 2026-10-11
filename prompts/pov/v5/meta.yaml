@@ -12,7 +12,7 @@
 #   prefix.md sha256 — 전 `14486e57f90f439fbf5eab7a905cd6ac5c66a2c334a891a9d35453a9f8c21ada`
 #   · 후 `e19e7e7bf81f560a863d4eee768da8234143ab16bc12e1072b0aaf54df37d799`.
 #   그 창에 run이 돌았다면 같은 "v5"로 다른 텍스트를 받은 것이다 — 호출의 `prompt_sha256`으로 가른다.
-# ⏵ 2026-10-11 — **예외 둘째: 이 판의 prefix를 네 자리 더 제자리에서 고쳤고 `output_schema`를 형제 봉투로 바꿨다**
+# ⏵ 2026-10-11 — **예외 둘째: 이 판의 prefix를 다섯 자리 더 제자리에서 고쳤고 `output_schema`를 형제 봉투로 바꿨다**
 #   (이슈 #549 ② · `submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — `PovActionNamed.poc_sha256` ·
 #   `runner._resolve_submit_digest`. v2~v4는 `PovAction` 그대로다).
 #   이유: 고친 시점에 v5로 모델 호출이 난 run이 0건이다 — **이 저장소·이 장비에서 확인한 범위**에서다:
@@ -25,12 +25,14 @@
 #   받은 것이다 — 호출의 `prompt_sha256`으로 가른다.
 #   prefix.md sha256 — 전 `e19e7e7bf81f560a863d4eee768da8234143ab16bc12e1072b0aaf54df37d799`
 #   · 후 `9e0e3b1134903e64a1e419742d8d261b8547614626190c01cbb0aae682332d08`.
-#   네 자리: ① `submit` 항목에 `poc_sha256` 한 문장 ② `final-hop` 덩어리 — 「(`poc_sha256`을 안 적으면)」 한정어와 「셋 안이면
+#   다섯 자리: ① `submit` 항목에 `poc_sha256` 한 문장 ② `final-hop` 덩어리 — 「(`poc_sha256`을 안 적으면)」 한정어와 「셋 안이면
 #   먼저 앞선 `gen`을 본다 … 이긴 `gen`이 있으면 `poc_sha256`에 그 `last_gen_sha256`을 적어 `submit`」(없을 때만 「submit하지 않는다」)
 #   ③ `trap` 덩어리 — 한정어 둘 ④ 「이미 `gen`을 또 냈다면」 덩어리 — 이긴 바이트는 지명으로 되살릴 수 있다(이긴 `gen`이 없을
-#   때만 변형 처방). 덤으로 `intermediate-gen` 덩어리의 「`submit`한 마지막 바이트만」이 「`submit`한 바이트(`poc_sha256`을 안 적으면
+#   때만 변형 처방) ⑤ `intermediate-gen` 덩어리의 「`submit`한 마지막 바이트만」이 「`submit`한 바이트(`poc_sha256`을 안 적으면
 #   마지막 `gen`)만」이 됐다(지명이 생겨 거짓이 된 문장).
-#   아래 description은 그날의 서술이다 — 「`submit`은 마지막 gen을 지정」은 `poc_sha256`을 안 적었을 때의 기본이다.
+#   아래 description은 그날의 서술이다 — 「`submit`은 마지막 gen을 지정」은 `poc_sha256`을 안 적었을 때의 기본이고,
+#   「마지막 홉에서 (제외 코드) 안이면 내지 않는다」·「변형이 셋 안이면 submit하지 않고」는 앞선 gen이 셋 밖을 받은 적이
+#   없을 때만이다(받은 적이 있으면 그 gen을 지명해 `submit` — 위 ②·④).
 role: pov
 version: v5
 output_schema: PovActionNamed
