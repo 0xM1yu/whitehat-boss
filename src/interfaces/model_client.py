@@ -182,8 +182,14 @@ class SchemaParseError(RuntimeError):
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
         attempt_log: "tuple[AttemptRecord, ...]" = (),
+        model_error_text: str = "",
     ) -> None:
         super().__init__(message)
+        # 마지막 시도의 오류를 응답 원문(`input_value`)·URL 없이 만든 텍스트 — 모델에게 다시 보여도
+        # 되는 사유다. `str(exc)`는 그것들을 든다(pydantic `ValidationError`). 비면(Fake) 노트가
+        # 고정 문구를 싣는다(`runner._pov_parse_retry_note`). 이 모듈은 어댑터를 모르므로
+        # 만드는 쪽(`openai_compat`)이 채운다.
+        self.model_error_text = model_error_text
         self.usage = usage
         self.gpu_ms = gpu_ms
         self.gpu_ms_source = gpu_ms_source
