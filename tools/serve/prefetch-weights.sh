@@ -7,8 +7,9 @@
 #   원격에서 `pip install -q hf_transfer`를 한 번, 이어 모델마다 `HF_HUB_ENABLE_HF_TRANSFER=1 hf download <repo> --revision <rev>`.
 #   --dry-run: ssh 없이 원격에서 돌릴 명령만 찍는다(SWAP_SSH_HOST도 필요 없다).
 #
-# 왜: `config/serving/vastai-remote.yaml`의 `ready_timeout_s`는 가중치가 캐시돼 있다는 전제다 — 콜드 기동은 그 안에
-#   안 끝난다(#571 · 2026-10-11 실측). 파이썬은 `PREFETCH_PYTHON`(기본 `python`)이다.
+# 왜: `config/serving/vastai-remote.yaml`의 `ready_timeout_s`는 가중치가 캐시돼 있다는 전제다 — 300·600 s 좌석에서
+#   콜드 기동이 상한을 넘은 적이 있다(gpt-oss-20b ×2 · qwen3.8-27b ×1 · 2026-10-11 KST / feyospace ×1 · 10-06 프로브).
+#   seccoderx-8b는 콜드 155 s로 400 안이었다(#571 · 좌석별 실측은 그 파일 주석). 파이썬은 `PREFETCH_PYTHON`(기본 `python`)이다.
 # keepalive: 여기 ssh는 vast-tunnel.sh·swap-remote.sh와 같은 옵션을 준다. 일회성 ssh인 vast-bootstrap.sh는 일부러 안 준다
 #   (멱등이라 끊기면 다시 돌리면 된다).
 set -euo pipefail
