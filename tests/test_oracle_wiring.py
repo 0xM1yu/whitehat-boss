@@ -10,7 +10,8 @@ fix 다리는 후보가 0개면 0번 · 1개 이상이면 정확히 한 번 도�
 **후보가 둘 이상일 때의 규칙은 ⏵ 2026-10-04에 사슬로 바뀌었다.** 2026-10-03 동결판은 「내부 근거
 등급의 최댓값 · 동점이면 거부」였고 실측 run에서 후보 8건이 **같은 PoC 바이트 1개**라 그 거부가
 점수를 0으로 만들었다. 지금은 같은 바이트끼리 **접고**(`sole_poc`) 남은 동점을 **전순서**로
-가른다 — ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시. `designation`에 **실제로 가른
+가른다 — ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시(⏵ 2026-10-11 — 맨 앞에 Critic
+판정 계단이 붙었다, #604). `designation`에 **실제로 가른
 단계**가 찍힌다. 등급 또는 `confidence`를 모르는 후보가 있으면 여전히 거부다(`grade_unknown`).
 끝 절의 검사들이 그
 사슬과 **불변식**(지정 로직은 채점기가 돌려준 값을 안 읽는다)을 건다.
@@ -42,9 +43,10 @@ from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas import FindingState
-from src.schemas.enums import EvidenceGrade, PovStopReason, ReasonCode
+from src.schemas.enums import EvidenceGrade, PovStopReason, ReasonCode, Verdict
 from tests.oracle_fakes import TASK_ID, FakeOracle, submit_script
 from tests.test_nodes import (  # noqa: F401
+    _critic_decision,
     _demoted_at_validate,
     _finding,
     _outside_validated,
@@ -1318,7 +1320,8 @@ def test_a_masked_task_id_without_a_mask_map_is_refused_before_anything_is_built
 # --- 후보가 여럿일 때: 같은 바이트는 접고, 남은 것은 전순서로 (⏵ 2026-10-04) ------------------
 #
 # 2026-10-03 동결판은 「내부 근거 등급 최댓값 · 동점이면 거부」였다. 아래 검사들은 그 거부가 사슬로
-# 바뀐 뒤를 문다 - ①등급 ②`confidence` ③작은 바이트 ④PoC 해시. 위 검사들의 후보는 근거 없는
+# 바뀐 뒤를 문다 - ①등급 ②`confidence` ③작은 바이트 ④PoC 해시(+ 맨 앞 Critic 판정, 아래 절).
+# 위 검사들의 후보는 근거 없는
 # Finding이라 **등급·confidence가 전부 같아** ③까지 내려간다. 등급·confidence가 **갈리는** 문맥을
 # 이 파일에서 만들려고 아래는 `_designate_final`을 사전째 **직접** 부른다 - 규칙 자체가 대상이고
 # 파이프라인이 아니다(파이프라인에서 등급이 갈리는 run은 `test_pipeline_e2e.py`).
@@ -1396,6 +1399,86 @@ def test_two_pocs_from_one_finding_are_separated_by_the_smaller_bytes() -> None:
     )
 
     assert got == (small, "smallest_poc", None)
+
+
+# --- 첫 계단: Critic 판정 — 보류(`need_evidence`)의 PoC는 uphold·미경유를 못 민다 (#604) -----
+#
+# 보류 Finding이 8단계 추가 풀에 들게 되면서(`_pov_targets`) 그 PoC가 후보가 된다.
+# 등급·`confidence`는 보류를 안 본다 - 하네스 Critic이 「모르겠다」고 한 PoC가 더 높은
+# `confidence`로 공식 최종 제출이 되지 않도록 판정이 사슬의 **맨 앞**이다.
+# 0 = uphold 또는 판정 없음, 1 = 보류.
+
+
+def test_an_upheld_poc_is_designated_over_a_held_poc_with_a_higher_confidence() -> None:
+    """보류 쪽이 등급(E4 대 E2)도 `confidence`(0.9 대 0.3)도 높은데 **지정은 uphold 쪽**이고 근거는
+    `critic_verdict`다. 보류 쪽 PoC를 **더 작게** 둬서 ③이 ①을 이기는 구현도 빨개진다."""
+    held = _attempt("f_held", b"\x01h")
+    upheld = _attempt("f_upheld", b"\x02upheld-poc")
+    grades = {"f_held": EvidenceGrade.E4, "f_upheld": EvidenceGrade.E2}
+    confidences = {"f_held": 0.9, "f_upheld": 0.3}
+    verdicts = {"f_held": 1, "f_upheld": 0}
+
+    got = runner._designate_final(_ledger_of(held, upheld), grades, confidences, verdicts)
+    back = runner._designate_final(_ledger_of(upheld, held), grades, confidences, verdicts)
+
+    assert got == (upheld, "critic_verdict", None)
+    assert back == got
+
+
+def test_a_held_poc_alone_is_designated_as_the_sole_candidate() -> None:
+    """보류 PoC가 유일한 후보면 판정 계단이 그것을 막지 않는다 - 선택이 없다(`sole_candidate`)."""
+    held = _attempt("f_held", b"\x01held")
+
+    got = runner._designate_final(
+        _ledger_of(held), {"f_held": EvidenceGrade.E1}, {"f_held": 0.2}, {"f_held": 1}
+    )
+
+    assert got == (held, "sole_candidate", None)
+
+
+def test_an_uncritiqued_poc_and_an_upheld_poc_tie_on_the_verdict_step() -> None:
+    """미경유(`decisions` 없음)와 uphold는 둘 다 0이라 판정 계단에서 동점이다 - 사슬이 `top_grade`로
+    내려가고, 등급이 높은 쪽이 미경유여도 uphold 쪽을 `critic_verdict`가 앞세우지 않는다."""
+    uncritiqued = _attempt("f_none", b"\x01none")
+    upheld = _attempt("f_upheld", b"\x02upheld\xfe")
+    grades = {"f_none": EvidenceGrade.E3, "f_upheld": EvidenceGrade.E2}
+    confidences = _flat(*grades)
+    verdicts = {"f_none": 0, "f_upheld": 0}
+
+    got = runner._designate_final(_ledger_of(uncritiqued, upheld), grades, confidences, verdicts)
+
+    assert got == (uncritiqued, "top_grade", None)
+
+
+def test_the_finalize_step_hands_the_critic_verdicts_to_the_designation(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """`_finalize_oracle`이 **`state.decisions`에서 읽은** 판정을 지정에 넘긴다 - 위 검사들은
+    판정 사전을 손으로 꽂는다. 보류된 Finding의 `confidence`를 더 높게 두고 등급은 같게 깐다."""
+    state, (held, upheld) = _findings(ctx, 2)
+    state.update(held.model_copy(update={"confidence": 0.95}))
+    state.update(upheld.model_copy(update={"confidence": 0.4}))
+    state.decisions[held.finding_id] = (
+        _critic_decision(held.finding_id, Verdict.NEED_EVIDENCE, grounded=False),
+    )
+    state.decisions[upheld.finding_id] = (
+        _critic_decision(upheld.finding_id, Verdict.UPHOLD, grounded=True),
+    )
+    monkeypatch.setattr(
+        runner,
+        "_grades_by_finding",
+        lambda _state: dict.fromkeys((held.finding_id, upheld.finding_id), EvidenceGrade.E3),
+    )
+    state.oracle_ledger = OracleLedger(wired=True)
+    state.oracle_ledger.add_attempt(_attempt(held.finding_id, b"\x01held"))
+    state.oracle_ledger.add_attempt(_attempt(upheld.finding_id, b"\x02upheld\xfe"))
+    ctx.oracle = _OracleThatReadsNothingItIsGiven()
+
+    runner._finalize_oracle(ctx, state)
+
+    (final,) = _events(ctx, EventKind.ORACLE_FINAL)
+    assert final.subject_id == upheld.finding_id
+    assert final.data["designation"] == "critic_verdict"
 
 
 def test_the_last_rung_is_the_poc_digest_and_the_input_order_does_not_move_it() -> None:
@@ -1537,9 +1620,11 @@ def test_there_is_no_tie_refusal_left_to_fall_back_on() -> None:
     갈린 run에서만** 나므로 여기서 길이를 직접 센다.
     """
     assert not [name for name in vars(oracle_log_module) if "GRADE_TIE" in name]
-    assert len(runner._DESIGNATION_CHAIN) == len(
-        runner._designation_key(_attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5})
+    key = runner._designation_key(
+        _attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 0}
     )
+    assert len(runner._DESIGNATION_CHAIN) == len(key) == 5
+    assert runner._DESIGNATION_CHAIN[0] == "critic_verdict"
 
 
 def _trap(name: str):  # noqa: ANN202
@@ -1651,6 +1736,22 @@ def test_designation_does_not_read_oracle_fields(
         assert picked is attempts[ids.index(winner)]
 
 
+def test_the_verdict_step_does_not_read_oracle_fields_either() -> None:
+    """판정 계단이 갈라도(`critic_verdict`) 후보의 `submission`을 열지 않는다 - 위 분기표에 없는
+    새 계단이라 따로 문다."""
+    ids = ("f_held", "f_upheld")
+    attempts = [_trap_attempt(finding_id) for finding_id in ids]
+
+    picked, designation, reason = runner._designate_final(
+        _ledger_of(*attempts),
+        dict.fromkeys(ids, EvidenceGrade.E3),
+        _flat(*ids),
+        {"f_held": 1, "f_upheld": 0},
+    )
+
+    assert (picked, designation, reason) == (attempts[1], "critic_verdict", None)
+
+
 class _OracleThatReadsNothingItIsGiven:
     """`finalize`가 받은 `vul`을 열지 않는 대역 - 함정 `submission`이 `_score`를 지나가게 한다."""
 
@@ -1680,6 +1781,7 @@ def test_finalize_oracle_does_not_read_oracle_fields_either(
     # 두 사전은 현 러너에서 같은 `state.findings`에서 나와 키 집합이 같다 - 여기서는 등급 사전을
     # 손으로 꽂으므로 `confidence`도 같은 키로 깔아 준다(안 깔면 전 분기가 `grade_unknown`이다).
     monkeypatch.setattr(runner, "_confidences_by_finding", lambda _state: _flat(*ids))
+    monkeypatch.setattr(runner, "_verdict_ranks_by_finding", lambda _state: dict.fromkeys(ids, 0))
     ctx.oracle = _OracleThatReadsNothingItIsGiven()
 
     runner._finalize_oracle(ctx, state)

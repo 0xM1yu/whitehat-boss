@@ -3,8 +3,9 @@
 러너 없이 순수하게 본다. 러너가 이 장부를 어떻게 채우는지는 `tests/test_oracle_wiring.py`가,
 파이프라인 끝까지 이어지는지는 `tests/test_pipeline_e2e.py`가 본다.
 
-⚠ 후보가 둘 이상일 때의 규칙(같은 바이트는 접고, 남은 것은 등급 → `confidence` → 작은 바이트 →
-PoC 해시의 전순서로 — ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다)은
+⚠ 후보가 둘 이상일 때의 규칙(같은 바이트는 접고, 남은 것은 (Critic 판정 →) 등급 →
+`confidence` → 작은 바이트 → PoC 해시의 전순서로 — ⏵ 2026-10-04에 「동점이면 거부」가
+이 사슬로 바뀌었다)은
 `runner._designate_final`의 것이고 **이 파일이 아니다** - 장부는 지정한 근거(`designation`)와
 거부 사유(`reason`)를 **기록**할
 뿐이다. 규칙 자체를 단언하는 검사는 `tests/test_oracle_wiring.py` 끝 절에 있다.

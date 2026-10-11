@@ -1049,7 +1049,8 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 # 명세가 없어 멈춘」 Finding의 자리를 밀어내고, 최종 지정 사슬은 등급 상한이 같으면
 # `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이
 # 될 수 있다. 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
-# 반박·보류(`need_evidence`)로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다. Critic을
+# 반박으로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다(⏵ 2026-10-11 - 보류
+# (`need_evidence`)는 든다, 이슈 #604). Critic을
 # **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과 재현 명세가
 # 없어 멈춘 것(F-9)은 든다.
 
@@ -1073,8 +1074,12 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
             FindingState.QUEUED, Verdict.REBUT, True, False, False, id="critic_rebutted_F6"
         ),
         pytest.param(
-            FindingState.QUEUED, Verdict.NEED_EVIDENCE, False, False, False,
+            FindingState.QUEUED, Verdict.NEED_EVIDENCE, False, False, True,
             id="critic_asked_for_evidence_F7",
+        ),
+        pytest.param(
+            FindingState.QUEUED, Verdict.NEED_EVIDENCE, True, False, True,
+            id="critic_asked_for_evidence_with_citations_F7",
         ),
         pytest.param(
             FindingState.HYPOTHESIZED, None, False, True, False,
@@ -1107,12 +1112,12 @@ def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
     in_pool: bool,
 ) -> None:
     """풀 판정표 - 상태가 아니라 **Critic이 이 Finding에 무엇을 했나**로 가른다. `QUEUED`는
-    F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6·F-7(Critic이 밀어 냈다)이 섞인 상태라 상태만으로는
+    F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6(밀어 냄)·F-7(보류 - 든다)이 섞인 상태라 상태만으로는
     못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `uphold`로 바꾸므로 정책이 `QUEUED`로 안
     보내고(`HYPOTHESIZED` F-9) 풀에 든다 - 정규화가 한 곳(`gate.normalize`)에서만 일어난다는 전제를
     같이 문다.
 
-    ⚠ 판정표 일곱은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
+    ⚠ 판정표 여덟은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
     절단 · `_drop_finding`)에서 골랐다 - 지어낸 상태가 아니다."""
     finding = _finding("find_0001", state=finding_state, confidence=0.9)
     state = runner._Accumulator()
@@ -1150,6 +1155,39 @@ def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing
     _with_top_n(ctx, 1)
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
+
+
+def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutted_ones(
+    ctx: RunContext,
+) -> None:
+    """보류(`need_evidence`)는 풀에 들되 정렬 키 앞의 판정 계단에서 uphold·미경유 뒤다 - 상한 1에
+    `confidence`가 더 높은 보류가 F-9 uphold의 자리를 못 가져간다. 반박된 Finding은 풀 밖이라
+    그 자리는 보류가 받는다."""
+    held = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
+    upheld = _finding("find_0002", state=FindingState.HYPOTHESIZED, confidence=0.5)
+    state = runner._Accumulator()
+    state.update(held)
+    state.update(upheld)
+    state.decisions[held.finding_id] = (
+        _critic_decision(held.finding_id, Verdict.NEED_EVIDENCE, grounded=False),
+    )
+    state.decisions[upheld.finding_id] = (
+        _critic_decision(upheld.finding_id, Verdict.UPHOLD, grounded=True),
+    )
+    _with_top_n(ctx, 1)
+
+    assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
+
+    rebutted = _finding("find_0003", state=FindingState.QUEUED, confidence=0.5)
+    state2 = runner._Accumulator()
+    state2.update(held)
+    state2.update(rebutted)
+    state2.decisions[held.finding_id] = state.decisions[held.finding_id]
+    state2.decisions[rebutted.finding_id] = (
+        _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
+    )
+
+    assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == ["find_0001"]
 
 
 def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: RunContext) -> None:
