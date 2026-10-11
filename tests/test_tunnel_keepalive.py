@@ -1,9 +1,10 @@
 """`tools/serve/`의 ssh 호출 — keepalive 옵션과 `vast-tunnel.sh --loop`.
 
-2026-10-11 run에서 `ServerAliveCountMax` 기본 3 × `ServerAliveInterval` 10 s = 30초 무응답에 터널이
-스스로 끊겼다(#571). 두 스크립트를 **실제로 돌려** 가짜 `ssh`(PATH 앞)가 받은 argv에서 `-o K=V`를
+`ServerAliveCountMax` 기본값(3 × `ServerAliveInterval` 10 s)이면 30초 무응답에 터널이 끊긴다(#571).
+두 스크립트를 **실제로 돌려** 가짜 `ssh`(PATH 앞)가 받은 argv에서 `-o K=V`를
 읽는다 - 옵션이 `--` 앞에 있어야 ssh의 옵션이다(뒤로 가면 원격 명령의 인자가 된다).
 `--loop`가 없을 때 argv는 종전과 같다(옵션 둘만 더해진 채). 가짜 `sleep`이 재시도 간격을 기록한다.
+신호(Ctrl-C·SIGTERM) 처리는 테스트하지 않았다.
 """
 
 import shutil
@@ -190,5 +191,12 @@ def test_loop_does_not_start_ssh_when_the_marker_is_already_there(tmp_path: Path
 @needs_bash
 def test_an_unknown_argument_is_refused_before_ssh(tmp_path: Path) -> None:
     done = _run(tmp_path, TUNNEL, "--forever")
+    assert done.returncode == 2
+    assert not (tmp_path / "calls").exists()
+
+
+@needs_bash
+def test_extra_arguments_after_loop_are_refused_before_ssh(tmp_path: Path) -> None:
+    done = _run(tmp_path, TUNNEL, "--loop", "--forever")
     assert done.returncode == 2
     assert not (tmp_path / "calls").exists()
