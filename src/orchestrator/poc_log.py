@@ -1,4 +1,5 @@
-"""PoV 루프가 선 자리의 **마지막 `gen` PoC**를 run 산출물에 파일로 남긴다 (#355).
+"""PoV 루프가 선 자리의 **마지막 `gen`(또는 `submit`이 지명한 gen) PoC**를 run 산출물에 파일로
+남긴다 (#355).
 
 `PromptLog`와 같은 모양의 주입 객체다 — run_dir을 아는 것은 러너이고 `RunContext`도 노드도
 그것을 몰라야 한다(`context.py`의 `prompts` 필드 주석). `None`이면 아무것도 쓰지 않는다.

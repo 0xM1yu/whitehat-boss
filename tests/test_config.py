@@ -371,7 +371,7 @@ def test_the_prompt_output_schema_is_what_the_caller_actually_requests(directory
         return
 
     # pov도 집합 소속이다(`nodes/pov.py`의 `resolve_output_schema`) — 어느 판이 어느 봉투인지는
-    # `tests/test_pov_prompt_v4.py`가 문다.
+    # `tests/test_pov_loop.py`가 문다.
     if role is Role.POV:
         assert template.output_schema in POV_ALLOWED_SCHEMA_NAMES, (
             f"{directory}/meta.yaml은 `{template.output_schema}`를 선언하는데 "

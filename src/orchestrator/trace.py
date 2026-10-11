@@ -495,7 +495,8 @@ class EventKind(StrEnum):
     # `last_gen_excluded_while_earlier_not`(bool)도 싣는다 — 마지막 gen의 `vul` 코드가 제외 코드
     # (0·71·300)이거나 없는데 앞선 gen 중에 제외 코드 밖이 있었는가. 로그이고 지정 입력이 아니다.
     # ⚠ **같은 run의 `submit_digest=matched`와 함께 읽는다** — 모델이 이긴 gen을 지명했으면 이 값이
-    # True여도 위반이 아니다. 흡수된 예외 종단과 v2는 이 키가 없다.
+    # True여도 위반이 아니다. 흡수된 예외 종단과 v2는 이 키가 없다. `repeat_spec` 출구의 「마지막
+    # gen」은 새로 만든 gen 중 마지막이다 — 반복된 gen은 코드를 못 받는다.
     POV_GENERATED = "pov_generated"
     # PoV가 최종 PoC 없이 끝난 기록. `reason`이 `capsule_missing`(캡슐 없음)이거나 정지 사유
     # (`PovStopReason`: `parse_failed`·`gateway_error`·`context_overflow`·`repeat_spec`·`max_hop`·
