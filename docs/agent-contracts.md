@@ -547,7 +547,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   도구 요약 줄에 그 `last_gen_bytes`·`last_gen_sha256`이 붙는다, #386 ① — 이름이 `input_*`가 아닌 것은
   일부러다: 도구가 그 바이트를 받았다고 읽히지 않게. **meta가 `hop_header`를 켠 판(v4~)은 followup 맨
   앞에 홉 줄이 하나 더 붙는다** — `hop=<k> last_hop=<N> remaining=<N-k>`, `runner._pov_hop_line`, #511.
-  그래서 그 판에서 도구 요약은 둘째 줄이다) + (v3 이상이고 `--oracle-submit`일 때) 직전
+  그래서 그 판에서 도구 요약은 둘째 줄이다. ⏵ 2026-10-11 — 파싱 실패 뒤 **재질문 턴은 예외**다: hop≥1 재질문은
+  홉 줄 · `[스키마 오류]` 노트가 앞서 도구 요약이 셋째 줄이 되고, hop 0 재질문은 본문 **끝**에 붙는다 — 아래
+  「실행」) + (v3 이상이고 `--oracle-submit`일 때) 직전
   `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
   직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
@@ -558,7 +560,17 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
-  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx·버릴 수
+  게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고(⏵ 2026-10-11 — **스키마 파싱 실패는 홉 하나를 쓰고
+  루프가 같은 자리를 다시 묻는다**: 실패 홉은 `stop_reason` 없는 `pov_hop`이다. 노트(`[스키마 오류] <사유>`,
+  홉 줄을 받는 판은 그 줄이 앞)는 **hop 0 재질문이면 hop 0 본문의 끝**(facts 뒤 — 어댑터 자신의 `[스키마 오류]`
+  재시도와 같은 자리)에, **hop≥1 재질문이면 followup의 머리**(홉 줄 → 노트 → 아직 못 받은 직전 도구 관측)에
+  붙는다. 오류 사유는 어댑터가 응답 원문·URL 없이 만든 `model_error_text`이고 예외 문자열이 아니다.
+  hop 0 재질문이 파싱 실패를 **살리는지는 미실측이다**(같은 자리 재시도가 이슈 #550 본문의 find_0005에서
+  2/2 실패했다, n=1). `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패이거나, ⏵ 2026-10-12부터는 그 호출의
+  **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
+  `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
+  없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
+  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
