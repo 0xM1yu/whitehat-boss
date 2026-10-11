@@ -107,7 +107,7 @@ import re
 import subprocess
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -2378,6 +2378,14 @@ def _run_pov_hops(
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
     쪽 사건은 올려 보낸다). 반환은 (최종 후보 — 지명한 gen 또는 마지막 `gen` PoC, 없으면 `None` — 와
     정지 사유)다 — 이 2-튜플 모양은 호출부 20여 곳이 쥐고 있다.
+    ⏵ **2026-10-11 (#550) — 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다**: `stop_reason` 없는
+    `POV_HOP`을 내고 `[스키마 오류]` 노트(+ 아직 못 받은 관측)를 실어 같은 자리를 다시 묻는다.
+    `last_poc`·`seen`은 그대로다. `hop >= pov_tool_hops`(마지막 홉)의 실패만 `PARSE_FAILED`로
+    선다. 게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
+    ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
+    — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). hop0 재질문은 본문 **끝**에
+    홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
+    몫이다(미정)(이 PR은 프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2415,6 +2423,11 @@ def _run_pov_hops(
         # 읽고 지정(`_designate_final`)은 읽지 않는다.
         gen_codes: list[int | None] = []
         followup = ""
+        # 홉 줄을 붙이기 **전**의 followup(= 직전 홉의 도구 관측) — 다음 호출이 파싱에 실패하면
+        # 그 관측을 아직 모델이 못 받았으므로 다시 물을 때 같이 싣는다(`prev` history에 안 들었다).
+        observation = ""
+        # hop0 호출이 파싱에 실패했을 때 다시 열면서 본문 끝에 붙일 오류 노트(#550).
+        retry_note: str | None = None
         prev: pov.PovHop | None = None
         hop = 0
         # 퍼즈 진입점 조회 결과 — hop0에서 채우고 **hop0 이벤트에만** 싣는다. 루프 밖에서 먼저
@@ -2456,6 +2469,8 @@ def _run_pov_hops(
                         capsule=capsule,
                         source=wide_source,
                         fuzz_entrypoint=entrypoint,
+                        retry_note=retry_note,
+                        hop=hop,
                     )
                 else:
                     current = pov.continue_hop(
@@ -2467,6 +2482,29 @@ def _run_pov_hops(
                 if reason is None:
                     raise
                 latency_s = (ctx.monotonic_ms() - started) / 1000.0
+                if reason is PovStopReason.PARSE_FAILED and hop < pov_hops:
+                    # 파싱 실패는 **홉 하나를 쓴 것**이다(#550) — `stop_reason` 없이 이벤트를 내고
+                    # 같은 자리를 다시 묻는다. `last_poc`·`seen`·`prev`는 그대로다.
+                    _emit_pov_hop(
+                        ctx, finding, hop=hop, failed=(exc, latency_s),
+                        fuzz=fuzz if hop == 0 else None,
+                    )
+                    hop += 1
+                    version = (
+                        ctx.config.model_for(Role.POV.value).prompt_template_version
+                        if prev is None
+                        else prev.version
+                    )
+                    note = _pov_parse_retry_note(
+                        hop, pov_hops, exc, with_hop_line=load_prompt(Role.POV, version).hop_header
+                    )
+                    if prev is None:
+                        retry_note = note
+                    else:
+                        followup = f"{note}\n{observation}"
+                        # 다시 묻는 호출이 `hop`번 홉이 되게 한다(`model_call.hop`=`POV_HOP.hop`).
+                        prev = replace(prev, hop=hop - 1)
+                    continue
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
@@ -2576,6 +2614,7 @@ def _run_pov_hops(
             # `hop < pov_hops`라는 뜻이라(`MAX_HOP`은 위에서 이미 갈렸다) `remaining`은 0 이상이다.
             # 줄을 받는 판은 meta가 `hop_header`로 선언한다(`prompt_loader` docstring) - v2·v3는
             # 바이트 그대로다.
+            observation = followup
             if load_prompt(Role.POV, current.version).hop_header:
                 followup = f"{_pov_hop_line(hop + 1, pov_hops)}\n{followup}"
             prev = current
@@ -2637,6 +2676,17 @@ def _pov_hop_line(hop: int, last_hop: int) -> str:
     `tests/test_pov_prompt_v4.py`가 같이 움직여야 한다. `_pov_observation`의 출력에 넣지 않는다 -
     그쪽의 v2 바이트 동일이 핀이다."""
     return f"hop={hop} last_hop={last_hop} remaining={last_hop - hop}"
+
+
+def _pov_parse_retry_note(
+    hop: int, last_hop: int, exc: Exception, *, with_hop_line: bool
+) -> str:
+    """파싱 실패 뒤 재질문에 싣는 노트 — 홉 줄(`hop_header` 판만) + `[스키마 오류] <사유>`.
+
+    자리는 둘이다: hop≥1이면 followup의 **머리**(노트 다음에 직전 관측), hop 0이면 첫 본문의 **끝**
+    (`open_hop(retry_note=)`). 사유는 `error_detail`로 512자에 자른다."""
+    line = f"{_pov_hop_line(hop, last_hop)}\n" if with_hop_line else ""
+    return f"{line}[스키마 오류] {error_detail(exc)}"
 
 
 def _pov_observation(
@@ -2707,11 +2757,14 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     """PoV 홉 호출 예외를 흡수 여부로 가른다 — pov 추가형 계약(옛 `_run_pov` 단발판이 쓰던
     `_is_droppable` 판정 그대로).
 
-    per-finding 실패(스키마 파싱·버릴 수 있는 게이트웨이)는 흡수해 이 finding만 건너뛰고,
+    버릴 수 있는 게이트웨이 실패는 흡수해 이 finding만 건너뛰고, **스키마 파싱 실패는 마지막
+    홉에서만** finding을 건너뛴다(앞 홉의 실패는 루프가 홉 하나를 쓰고 다시 묻는다 — #550),
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
     run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
     ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
+    ⏵ 2026-10-11 이 함수는 **사유만** 가른다 — `PARSE_FAILED`로 실제 서는지는 루프가 홉 여유를 보고
+    정한다(마지막 홉만 선다 · `_run_pov_hops`, #550).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
