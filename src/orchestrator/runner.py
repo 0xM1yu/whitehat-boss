@@ -1420,7 +1420,10 @@ def _pov_targets(
     ① **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
     반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류(`need_evidence`, F-7)는
     **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
-    5/5인 run의 풀이 비었다) ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
+    5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 어제 run의 5/5 보류가
+    모델 판단인지 파서 폴백인지는 미확인(#603이 응답을 남기면 가려진다).
+    ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
     (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
     Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
     명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
@@ -1486,7 +1489,9 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     반박(F-6)으로 판정했다. 보류(`need_evidence`, F-7)는 안 밀어 낸 것이다 — 풀에 들고 정렬·지정에서
     뒤로 간다(`_verdict_ranks_by_finding`). ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). 판정은
     `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야 `QUEUED`(F-6)와
-    이 판정이 어긋나지 않는다.
+    이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 어제 run의 5/5 보류가
+    모델 판단인지 파서 폴백인지는 미확인(#603이 응답을 남기면 가려진다).
 
     ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
     **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
@@ -2129,7 +2134,8 @@ def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
 def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
     """Finding별 Critic 판정 계단 — 0 = uphold 또는 판정 없음(미경유), 1 = 보류(`need_evidence`).
     추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은
-    `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수)."""
+    `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
+    판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다)."""
     return {
         f.finding_id: int(
             any(
@@ -2164,6 +2170,8 @@ def _designation_key(
     ⓪Critic 판정(uphold·미경유 0 < 보류 1) ①등급 내림차순 ②`confidence` 내림차순 ③PoC 바이트
     **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
     「모르겠다」고 한 PoC가 등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604).
+    판정 계단이 등급보다 앞서므로 **등급이 낮은 uphold·미경유 PoC가 등급이 높은 보류 PoC를
+    이긴다**(E0 미경유 > E4 보류) — 의도한 것이다.
 
     🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
@@ -2236,7 +2244,8 @@ def _designate_final(
     문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
-    docstring)와 후보 0건(읽을 `submission`이 없다).
+    docstring), `verdicts` 사전(`_verdict_ranks_by_finding` 안에서 채점기 장부를 읽는 변이는
+    지금 안 잡힌다 — 이 함수 밖의 값이라 함정이 못 본다)과 후보 0건(읽을 `submission`이 없다).
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
