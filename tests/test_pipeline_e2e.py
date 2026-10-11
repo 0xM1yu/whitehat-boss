@@ -38,12 +38,14 @@ from src.ids import new_run_id
 from src.interfaces.model_client import ModelGatewayError, SchemaParseError
 from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import runner, task_loader, trace
+from src.orchestrator.nodes import critic
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
 from src.schemas.candidate import Candidate
-from src.schemas.common import PLACEHOLDER_DIGEST, Location
-from src.schemas.enums import FindingState, ReasonCode, Role
+from src.schemas.common import PLACEHOLDER_DIGEST, Location, ProducedBy
+from src.schemas.decision import Decision
+from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
 from src.schemas.finding import Finding
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from src.schemas.scout_response import ScoutResponse
@@ -4693,6 +4695,32 @@ def test_an_empty_pov_pool_reaches_the_run_warnings(
 
     assert not _of(_events(trace_path), "pov_generated"), "전제 — pov가 안 돌았다"
     assert any(w.startswith("PoV 대상 0건 — validated ") for w in result.warnings), result.warnings
+
+
+def test_a_real_run_whose_critic_holds_every_finding_says_why_the_pov_pool_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """monkeypatch가 `_pov_targets`가 아니라 **Critic 판정**뿐인 실제 경로 — 모든 판정이 보류
+    (`need_evidence`, F-7 → `QUEUED`)면 validated가 0이고 풀(상한 8)에서 전부 빠져 경고가 오른다."""
+    def hold(ctx, *, decision_id, finding, evidences, source=None):  # noqa: ANN001, ANN202
+        return Decision(
+            decision_id=decision_id,
+            run_id=ctx.run_id,
+            finding_id=finding.finding_id,
+            verdict=Verdict.NEED_EVIDENCE,
+            rationale="근거 서술",
+            evidence_refs=[],
+            produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+        )
+
+    monkeypatch.setattr(critic, "_ask_model", hold)
+
+    result, trace_path = _run(tmp_path, name="pov_pool_held", before=_with_index())
+
+    assert not _of(_events(trace_path), "pov_generated"), "전제 — pov가 안 돌았다"
+    assert any(
+        w.startswith("PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류 ") for w in result.warnings
+    ), result.warnings
 
 
 def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
