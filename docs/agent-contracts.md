@@ -1123,7 +1123,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **v13**(이슈 #67 · 저장소 소유자 결정 · v11 + FACTS에서 `source` 사본을 뺀다). v13은 산문 지시가 두 줄만 다르다 —
 > body의 Facts 머리 문장(JSON을 「the complete set of facts」라 부르던 줄)과 prefix의 `FACTS.source` 한 자리다(`tests/test_auditor_v13_facts.py`).
 > 그래도 규칙 1이 걸린다 — 같은 입력에서 hop0 user 턴이 원문의 JSON 이스케이프 사본만큼 짧아진다. **v12는 건너뛰었다** — 2026-10-10 열린
-> PR #580(FT Auditor 계약)이 그 번호를 쓴다. v11·v13으로 돈 run은 0건이고 규칙 5·재측정은 이번에도 돌지 않았다.
+> PR #580(FT Auditor 계약)이 그 번호를 쓴다. ~~v11·v13으로 돈 run은 0건이고~~ ⏵ **2026-10-11 — v13으로 돈 run이 1건이 됐다**([10-11 run](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) `run_20261011_0001` — `checksum` 0이라 비교표 밖). v11은 그대로 0건이다. 규칙 5·재측정은 이번에도 돌지 않았다.
 > ⏵ **2026-10-11 — v13 → v14.** v13은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT 정답은
 > v12 계약(#580 머지)이라 **v14 = v12 + FACTS `source` 제거**를 새 판으로 세웠다 — v13은 머지된 판이라 규칙 1로 그 자리에서 안 고쳤다.
 > v14 body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`tests/test_auditor_v14_facts.py`). v14로 돈 run은 0건이다.
