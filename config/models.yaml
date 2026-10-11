@@ -821,7 +821,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5는 `PovActionNamed`)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -852,6 +852,8 @@ models:
     # 제외 코드 밖이면 하고 안이면 안 하며 unavailable은 정보 없음이므로 0바이트가 아니고 rationale에
     # SOURCE·FACTS의 앞단 조건을 거쳐 sink에 이르는 사슬을 적을 때만 한다 - submit 원칙의 유일한 예외).
     # 캐시된 코드(cached=true)로 submit하면 rationale에 그 사실을 적는다(막지는 않는다).
+    # ⏵ 2026-10-11 — 위 「안이면 안 하며」는 v4의 서술이다. v5(이슈 #549 ②)는 앞선 gen이 제외 코드 밖을 받은 적이
+    # 있으면 submit의 poc_sha256으로 그 gen을 지명해 낸다 — 어느 gen도 못 이겼을 때만 안 낸다.
     # v4가 물려받은 v3 = PoV 툴 루프 + 넓은 SOURCE·진입점·도구 출력 꼬리 + 중간 gen의
     # vul 판정 관측(2026-10-05 #354/#386①)이다.
     # 판정 관측은 `run --oracle-submit`일 때만 실린다. 실모델 입력 토큰은 v3 prefix로 잰 값만 있다(v4는
