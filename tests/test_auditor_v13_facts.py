@@ -254,15 +254,15 @@ def _all_templates() -> list[tuple[str, str]]:
     )
 
 
-def test_only_auditor_v13_omits_the_facts_source() -> None:
-    """디스크 전체를 돈다 — 다른 역할(Scout·Critic·PoV)과 Auditor v1~v11의 FACTS는 `source`를
-    그대로 싣는다(기본 `true`)."""
+def test_only_auditor_v13_and_v14_omit_the_facts_source() -> None:
+    """디스크 전체를 돈다 — 다른 역할(Scout·Critic·PoV)과 Auditor v1~v12의 FACTS는 `source`를
+    그대로 싣는다(기본 `true`). ⏵ 2026-10-11 v14(v12 + 같은 변경)가 더해졌다."""
     omitting = {
         (role, version)
         for role, version in _all_templates()
         if not load_prompt(Role(role), version).facts_source
     }
-    assert omitting == {("auditor", "v13")}
+    assert omitting == {("auditor", "v13"), ("auditor", "v14")}
 
 
 def test_build_facts_keeps_the_source_key_by_default() -> None:
