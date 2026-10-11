@@ -1071,8 +1071,9 @@ def test_declared_request_params_ride_the_payload_and_undeclared_add_no_key(
 
 # --- 실패한 응답 원문을 실어 올린다 (#603) ------------------------------------
 #
-# 스키마 소진 때 서버가 준 원문은 어디에도 안 남았다(`error_detail`은 pydantic 메시지의 잘린
-# 조각뿐). 어댑터는 파일을 못 쓰므로 `retry_bodies`처럼 예외에 실어 올리고 상위가 쓴다.
+# 스키마 소진 때 서버가 준 원문은 이 변경 전까지 어디에도 안 남았다(`error_detail`은 pydantic
+# 메시지의 잘린 조각뿐 — ⏵ 2026-10-11 #603이 예외에 실어 올려 상위가 쓴다). 어댑터는 파일을 못
+# 쓰므로 `retry_bodies`처럼 예외에 싣는다.
 
 
 def test_a_schema_parse_error_carries_every_attempts_raw_text(
@@ -1092,8 +1093,10 @@ def test_a_schema_parse_error_carries_every_attempts_raw_text(
     assert caught.value.raw_texts == ('{"nope": 1}', '{"also": "bad"}')
 
 
-def test_a_gateway_rejection_carries_no_raw_text(monkeypatch: pytest.MonkeyPatch) -> None:
-    """게이트웨이 거절(400)은 받은 응답이 없다 — `raw_texts`를 실어 올리지 않는다."""
+def test_a_first_attempt_gateway_rejection_has_no_raw_text_to_carry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 시도가 게이트웨이 거절(400)이면 받은 응답이 없어 `raw_texts`는 `()`다."""
     _raise_http(monkeypatch, _http_error(400, _OVERFLOW))
 
     with pytest.raises(ModelGatewayError) as gateway:
@@ -1153,3 +1156,9 @@ def test_a_gateway_error_after_a_schema_failure_keeps_the_earlier_raw_text(
     with pytest.raises(ModelGatewayError) as first:
         _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
     assert first.value.raw_texts == ()
+
+
+def test_a_gateway_error_built_outside_the_adapter_still_declares_raw_texts() -> None:
+    """어댑터가 속성을 덧붙이지 않아도 `ModelGatewayError`는 `raw_texts`를 가진다."""
+    assert ModelGatewayError("x").raw_texts == ()
+    assert ModelGatewayError("x", raw_texts=("a",)).raw_texts == ("a",)

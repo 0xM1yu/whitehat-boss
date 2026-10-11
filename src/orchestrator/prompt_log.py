@@ -37,8 +37,9 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
   실패 시도 원문은 `write_response`가 `…_response[_retryK].txt`로 남긴다. 재시도가 성공한 호출의 앞
   시도 원문과 성공 응답은 여전히 안 남는다, #603).
   `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로 들어가고 usage·`gpu_ms`는
-  `model_call`에 있다. 사본을 만들면 정본을 물어야 한다.
-  예외 하나 — hop>0 파일의 history에는 앞 홉의 응답 원문(assistant 턴)이 실린다. 응답을
+  `model_call`에 있다. 성공 응답은 사본을 만들면 정본을 물어야 해서 안 남긴다 — 실패한 응답에는
+  정본(파싱된 값)이 없어 그 이유가 적용되지 않는다.
+  또 하나 — hop>0 파일의 history에는 앞 홉의 응답 원문(assistant 턴)이 실린다. 응답을
   기록하려는 것이 아니라 그 홉에 **입력으로** 간 바이트라서다.
 - **호출이 실패해도 남는다.** 호출자가 모델을 부르기 **전에** 쓴다 — 실패 분기가
   "스키마 파싱 실패율"의 분자(시도 단위 `attempts`, 정본은 `trace.py`)에 드는데
