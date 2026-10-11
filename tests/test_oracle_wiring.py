@@ -1450,6 +1450,29 @@ def test_an_uncritiqued_poc_and_an_upheld_poc_tie_on_the_verdict_step() -> None:
     assert got == (uncritiqued, "top_grade", None)
 
 
+def test_a_held_poc_loses_to_an_uncritiqued_poc_even_at_a_higher_grade() -> None:
+    """보류 대 미경유 - 판정 계단이 등급보다 앞서므로 E4 보류가 E0 미경유에 진다."""
+    held = _attempt("f_held", b"\x01h")
+    none = _attempt("f_none", b"\x02none-poc")
+    grades = {"f_held": EvidenceGrade.E4, "f_none": EvidenceGrade.E0}
+    verdicts = {"f_held": 1, "f_none": 0}
+
+    got = runner._designate_final(_ledger_of(held, none), grades, _flat(*grades), verdicts)
+
+    assert got == (none, "critic_verdict", None)
+
+
+def test_a_candidate_without_a_verdict_rank_refuses_the_designation() -> None:
+    """판정 계단을 모르는 후보가 있으면 `grade_unknown`이다 - 모르는 값을 0으로 깔지 않는다."""
+    known = _attempt("f_known", b"\x01known")
+    other = _attempt("f_other", b"\x02other\xfe")
+    grades = {"f_known": EvidenceGrade.E3, "f_other": EvidenceGrade.E3}
+
+    got = runner._designate_final(_ledger_of(known, other), grades, _flat(*grades), {"f_known": 0})
+
+    assert got == (None, "", "grade_unknown")
+
+
 def test_the_finalize_step_hands_the_critic_verdicts_to_the_designation(
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
