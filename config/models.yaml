@@ -680,8 +680,10 @@ models:
     # `source` 사본을 뺀다 — 원문은 산문 SOURCE 블록 하나로 간다(meta `facts_source: false`). body의 Facts
     # 머리 문장 한 줄과 prefix의 `FACTS.source` 한 자리만 다르다(`prompts/auditor/v13/meta.yaml`). 봉투는
     # v11과 같다. v12는 2026-10-10 열린 PR #580(FT Auditor 계약)이 쓰는 번호라 건너뛰었다. v11 문장을 그
-    # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈
-    # run은 0건이다.
+    # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. ~~이 판으로 돈
+    # run은 0건이다.~~ ⏵ 2026-10-11 — 1건이 됐다(run_20261011_0001 ·
+    # docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md). Auditor 호출 20건 ·
+    # Finding 5건. checksum이 0이라 비교표 밖이고 v11 이하와 직접 비교하지 않는다.
     # ⏵ 2026-10-11 — **v14**로 올렸다(이슈 #67 · #578 · 저장소 소유자 결정). v13은 FACTS 변경을 v11 위에 얹어
     # 봉투가 v11 것(`no_signal`이면 `audit` null)이었다 — FT 정답은 v12 계약(`no_signal`에도 `audit`)이라 그
     # 데이터로 학습한 Auditor를 서빙하려면 v12 봉투가 필요하다. v14 = v12 + FACTS에서 `source` 사본을 뺀다(봉투는 v12의 `AuditorProcedureAuditAlwaysAction`).
