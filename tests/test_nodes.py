@@ -1262,18 +1262,46 @@ def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: 
     assert "상한 0" in message
 
 
-def test_an_empty_pov_pool_stays_silent_without_a_pov_seat_or_with_targets(
-    ctx: RunContext,
-) -> None:
-    """좌석이 없으면(`_pov_targets`가 0건이어도 8단계는 원래 안 도는 프로필) 없고, 대상이 1건
-    이상이면 없다."""
+def test_an_empty_pov_pool_stays_silent_without_a_pov_seat(ctx: RunContext) -> None:
+    """좌석이 없는 프로필은 `_pov_targets`가 0건이어도 8단계가 원래 안 돈다 — 문장이 없다."""
     _with_top_n(ctx, 8)
     seatless = {k: v for k, v in ctx.config.profile.roles.items() if k != Role.POV.value}
-    ctx.config = ctx.config.transition(
-        profile=ctx.config.profile.transition(roles=seatless)
-    )
+    ctx.config = ctx.config.transition(profile=ctx.config.profile.transition(roles=seatless))
     assert Role.POV.value not in ctx.config.profile.roles, "주입이 안 먹었다"
     assert _empty_pool_message(ctx, [("find_0001", Verdict.REBUT)]) is None
+
+
+def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_order(
+    ctx: RunContext,
+) -> None:
+    """칸 우선순위와 정규화를 한 번에 문다 — 상한 0 · validated 0, 여섯 Finding이 각자 한 칸:
+    근거 없는 반박(→ `normalize`가 업홀드 → 업홀드 미승격) · 근거 있는 업홀드(미승격) · **판정 실패
+    목록에도 반박이 있는 것**(→ 판정 실패가 먼저) · 근거 있는 반박 · 보류 · 판정 없음."""
+    _with_top_n(ctx, 0)
+    state = runner._Accumulator()
+    plan = {
+        "find_0001": (Verdict.REBUT, False),
+        "find_0002": (Verdict.UPHOLD, True),
+        "find_0003": (Verdict.REBUT, True),
+        "find_0004": (Verdict.REBUT, True),
+        "find_0005": (Verdict.NEED_EVIDENCE, True),
+        "find_0006": (None, True),
+    }
+    for finding_id, (verdict, grounded) in plan.items():
+        state.update(_finding(finding_id, state=FindingState.QUEUED, confidence=0.9))
+        if verdict is not None:
+            state.decisions[finding_id] = (
+                _critic_decision(finding_id, verdict, grounded=grounded),
+            )
+    state.critic_failed_ids.add("find_0003")
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert state.pov_pool_empty is not None
+    assert state.pov_pool_empty.startswith(
+        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류 1 · 판정 실패 1 · Critic 미경유 1"
+        " · 업홀드 미승격 2 · pov_attempt_top_n 0."
+    ), state.pov_pool_empty
 
 
 def test_an_empty_pov_pool_stays_silent_when_a_target_exists(ctx: RunContext) -> None:
