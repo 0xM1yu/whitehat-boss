@@ -189,6 +189,9 @@ models:
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
+    # ⏵ 2026-10-12 — 「안 쟀다」는 낡았다: `run_20261011_0001`(vast · 순차)의 Critic 호출 1이 58,156 토큰(두 시도 합)을
+    # 515 s에 냈다 — ≈113 tok/s(계산값 · 시도별 시간은 trace에 없다 · `config/budgets.yaml`의 같은 날짜 ⏵). 12는 그대로
+    # 안 잰 가정이고, 이 값은 동시 8이 아니라 순차 1의 값이라 그 가정을 대신하지 않는다.
     # 달리 여유 배수(× 1.3)를 안 적었다.
     # 지금(4,096 · 순차)은 기본 300 s로도 든다 — 2026-09-12 토큰 회계 보고서
     # (`docs/experiments/harness/2026-09-12-critic-gptoss-token-accounting-atom.md`)가 같은 폭주를
@@ -680,9 +683,17 @@ models:
     # `source` 사본을 뺀다 — 원문은 산문 SOURCE 블록 하나로 간다(meta `facts_source: false`). body의 Facts
     # 머리 문장 한 줄과 prefix의 `FACTS.source` 한 자리만 다르다(`prompts/auditor/v13/meta.yaml`). 봉투는
     # v11과 같다. v12는 2026-10-10 열린 PR #580(FT Auditor 계약)이 쓰는 번호라 건너뛰었다. v11 문장을 그
-    # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈
-    # run은 0건이다.
-    prompt_template_version: "v13"
+    # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. ~~이 판으로 돈
+    # run은 0건이다.~~ ⏵ 2026-10-11 — v13 Auditor 호출이 있는 run은 넷(run_20261010_0002·0003·0004 · run_20261011_0001 —
+    # 호출 1·14·8·20 · docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §1). 0~9단계를
+    # 완주한 것은 run_20261011_0001 하나(Auditor 호출 20 · Finding 5). checksum이 0이라 전부 비교표 밖이고
+    # v11 이하와 직접 비교하지 않는다.
+    # ⏵ 2026-10-11 — **v14**로 올렸다(이슈 #67 · #578 · 저장소 소유자 결정). v13은 FACTS 변경을 v11 위에 얹어
+    # 봉투가 v11 것(`no_signal`이면 `audit` null)이었다 — FT 정답은 v12 계약(`no_signal`에도 `audit`)이라 그
+    # 데이터로 학습한 Auditor를 서빙하려면 v12 봉투가 필요하다. v14 = v12 + FACTS에서 `source` 사본을 뺀다(봉투는 v12의 `AuditorProcedureAuditAlwaysAction`).
+    # body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`prompts/auditor/v14/meta.yaml`). v13의
+    # 요청 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 규칙 1). 이 판으로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-11).
+    prompt_template_version: "v14"
     fallback: null
     benchmark:
       measured_at: null
