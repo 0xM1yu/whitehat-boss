@@ -850,6 +850,8 @@ class _Accumulator:
     #
     # 위 `ne_absorbed`와 같은 자리다 — 러너가 세고 경고·리포트가 그 값을 그대로 받는다.
     pov_results: dict[str, str] = field(default_factory=dict)
+    # 좌석은 있는데 8단계 대상이 0건일 때의 사유 한 문장(`_pov_pool_empty_reason`), 아니면 `None`.
+    pov_pool_empty: str | None = None
     # 채점기(oracle)의 모든 vul 시도와 최종 지정 단계 (#386). 채점기를 안 켠 run에서는 비어 있고
     # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
     # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
@@ -1170,6 +1172,8 @@ def run_pipeline(
     pov_shortfall = _pov_shortfall_warning(state.pov_results)
     if pov_shortfall is not None:
         warnings.append(pov_shortfall)
+    if state.pov_pool_empty is not None:
+        warnings.append(state.pov_pool_empty)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1353,6 +1357,8 @@ def _analyze(
     # PoV는 프로필이 pov 좌석을 선언할 때만 돈다. **`served_models()`가 아니라 `profile.roles`로
     # 본다** — fake pov(dev_*)도 좌석이라 라우팅이 돌아야 dev_fake로 검증된다(served면 fake 빠짐).
     pov_targets = _pov_targets(ctx, state, validated)
+    if not pov_targets and Role.POV.value in ctx.config.profile.roles:
+        state.pov_pool_empty = _pov_pool_empty_reason(ctx, state, validated)
     if pov_targets and Role.POV.value in ctx.config.profile.roles:
         swap = ctx.config.swap
         # pov 모델 교대는 pov가 `swap.swappable`에 있을 때만 부른다 — **이 `if`가 헛교대를 막는
@@ -1504,6 +1510,51 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     return finding_id in state.critic_failed_ids or any(
         gate.normalize(decision) is Verdict.REBUT
         for decision in state.decisions.get(finding_id, ())
+    )
+
+
+def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
+    """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
+    왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는
+    K>0에서 풀에 들므로(PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
+    정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
+
+    ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
+    채점기를 붙인 run은 대상이 0건이어도 `_finalize_oracle`이 8단계 span 안에서 `oracle_final`을
+    남긴다(리뷰 #606)."""
+    # 풀이 비면 `validated`도 비므로 이 칸(`validated {len}`)은 구조상 0이다 — 방어로 둔다.
+    # 보류 칸에는 verdict 파서 폴백이 섞인다 — 못 읽은 verdict는 `to_decision`이 `need_evidence`로
+    # 보낸다(`schemas/decision.py`). 가르는 값은 trace `critic_verdict_unmapped` 건수다(계수기는
+    # 두지 않는다: K>0에서 이 칸은 0이다).
+    inside = {f.finding_id for f in validated}
+    rebut = hold = failed = unjudged = other = 0
+    for finding_id in state.findings:
+        if finding_id in inside:
+            continue
+        verdicts = {gate.normalize(d) for d in state.decisions.get(finding_id, ())}
+        if finding_id in state.critic_failed_ids:
+            failed += 1
+        elif Verdict.REBUT in verdicts:
+            rebut += 1
+        elif Verdict.NEED_EVIDENCE in verdicts:
+            hold += 1
+        elif not verdicts:
+            unjudged += 1
+        else:
+            other += 1
+    limit = ctx.config.thresholds.pov_attempt_top_n
+    rest = f" · 업홀드 미승격 {other}" if other else ""
+    why = (
+        "pov_attempt_top_n이 0이라 validated 밖은 후보가 아니다(상한 0)"
+        if limit <= 0
+        else "validated 밖 후보도 Critic이 모두 밀어 냈거나 없다"
+    )
+    return (
+        f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
+        f" · 보류(파서 폴백 포함) {hold} · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest}"
+        f" · pov_attempt_top_n {limit}. "
+        f"8단계 PoV는 한 건도 시도되지 않았다({why})"
     )
 
 
@@ -1846,6 +1897,9 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     그 밖의 형은 run과 함께 보고서도 잃는다.
     ② **PoC가 「터지는가」는 아무것도 안 말한다.** 여기서 센 것은 바이트의 존재와 회수
     가능성뿐이다. 그 판정은 오라클이 낸다(범위 밖).
+
+    ⏵ 2026-10-11 — 빈 맵 중 「좌석은 있는데 대상 0건」은 `pov_pool_empty`가 따로 말한다
+    (이 함수는 그대로 `None`을 돌려준다).
     """
     # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
     # ① 8단계 앞에서 멈췄다 ② `_pov_targets`가 0건이라 `_run_pov`가 안 불렸다(VALIDATED가 0건이고
@@ -1855,6 +1909,8 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
     # 대상이 0건」을 따로 말하려면 필드가 하나 더 필요하다(범위 밖 — 이 경고의 명제는 「PoV를
     # 시도한 run」에 한정이다).
+    # ⏵ 2026-10-11 — `_Accumulator.pov_pool_empty`가 ② 갈래(좌석 있음 · 대상 0건)를 따로 말한다
+    # (`_pov_pool_empty_reason`). ①③은 이 맵으로도 여전히 못 가른다.
     if not results:
         return None
     stops = Counter(results.values())
