@@ -200,7 +200,7 @@ class OpenAICompatModelClient:
         schema: type[BaseModel],
         history: Sequence[ChatTurn] = (),
     ) -> ModelResult:
-        last_error: Exception | None = None
+        last_error: ValidationError | None = None
         body = prompt.body
         # **재시도분까지 더한다.** 스키마 파싱에 실패한 응답도 서버는 이미 만들어 냈고
         # 그 GPU 시간과 토큰은 실제로 쓰였다. 마지막 시도만 세면 재시도가 잦은 모델일수록
@@ -328,6 +328,11 @@ class OpenAICompatModelClient:
             attempts=self.retries + 1,
             retry_bodies=tuple(retry_bodies),
             attempt_log=tuple(attempt_log),
+            # 마지막 시도의 오류를 `include_input=False`·`include_url=False`로 만든 텍스트 —
+            # 모델에게 다시 보여도 되는 유일한 사유다(`str(exc)`는 응답 원문 조각과 URL을 든다).
+            model_error_text=_bounded_error_text(
+                last_error.errors(include_url=False, include_input=False)
+            ),
         )
 
     def _request_payload(

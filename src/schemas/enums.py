@@ -336,11 +336,13 @@ class PovStopReason(StrEnum):
 
     루프 제어 셋 — `SUBMITTED`(모델이 submit) · `REPEAT_SPEC`(이미 낸 gen과 같은 PoC 바이트 재생성)
     · `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
-    계약대로) — `PARSE_FAILED`(스키마 파싱 실패 · ⏵ 2026-10-11 **마지막 홉에서만 선다** — 앞 홉의
-    실패는 홉 하나를 쓰고 루프가 다시 묻는다, #550) · `CONTEXT_OVERFLOW`
-    (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이). **서버 쪽 사건(status 없음·5xx)과
-    예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라 여기 값이 없다(`NeStopReason`이
-    `BUDGET_EXHAUSTED`를 흡수한 것과 다른 점: pov는 추가형이라 run-정지 사건을 안 삼킨다).
+    계약대로) — `PARSE_FAILED`(스키마 파싱 실패 · ⏵ 2026-10-11 **마지막 홉에서, 또는 전 시도가
+    `finish_reason == "length"`로 끝난 홉에서 선다** — 그 밖의 앞 홉 실패는 홉 하나를 쓰고
+    루프가 다시 묻는다, #550. 둘은 값이 같고 이벤트의 `parse_truncated` 키로 가른다)
+    · `CONTEXT_OVERFLOW` (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이).
+    **서버 쪽 사건(status 없음·5xx)과 예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라
+    여기 값이 없다(`NeStopReason`이 `BUDGET_EXHAUSTED`를 흡수한 것과 다른 점: pov는 추가형이라
+    run-정지 사건을 안 삼킨다).
 
     이 값을 내는 것은 `runner._run_pov_hops`이고, 홉 이벤트(`POV_HOP`)의 `stop_reason`으로
     남는다(`NeStopReason` ↔ `SCOUT_HOP`과 같은 짝).

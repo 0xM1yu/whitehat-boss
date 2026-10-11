@@ -121,6 +121,7 @@ from src.interfaces.model_client import (
     ModelSwapError,
     SchemaParseError,
     error_detail,
+    truncate_detail,
 )
 from src.interfaces.oracle import Oracle
 from src.interfaces.retrieval import RetrievalResult
@@ -2372,8 +2373,15 @@ def _run_pov_hops(
     호출부 20여 곳이 쥐고 있다.
     ⏵ **2026-10-11 (#550) — 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다**: `stop_reason` 없는
     `POV_HOP`을 내고 `[스키마 오류]` 노트(+ 아직 못 받은 관측)를 실어 같은 자리를 다시 묻는다.
-    `last_poc`·`seen`은 그대로다. `hop >= pov_tool_hops`(마지막 홉)의 실패만 `PARSE_FAILED`로
-    선다. 게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
+    `last_poc`·`seen`은 그대로다. `PARSE_FAILED`로 서는 것은 둘뿐이다 — `hop >= pov_tool_hops`
+    (마지막 홉)의 실패, 또는 **그 호출의 모든 시도가 `finish_reason == "length"`로 끝난** 실패
+    (`_pov_parse_truncated`)다. 후자는 재질문 없이 서고 종단 `POV_HOP`이 `parse_truncated`를
+    싣는다 — 같은 프롬프트가 같은 상한에 닿는 것이 체계적일 수 있어서다(그 가능성은 이슈 #550의
+    find_0005 한 건에서 봤고 재질문이 절단을 살리는 비율은 측정한 run이 0이다). 일부 시도만
+    `length`이거나 못 쟀으면(`None`·빈 `attempt_log`) 절단으로 치지 않고 재질문한다.
+    ⚠ **연속 파싱 실패의 횟수 상한은 없다** — 비절단 실패는 매 홉 이어질 수 있어
+    `pov_tool_hops + 1`번까지 묻는다(이슈 #613이 쫓는다).
+    게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). hop0 재질문은 본문 **끝**에
     홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
@@ -2468,7 +2476,8 @@ def _run_pov_hops(
                 if reason is None:
                     raise
                 latency_s = (ctx.monotonic_ms() - started) / 1000.0
-                if reason is PovStopReason.PARSE_FAILED and hop < pov_hops:
+                truncated = _pov_parse_truncated(exc)
+                if reason is PovStopReason.PARSE_FAILED and hop < pov_hops and not truncated:
                     # 파싱 실패는 **홉 하나를 쓴 것**이다(#550) — `stop_reason` 없이 이벤트를 내고
                     # 같은 자리를 다시 묻는다. `last_poc`·`seen`·`prev`는 그대로다.
                     _emit_pov_hop(
@@ -2494,6 +2503,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
+                    parse_truncated=truncated,
                 )
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
             action = current.action
@@ -2611,9 +2621,29 @@ def _pov_parse_retry_note(
     """파싱 실패 뒤 재질문에 싣는 노트 — 홉 줄(`hop_header` 판만) + `[스키마 오류] <사유>`.
 
     자리는 둘이다: hop≥1이면 followup의 **머리**(노트 다음에 직전 관측), hop 0이면 첫 본문의 **끝**
-    (`open_hop(retry_note=)`). 사유는 `error_detail`로 512자에 자른다."""
+    (`open_hop(retry_note=)`). 사유는 어댑터가 `include_input=False`로 만든 `model_error_text`를
+    512자로 자른 것이다 — 예외 문자열(`str(exc)`)을 싣지 않는다: 응답 원문 조각(`input_value`)과
+    pydantic URL을 든다. 그 텍스트가 비면(Fake) 고정 문구다. 모든 시도가 `length`면 재질문이
+    없어 이 함수는 불리지 않는다(`_pov_parse_truncated`)."""
     line = f"{_pov_hop_line(hop, last_hop)}\n" if with_hop_line else ""
-    return f"{line}[스키마 오류] {error_detail(exc)}"
+    model_text = getattr(exc, "model_error_text", "")
+    detail = truncate_detail(model_text) if model_text else _PARSE_NOTE_NO_TEXT
+    return f"{line}[스키마 오류] {detail}"
+
+
+# `SchemaParseError.model_error_text`가 빌 때(Fake·옛 예외)의 노트 사유 — 예외 문자열을 대신 싣지
+# 않는다: 어댑터의 `str(exc)`는 응답 원문 조각(`input_value`)과 pydantic URL을 든다.
+_PARSE_NOTE_NO_TEXT = "응답이 PovAction 스키마를 만족하지 못했다"
+
+
+def _pov_parse_truncated(exc: Exception) -> bool:
+    """파싱 실패가 **모든 시도가 `finish_reason == "length"`로 끝난** 것인가 — 서버의 말이다.
+
+    빈 `attempt_log`(Fake·잃음)·`None`·`length` 밖 사유가 하나라도 있으면 거짓이다 — 안 쟀거나
+    일부만 절단이면 절단이라 단정하지 않는다(CLAUDE.md §0). 참이면 루프가 같은 프롬프트를 다시
+    묻지 않는다."""
+    log = exc.attempt_log if isinstance(exc, SchemaParseError) else ()
+    return bool(log) and all(a.finish_reason == "length" for a in log)
 
 
 def _pov_observation(
@@ -2685,13 +2715,14 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     `_is_droppable` 판정 그대로).
 
     버릴 수 있는 게이트웨이 실패는 흡수해 이 finding만 건너뛰고, **스키마 파싱 실패는 마지막
-    홉에서만** finding을 건너뛴다(앞 홉의 실패는 루프가 홉 하나를 쓰고 다시 묻는다 — #550),
+    홉에서, 또는 전 시도가 `length`로 끝났을 때** finding을 건너뛴다(그 밖의 앞 홉 실패는 루프가 홉
+    하나를 쓰고 다시 묻는다 — #550),
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
     run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
     ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
     ⏵ 2026-10-11 이 함수는 **사유만** 가른다 — `PARSE_FAILED`로 실제 서는지는 루프가 홉 여유를 보고
-    정한다(마지막 홉만 선다 · `_run_pov_hops`, #550).
+    정한다(마지막 홉이거나 전 시도가 절단일 때 선다 · `_run_pov_hops`, #550).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
@@ -2719,6 +2750,7 @@ def _emit_pov_hop(
     failed: tuple[Exception, float | None] | None = None,
     wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
+    parse_truncated: bool = False,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
@@ -2759,6 +2791,8 @@ def _emit_pov_hop(
             data["latency_s"] = latency_s
         data["error"] = type(exc).__name__
         data["error_detail"] = error_detail(exc)
+    if parse_truncated:
+        data["parse_truncated"] = True
     ctx.trace.emit(
         EventKind.POV_HOP,
         stage=Stage.VALIDATE,
