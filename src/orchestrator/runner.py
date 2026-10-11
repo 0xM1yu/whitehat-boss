@@ -1503,7 +1503,7 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
     왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
     쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는 지금은
     밀어 내는 쪽이지만 #604가 들이는 쪽으로 바꾸면 K>0에서 보류 칸은 항상 0이 된다(K=0에서는 정보
-    칸). 이 함수와 독립으로 센다. K = `pov_attempt_top_n`."""
+    칸). `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`."""
     # 풀이 비면 `validated`도 비므로 이 칸(`validated {len}`)은 구조상 0이다 — 방어로 둔다.
     inside = {f.finding_id for f in validated}
     rebut = hold = failed = unjudged = other = 0
