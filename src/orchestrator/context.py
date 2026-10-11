@@ -358,6 +358,17 @@ class RunContext:
                 retry_fields = {
                     "retry_record_error": f"{type(record_exc).__name__}(errno={record_exc.errno})"
                 }
+            # 실패한 시도의 응답 원문도 같은 가드로 남긴다(#603). 성공 호출은 안 쓴다.
+            try:
+                response_fields = self._record_failed_responses(
+                    role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
+                )
+            except OSError as record_exc:
+                response_fields = {
+                    "response_record_error": (
+                        f"{type(record_exc).__name__}(errno={record_exc.errno})"
+                    )
+                }
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,
@@ -370,6 +381,7 @@ class RunContext:
                 hop=hop,
                 **prompt_fields,
                 **retry_fields,
+                **response_fields,
                 schema=schema.__name__,
                 ok=False,
                 error=type(exc).__name__,
@@ -604,6 +616,27 @@ class RunContext:
                 history=history,
             )
         return {"sent_sha256": last_digest}
+
+    def _record_failed_responses(
+        self, *, role: Role, stage: Stage, raw_texts: tuple[str, ...], hop: int = 0
+    ) -> dict[str, TraceValue]:
+        """스키마 실패한 시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
+
+        **실패 경로만 부른다** — 성공 응답은 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
+        이벤트 키가 늘지 않는다.
+        """
+        if not raw_texts or self.prompts is None:
+            return {}
+        written = [
+            self.prompts.write_response(
+                role=role.value, stage=int(stage), index=index, hop=hop, text=text
+            )
+            for index, text in enumerate(raw_texts)
+        ]
+        return {
+            "response_refs": json.dumps([ref for ref, _ in written], separators=(",", ":")),
+            "response_sha256": json.dumps([digest for _, digest in written], separators=(",", ":")),
+        }
 
     # --- 도구 ---
 

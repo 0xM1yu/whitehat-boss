@@ -471,3 +471,96 @@ def test_dry_run_leaves_no_prompt_artifacts(tmp_path: Path) -> None:
     run_dir, _ = _run(tmp_path, dry_run=True)
 
     assert not (run_dir / DIR_NAME).exists()
+
+
+# --- 실패한 응답 원문 (#603) --------------------------------------------------
+
+
+def test_a_failed_response_lands_beside_its_prompt_with_the_same_sequence_number(
+    tmp_path: Path,
+) -> None:
+    """응답 파일은 직전 `write`와 같은 순번을 쓰고 카운터를 올리지 않는다. LF·바이트 동일."""
+    log = PromptLog(tmp_path)
+    raw0, raw1 = "첫 응답\r\n원문", '{"a": 1}'
+
+    log.write(role="pov", stage=8, prompt=PROMPT)
+    log.write(role="pov", stage=8, prompt=PROMPT, hop=1)
+    ref0, digest0 = log.write_response(role="pov", stage=8, index=0, hop=1, text=raw0)
+    ref1, digest1 = log.write_response(role="pov", stage=8, index=1, hop=1, text=raw1)
+    nxt, _ = log.write(role="auditor", stage=5, prompt=PROMPT)
+
+    assert ref0 == f"{DIR_NAME}/0002_pov_hop1_response.txt"
+    assert ref1 == f"{DIR_NAME}/0002_pov_hop1_response_retry1.txt"
+    assert nxt == f"{DIR_NAME}/0003_auditor.md"  # 응답이 순번을 안 먹었다
+    assert (tmp_path / ref0).read_bytes() == raw0.encode("utf-8")  # 바이트 그대로(\r 보존)
+    assert (tmp_path / ref1).read_bytes() == raw1.encode("utf-8")
+    assert digest0 == sha256_text(raw0) and digest1 == sha256_text(raw1)
+    assert b"\r\n" in (tmp_path / ref0).read_bytes()  # 응답 안의 \r\n은 건드리지 않는다
+
+
+class _ExhaustedWithRawClient:
+    """스키마 소진 — 두 시도의 원문을 예외에 싣는다."""
+
+    RAWS = ('{"action": "answer"}', '{"action": "answer", "x": 1}\n')
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        raise SchemaParseError(
+            "소진",
+            usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+            gpu_ms=1000,
+            gpu_ms_source="request_wall_clock",
+            attempts=2,
+            retry_bodies=("재시도 본문",),
+            raw_texts=self.RAWS,
+        )
+
+
+def test_call_model_writes_the_failed_responses_and_the_trace_points_at_them(
+    tmp_path: Path,
+) -> None:
+    """실패 호출: 응답 파일이 원문 그대로 남고 `model_call`이 `response_refs`·sha로 가리킨다.
+    성공 호출에는 파일도 필드도 없다."""
+    ctx = _context(prompts=PromptLog(tmp_path), models=_ExhaustedWithRawClient())
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    (call,) = _model_calls(ctx)
+    refs = json.loads(call["response_refs"])  # JSON 배열 문자열 — `TraceValue`가 스칼라다
+    assert refs == [
+        f"{DIR_NAME}/0001_scout_response.txt",
+        f"{DIR_NAME}/0001_scout_response_retry1.txt",
+    ]
+    for ref, raw in zip(refs, _ExhaustedWithRawClient.RAWS, strict=True):
+        assert (tmp_path / ref).read_bytes() == raw.encode("utf-8")
+    assert json.loads(call["response_sha256"]) == [
+        sha256_text(r) for r in _ExhaustedWithRawClient.RAWS
+    ]
+
+    ok_ctx = _context(prompts=PromptLog(tmp_path / "ok"))
+    ok_ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (ok,) = _model_calls(ok_ctx)
+    assert "response_refs" not in ok and "response_sha256" not in ok
+    assert not list((tmp_path / "ok").rglob("*_response*"))
+
+
+def test_a_failed_response_write_keeps_the_original_error_and_lands_as_a_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """응답 쓰기가 OSError여도 원 예외·청구·이벤트는 살고 사유가 `response_record_error`다."""
+    prompts = PromptLog(tmp_path)
+
+    def disk_full(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(prompts, "write_response", disk_full)
+    ctx = _context(prompts=prompts, models=_ExhaustedWithRawClient())
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    assert ctx.ledger.input_tokens == 300
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is False
+    assert call["response_record_error"] == "OSError(errno=28)"
+    assert "response_refs" not in call

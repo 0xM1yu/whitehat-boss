@@ -182,6 +182,7 @@ class SchemaParseError(RuntimeError):
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
         attempt_log: "tuple[AttemptRecord, ...]" = (),
+        raw_texts: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.usage = usage
@@ -193,6 +194,8 @@ class SchemaParseError(RuntimeError):
         # 시도별 (출력 토큰, 종료 사유). 소진한 호출이 절단이었는지를 서버의 말로 직접 가른다
         # (#550) — `usage`는 시도를 합친 값이라 못 한다.
         self.attempt_log = attempt_log
+        # 시도별 응답 원문 — 실패 경로만 든다. 상위가 응답 파일로 남긴다(#603).
+        self.raw_texts = raw_texts
 
 
 class Prompt(HarnessModel):

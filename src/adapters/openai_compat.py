@@ -228,6 +228,8 @@ class OpenAICompatModelClient:
         # 아닌 서버의 직접 확인이다(`AttemptRecord`) — 합 65,536처럼 상한의 2배면 두 시도가 정확히
         # 상한이라는 것까지는 산술로 이미 나온다.
         attempt_log: list[AttemptRecord] = []
+        # 스키마 검증에 실패한 시도의 응답 원문 — 소진 때 예외에 실어 올린다(#603).
+        raw_texts: list[str] = []
         attempt = 0
         for attempt in range(1, self.retries + 2):
             if attempt > 1:
@@ -270,6 +272,7 @@ class OpenAICompatModelClient:
                 value = schema.model_validate_json(raw)
             except ValidationError as exc:
                 last_error = exc
+                raw_texts.append(raw)
                 # 재요청에는 스키마 오류 메시지만 덧붙인다(agent-contracts.md §1).
                 # 이전 응답 원문을 다시 넣으면 같은 오류를 반복하게 만든다.
                 #
@@ -328,6 +331,7 @@ class OpenAICompatModelClient:
             attempts=self.retries + 1,
             retry_bodies=tuple(retry_bodies),
             attempt_log=tuple(attempt_log),
+            raw_texts=tuple(raw_texts),
         )
 
     def _request_payload(
