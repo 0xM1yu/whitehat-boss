@@ -1695,7 +1695,7 @@ def test_the_final_slot_goes_by_confidence_not_by_which_poc_crashed() -> None:
     grades = {"f_win": EvidenceGrade.E3, "f_lose": EvidenceGrade.E3}
 
     picked, designation, reason = runner._designate_final(
-        ledger, grades, {"f_win": 0.4, "f_lose": 0.9}
+        ledger, grades, {"f_win": 0.4, "f_lose": 0.9}, {"f_win": 1, "f_lose": 1}
     )
 
     assert (picked, designation, reason) == (loser, "top_confidence", None)

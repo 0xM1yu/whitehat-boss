@@ -45,8 +45,9 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 **넷**이다:
 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 낼 PoC가 없던 것,
 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
-`grade_unknown`(후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 **규칙이
-거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는 둘을 같이 본다.
+`grade_unknown`(후보 중에 내부 근거 등급·`confidence`·Critic 판정 계단 중 하나라도 모르는 것이
+있어 **규칙이 거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는
+셋을 같이 본다 · ⏵ 2026-10-11 판정 계단이 셋째로 들었다).
 현 러너로는 닿지 않는 방어 분기다). 어느 쪽이든 `fix` 다리와 판정은 안 돈다.
 
 ⏵ 2026-10-04 — **`grade_tie`는 없어졌다**(그래서 다섯이 아니라 넷이다). 후보가 둘 이상일 때
@@ -55,6 +56,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 PoC 사이의 동점이 남지 않는다 — 거부할 자리가 없어져 사유도 상수도 지웠다. 바꾼 이유: 실측
 run에서 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그
 run의 점수를 0으로 만들었다.
+⏵ 2026-10-11 — 사슬 맨 앞에 **Critic 판정**이 붙어 다섯이다(`critic_verdict`: 보류 PoC는
+미경유 PoC 뒤, 미경유 PoC는 uphold PoC 뒤다 — ⏵ 2026-10-12 미경유를 uphold에서 떼었다).
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -111,8 +114,9 @@ ERROR_EMPTY_POC = "empty_poc"
 OBSERVATION_NO_VERDICT = "no_verdict"
 
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
-# 후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 규칙이 거부했다. 이름은 등급
-# 미상에서 굳었지만 `runner._designate_final`의 검사가 둘을 같이 본다. 모르는 값을 0으로 깔면
+# 후보 중에 내부 근거 등급·`confidence`·Critic 판정 계단 중 하나라도 모르는 것이 있어 규칙이
+# 거부했다. 이름은 등급 미상에서 굳었지만 `runner._designate_final`의 검사가 셋을 같이 본다
+# (⏵ 2026-10-11 판정 계단이 셋째로 들었다). 모르는 값을 0으로 깔면
 # 없는 근거로 고르게 되기 때문이다(CLAUDE.md §0). 현 러너로는 닿지 않는 방어 분기다.
 REASON_GRADE_UNKNOWN = "grade_unknown"
 
@@ -143,8 +147,10 @@ NO_CRASH_VUL_EXIT_CODES = (0, 71, 300)
 # 싣기로 했다(§0 — 지정 근거를 적는다). 앞 둘은 고를 것이 없던 경우고, 뒤 넷은 사슬의 **어느
 # 단계가** 둘을 갈랐는지다. `poc_digest`가 찍힌 run은 등급·`confidence`·바이트 수가 전부 같아
 # **내용 해시로** 갈린 것이다 — 약한 근거이고, 그렇게 적혀 있어야 읽는 쪽이 안다.
+# ⏵ 2026-10-11 — 사슬 맨 앞에 `critic_verdict`가 붙어 일곱이고 사슬은 다섯이다.
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택이 없었다
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
+DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유 < 보류 순으로 앞선다
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
 DESIGNATION_SMALLEST_POC = "smallest_poc"  # 등급·confidence 동점 — 바이트가 작은 쪽
@@ -387,7 +393,7 @@ class OracleLedger:
             "vul_submitted": self.submitted,
             "vul_failed": self.failed,
             "final": STATUS_NOT_REACHED if self.final is None else self.final.status,
-            # `none`의 사유 — 후보가 여럿인데 등급·`confidence`를 몰라 못 가른 run
+            # `none`의 사유 — 후보가 여럿인데 등급·`confidence`·Critic 판정을 몰라 못 가른 run
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
@@ -495,8 +501,9 @@ def _none_warning(final: FinalAttempt, candidates: int) -> str:
     tail = "이 run은 채점 점수가 없다"
     if final.reason == REASON_GRADE_UNKNOWN:
         return (
-            f"vul 제출이 성공한 최종 후보가 {candidates}건인데 그중 내부 근거 등급 또는 "
-            "confidence를 모르는 것이 있어 최종 PoC를 지정하지 않았다 - 모르는 값으로 고르면 "
+            f"vul 제출이 성공한 최종 후보가 {candidates}건인데 그중 내부 근거 등급·"
+            "confidence·Critic 판정 중 모르는 것이 있어 최종 PoC를 지정하지 않았다 - "
+            "모르는 값으로 고르면 "
             "없는 근거로 "
             f"고르는 것이다. fix 다리와 판정 조회를 돌리지 않았다 - {tail}"
         )
