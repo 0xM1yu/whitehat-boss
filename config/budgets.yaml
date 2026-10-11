@@ -255,8 +255,10 @@ thresholds:
   # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 상한. **0은 종전 동작이고
   # 미실측 표시가 아니다** — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다.
   #
-  # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박·보류(`need_evidence`)로
-  # 판정한 것과 판정 호출이 실패해 버려진 것은 뺀다(`runner._pov_targets`). 드는 것은 Critic을
+  # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박으로 판정한 것과 판정 호출이
+  # 실패해 버려진 것은 뺀다(`runner._pov_targets`). ⏵ 2026-10-11 — 보류(`need_evidence`)는 이제 들고
+  # 정렬·최종 지정에서 uphold, 미경유, 보류 순이다(이슈 #604 · ⏵ 2026-10-12 — 미경유를 uphold와
+  # 갈라 그 사이에 뒀다, (b)의 순서). 드는 것은 Critic을
   # 안 거친 Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어
   # `hypothesized`에 멈춘 것(F-9) 등이다.
   #
@@ -284,7 +286,11 @@ thresholds:
   #   PoC가 0건이라 채점이 시작조차 안 됐다.** 위 「켤 때의 값은 미실측이다」는 맞지만, 0은
   #   미실측이 아니라 **「안 돈다」가 확정된 값**이다 — 재려면 먼저 켜야 한다.
   #   8은 `critic_top_n: 8`과 같게 맞춘 값이다(계산값 — Critic이 본 Finding 전부를 PoV 풀이
-  #   덮는다). `pov_tool_hops: 16`이라 finding당 1+16홉 -> PoV 모델 호출 최대 136회(계산값).
+  #   덮는다. ⏵ 2026-10-11 — 반박과 판정 호출이 실패해 버려진 것(`critic_failed_ids`)은 풀에서
+  #   빠지므로 「전부」는 그 둘이 아닌 것에 한한다, 이슈 #604. ⏵ 2026-10-12 — 풀은 Critic 미경유
+  #   Finding도 담고 uphold → 미경유 → 보류 순으로 자르므로 합이 8을 넘으면 보류가 `rest[:8]`
+  #   밖으로 밀린다 — 「전부 덮는다」는 합이 8 이하일 때만 선다).
+  #   `pov_tool_hops: 16`이라 finding당 1+16홉 -> PoV 모델 호출 최대 136회(계산값).
   #   미실측: 후보가 **스스로 서기까지의** 홉·토큰·벽시계 0건(잰 한 건은 홉 상한에 끊겼다 - 위).
   #   `default.gpu_seconds`는 **7,200,000**이고 ⏵ **PoV
   #   폭주를 먼저 묶는 것은 `output_tokens`다**(위 `default` 주석의 「실효 상한」 단락).

@@ -16,9 +16,10 @@ Protocol이 넘는다 — `swap_to`·`resolve_requests`와 같은 자리다. **�
 run당 한 번만 부른다.
 중간 PoC의 `vul` 판정 조회는 `query_vul`로 분리해 다음 PoV 홉에 원시 종료 코드만 돌려준다.
 최종 하나가 어느 후보인가는 `runner._designate_final`이 정한다 - 후보가 하나뿐이면 그
-하나고, **둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순서**(내부 근거 등급 →
-`confidence` → 작은 바이트 → PoC 해시)**로 하나를 고른다**. 등급 또는 `confidence`를 모르는 후보가
-있으면 지정하지 않는다(그 함수 docstring — ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다).
+하나고, **둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순서**
+(Critic 판정 → 내부 근거 등급 → `confidence` → 작은 바이트 → PoC 해시)**로 하나를 고른다**.
+등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다(그 함수 docstring —
+⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다).
 🔴 **그 규칙은 이 파일이 내는 값을 안 읽는다** — `VulSubmission.response_exit_code`와 중간
 `query_vul` 값이 지정 시점에 손에 있는데도다. `query_vul`은 모델 되먹임일 뿐이고 `fix`와 최종
 판정은 채점자의 몫이다. 각 제출 PoC마다 `fix`를 내는 것은 채점자의 일을 N번 하는 것이다.
@@ -52,7 +53,7 @@ class VulSubmission:
     `response_exit_code`는 **제출 응답에 실린 값**이다. 서버가 타임아웃(300)을 응답에서만 0으로
     덮으므로(이슈 #384) 판정이 아니다 — 사람이 후보를 훑을 때 보라고 기록할 뿐이고, 어느 PoC를
     최종으로 지정할지에도 쓰지 않는다(`runner._designate_final`) — 그 사슬이 읽는 것은 하네스가
-    만든 값(내부 근거 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다.
+    만든 값(Critic 판정 · 내부 근거 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다.
 
     `cached`는 `vul` 다리가 **이 호출 전에 이미 있던 코드를 돌려준 것인지**다 — 서버는 같은
     `(agent_id, task_id, sha256)`에서 그 모드의 코드가 이미 있으면 컨테이너를 안 돌리고 옛 코드를
