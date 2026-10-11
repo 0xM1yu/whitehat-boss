@@ -468,6 +468,8 @@ class EventKind(StrEnum):
     # (subject_id, role, hop) 사슬 — `context.py`). gen/inspect 홉은 `action`과 도구 결과
     # (`tool`·`tool_ok`·`exit_code`·`evidence_kind`)를, 실패 홉은 `error`·`schema_ok`를, 종단 홉은
     # `stop_reason`(`PovStopReason`)을 싣는다. `SCOUT_HOP` ↔ `NeStopReason`과 같은 짝.
+    # ⏵ 2026-10-11 (#550) — 스키마 파싱 실패 홉은 `stop_reason` **없이** 나올 수 있다(루프가 같은
+    # 자리를 다시 묻는다). 마지막 홉(`pov_tool_hops`)의 실패만 `parse_failed`를 싣고 선다.
     # **gen 홉은 그 홉이 조립한 PoC의 `poc_sha256`도 싣는다**(맨 hex — 종단 이벤트의 `poc_sha256`과
     # 같은 형식이라 바로 대조된다). 종단 이벤트를 건너뛰는 중단 경로(예산 소진·서버 쪽 게이트웨이
     # 오류)에서 잃은 PoC를 특정하는 흔적이다 — 그 홉 자신의 도구 호출이 예산에서 끊겨도 루프가 이

@@ -56,6 +56,7 @@ def _render_prompt(
     capsule: ContextCapsule,
     source: Callable[[], str] | None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
+    retry_note: str | None = None,
 ) -> Prompt:
     """hop0 프롬프트를 렌더한다 — 사실 블록(FACTS)이 여기 실린다.
 
@@ -74,7 +75,7 @@ def _render_prompt(
     effective_fuzz = fuzz_entrypoint if wide else None
     template = load_prompt(ROLE, version)
     text = ctx.read_source(capsule.target) if source is None else source()
-    return template.render(
+    prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
             ids={"finding_id": finding.finding_id},
@@ -89,6 +90,14 @@ def _render_prompt(
         finding=_describe_finding(finding, wide=wide),
         target=describe_target(capsule.target),
         source=text,
+    )
+    if retry_note is None:
+        return prompt
+    # hop0 파싱 실패 뒤 다시 물을 때만 — 본문 끝에 오류 노트를 붙인다(`None`이면 바이트 그대로).
+    return Prompt(
+        prefix=prompt.prefix,
+        body=f"{prompt.body}\n\n{retry_note}",
+        prompt_version=prompt.prompt_version,
     )
 
 
@@ -116,6 +125,8 @@ def open_hop(
     capsule: ContextCapsule,
     source: Callable[[], str] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
+    retry_note: str | None = None,
+    hop: int = 0,
 ) -> PovHop:
     """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다.
 
@@ -130,6 +141,10 @@ def open_hop(
     「바이트가 어디로 들어가는가」의 답이다. 러너가 만든다(`runner._fuzz_entrypoint`). 이것은
     `_WIDE_INPUT_VERSIONS`가 아니면 `_render_prompt`가 무시한다 — 이 파라미터는 이 PR이 새로
     만든 것이라 `source`와 달리 지킬 기존 계약이 없다(적대적 리뷰 2026-10-02 MEDIUM-4).
+
+    ⏵ 2026-10-11 (#550) — `retry_note`·`hop`은 **hop0 호출이 스키마 파싱에 실패해 다시 열 때만**
+    준다. 실패한 호출도 홉 하나를 쓴 것이라(`runner._run_pov_hops`) 다시 여는 호출은 `hop`번 홉이고,
+    노트는 본문 끝에 붙는다. 둘 다 기본값이면 첫 호출과 바이트가 같다.
     """
     prompt = _render_prompt(
         ctx,
@@ -137,8 +152,9 @@ def open_hop(
         capsule=capsule,
         source=source,
         fuzz_entrypoint=fuzz_entrypoint,
+        retry_note=retry_note,
     )
-    return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=0)
+    return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=hop)
 
 
 def continue_hop(ctx: RunContext, *, finding: Finding, prev: PovHop, followup: str) -> PovHop:
