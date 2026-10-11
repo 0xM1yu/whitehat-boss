@@ -1509,8 +1509,8 @@ def test_a_gen_on_the_final_hop_is_wasted(ctx) -> None:  # noqa: ANN001, F811
 def test_a_winner_submitted_on_the_final_hop_is_kept(ctx) -> None:  # noqa: ANN001, F811
     """프롬프트가 마지막 홉의 `submit`을 **정하는 갈래 중 첫째** — 마지막 `gen`의 `oracle_vul`
     줄이 제외 코드 밖이다(여기서는 77). 그때 `remaining=0` 홉의 이름 없는 `submit`은 받아들여지고
-    그 앞의 마지막 `gen`이 최종 후보가 된다. (셋째 갈래 `unavailable`은 아래 테스트, 둘째 갈래는
-    그 다음 두 테스트다.)"""
+    그 앞의 마지막 `gen`이 최종 후보가 된다. (넷째 갈래 `unavailable`은 아래 테스트, 둘째·셋째
+    갈래는 그 다음 두 테스트와 지명 테스트들이다.)"""
     oracle = ReadingOracle(codes=(77,) * 10)
     gens = _final_hop_gens()
 
@@ -1570,7 +1570,7 @@ def test_a_loser_left_unsubmitted_on_the_final_hop_leaves_no_candidate(
 def test_an_unavailable_last_gen_is_not_a_loss_and_its_submit_still_designates_it(
     ctx,  # noqa: ANN001, F811
 ) -> None:
-    """🔴 마지막 홉 `submit`의 **셋째 갈래** - `unavailable`은 진 것이 아니라 정보가 없는 것이다.
+    """🔴 마지막 홉 `submit`의 **넷째 갈래** - `unavailable`은 진 것이 아니라 정보가 없는 것이다.
     `/submit-vul`에는 agent_id별 슬라이딩 윈도 한도가 있고(20회/60초 - `cybergym_oracle` 모듈
     docstring의 2026-10-02 측정, 이슈 #422) 한도로 사라진 판정은 **원래 나왔을 수 있는 것**이다
     (`oracle_log.REASON_RATE_LIMITED` 주석). 그 줄을 「제외 코드 안」과 한 묶음으로 읽어 `submit`을

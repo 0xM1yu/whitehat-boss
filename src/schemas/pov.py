@@ -1,4 +1,5 @@
-"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`, 그 `gen`이 싣는 PoC 바이트 구성 스펙 `PovSpec`.
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5는 형제 `PovActionNamed`), 그 `gen`이 싣는 PoC
+바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가
@@ -242,14 +243,15 @@ class PovActionNamed(PovAction):
     포맷은 이 스펙으로 도달 못 한다 — 그때 `spec` 자리에 generator-script 대안을 더한다(별도
     신뢰면·리뷰). 지금은 열지 않는다(임의 코드 실행 회피).
 
-    `PovSegment._check_kind`와 같은 규율으로, 그 액션이 쓰지 않는 필드가 실리면 거절한다.
+    `PovSegment._check_kind`와 같은 규율으로, 그 액션이 쓰지 않는 필드가 실리면 거절한다
+    (`poc_sha256`만 예외 — `submit` 밖에서는 거절하지 않고 읽지도 않는다).
     """
 
     poc_sha256: str | None = Field(
         default=None,
         max_length=80,
         description=(
-            "`submit`에서만 읽는다 — 이미 낸 gen의 PoC sha256(전체 또는 8자 이상 접두 · "
-            "`sha256:` 접두 허용). 없으면 마지막 gen의 PoC가 최종 후보다. 형식은 러너가 정규화한다."
+            "`submit`에서만 읽는다 — 이미 낸 gen의 PoC sha256(전체 또는 8자 이상 접두 · `sha256:` "
+            "접두 허용). 없으면 마지막 gen의 PoC가 최종 후보다. 형식은 받는 쪽이 정규화한다."
         ),
     )
