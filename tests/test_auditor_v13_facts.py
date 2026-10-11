@@ -11,10 +11,16 @@ v11까지는 같은 SOURCE 문자열이 산문 블록과 FACTS JSON(`source`) �
    죽는다(`test_nullable_cwe.py` H4와 같은 장치).
 3. **노드 렌더** — v13 hop0의 FACTS에 `source` 키가 **없고**(null·빈 문자열이 아니다) 나머지 키는
    v11과 같다. 원문은 산문 블록에 한 번만 실린다.
-4. **선언** — FACTS에서 `source`를 빼는 판은 디스크 전체에서 auditor/v13 하나다. 다른 역할·판의
-   FACTS는 바이트 그대로다(`build_facts` 기본값).
+4. **선언** — FACTS에서 `source`를 빼는 판은 디스크 전체에서 auditor/v13·v14 둘이다
+   (⏵ 2026-10-11 v14). 다른 역할·판의 FACTS는 바이트 그대로다(`build_facts` 기본값).
 5. **곁가지** — Fake가 산문 블록에서 원문을 읽어 v11과 같은 판정을 내고, bench가 노드와 같은 FACTS를
    싣는다.
+
+⏵ 2026-10-11 — 서빙 판은 v14다(PR #601). 이 파일은 둘을 든다: 위 1~3·5는 머지된 v13을 v11 대비
+고정으로 묻는 핀이고, 판 이름에 묶이지 않은 핀도 여기 있다 — 서빙 좌석이 config에서 고른 판의 FACTS
+(`test_the_served_auditor_seat_renders_a_facts_without_the_source`) · 4의 디스크 전체 집합
+`{v13, v14}` · `build_facts` 기본값 · 로더 거절. v14의 v12 대비 핀(산문·봉투·서빙 판 봉투 규칙)은
+`tests/test_auditor_v14_facts.py`다.
 
 ⚠ 철자·구조 핀이다 — 모델이 산문 SOURCE 블록을 FACTS 없이도 같은 무게로 읽는지는 미측정이다.
 """
@@ -182,7 +188,7 @@ def test_the_served_auditor_seat_renders_a_facts_without_the_source(
     ctx: RunContext, profile: str
 ) -> None:
     """**성질** 핀 — 서빙 좌석이 실제로 고르는 판의 hop0는 FACTS에 `source`가 없고 원문이 산문에
-    한 번 있다. 판 이름이 아니다: 좌석이 `facts_source`를 안 선언한 판(v14 따위)으로 옮겨가면
+    한 번 있다. 판 이름이 아니다: 좌석이 `facts_source`를 안 선언한 판(예: v12)으로 옮겨가면
     빨개져 그 결정을 명시하게 한다. `test_config`의 이름 핀만으로는 이름을 고친 뒤 안 물린다."""
     version = load_config(profile).model_for(Role.AUDITOR.value).prompt_template_version
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
@@ -254,19 +260,19 @@ def _all_templates() -> list[tuple[str, str]]:
     )
 
 
-def test_only_auditor_v13_omits_the_facts_source() -> None:
-    """디스크 전체를 돈다 — 다른 역할(Scout·Critic·PoV)과 Auditor v1~v11의 FACTS는 `source`를
-    그대로 싣는다(기본 `true`)."""
+def test_only_auditor_v13_and_v14_omit_the_facts_source() -> None:
+    """디스크 전체를 돈다 — 다른 역할(Scout·Critic·PoV)과 Auditor v1~v12의 FACTS는 `source`를
+    그대로 싣는다(기본 `true`). ⏵ 2026-10-11 v14(v12 + 같은 변경)가 더해졌다."""
     omitting = {
         (role, version)
         for role, version in _all_templates()
         if not load_prompt(Role(role), version).facts_source
     }
-    assert omitting == {("auditor", "v13")}
+    assert omitting == {("auditor", "v13"), ("auditor", "v14")}
 
 
 def test_build_facts_keeps_the_source_key_by_default() -> None:
-    """기본값이 바뀌면 v13 밖 모든 판의 요청이 바뀐다 — 키가 있고 값이 그대로다."""
+    """기본값이 바뀌면 v13·v14 밖 모든 판의 요청이 바뀐다 — 키가 있고 값이 그대로다."""
     assert build_facts(run_id="r", ids={})["source"] == ""
     assert build_facts(run_id="r", ids={}, source="x")["source"] == "x"
     assert "source" not in build_facts(run_id="r", ids={}, source="x", include_source=False)
