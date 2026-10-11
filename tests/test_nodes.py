@@ -1205,6 +1205,87 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
 
 
 
+# --- 8단계 pov의 빈 풀이 run 경고로 오른다 (이슈 #357 잔여) ------------------------------
+
+
+def _empty_pool_message(ctx: RunContext, specs: list[tuple[str, Verdict | None]]) -> str | None:
+    """`specs`의 Finding들(전부 `validated` 밖)을 `_analyze`에 먹이고 `pov_pool_empty`를 돌려준다.
+    판정 `None`은 Critic을 안 거친 것, 문자열 `"dropped"`는 판정 호출이 실패해 버려진 것이다."""
+    state = runner._Accumulator()
+    for finding_id, verdict in specs:
+        finding = _finding(finding_id, state=FindingState.QUEUED, confidence=0.9)
+        state.update(finding)
+        if isinstance(verdict, Verdict):
+            state.decisions[finding_id] = (_critic_decision(finding_id, verdict, grounded=True),)
+        elif verdict == "dropped":
+            runner._drop_finding(ctx, state, finding, "schema_parse_failed", SchemaParseError("x"))
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+    return state.pov_pool_empty
+
+
+def test_an_empty_pov_pool_with_a_pov_seat_lands_in_the_run_warnings_with_its_breakdown(
+    ctx: RunContext,
+) -> None:
+    """🔴 좌석이 있는데 PoV 대상이 0건이면 `state.pov_pool_empty`가 사유째 말한다(#357 잔여) —
+    다섯 전부 근거 있는 반박이면 풀이 비고 문장이 그 다섯을 센다."""
+    _with_top_n(ctx, 8)
+    assert Role.POV.value in ctx.config.profile.roles, "전제 — pov 좌석"
+
+    message = _empty_pool_message(ctx, [(f"find_000{i}", Verdict.REBUT) for i in range(1, 6)])
+
+    assert message is not None
+    assert message.startswith(
+        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류 0 · 판정 실패 0 · Critic 미경유 0"
+        " · pov_attempt_top_n 8."
+    ), message
+    assert "8단계는 돌지 않았다" in message
+
+
+def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: RunContext) -> None:
+    """넷을 **서로 다른 수**로 넣어 하나라도 안 세거나 다른 칸에 세면 문장이 어긋난다. 상한이 0이면
+    `validated` 밖은 후보가 아니라 Critic 미경유도 풀에 못 든다 — 문장이 상한 0을 든다."""
+    _with_top_n(ctx, 0)
+    specs: list[tuple[str, Verdict | str | None]] = [
+        *[(f"find_01{i}", Verdict.REBUT) for i in range(3)],
+        *[(f"find_02{i}", Verdict.NEED_EVIDENCE) for i in range(2)],
+        ("find_0300", "dropped"),
+        *[(f"find_04{i}", None) for i in range(4)],
+    ]
+
+    message = _empty_pool_message(ctx, specs)
+
+    assert message is not None
+    assert message.startswith(
+        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류 2 · 판정 실패 1 · Critic 미경유 4"
+        " · pov_attempt_top_n 0."
+    ), message
+    assert "상한 0" in message
+
+
+def test_an_empty_pov_pool_stays_silent_without_a_pov_seat_or_with_targets(
+    ctx: RunContext,
+) -> None:
+    """좌석이 없으면(`_pov_targets`가 0건이어도 8단계는 원래 안 도는 프로필) 없고, 대상이 1건
+    이상이면 없다."""
+    _with_top_n(ctx, 8)
+    seatless = {k: v for k, v in ctx.config.profile.roles.items() if k != Role.POV.value}
+    ctx.config = ctx.config.transition(
+        profile=ctx.config.profile.transition(roles=seatless)
+    )
+    assert Role.POV.value not in ctx.config.profile.roles, "주입이 안 먹었다"
+    assert _empty_pool_message(ctx, [("find_0001", Verdict.REBUT)]) is None
+
+
+def test_an_empty_pov_pool_stays_silent_when_a_target_exists(ctx: RunContext) -> None:
+    state, _ = _outside_validated(ctx, [("find_0001", 0.9)])
+    _with_top_n(ctx, 1)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert _pov_subjects(ctx) == ["find_0001"], "전제 — 대상이 있어 pov가 돌았다"
+    assert state.pov_pool_empty is None
+
+
 # --- 발급값 도장 (D83 · 이슈 #279) ---------------------------------------------
 
 

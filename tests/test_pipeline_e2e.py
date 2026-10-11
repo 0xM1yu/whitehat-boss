@@ -4681,6 +4681,20 @@ def test_a_pov_run_that_submits_nothing_says_why_in_the_warning_and_the_report(
     assert "PoV 정지 사유" in result.report.render()
 
 
+def test_an_empty_pov_pool_reaches_the_run_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """pov 좌석이 있는 run에서 8단계 대상이 0건이면 `RunResult.warnings`에 사유 문장이 오른다
+    (#357 잔여). 대상 선택만 비워(`_pov_targets`) 경고 배선 `_analyze`→`run_pipeline`을 문다 —
+    개수 판정은 `tests/test_nodes.py`가 든다."""
+    monkeypatch.setattr(runner, "_pov_targets", lambda ctx, state, validated: [])
+
+    result, trace_path = _run(tmp_path, name="pov_pool_empty", before=_with_index())
+
+    assert not _of(_events(trace_path), "pov_generated"), "전제 — pov가 안 돌았다"
+    assert any(w.startswith("PoV 대상 0건 — validated ") for w in result.warnings), result.warnings
+
+
 def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
     """PoV가 submit에 닿은 run에는 그 경고가 **없다** — 0건일 때도 줄이 나오면 그 문장이 신호가
     아니라 장식이 된다(`test_a_full_run_says_nothing_about_deferral`과 같은 틀).
@@ -4693,6 +4707,7 @@ def test_a_full_run_says_nothing_about_a_pov_shortfall(tmp_path: Path) -> None:
 
     assert _of(_events(trace_path), "pov_generated"), "픽스처 전제 — dev_fake는 PoC를 낸다"
     assert not any("회수 가능한 최종 PoC가 0건" in warning for warning in result.warnings)
+    assert not any("PoV 대상 0건" in warning for warning in result.warnings)
     assert "PoV 정지 사유 (시도 2건): submitted 2건" in result.report.render()
 
 
