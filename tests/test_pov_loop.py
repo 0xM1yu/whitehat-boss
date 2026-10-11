@@ -30,7 +30,14 @@ from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
 from src.config import load_config
 from src.interfaces import tool_runner
-from src.interfaces.model_client import ModelGatewayError, ModelResult, SchemaParseError, Usage
+from src.interfaces.model_client import (
+    AttemptRecord,
+    ModelGatewayError,
+    ModelResult,
+    Prompt,
+    SchemaParseError,
+    Usage,
+)
 from src.orchestrator import poc_log, runner
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
@@ -429,7 +436,8 @@ def test_pov_loop_runs_inspect_then_submit(ctx: RunContext) -> None:  # noqa: F8
 #
 # 전 판은 파싱 실패 하나로 루프를 `PARSE_FAILED`로 세웠다(Finding이 통째로 버려진다 —
 # `run_20261007_0001`은 Finding 5건 중 2건, 이슈 #550). 지금은 그 호출이 **홉 하나를 쓴 것**으로
-# 세고 다음 홉에서 같은 자리를 다시 묻는다. 마지막 홉(`hop >= pov_tool_hops`)에서만 종단한다.
+# 세고 다음 홉에서 같은 자리를 다시 묻는다. 종단하는 것은 마지막 홉(`hop >= pov_tool_hops`)이거나
+# 그 호출의 모든 시도가 `length`로 끝났을 때(아래 「전 시도가 `length`」 절)다.
 # 게이트웨이 예외는 그대로 종단한다.
 
 
@@ -479,7 +487,7 @@ def test_a_hop0_parse_failure_consumes_the_hop_and_the_loop_continues(
     `POV_HOP.hop`은 실패 뒤에도 1:1이다(`…_join_key_matches…`의 약속)."""
     pov_hops = ctx.config.thresholds.pov_tool_hops
     scripted, (poc, reason) = _parse_run(
-        ctx, [SchemaParseError("bad pov action json"), _gen(count=8), _SUBMIT]
+        ctx, [_parse_err("bad pov action json"), _gen(count=8), _SUBMIT]
     )
 
     assert reason is PovStopReason.SUBMITTED
@@ -509,7 +517,7 @@ def test_a_hop1_parse_failure_consumes_the_hop_keeps_the_partial_poc_and_the_obs
     (`prev`의 history에는 그 관측이 아직 안 들었다)."""
     pov_hops = ctx.config.thresholds.pov_tool_hops
     scripted, (poc, reason) = _parse_run(
-        ctx, [_gen(count=8), SchemaParseError("bad at hop1"), _SUBMIT]
+        ctx, [_gen(count=8), _parse_err("bad at hop1"), _SUBMIT]
     )
     # 두 run이 trace를 공유하므로 이벤트는 대조군을 돌리기 **전에** 다 읽어 둔다.
     hops = _hops(scripted)
@@ -541,7 +549,7 @@ def test_consecutive_hop1_parse_failures_refresh_the_note_and_keep_the_observati
     pov_hops = ctx.config.thresholds.pov_tool_hops
     scripted, (poc, reason) = _parse_run(
         ctx,
-        [_gen(count=8), SchemaParseError("e1-first"), SchemaParseError("e2-second"), _SUBMIT],
+        [_gen(count=8), _parse_err("e1-first"), _parse_err("e2-second"), _SUBMIT],
     )
 
     assert reason is PovStopReason.SUBMITTED
@@ -568,7 +576,7 @@ def test_consecutive_hop0_parse_failures_refresh_the_retry_note(
     첫 노트(E1)를 재사용하거나 그 위에 덧붙이지 않는다."""
     pov_hops = ctx.config.thresholds.pov_tool_hops
     scripted, (poc, reason) = _parse_run(
-        ctx, [SchemaParseError("e1-first"), SchemaParseError("e2-second"), _gen(count=8), _SUBMIT]
+        ctx, [_parse_err("e1-first"), _parse_err("e2-second"), _gen(count=8), _SUBMIT]
     )
 
     assert reason is PovStopReason.SUBMITTED
@@ -589,8 +597,8 @@ def test_the_error_note_is_truncated_to_error_detail(
 ) -> None:
     """모델 응답이 키운 오류 문구(2만 5천 자)도 재질문에는 `error_detail`의 512자 +
     `…(잘림)`만 간다 —
-    재질문 본문은 기준보다 600자 넘게 안 자란다(`{exc}`를 그대로 싣는 변이가 여기서 죽는다)."""
-    big = SchemaParseError("x" * 25_000)
+    재질문 본문은 기준보다 600자 넘게 안 자란다(`model_error_text`를 그대로 싣는 변이가 죽는다)."""
+    big = _parse_err("x" * 25_000)
     if failing_hop == 0:
         scripted, _ = _parse_run(ctx, [big, _gen(count=8), _SUBMIT])
         bodies = _pov_user_bodies(scripted)
@@ -609,7 +617,7 @@ def test_the_error_note_is_truncated_to_error_detail(
 def test_a_parse_failure_keeps_the_digests_already_seen(ctx: RunContext) -> None:  # noqa: F811
     """⑤ 실패 홉은 `seen`도 안 지운다 — 실패 뒤 hop0과 **같은 바이트**면 REPEAT_SPEC."""
     scripted, (poc, reason) = _parse_run(
-        ctx, [_gen(count=8), SchemaParseError("bad"), _gen(count=8), _gen(count=9)]
+        ctx, [_gen(count=8), _parse_err("bad"), _gen(count=8), _gen(count=9)]
     )
 
     assert reason is PovStopReason.REPEAT_SPEC
@@ -623,7 +631,7 @@ def test_a_parse_failure_note_has_no_hop_line_for_a_version_without_hop_header(
     """홉 줄은 meta가 `hop_header`를 선언한 판만 받는다(`_pov_hop_line` 윗줄) — v3 prefix는 그 줄을
     서술하지 않으므로 오류 노트도 줄 없이 `[스키마 오류]`만 싣는다."""
     scripted, (_, reason) = _parse_run(
-        ctx, [SchemaParseError("bad pov action json"), _gen(count=8), _SUBMIT], version="v3"
+        ctx, [_parse_err("bad pov action json"), _gen(count=8), _SUBMIT], version="v3"
     )
 
     bodies = _pov_user_bodies(scripted)
@@ -2858,3 +2866,168 @@ def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> 
     ]
     assert list(inspect.signature(runner._run_pov).parameters) == ["ctx", "state", "finding"]
     assert runner._run_pov(scripted, state, finding) is None
+
+
+# --- 전 시도가 `length`로 끝난 파싱 실패는 재질문 없이 선다 (#550 리뷰 · sumin) ----------------
+#
+# 같은 프롬프트로 같은 상한에 닿는 것이 체계적일 수 있어 다시 물으면 모델 호출만
+# `pov_tool_hops + 1`번 쓴다(리뷰 재현: 17번). 횟수 상한은 이 PR에 없다 — 이슈 #613이 쫓는다.
+
+
+def _parse_err(text: str = "bad") -> SchemaParseError:
+    """어댑터가 모델에게 보여도 되는 오류 문구(`model_error_text`)를 단 파싱 실패."""
+    return SchemaParseError(text, model_error_text=text)
+
+
+def _attempts_err(*finish: str | None, tokens: int | None = 32_768) -> SchemaParseError:
+    """시도마다 `finish_reason`을 단 파싱 실패 — `AttemptRecord`는 서버의 말이다."""
+    return SchemaParseError(
+        "bad",
+        attempts=len(finish),
+        attempt_log=tuple(AttemptRecord(output_tokens=tokens, finish_reason=f) for f in finish),
+        model_error_text="bad",
+    )
+
+
+def test_all_attempts_truncated_ends_the_loop_at_hop0_without_asking_again(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """모든 시도가 `length`면 hop0에서 모델을 **한 번만** 부르고 `PARSE_FAILED`로 선다.
+    종단 `POV_HOP`이 `stop_reason`과 절단 키(`parse_truncated`)를 싣는다. 울타리 `RuntimeError`가
+    뒤에 있어 재질문하는 회귀는 빨갛게 난다."""
+    over = RuntimeError("절단인데 다시 물었다")
+    scripted, (poc, reason) = _parse_run(
+        ctx, [_attempts_err("length", "length"), _gen(count=8), over]
+    )
+
+    assert reason is PovStopReason.PARSE_FAILED
+    assert poc is None
+    assert len(_pov_user_bodies(scripted)) == 1
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0]
+    assert hops[0].data["stop_reason"] == PovStopReason.PARSE_FAILED.value
+    assert hops[0].data["parse_truncated"] is True
+    skipped = [e for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
+    assert len(skipped) == 1 and skipped[0].data["reason"] == PovStopReason.PARSE_FAILED.value
+
+
+def test_all_attempts_truncated_at_hop1_ends_there_and_keeps_the_partial_poc(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop≥1 변형 — `[gen, 절단 실패, …]`는 모델 호출 2번에서 서고 hop0 gen의 PoC를 지킨다."""
+    over = RuntimeError("절단인데 다시 물었다")
+    scripted, (poc, reason) = _parse_run(
+        ctx, [_gen(count=8), _attempts_err("length", "length"), _SUBMIT, over]
+    )
+
+    assert reason is PovStopReason.PARSE_FAILED
+    assert poc == b"A" * 8
+    assert len(_pov_user_bodies(scripted)) == 2
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1]
+    assert hops[1].data["stop_reason"] == PovStopReason.PARSE_FAILED.value
+    assert hops[1].data["parse_truncated"] is True
+    assert "parse_truncated" not in hops[0].data
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        pytest.param(_attempts_err("length", "stop"), id="some-length-some-stop"),
+        pytest.param(_attempts_err("stop", "length"), id="last-only-length"),
+        pytest.param(_attempts_err("length", None), id="length-and-unreported"),
+        pytest.param(_attempts_err(None, None), id="finish-reason-unreported"),
+        pytest.param(_attempts_err("length", "stop", tokens=None), id="tokens-unreported"),
+        pytest.param(SchemaParseError("bad", model_error_text="bad"), id="empty-attempt-log"),
+    ],
+)
+def test_a_parse_failure_that_is_not_all_length_still_asks_again(
+    ctx: RunContext,  # noqa: F811
+    exc: SchemaParseError,
+) -> None:
+    """음성 핀 — 절단은 **서버가 전 시도에 `length`라 말한 것**뿐이다. 일부만 `length`이거나
+    못 쟀거나(`None`·빈 `attempt_log` = Fake·잃음) 하면 재질문한다(지어내지 않는다, §0)."""
+    scripted, (poc, reason) = _parse_run(ctx, [exc, _gen(count=8), _SUBMIT])
+
+    assert reason is PovStopReason.SUBMITTED
+    assert poc == b"A" * 8
+    assert len(_pov_user_bodies(scripted)) == 3
+    assert all("parse_truncated" not in h.data for h in _hops(scripted))
+
+
+def test_a_non_truncated_parse_failure_on_the_last_hop_carries_no_truncation_key(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """절단 키는 절단일 때만 있다 — 마지막 홉에서 선 비절단 실패의 종단 이벤트에는 없다."""
+    scripted, (_, reason) = _parse_run(ctx, [_attempts_err("stop", "stop")], pov_hops=0)
+
+    assert reason is PovStopReason.PARSE_FAILED
+    hops = _hops(scripted)
+    assert hops[0].data["stop_reason"] == PovStopReason.PARSE_FAILED.value
+    assert "parse_truncated" not in hops[0].data
+
+
+def test_a_hop0_retry_records_the_fuzz_lookup_on_hop0_only(ctx: RunContext) -> None:  # noqa: F811
+    """재질문 갈래의 `fuzz=fuzz if hop == 0 else None`을 문다 — hop0의 실패 이벤트에는 진입점
+    조회가 실리고 재질문 홉에는 없다(`fuzz=None`으로 바꾸는 변이가 살아 있었다 — 리뷰 재현)."""
+    scripted, _ = _parse_run(ctx, [_parse_err("bad"), _gen(count=8), _SUBMIT])
+
+    hops = _hops(scripted)
+    assert "fuzz_found" in hops[0].data and "fuzz_file" in hops[0].data
+    assert all("fuzz_found" not in h.data for h in hops[1:])
+
+
+class _Wire:
+    """`OpenAICompatModelClient._post`를 갈아 끼우는 스텁 — 모델이 `spec`에 문자열을 낸 응답."""
+
+    @staticmethod
+    def client(monkeypatch: pytest.MonkeyPatch):  # noqa: ANN205
+        from src.adapters.openai_compat import OpenAICompatModelClient, PostedResponse
+
+        def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
+            raw = json.dumps({"action": "gen", "spec": "A" * 80, "rationale": "r"})
+            return PostedResponse(
+                content=raw,
+                usage=Usage(input_tokens=1, output_tokens=1, cached_tokens=0),
+                finish_reason="stop",
+                output_tokens_reported=True,
+            )
+
+        monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+        return OpenAICompatModelClient(
+            endpoint="http://127.0.0.1:9/v1", model_name="feyospace-v1-small", temperature=0.0,
+            top_p=1.0, max_tokens=64, seed=7, retries=1,
+        )
+
+
+def test_the_retry_note_carries_neither_response_text_nor_pydantic_urls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """실어댑터가 던진 `SchemaParseError`로 만든 재질문 노트에는 `input_value`(응답 원문 조각)·
+    `errors.pydantic.dev`(URL)·모델 이름이 없고 `include_input=False` 문구만 있다."""
+    client = _Wire.client(monkeypatch)
+    with pytest.raises(SchemaParseError) as caught:
+        client.complete(
+            role=Role.POV,
+            prompt=Prompt(prefix="p", body="b", prompt_version="v5"),
+            schema=PovAction,
+        )
+
+    note = runner._pov_parse_retry_note(1, 16, caught.value, with_hop_line=True)
+
+    assert note.startswith("hop=1 last_hop=16 remaining=15\n[스키마 오류] ")
+    assert "Input should be an object" in note
+    for leaked in ("input_value", "errors.pydantic.dev", "AAAA", "feyospace", "2회 안에"):
+        assert leaked not in note, leaked
+    # 예외 자신의 문자열(trace의 `error_detail`)은 그대로다 — 이 변경은 모델에게 가는 노트만 좁힌다.
+    assert "input_value" in str(caught.value)
+
+
+def test_a_parse_error_without_model_text_gets_a_fixed_note_not_its_message() -> None:
+    """`model_error_text`가 비면(Fake·옛 예외) 예외 문자열을 대신 싣지 않는다 — 고정 문구다."""
+    note = runner._pov_parse_retry_note(
+        1, 16, SchemaParseError("input_value='SECRET'"), with_hop_line=False
+    )
+
+    assert note.startswith("[스키마 오류] ")
+    assert "SECRET" not in note and "input_value" not in note

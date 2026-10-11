@@ -563,9 +563,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   루프가 같은 자리를 다시 묻는다**: 실패 홉은 `stop_reason` 없는 `pov_hop`이다. 노트(`[스키마 오류] <사유>`,
   홉 줄을 받는 판은 그 줄이 앞)는 **hop 0 재질문이면 hop 0 본문의 끝**(facts 뒤 — 어댑터 자신의 `[스키마 오류]`
   재시도와 같은 자리)에, **hop≥1 재질문이면 followup의 머리**(홉 줄 → 노트 → 아직 못 받은 직전 도구 관측)에
-  붙는다. `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패일 때만이다 — 이슈 #550.
-  게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는 `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직
-  서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
+  붙는다. 오류 사유는 어댑터가 응답 원문·URL 없이 만든 `model_error_text`이고 예외 문자열이 아니다.
+  hop 0 재질문이 파싱 실패를 **살리는지는 미실측이다**(같은 자리 재시도가 이슈 #550 본문의 find_0005에서
+  2/2 실패했다, n=1). `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패이거나 그 호출의
+  **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
+  `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
+  없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
+  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴

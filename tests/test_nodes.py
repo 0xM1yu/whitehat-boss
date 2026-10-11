@@ -630,7 +630,8 @@ def test_run_pov_records_a_skip_on_a_schema_parse_error(
     """모델이 매 홉 스키마를 못 맞추면 pov_skipped(parse_failed) — finding은 안 죽는다.
 
     파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다(#550 (c)) — 홉을 여는 `pov.open_hop`을 항상 실패하게
-    스텁하면 **`pov_tool_hops + 1`번** 불리고(마지막 홉에서만 종단) 뒤에 parse_failed로 남는다."""
+    스텁하면 **`pov_tool_hops + 1`번** 불리고(절단 기록이 없는 실패라 마지막 홉에서 종단) 뒤에
+    parse_failed로 남는다."""
     state, finding = _pov_state(ctx)
     calls: list[int] = []
     pov_hops = ctx.config.thresholds.pov_tool_hops
