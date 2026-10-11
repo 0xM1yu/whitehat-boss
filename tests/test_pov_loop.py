@@ -162,9 +162,17 @@ class _ScriptedModel:
         self._i = 0
         self.prompts: list[tuple[Role, object]] = []
         self.histories: list[tuple[object, ...]] = []
+        # ⏵ 2026-10-11 (#550) — 호출 수 울타리. 파싱 실패는 루프가 계속 도는 예외라 `hop`이 안
+        # 오르는 회귀는 목록 끝 항목을 반복하며 **끝없이 돈다**. `fence()`번째 호출은
+        # `RuntimeError`로 빨갛게 한다(`_scripted`가 `pov_tool_hops + 2`로 건다 —
+        # 정상 코드는 `+ 1`번만 부른다).
+        self.fence = lambda: None
         self.schemas: list[type] = []
 
     def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
+        limit = self.fence()
+        if limit is not None and len(self.prompts) + 1 >= limit:
+            raise RuntimeError(f"fence: 모델을 pov_tool_hops + 2 = {limit}번째로 불렀다")
         self.prompts.append((role, prompt))
         self.histories.append(tuple(history))
         self.schemas.append(schema)
@@ -184,7 +192,11 @@ class _ScriptedModel:
 
 
 def _scripted(ctx: RunContext, actions: list[object]) -> RunContext:  # noqa: F811
-    return dataclasses.replace(ctx, models=_ScriptedModel(actions))
+    model = _ScriptedModel(actions)
+    scripted = dataclasses.replace(ctx, models=model)
+    # 상한은 **부를 때** 읽는다 — `scripted.config`는 만든 뒤에 `pov_tool_hops`가 바뀌기도 한다.
+    model.fence = lambda: scripted.config.thresholds.pov_tool_hops + 2
+    return scripted
 
 
 def _with_pov_version(ctx: RunContext, version: str) -> RunContext:  # noqa: F811
@@ -418,38 +430,299 @@ def test_pov_loop_runs_inspect_then_submit(ctx: RunContext) -> None:  # noqa: F8
     assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
 
 
-def test_pov_loop_absorbs_a_hop0_parse_error(ctx: RunContext) -> None:  # noqa: F811
-    """hop0 스키마 파싱 실패는 흡수해 PARSE_FAILED로 서고 pov_skipped를 남긴다(finding 안 죽임)."""
-    scripted = _scripted(ctx, [SchemaParseError("bad pov action json")])
+# --- #550 (c) — 스키마 파싱 실패는 홉 하나를 쓰고 루프는 계속 돈다 -------------------------------
+#
+# 전 판은 파싱 실패 하나로 루프를 `PARSE_FAILED`로 세웠다(Finding이 통째로 버려진다 —
+# `run_20261007_0001`은 Finding 5건 중 2건, 이슈 #550). 지금은 그 호출이 **홉 하나를 쓴 것**으로
+# 세고 다음 홉에서 같은 자리를 다시 묻는다. 마지막 홉(`hop >= pov_tool_hops`)에서만 종단한다.
+# 게이트웨이 예외는 그대로 종단한다.
+
+
+def _parse_run(
+    ctx: RunContext,  # noqa: F811
+    actions: list[object],
+    *,
+    pov_hops: int | None = None,
+    version: str = "v5",
+):  # noqa: ANN202
+    """`version`(기본 v5 = 홉 줄을 받는 판)·`pov_tool_hops`를 정해 `_run_pov_hops`를 돌린다
+    → (스크립트한 ctx, `(poc, reason)`)."""
+    base = _with_pov_version(ctx, version)
+    if pov_hops is not None:
+        base = dataclasses.replace(
+            base,
+            config=base.config.transition(
+                thresholds=base.config.thresholds.transition(pov_tool_hops=pov_hops)
+            ),
+        )
+    scripted = _scripted(base, actions)
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    return scripted, runner._run_pov_hops(scripted, state, finding, capsule)
+
+
+def _pov_user_bodies(scripted: RunContext) -> list[str]:  # noqa: F811
+    return [p.body for role, p in scripted.models.prompts if role is Role.POV]
+
+
+def _pov_model_call_hops(scripted: RunContext) -> list[int]:  # noqa: F811
+    return [
+        e.data["hop"]
+        for e in scripted.trace.events
+        if e.kind is EventKind.MODEL_CALL and e.data.get("role") == Role.POV.value
+    ]
+
+
+def test_a_hop0_parse_failure_consumes_the_hop_and_the_loop_continues(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop0 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다 — `[실패, gen, submit]`은 SUBMITTED.
+
+    ① `POV_HOP`이 셋(hop0 failed · hop1 gen · hop2 submit)이고 실패 홉은 `stop_reason` 없이 낸다
+    ② 다시 연 hop0 본문 = 처음 본문 + `\n\n` + 홉 줄(`hop=1 …`) + 다음 줄 `[스키마 오류] <사유>`
+    ③ 실패한 호출은 history에 안 든다(되묻는 모델이 자기 깨진 응답을 못 본다) ④ `model_call.hop`과
+    `POV_HOP.hop`은 실패 뒤에도 1:1이다(`…_join_key_matches…`의 약속)."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, (poc, reason) = _parse_run(
+        ctx, [SchemaParseError("bad pov action json"), _gen(count=8), _SUBMIT]
+    )
+
+    assert reason is PovStopReason.SUBMITTED
+    assert poc == b"A" * 8
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]
+    assert hops[0].data["schema_ok"] is False and hops[0].data["error"] == "SchemaParseError"
+    assert "stop_reason" not in hops[0].data
+    assert [h.data.get("action") for h in hops] == [None, "gen", "submit"]
+    bodies = _pov_user_bodies(scripted)
+    note = f"hop=1 last_hop={pov_hops} remaining={pov_hops - 1}\n[스키마 오류] bad pov action json"
+    assert bodies[1] == bodies[0] + "\n\n" + note
+    assert scripted.models.histories[1] == ()
+    assert _pov_model_call_hops(scripted) == [0, 1, 2]
+    assert len([e for e in scripted.trace.events if e.kind is EventKind.POV_GENERATED]) == 1
+    assert not any(e.kind is EventKind.POV_SKIPPED for e in scripted.trace.events)
+
+
+def test_a_hop1_parse_failure_consumes_the_hop_keeps_the_partial_poc_and_the_observation(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop≥1 실패도 홉 하나를 쓰고 계속 돈다 — `[gen, 실패, submit]`은 SUBMITTED이고 지정 PoC는
+    hop0 gen의 바이트다(`last_poc`를 잃지 않는다).
+
+    다시 묻는 followup = 홉 줄(`hop=2 …`) · `[스키마 오류] …` · **실패한 홉이 답할 관측**이다.
+    관측을 빼면 모델이 자기 gen의 도구 결과를 한 번도 못 보고 같은 gen을 다시 내 REPEAT_SPEC에 선다
+    (`prev`의 history에는 그 관측이 아직 안 들었다)."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, (poc, reason) = _parse_run(
+        ctx, [_gen(count=8), SchemaParseError("bad at hop1"), _SUBMIT]
+    )
+    # 두 run이 trace를 공유하므로 이벤트는 대조군을 돌리기 **전에** 다 읽어 둔다.
+    hops = _hops(scripted)
+    model_hops = _pov_model_call_hops(scripted)
+    generated = [e for e in scripted.trace.events if e.kind is EventKind.POV_GENERATED]
+    control, _ = _parse_run(ctx, [_gen(count=8), _SUBMIT])
+
+    assert reason is PovStopReason.SUBMITTED
+    assert poc == b"A" * 8  # hop0 gen의 바이트 — 실패 홉이 `last_poc`를 지우지 않는다
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]
+    assert [h.data.get("action") for h in hops] == ["gen", None, "submit"]
+    assert model_hops == [0, 1, 2]
+    bodies = _pov_user_bodies(scripted)
+    head = f"hop=2 last_hop={pov_hops} remaining={pov_hops - 2}\n[스키마 오류] bad at hop1\n"
+    assert bodies[2].startswith(head)
+    # 실패 없이 돈 대조군의 hop1 followup(= hop0 gen의 관측)이 홉 줄만 뺀 채 그대로 따라온다.
+    assert bodies[2][len(head):] == _pov_user_bodies(control)[1].split("\n", 1)[1]
+    assert scripted.models.histories[2] == scripted.models.histories[1]  # 실패 호출은 history 밖
+    assert len(generated) == 1
+
+
+def test_consecutive_hop1_parse_failures_refresh_the_note_and_keep_the_observation(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """연속 실패 — `[gen, 실패(E1), 실패(E2), submit]`. 둘째 재질문은 **E2로 새로 쓴 노트**
+    (홉 줄 `hop=3`)와 **hop1 gen의 관측**을 싣는다:
+    노트가 쌓이지도(E1 잔존) 관측이 사라지지도 않고, 실패한 호출은 둘 다 history에 안 든다.
+    `[스키마 오류]`는 재질문 본문마다 정확히 한 번이다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, (poc, reason) = _parse_run(
+        ctx,
+        [_gen(count=8), SchemaParseError("e1-first"), SchemaParseError("e2-second"), _SUBMIT],
+    )
+
+    assert reason is PovStopReason.SUBMITTED
+    assert poc == b"A" * 8
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2, 3]
+    assert _pov_model_call_hops(scripted) == [0, 1, 2, 3]
+    bodies = _pov_user_bodies(scripted)
+    assert [b.count("[스키마 오류]") for b in bodies] == [0, 0, 1, 1]
+    head2 = f"hop=2 last_hop={pov_hops} remaining={pov_hops - 2}\n[스키마 오류] e1-first\n"
+    head3 = f"hop=3 last_hop={pov_hops} remaining={pov_hops - 3}\n[스키마 오류] e2-second\n"
+    assert bodies[2].startswith(head2) and bodies[3].startswith(head3)
+    assert "e1-first" not in bodies[3]
+    assert bodies[3][len(head3):] == bodies[2][len(head2):]  # 같은 관측(hop0 gen의 도구 결과)
+    assert bodies[3][len(head3):].startswith("tool=")
+    histories = scripted.models.histories
+    assert histories[1] == histories[2] == histories[3]  # 실패 호출은 history에 안 든다
+
+
+def test_consecutive_hop0_parse_failures_refresh_the_retry_note(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """연속 실패 — `[실패(E1), 실패(E2), gen, submit]`. 둘째 hop0 재질문 본문은
+    **처음 본문 + E2 노트**(홉 줄 `hop=2`)다 —
+    첫 노트(E1)를 재사용하거나 그 위에 덧붙이지 않는다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, (poc, reason) = _parse_run(
+        ctx, [SchemaParseError("e1-first"), SchemaParseError("e2-second"), _gen(count=8), _SUBMIT]
+    )
+
+    assert reason is PovStopReason.SUBMITTED
+    assert poc == b"A" * 8
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2, 3]
+    assert _pov_model_call_hops(scripted) == [0, 1, 2, 3]
+    bodies = _pov_user_bodies(scripted)
+    note2 = f"hop=2 last_hop={pov_hops} remaining={pov_hops - 2}\n[스키마 오류] e2-second"
+    assert bodies[2] == bodies[0] + "\n\n" + note2
+    assert "e1-first" not in bodies[2]
+    assert scripted.models.histories[:3] == [(), (), ()]
+
+
+@pytest.mark.parametrize("failing_hop", [0, 1])
+def test_the_error_note_is_truncated_to_error_detail(
+    ctx: RunContext,  # noqa: F811
+    failing_hop: int,
+) -> None:
+    """모델 응답이 키운 오류 문구(2만 5천 자)도 재질문에는 `error_detail`의 512자 +
+    `…(잘림)`만 간다 —
+    재질문 본문은 기준보다 600자 넘게 안 자란다(`{exc}`를 그대로 싣는 변이가 여기서 죽는다)."""
+    big = SchemaParseError("x" * 25_000)
+    if failing_hop == 0:
+        scripted, _ = _parse_run(ctx, [big, _gen(count=8), _SUBMIT])
+        bodies = _pov_user_bodies(scripted)
+        baseline, retried = len(bodies[0]), bodies[1]
+    else:
+        control, _ = _parse_run(ctx, [_gen(count=8), _SUBMIT])
+        scripted, _ = _parse_run(ctx, [_gen(count=8), big, _SUBMIT])
+        baseline = len(_pov_user_bodies(control)[1])
+        retried = _pov_user_bodies(scripted)[2]
+
+    assert "x" * 512 + "…(잘림)" in retried
+    assert "x" * 513 not in retried
+    assert len(retried) - baseline <= 600
+
+
+def test_a_parse_failure_keeps_the_digests_already_seen(ctx: RunContext) -> None:  # noqa: F811
+    """⑤ 실패 홉은 `seen`도 안 지운다 — 실패 뒤 hop0과 **같은 바이트**면 REPEAT_SPEC."""
+    scripted, (poc, reason) = _parse_run(
+        ctx, [_gen(count=8), SchemaParseError("bad"), _gen(count=8), _gen(count=9)]
+    )
+
+    assert reason is PovStopReason.REPEAT_SPEC
+    assert poc == b"A" * 8
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2]
+
+
+def test_a_parse_failure_note_has_no_hop_line_for_a_version_without_hop_header(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """홉 줄은 meta가 `hop_header`를 선언한 판만 받는다(`_pov_hop_line` 윗줄) — v3 prefix는 그 줄을
+    서술하지 않으므로 오류 노트도 줄 없이 `[스키마 오류]`만 싣는다."""
+    scripted, (_, reason) = _parse_run(
+        ctx, [SchemaParseError("bad pov action json"), _gen(count=8), _SUBMIT], version="v3"
+    )
+
+    bodies = _pov_user_bodies(scripted)
+    assert reason is PovStopReason.SUBMITTED
+    assert bodies[1] == bodies[0] + "\n\n[스키마 오류] bad pov action json"
+
+
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(422, PovStopReason.GATEWAY_ERROR), (413, PovStopReason.CONTEXT_OVERFLOW)],
+)
+def test_a_gateway_error_still_ends_the_loop_on_the_hop_it_happens(
+    ctx: RunContext,  # noqa: F811
+    status: int,
+    expected: PovStopReason,
+) -> None:
+    """⑥ 바뀐 것은 **파싱 실패뿐**이다 — 버릴 수 있는 게이트웨이(422)·크기 거절(413)은 그 홉에서
+    곧장 종단하고 다시 묻지 않는다(같은 요청이 같은 거절을 받는다)."""
+    scripted, (poc, reason) = _parse_run(
+        ctx, [ModelGatewayError("gateway", status=status), _gen(count=8), _SUBMIT]
+    )
+
+    assert reason is expected
+    assert poc is None
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0]
+    assert hops[0].data["stop_reason"] == expected.value
+    assert len(_pov_user_bodies(scripted)) == 1
+
+
+def test_open_hop_renders_the_same_bytes_without_a_retry_note_and_appends_it_when_given(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """`retry_note=None`(기본)이면 hop0 본문 바이트가 이 PR 전과 같다 — 끝에 빈 줄이 안 붙는다.
+    주면 본문 끝에 `\\n\\n` + 노트가 붙고 `hop=`은 모델 호출의 홉 번호(조인 키)로만 간다."""
+    scripted = _scripted(_with_pov_version(ctx, "v5"), [_gen(count=8)])
     state, finding = _pov_state(ctx)
     capsule = state.finding_capsules[finding.finding_id]
 
-    poc, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+    pov_node.open_hop(scripted, finding=finding, capsule=capsule)
+    pov_node.open_hop(scripted, finding=finding, capsule=capsule, retry_note=None)
+    pov_node.open_hop(scripted, finding=finding, capsule=capsule, retry_note="note", hop=3)
+
+    plain, explicit_none, noted = _pov_user_bodies(scripted)
+    assert plain == explicit_none
+    assert plain.endswith("```\n") and not plain.endswith("\n\n")  # 종전 끝 그대로
+    assert noted == plain + "\n\nnote"
+    assert _pov_model_call_hops(scripted) == [0, 0, 3]
+    assert scripted.models.histories == [(), (), ()]
+
+
+def test_a_parse_failure_on_the_last_hop_still_ends_with_parse_failed(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """④ 마지막 홉(`hop >= pov_tool_hops`)의 파싱 실패는 지금처럼 종단한다 — 다시 물을 홉이 없다."""
+    over = RuntimeError("마지막 홉 뒤에 모델을 또 불렀다")
+    scripted, (poc, reason) = _parse_run(ctx, [SchemaParseError("bad"), over], pov_hops=0)
 
     assert reason is PovStopReason.PARSE_FAILED
     assert poc is None
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0]
+    assert hops[0].data["stop_reason"] == PovStopReason.PARSE_FAILED.value
     skipped = [e for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == PovStopReason.PARSE_FAILED.value
-    assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
+    assert len(skipped) == 1 and skipped[0].data["reason"] == PovStopReason.PARSE_FAILED.value
+    assert len(_pov_user_bodies(scripted)) == 1
 
 
-def test_pov_loop_absorbs_a_hop1_failure_and_keeps_the_partial_poc(ctx: RunContext) -> None:  # noqa: F811
-    """hop≥1 실패도 흡수한다. hop0 gen이 만든 부분 PoC는 POV_SKIPPED에 실려 남는다(안 잃는다).
+def test_parse_failures_on_every_hop_exhaust_the_hops_and_end_with_parse_failed(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """매 홉 실패하면 `pov_tool_hops + 1`번 묻고 선다 — 실패 홉도 홉이라 무한 되묻기가 아니다.
 
-    NE 루프가 hop≥1 흡수를 따로 검증하듯, pov도 hop0 성공 + hop1 실패를 본다(적대적 리뷰:
-    이 경로가 무검증이었다 — hop≥1 예외 미흡수 변이가 살아남았다)."""
-    scripted = _scripted(ctx, [_gen(count=8), SchemaParseError("bad at hop1")])
-    state, finding = _pov_state(ctx)
-    capsule = state.finding_capsules[finding.finding_id]
-
-    poc, reason = runner._run_pov_hops(scripted, state, finding, capsule)
+    `POV_HOP` 셋이 전부 failed이고 `stop_reason`은 **마지막 하나에만** 있다. 모델 호출 수가 정확히
+    3이다(`hop += 1`을 빼면 같은 홉을 끝없이 묻는다 — 호출 수가 그것을 문다)."""
+    # 셋째 뒤의 `RuntimeError`는 **울타리**다 — 홉이 안 올라가는 변이가 같은 홉을 끝없이 물으면
+    # 이 예외로 빨개진다(correct 코드는 셋만 부르고 넷째에 닿지 않는다).
+    over = RuntimeError("모델을 pov_tool_hops + 1번보다 더 불렀다")
+    scripted, (poc, reason) = _parse_run(
+        ctx, [SchemaParseError("bad")] * 3 + [over], pov_hops=2
+    )
 
     assert reason is PovStopReason.PARSE_FAILED
-    assert isinstance(poc, bytes) and len(poc) > 0  # hop0의 PoC를 잃지 않는다
+    assert poc is None
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]
+    assert all(h.data["schema_ok"] is False for h in hops)
+    assert [h.data.get("stop_reason") for h in hops] == [
+        None, None, PovStopReason.PARSE_FAILED.value
+    ]
+    assert len(_pov_user_bodies(scripted)) == 3
+    assert _pov_model_call_hops(scripted) == [0, 1, 2]
     skipped = [e for e in scripted.trace.events if e.kind is EventKind.POV_SKIPPED]
-    assert skipped and skipped[-1].data["reason"] == PovStopReason.PARSE_FAILED.value
-    assert skipped[-1].data["poc_bytes"] == len(poc)
-    assert not any(e.kind is EventKind.POV_GENERATED for e in scripted.trace.events)
+    assert len(skipped) == 1 and skipped[0].data["reason"] == PovStopReason.PARSE_FAILED.value
 
 
 def test_pov_loop_reraises_a_server_side_gateway_error(ctx: RunContext) -> None:  # noqa: F811
@@ -1998,6 +2271,22 @@ def test_the_pov_hop_count_follows_pov_tool_hops(ctx: RunContext, pov_hops: int)
     assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
 
 
+@pytest.mark.parametrize("pov_hops", [2, 5])
+def test_a_parse_failure_in_the_middle_takes_a_hop_slot_but_the_total_stays_pov_hops_plus_one(
+    ctx: RunContext, pov_hops: int  # noqa: F811
+) -> None:
+    """`…_follows_pov_tool_hops`의 변형 — 중간(hop1)에 파싱 실패를 하나 끼워도 홉 총수는
+    `pov_tool_hops + 1`이다. 실패 홉이 한 자리를 먹으므로 gen은 하나 덜 나오나 상한은 안 넘는다."""
+    actions: list[object] = [_gen(count=1), SchemaParseError("bad in the middle")]
+    actions += [_gen(count=n) for n in range(2, pov_hops + 6)]
+    scripted, (_, reason) = _parse_run(ctx, actions, pov_hops=pov_hops)
+
+    assert reason is PovStopReason.MAX_HOP
+    assert [h.data["hop"] for h in _hops(scripted)] == list(range(pov_hops + 1))
+    assert [h.data.get("action") for h in _hops(scripted)][:2] == ["gen", None]
+    assert len(_pov_user_bodies(scripted)) == pov_hops + 1  # 홉 하나에 모델 호출 하나
+
+
 @pytest.mark.parametrize("max_hops", [0, 9])
 def test_max_hops_does_not_move_the_pov_hop_count(ctx: RunContext, max_hops: int) -> None:  # noqa: F811
     """음성 통제 — Scout NE 루프의 `max_hops`를 0으로 내리든 9로 올리든 PoV 홉 수는 그대로다(#511).
@@ -2407,8 +2696,12 @@ def _exit_max_hop(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: AN
 
 
 def _exit_parse_failed(ctx: RunContext, monkeypatch: pytest.MonkeyPatch):  # noqa: ANN202, F811
+    # ⏵ 2026-10-11 (#550) — `open_hop`이 매번 실패해 홉을 다 쓰고 마지막 홉에서 PARSE_FAILED로 선다.
     state, finding = _pov_state(ctx)
-    monkeypatch.setattr(pov_node, "open_hop", _raise(SchemaParseError("bad pov json")))
+    fence = ctx.config.thresholds.pov_tool_hops + 2
+    monkeypatch.setattr(
+        pov_node, "open_hop", _raise(SchemaParseError("bad pov json"), fence=fence)
+    )
     return ctx, state, finding
 
 
