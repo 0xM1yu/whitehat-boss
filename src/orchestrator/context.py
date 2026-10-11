@@ -617,24 +617,36 @@ class RunContext:
         return {"sent_sha256": last_digest}
 
     def _record_failed_responses(
-        self, *, role: Role, stage: Stage, raw_texts: tuple[str, ...], hop: int = 0
+        self, *, role: Role, stage: Stage, raw_texts: tuple[str | None, ...], hop: int = 0
     ) -> dict[str, TraceValue]:
         """스키마 실패한 시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
 
         **실패 경로만 부른다** — 성공 응답은 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
         이벤트 키가 늘지 않는다. 쓰다가 중간에 실패하면 앞서 쓴 파일은 참조가 안 남은 고아로 남는다.
+
+        **`None` 칸은 파일을 안 쓰고 refs·sha의 그 자리가 JSON `null`이다** — `content: null`은 받은
+        문자열이 없는 것이라 0바이트 파일이나 빈 문자열의 해시를 남기면 안 잰 값이 잰 값처럼 보인다
+        (`_attempt_fields`와 같은 관례, CLAUDE.md §0). `index`는 칸 위치 그대로라 `_retryK`
+        번호는 시도 번호와 정렬된다. 칸이 전부 `None`이어도 비어 있지 않으므로 `[null]`이 나가
+        시도 칸과 맞는다.
         """
         if not raw_texts or self.prompts is None:
             return {}
         written = [
-            self.prompts.write_response(
+            None
+            if text is None
+            else self.prompts.write_response(
                 role=role.value, stage=int(stage), index=index, hop=hop, text=text
             )
             for index, text in enumerate(raw_texts)
         ]
         return {
-            "response_refs": json.dumps([ref for ref, _ in written], separators=(",", ":")),
-            "response_sha256": json.dumps([digest for _, digest in written], separators=(",", ":")),
+            "response_refs": json.dumps(
+                [w[0] if w else None for w in written], separators=(",", ":")
+            ),
+            "response_sha256": json.dumps(
+                [w[1] if w else None for w in written], separators=(",", ":")
+            ),
         }
 
     # --- 도구 ---

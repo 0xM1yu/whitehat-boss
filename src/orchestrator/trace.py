@@ -31,8 +31,12 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 스키마 파싱 실패율 | `model_call`(`attempts`·`ok`·`error`) | 시도 단위 — 산식 아래 (#83) |
 | 시도별 출력 토큰·종료 사유 | `model_call`의 `attempt_*` 둘 | 시도 순서 — 아래 (#550) |
 | 실패 응답 원문 | `model_call`의 `response_refs`·`response_sha256` | 스키마 소진·게이트웨이
-거절로 끝난 호출의 스키마 실패 시도(JSON 배열 문자열, 시도 순서). **키 부재 = 성공(재시도 성공
-포함) · PromptLog 없음 · 응답을 받은 적이 없는 호출.** 쓰기 실패는 `response_record_error` (#603) |
+거절로 끝난 호출의 스키마 실패 시도(JSON 배열 문자열, 시도 순서).
+**칸이 `null`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답이 아니고 파일도
+없다.** **키 부재 = 성공(재시도 성공 포함) · PromptLog 없음 · 원문을 못 실은 호출 —
+키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
+`ModelGatewayError`가 된 시도의 원문은 안 남는다
+(`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |

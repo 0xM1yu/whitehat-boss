@@ -114,7 +114,7 @@ class ModelGatewayError(RuntimeError):
         retry_bodies: tuple[str, ...] = (),
         generating: bool | None = None,
         attempt_log: "tuple[AttemptRecord, ...]" = (),
-        raw_texts: tuple[str, ...] = (),
+        raw_texts: tuple[str | None, ...] = (),
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -135,6 +135,9 @@ class ModelGatewayError(RuntimeError):
         # 응답을 못 받은 시도(이 예외를 낸 시도)도 `AttemptRecord()`로 칸을 지킨다.
         self.attempt_log = attempt_log
         # 이 시도 앞서 스키마에 실패한 시도들의 응답 원문 — 거절한 시도 자체엔 응답이 없다(#603).
+        # 칸이 `None`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답(`""`)이 아니다.
+        # ⚠ 이 칸들이 비었다고 응답을 받은 적이 없다는 뜻은 아니다: 200이었으나 모양이 계약과 달라
+        # 이 예외가 된 시도의 원문은 여기 없다(`_post`의 「응답 모양이 계약과 다르다」 분기).
         self.raw_texts = raw_texts
 
 
@@ -185,7 +188,7 @@ class SchemaParseError(RuntimeError):
         attempts: int = 1,
         retry_bodies: tuple[str, ...] = (),
         attempt_log: "tuple[AttemptRecord, ...]" = (),
-        raw_texts: tuple[str, ...] = (),
+        raw_texts: tuple[str | None, ...] = (),
     ) -> None:
         super().__init__(message)
         self.usage = usage
@@ -198,6 +201,7 @@ class SchemaParseError(RuntimeError):
         # (#550) — `usage`는 시도를 합친 값이라 못 한다.
         self.attempt_log = attempt_log
         # 시도별 응답 원문 — 실패 경로만 든다. 상위가 응답 파일로 남긴다(#603).
+        # 칸이 `None`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답(`""`)이 아니다.
         self.raw_texts = raw_texts
 
 

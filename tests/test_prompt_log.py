@@ -692,7 +692,7 @@ def test_a_null_content_attempt_does_not_mask_the_schema_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """1차 `content=None`·2차 검증 실패 — 원 `SchemaParseError`·이벤트 하나·청구가 산다.
-    기록은 두 칸이고 1차 파일은 비어 있다."""
+    기록은 두 칸이고 1차 칸은 `null`이다 — 받은 문자열이 없으므로 파일도 없고 해시도 없다."""
     client = _scripted_adapter(monkeypatch, [None, '{"x": 1}'])
     ctx = _context(prompts=PromptLog(tmp_path), models=client)
 
@@ -701,9 +701,32 @@ def test_a_null_content_attempt_does_not_mask_the_schema_error(
     (call,) = _model_calls(ctx)  # 정확히 하나
     refs = json.loads(call["response_refs"])
     assert len(refs) == 2
-    assert (tmp_path / refs[0]).read_bytes() == b""
+    assert refs[0] is None
+    assert not (tmp_path / DIR_NAME / "0001_scout_response.txt").exists()
     assert (tmp_path / refs[1]).read_bytes() == b'{"x": 1}'
+    digests = json.loads(call["response_sha256"])
+    assert digests[0] is None
+    assert digests[1] == sha256_digest(b'{"x": 1}')
     assert ctx.ledger.input_tokens == 10
+
+
+def test_a_null_content_attempt_followed_by_a_gateway_error_leaves_null_slots_and_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 `content=None`·2차 게이트웨이 거절 — 칸은 `[null]`이고 응답 파일은 0개다.
+    `if not raw_texts` 가드(빈 튜플 → 키 없음)와 구별된다: `(None,)`은 비어 있지 않다."""
+    from src.interfaces.model_client import ModelGatewayError
+
+    ctx = _context(
+        prompts=PromptLog(tmp_path), models=_scripted_adapter(monkeypatch, [None, "gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_refs"] == "[null]"
+    assert call["response_sha256"] == "[null]"
+    assert not list(tmp_path.rglob("*_response*"))
 
 
 def test_a_gateway_error_after_a_schema_failure_still_leaves_the_first_response(
@@ -749,11 +772,23 @@ def test_a_large_multibyte_response_is_written_whole_and_hashed_from_the_file_by
     assert json.loads(call["response_sha256"]) == [sha256_digest(data)]
 
 
-@pytest.mark.parametrize("error", [ValueError("x"), RuntimeError("x")], ids=["value", "runtime"])
+class _Unlisted(Exception):  # noqa: N818 - 가드가 열거할 수 없는 모양: 어떤 열거형에도 안 든다
+    """표준 예외 이름을 열거해 좁힌 가드(`(OSError, ValueError, …)`)가 못 잡는 예외."""
+
+
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("x"), RuntimeError("x"), _Unlisted("x")],
+    ids=["value", "runtime", "unlisted"],
+)
 def test_a_non_os_error_while_recording_keeps_the_original_error_and_names_itself(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
 ) -> None:
-    """가드가 `(OSError, AttributeError)`처럼 좁으면 이 예외가 원 예외를 가린다."""
+    """가드가 `(OSError, AttributeError)`처럼 좁으면 이 예외가 원 예외를 가린다.
+
+    `_Unlisted`는 표준 예외를 이름으로 열거한 가드(`(OSError, ValueError, RuntimeError,
+    AttributeError)`)에도 안 든다 — 열거형으로 좁힌 변이는 `ValueError`·`RuntimeError`
+    케이스만으로는 살아남고 이 케이스가 죽인다."""
     prompts = PromptLog(tmp_path)
 
     def boom(*_a: object, **_k: object) -> None:
