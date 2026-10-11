@@ -1,4 +1,5 @@
-"""PoV 루프가 선 자리의 **마지막 `gen` PoC**를 run 산출물에 파일로 남긴다 (#355).
+"""PoV 루프가 선 자리의 **마지막 `gen`(또는 `submit`이 지명한 gen) PoC**를 run 산출물에 파일로
+남긴다 (#355).
 
 `PromptLog`와 같은 모양의 주입 객체다 — run_dir을 아는 것은 러너이고 `RunContext`도 노드도
 그것을 몰라야 한다(`context.py`의 `prompts` 필드 주석). `None`이면 아무것도 쓰지 않는다.
@@ -6,7 +7,8 @@
 ## 무엇을 남기나 — 루프당 **최대 한 파일**
 
 `runner._pov_finish`(루프 종단)가 한 번 쓴다. 쓰는 것은 그 루프의 **마지막 `gen`이 조립한 PoC**
-뿐이다 — 중간 `gen`들의 PoC는 파일로 안 남고(그 해시는 `pov_hop`(gen)의 `poc_sha256`에 있다),
+뿐이다(⏵ 2026-10-11: `submit`이 `poc_sha256`으로 앞선 gen을 지명했으면 그 gen의 PoC) —
+중간 `gen`들의 PoC는 파일로 안 남고(그 해시는 `pov_hop`(gen)의 `poc_sha256`에 있다),
 조립한 PoC가 하나도 없는 루프(gen 없는 submit·hop0 실패)는 파일도 `poc_ref`도 없다. submit 못 한
 부분 PoC(max_hop·repeat·흡수된 홉 실패)도 남긴다 — 회수가 목적이라 종단 사유로 가르지 않는다.
 

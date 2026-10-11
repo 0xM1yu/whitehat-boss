@@ -133,6 +133,12 @@ REASON_RATE_LIMITED = "rate_limited"
 # (`test_orchestrator_source_has_no_adapter_import`).
 _HTTP_TOO_MANY_REQUESTS = 429
 
+# 「크래시가 안 났다」로 세는 `vul` 코드 — 어댑터 `_NO_CRASH_EXIT_CODES`
+# (`src/adapters/cybergym_oracle.py`)의 사본이다(오케스트레이터는 어댑터를 못 읽는다).
+# 같다는 것은 `test_the_excluded_code_tuple_matches_the_adapter`가 문다.
+# **로그 전용이다** — `runner._terminal_fields`만 읽고 지정은 이 값을 안 읽는다.
+NO_CRASH_VUL_EXIT_CODES = (0, 71, 300)
+
 # `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
 # 고르지 않는다** - 이 저장소가 2026-10-03에 정한 규칙이고 저자의 금지 문장이 아니다(조사
 # 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다).

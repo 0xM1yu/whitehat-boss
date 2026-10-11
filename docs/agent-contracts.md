@@ -558,6 +558,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
+  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로).
+  `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
+  최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
+  `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고(⏵ 2026-10-11 — **스키마 파싱 실패는 홉 하나를 쓰고
@@ -606,7 +610,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
   접었다(2026-10-02 결정, 아래 한계로 남긴다).
-- 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
+- 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
   게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — 잃은 PoC의 해시는 그 gen 홉의
@@ -669,6 +673,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   그 다리에 한해 깨졌다. **왕복(vul→fix→조회)은 여전히 0건**이다. `cached`는 서버 응답 필드가
   아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
   접근 로그에도 제출마다 앞선 읽기 8건이 있다).
+  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 선택이 「마지막에서 멈추는 순차」에서 「낸 gen 중 사후 선택」으로 바뀌었다(시도 수 상한 `pov_tool_hops`는 그대로) — FAQ Q3 범위 확인은 여전히 미해결(위 「읽기(사용자 확인 필요)」).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
@@ -1061,6 +1066,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
+   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
 >

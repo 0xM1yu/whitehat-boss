@@ -1,4 +1,5 @@
-"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`, 그 `gen`이 싣는 PoC 바이트 구성 스펙 `PovSpec`.
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5는 형제 `PovActionNamed`), 그 `gen`이 싣는 PoC
+바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가
@@ -210,3 +211,47 @@ class PovAction(HarnessModel):
                 f"{self.action}가 쓰는 필드는 {list(_FIELDS_BY_ACTION[self.action])}뿐이다"
             )
         return self
+
+
+# ⏵ 2026-10-11 — `PovAction`의 형제 — v5가 `submit`에 앞선 gen을 지명하는 선택 필드를 더한다(이슈
+# #549 ②). **`PovAction`은 한 글자도 안 고친다** — 그 JSON 스키마가 v2~v4의 요청 payload라서다
+# (`nodes/pov.py`의 판별은 프롬프트 meta `output_schema` 선언 — Auditor 봉투 넷과 같은 방식).
+# 필드는 맨 뒤에 붙는다(pydantic 순서). docstring은 **자기 것**이다 — 요청 스키마의 `description`
+# 으로 모델에 실리므로 `submit` 줄이 지명을 말해야 한다(부모의 「마지막 gen」은 v2~v4에는 참이라
+# 거기는 안 고친다 — Santa 2라운드 C가 잡았다).
+# **형식을 검증하지 않는다** — 환각한 해시(짧음·`0x`·백틱·말줄임)를 거절하면 어댑터 재시도 끝에
+# `SchemaParseError`가 되어 그 Finding이 후보를 잃는다(fail-closed가 아니다). 맞는 gen을 못 찾으면
+# 러너가 마지막 gen으로 돌아가고 trace에 `submit_digest=unknown`을 남긴다(`_resolve_submit_digest`).
+# 길이 상한 80만 둔다(`sha256:`+64 hex = 71자) — **그 상한도 같은 비용을 진다**: 81자 이상은 파싱
+# 실패라 그 홉은 후보를 못 만든다(`strict` json_schema라 문법으로 먼저 걸릴 수 있다 — 미실측).
+# `submit` 밖에서는 읽히지 않고 무시된다.
+class PovActionNamed(PovAction):
+    """PoV 툴 루프가 매 홉 내는 제어 액션(v5 — `submit`이 앞선 gen을 지명할 수 있는 판).
+
+    `action`이 어느 필드를 쓰는지 정한다:
+    - `gen`: `spec`(PovSpec)을 실어 순수 함수가 인프로세스로 바이트를 만든다. **모델이 쓴 코드를
+      실행하지 않는다** — 조립은 결정론 순수 함수. raw 임의 바이트가 필요하면 `spec`의 `literal`
+      세그먼트에 통째로 넣는다.
+    - `inspect`: `tool`(asan/build/gdb/poc) 진단을 돌린다. **`poc`는 직전 `gen`의 PoC를 과제의
+      취약 빌드에 먹인다** — 그 관측은 당신 바이트의 결과다. 나머지 셋(`asan`·`build`·`gdb`)은
+      대상 소스를 빌드·실행할 뿐이고 그 바이트를 **입력으로 받지 않는다** — 그 셋의 관측은 대상
+      자체의 상태다.
+    - `submit`: 루프를 끝낸다 — `poc_sha256`에 이미 낸 gen의 digest(전체 또는 8자 이상 접두,
+      `sha256:` 접두 허용)를 적으면 **그 gen의 PoC**가, 안 적으면 마지막 gen의 PoC가 final 후보.
+
+    ⚠ **승격 seam(후속):** 모델이 `literal`로 직접 못 쓰는 계산값(체크섬·해시·압축)을 요구하는
+    포맷은 이 스펙으로 도달 못 한다 — 그때 `spec` 자리에 generator-script 대안을 더한다(별도
+    신뢰면·리뷰). 지금은 열지 않는다(임의 코드 실행 회피).
+
+    `PovSegment._check_kind`와 같은 규율으로, 그 액션이 쓰지 않는 필드가 실리면 거절한다
+    (`poc_sha256`만 예외 — `submit` 밖에서는 거절하지 않고 읽지도 않는다).
+    """
+
+    poc_sha256: str | None = Field(
+        default=None,
+        max_length=80,
+        description=(
+            "`submit`에서만 읽는다 — 이미 낸 gen의 PoC sha256(전체 또는 8자 이상 접두 · `sha256:` "
+            "접두 허용). 없으면 마지막 gen의 PoC가 최종 후보다. 형식은 받는 쪽이 정규화한다."
+        ),
+    )
