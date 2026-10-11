@@ -1,6 +1,7 @@
 """`tools/serve/`의 ssh 호출 — keepalive 옵션과 `vast-tunnel.sh --loop`.
 
-`ServerAliveCountMax` 기본값(3 × `ServerAliveInterval` 10 s)이면 30초 무응답에 터널이 끊긴다(#571).
+`ServerAliveCountMax` 기본값(3 × `ServerAliveInterval` 10 s)이면 30초 무응답에 터널이 끊긴다
+(#605 보고서 §6 — 관측된 끊김의 원인이 아니라 그 예방이다).
 두 스크립트를 **실제로 돌려** 가짜 `ssh`(PATH 앞)가 받은 argv에서 `-o K=V`를
 읽는다 - 옵션이 `--` 앞에 있어야 ssh의 옵션이다(뒤로 가면 원격 명령의 인자가 된다).
 `--loop`가 없을 때 argv는 종전과 같다(옵션 둘만 더해진 채). 가짜 `sleep`이 재시도 간격을 기록한다.

@@ -9,8 +9,9 @@
 #     표지는 다음 재연결을 막는다(시작 전과 재연결 직전마다 본다) — 살아 있는 ssh는 Ctrl-C로 끝낸다.
 #     옛 표지가 남아 있으면 시작 직후 멈춘다. SIGTERM은 자식 ssh가 끝나야 처리된다(bash trap 의미론) - 신호 처리·Ctrl-C 종료는 테스트하지 않았다.
 #
-# keepalive: ServerAliveCountMax의 기본 3 × Interval 10 s = 30초 무응답이면 터널이 스스로 끊긴다(2026-10-11 run,
-#   docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §6). 12로 올려 2분을 견딘다.
+# keepalive: ServerAliveCountMax의 기본 3 × Interval 10 s = 30초 무응답이면 터널이 스스로 끊긴다(#605 보고서 §6 —
+#   `docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md`, #605가 머지돼야 저장소에 있다). 12로 올려 2분을 견딘다.
+#   **예방이다** — 관측된 끊김(2026-10-11, 로컬 인터넷 전환 때)의 처방은 keepalive가 아니라 `--loop` 재연결이다(같은 §6).
 #
 # PORTS는 `config/serving/vastai-remote.yaml`의 서버 행이 registry에서 받는 포트다 — 손으로 적었고
 # `tests/test_remote_swap.py`가 그 집합과 같은지 잠근다(행이나 포트가 바뀌면 그 테스트가 빨개진다).
