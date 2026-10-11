@@ -45,7 +45,7 @@ from src.schemas.finding import (
     PathStep,
     ReproSpec,
 )
-from src.schemas.pov import PovAction, PovSegment, PovSpec
+from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
@@ -631,7 +631,15 @@ def _build_auditor_procedure_audit_always_action(
     )
 
 
-# `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`을 요청하고, `gen`이
+def _build_pov_action_named(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> PovActionNamed:
+    """v5 봉투(`PovActionNamed`)의 fake — `_build_pov_action`과 같은 액션(`poc_sha256` 없음)."""
+    return PovActionNamed(**_build_pov_action(context, produced_by, history).model_dump())
+
+
+# `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`(⏵ 2026-10-11 — v5는
+# 형제 `PovActionNamed`)을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
 # fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).
@@ -646,6 +654,7 @@ _BUILDERS = {
     Decision: _build_decision,
     DecisionDraft: _build_decision_draft,
     PovAction: _build_pov_action,
+    PovActionNamed: _build_pov_action_named,
     AuditorAction: _build_auditor_action,
     AuditorProcedureAction: _build_auditor_procedure_action,
     AuditorProcedureNullableCweAction: _build_auditor_procedure_nullable_cwe_action,
