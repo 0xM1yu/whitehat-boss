@@ -18,7 +18,7 @@ import pytest
 from src import cli
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
-from src.ids import IdFactory, sha256_text
+from src.ids import IdFactory, sha256_digest, sha256_text
 from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, SchemaParseError, Usage
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -471,3 +471,351 @@ def test_dry_run_leaves_no_prompt_artifacts(tmp_path: Path) -> None:
     run_dir, _ = _run(tmp_path, dry_run=True)
 
     assert not (run_dir / DIR_NAME).exists()
+
+
+# --- 실패한 응답 원문 (#603) --------------------------------------------------
+
+
+def test_a_failed_response_lands_beside_its_prompt_with_the_same_sequence_number(
+    tmp_path: Path,
+) -> None:
+    """응답 파일은 직전 `write`와 같은 순번을 쓰고 카운터를 올리지 않는다. LF·바이트 동일."""
+    log = PromptLog(tmp_path)
+    raw0, raw1 = "첫 응답\r\n원문", '{"a": 1}'
+
+    log.write(role="pov", stage=8, prompt=PROMPT)
+    log.write(role="pov", stage=8, prompt=PROMPT, hop=1)
+    ref0, digest0 = log.write_response(role="pov", stage=8, index=0, hop=1, text=raw0)
+    ref1, digest1 = log.write_response(role="pov", stage=8, index=1, hop=1, text=raw1)
+    nxt, _ = log.write(role="auditor", stage=5, prompt=PROMPT)
+
+    assert ref0 == f"{DIR_NAME}/0002_pov_hop1_response.txt"
+    assert ref1 == f"{DIR_NAME}/0002_pov_hop1_response_retry1.txt"
+    assert nxt == f"{DIR_NAME}/0003_auditor.md"  # 응답이 순번을 안 먹었다
+    assert (tmp_path / ref0).read_bytes() == raw0.encode("utf-8")  # 바이트 그대로(\r 보존)
+    assert (tmp_path / ref1).read_bytes() == raw1.encode("utf-8")
+    assert digest0 == sha256_text(raw0) and digest1 == sha256_text(raw1)
+    assert b"\r\n" in (tmp_path / ref0).read_bytes()  # 응답 안의 \r\n은 건드리지 않는다
+
+
+class _ExhaustedWithRawClient:
+    """스키마 소진 — 두 시도의 원문을 예외에 싣는다."""
+
+    RAWS = ('{"action": "answer"}', '{"action": "answer", "x": 1}\n')
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        raise SchemaParseError(
+            "소진",
+            usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+            gpu_ms=1000,
+            gpu_ms_source="request_wall_clock",
+            attempts=2,
+            retry_bodies=("재시도 본문",),
+            raw_texts=self.RAWS,
+        )
+
+
+def test_call_model_writes_the_failed_responses_and_the_trace_points_at_them(
+    tmp_path: Path,
+) -> None:
+    """실패 호출: 응답 파일이 원문 그대로 남고 `model_call`이 `response_refs`·sha로 가리킨다.
+    성공 호출에는 파일도 필드도 없다."""
+    ctx = _context(prompts=PromptLog(tmp_path), models=_ExhaustedWithRawClient())
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    (call,) = _model_calls(ctx)
+    refs = json.loads(call["response_refs"])  # JSON 배열 문자열 — `TraceValue`가 스칼라다
+    assert refs == [
+        f"{DIR_NAME}/0001_scout_response.txt",
+        f"{DIR_NAME}/0001_scout_response_retry1.txt",
+    ]
+    for ref, raw in zip(refs, _ExhaustedWithRawClient.RAWS, strict=True):
+        assert (tmp_path / ref).read_bytes() == raw.encode("utf-8")
+    assert json.loads(call["response_sha256"]) == [
+        sha256_text(r) for r in _ExhaustedWithRawClient.RAWS
+    ]
+
+    ok_ctx = _context(prompts=PromptLog(tmp_path / "ok"))
+    ok_ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (ok,) = _model_calls(ok_ctx)
+    assert "response_refs" not in ok and "response_sha256" not in ok
+    assert not list((tmp_path / "ok").rglob("*_response*"))
+
+
+def test_a_failed_response_write_keeps_the_original_error_and_lands_as_a_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """응답 쓰기가 OSError여도 원 예외·청구·이벤트는 살고 사유가 `response_record_error`다."""
+    prompts = PromptLog(tmp_path)
+
+    def disk_full(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(prompts, "write_response", disk_full)
+    ctx = _context(prompts=prompts, models=_ExhaustedWithRawClient())
+
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    assert ctx.ledger.input_tokens == 300
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is False
+    assert call["response_record_error"] == "OSError(errno=28)"
+    assert "response_refs" not in call
+
+
+# --- 실패 응답 기록의 경계 (#603 라운드 2) -----------------------------------
+
+
+class _RaisingClient:
+    """대본의 예외를 그대로 던진다 — 소비(`usage`)는 예외가 들고 있다."""
+
+    def __init__(self, exc: Exception) -> None:
+        self._exc = exc
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        raise self._exc
+
+
+def _exhausted(raw_texts: tuple[str, ...]) -> SchemaParseError:
+    return SchemaParseError(
+        "소진",
+        usage=Usage(input_tokens=300, output_tokens=30, cached_tokens=0),
+        gpu_ms=1000,
+        gpu_ms_source="request_wall_clock",
+        attempts=max(len(raw_texts), 1),
+        raw_texts=raw_texts,
+    )
+
+
+def _call_failing(ctx: RunContext, *, hop: int = 0) -> None:
+    with pytest.raises(SchemaParseError):
+        ctx.call_model(
+            role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT, hop=hop
+        )
+
+
+def test_failed_response_files_carry_the_hop_in_their_names(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted(("a", "b"))))
+
+    _call_failing(ctx, hop=3)
+
+    (call,) = _model_calls(ctx)
+    assert json.loads(call["response_refs"]) == [
+        f"{DIR_NAME}/0001_scout_hop3_response.txt",
+        f"{DIR_NAME}/0001_scout_hop3_response_retry1.txt",
+    ]
+
+
+def test_a_lone_surrogate_in_a_response_is_written_and_keeps_the_original_error(
+    tmp_path: Path,
+) -> None:
+    """모델 JSON의 외톨이 서로게이트가 쓰기를 터뜨려 원 예외·청구를 가리면 안 된다."""
+    raw = "앞" + chr(0xD800) + "뒤"  # 리터럴 이스케이프는 pytest 재작성이 못 쓴다
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted((raw,))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == raw.encode("utf-8", errors="surrogatepass")
+    assert "response_record_error" not in call
+    assert ctx.ledger.input_tokens == 300
+
+
+def test_no_raw_text_means_no_response_key_and_no_file(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted(())))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" not in call and "response_sha256" not in call
+    assert "response_record_error" not in call
+    assert not list(tmp_path.rglob("*_response*"))
+
+
+def test_without_a_prompt_log_the_original_error_propagates_and_no_response_key() -> None:
+    ctx = _context(prompts=None, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" not in call and "response_record_error" not in call
+    assert ctx.ledger.input_tokens == 300
+
+
+def test_any_error_while_recording_responses_keeps_the_original_error_and_the_charge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """OSError만이 아니다 — 어떤 예외든 사유로 남기고 원 예외·청구·이벤트는 산다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise AttributeError("x")
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_record_error"] == "AttributeError"
+    assert ctx.ledger.input_tokens == 300
+
+
+def _scripted_adapter(monkeypatch: pytest.MonkeyPatch, replies: list[object]):  # noqa: ANN202
+    """실 어댑터(`complete`)를 대본 응답으로 돌린다 — `raw_texts`가 예외에 실리는 길까지 잰다."""
+    from src.adapters.openai_compat import OpenAICompatModelClient, PostedResponse
+    from src.interfaces.model_client import ModelGatewayError
+
+    queue = list(replies)
+
+    def fake_post(self, payload: dict):  # noqa: ANN001, ANN202, ARG001
+        reply = queue.pop(0)
+        if reply == "gateway":
+            raise ModelGatewayError("거절", status=400, detail="x")
+        usage = Usage(input_tokens=5, output_tokens=5, cached_tokens=0)
+        return PostedResponse(
+            content=reply, usage=usage, finish_reason="stop", output_tokens_reported=True
+        )
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+    return OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="t", temperature=0.0, top_p=1.0,
+        max_tokens=64, seed=1, retries=1,
+    )
+
+
+def test_a_null_content_attempt_does_not_mask_the_schema_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 `content=None`·2차 검증 실패 — 원 `SchemaParseError`·이벤트 하나·청구가 산다.
+    기록은 두 칸이고 1차 칸은 `null`이다 — 받은 문자열이 없으므로 파일도 없고 해시도 없다."""
+    client = _scripted_adapter(monkeypatch, [None, '{"x": 1}'])
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)  # 정확히 하나
+    refs = json.loads(call["response_refs"])
+    assert len(refs) == 2
+    assert refs[0] is None
+    assert not (tmp_path / DIR_NAME / "0001_scout_response.txt").exists()
+    assert (tmp_path / refs[1]).read_bytes() == b'{"x": 1}'
+    digests = json.loads(call["response_sha256"])
+    assert digests[0] is None
+    assert digests[1] == sha256_digest(b'{"x": 1}')
+    assert ctx.ledger.input_tokens == 10
+
+
+def test_a_null_content_attempt_followed_by_a_gateway_error_leaves_null_slots_and_no_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 `content=None`·2차 게이트웨이 거절 — 칸은 `[null]`이고 응답 파일은 0개다.
+    `if not raw_texts` 가드(빈 튜플 → 키 없음)와 구별된다: `(None,)`은 비어 있지 않다."""
+    from src.interfaces.model_client import ModelGatewayError
+
+    ctx = _context(
+        prompts=PromptLog(tmp_path), models=_scripted_adapter(monkeypatch, [None, "gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_refs"] == "[null]"
+    assert call["response_sha256"] == "[null]"
+    assert not list(tmp_path.rglob("*_response*"))
+
+
+def test_a_gateway_error_after_a_schema_failure_still_leaves_the_first_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1차 스키마 실패·2차 게이트웨이 거절 — 1차 원문 하나가 남는다. 1차 거절이면 안 남는다."""
+    from src.interfaces.model_client import ModelGatewayError
+
+    ctx = _context(
+        prompts=PromptLog(tmp_path), models=_scripted_adapter(monkeypatch, ['{"x": 1}', "gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == b'{"x": 1}'
+
+    other = tmp_path / "first"
+    ctx2 = _context(
+        prompts=PromptLog(other), models=_scripted_adapter(monkeypatch, ["gateway"])
+    )
+    with pytest.raises(ModelGatewayError):
+        ctx2.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+    (call2,) = _model_calls(ctx2)
+    assert "response_refs" not in call2
+    assert not list(other.rglob("*_response*"))
+
+
+def test_a_large_multibyte_response_is_written_whole_and_hashed_from_the_file_bytes(
+    tmp_path: Path,
+) -> None:
+    """수십만 자·멀티바이트 원문이 잘리지 않고 그대로 쓰이고, 해시가 그 파일 바이트의 것이다."""
+    raw = ("한글 abc {" * 40_000)[:300_000]  # 300,000자 · 멀티바이트 포함
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted((raw,))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    data = (tmp_path / ref).read_bytes()
+    assert data == raw.encode("utf-8", errors="surrogatepass")
+    assert len(data) > 300_000
+    assert json.loads(call["response_sha256"]) == [sha256_digest(data)]
+
+
+class _Unlisted(Exception):  # noqa: N818 - 가드가 열거할 수 없는 모양: 어떤 열거형에도 안 든다
+    """표준 예외 이름을 열거해 좁힌 가드(`(OSError, ValueError, …)`)가 못 잡는 예외."""
+
+
+@pytest.mark.parametrize(
+    "error",
+    [ValueError("x"), RuntimeError("x"), _Unlisted("x")],
+    ids=["value", "runtime", "unlisted"],
+)
+def test_a_non_os_error_while_recording_keeps_the_original_error_and_names_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """가드가 `(OSError, AttributeError)`처럼 좁으면 이 예외가 원 예외를 가린다.
+
+    `_Unlisted`는 표준 예외를 이름으로 열거한 가드(`(OSError, ValueError, RuntimeError,
+    AttributeError)`)에도 안 든다 — 열거형으로 좁힌 변이는 `ValueError`·`RuntimeError`
+    케이스만으로는 살아남고 이 케이스가 죽인다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise error
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_record_error"] == type(error).__name__
+    assert ctx.ledger.input_tokens == 300
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit], ids=["ctrl_c", "exit"])
+def test_an_interrupt_while_recording_is_not_swallowed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, interrupt: type[BaseException]
+) -> None:
+    """가드는 `Exception`까지다 — `BaseException`으로 넓히면 Ctrl-C·TERM이 기록 쓰기에 삼켜진다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise interrupt()
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    with pytest.raises(interrupt):
+        _call_failing(ctx)
