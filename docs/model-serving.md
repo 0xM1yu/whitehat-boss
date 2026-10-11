@@ -345,7 +345,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ### 교대 명령과 장비 파일 (2026-09-29)
 
 `harness_pool`은 단계 경계에서 서버를 끄고 켠다(콜드 재기동 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
-「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다. ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다.
+「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다. ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다. ⏵ 2026-10-12 — 「vast는 미실측」도 낡았다: vast 교대 종단은 2026-10-03에 처음 성립했고(`config/profiles.yaml`의 ⏵ 2026-10-08), 기동 콜드 ↔ 따뜻한 쌍은 [10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §2가 든다.
 
 - **교대 명령** — `tools/serve/swap.sh`, 장비 무관. 하네스가 단계마다 `bash tools/serve/swap.sh <키…>`를
   부르고 run 끝에 인자 없이 부른다. 계약(인자 · 환경 · 종료코드 · stdout 마지막 줄 JSON 보고 · 서버 로그)은
