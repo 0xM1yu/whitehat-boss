@@ -1,20 +1,17 @@
 """Auditor v14 — v12에서 FACTS의 `source` 사본을 뺀 판 (이슈 #67 · #578 · 2026-10-11).
 
 v13(#591)은 같은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT
-정답은
-v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 판으로 세웠다 — v13의 요청
+정답은 v12 계약(`no_signal`에도 `audit`를 채운다)이라 v14를 v12 위에 새 판으로 세웠다 — v13의 요청
 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · agent-contracts §4 규칙 1). 묶는 것은 다섯이다.
 
 1. **v14 산문은 v12에서 두 줄만 다르다** — body의 Facts 머리 문장 · prefix의 `FACTS.source` 한 자리.
    줄 전체 등식(`old.replace(was, now) == new`)이라 덧붙이기·지우기가 다 죽고, 파일 바이트 등식이
-   끝 개행·CRLF·U+2028 변이도 죽인다. body는 v13과
-   바이트 동일이다(v12 body = v11 body라 v13 body와 같은 한 줄 차이다).
+   끝 개행·CRLF·U+2028 변이도 죽인다. body는 v13과 바이트 동일이다(v12 body = v11 body라 v13 body와
+   같은 한 줄 차이다).
 2. **봉투는 v12 것이다** — `AuditorProcedureAuditAlwaysAction`(v13의
-`AuditorProcedureNullableCweAction`이
-   아니다). 도구·SOURCE 옵션·입력도 v12와 같다.
+   `AuditorProcedureNullableCweAction`이 아니다). 도구·SOURCE 옵션·입력도 v12와 같다.
 3. **노드 렌더** — v14 hop0의 FACTS에 `source` 키가 **없고** 나머지 키는 v12와 같다. 원문은 산문
-블록에
-   한 번만 실린다. `auditor.run`이 config에서 판을 골라 돈 hop0도 같다.
+   블록에 한 번만 실린다. `auditor.run`이 config에서 판을 골라 돈 hop0도 같다.
 4. **곁가지** — Fake가 산문 블록에서 원문을 읽어 v12와 같은 판정을 내고, bench가 노드와 같은 FACTS와
    v12 봉투를 요청한다.
 5. **서빙 판 봉투 규칙** — config가 고른 판의 봉투가 `no_signal` ⟺ 세 값 · null `audit` 금지를

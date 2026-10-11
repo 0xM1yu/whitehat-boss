@@ -8,13 +8,16 @@ FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12
 판** 둘에서 돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와
 같은 장치). v10 전용 여섯(봉투 이름 · `cwe` null 금지 · 글자 수 둘 · result↔status 짝 ·
 null `audit`↔status 짝)의 서빙 판 쪽은 이렇다. 뒤 둘은 `tests/test_auditor_v14_facts.py`의
-서빙 판 핀(`test_the_served_auditor_keeps_the_no_signal_envelope_rule`)이 직접 문다. 앞 넷(봉투
-이름 · `cwe` null 금지 · 글자 수 둘)은 서빙 판(v14)을 직접 묻는 핀이 없다 — v14가 v12와 prefix
-줄 하나 · body 바이트 동일이라는 `tests/test_auditor_v14_facts.py`의 등식과 v12 쪽 핀
-(`tests/test_auditor_v12.py`)이 간접으로 물고, 봉투 이름은
-`test_v14_keeps_the_v12_envelope_tools_and_source_options`가 직접 문다.
-`tests/test_nullable_cwe.py`는 v11을 문다. 서빙 판 prefix 글자 수(59,074)를 숫자로 드는 핀은
-없다.
+서빙 판 핀(`test_the_served_auditor_keeps_the_no_signal_envelope_rule`)이 직접 문다. 앞 넷 중
+봉투 이름은 이름 `"v14"`로 건 핀 하나
+(`test_v14_keeps_the_v12_envelope_tools_and_source_options`)가 직접 묻고, config로 서빙 판을
+읽어 거는 핀은 위 `test_the_served_auditor_keeps_the_no_signal_envelope_rule`뿐이다.
+`cwe` null 금지·글자 수 둘은 서빙 판 직접 핀이 없다 — v14는 v12와 prefix·body 각 한 줄만 다르고
+(`test_v14_differs_from_v12_in_exactly_one_line_per_file`) body는 v13과 바이트
+동일(`test_v14_body_is_the_v13_body`)이라는 `tests/test_auditor_v14_facts.py`의 등식과 v12 쪽
+핀(`tests/test_auditor_v12.py`)이 간접으로 문다. `tests/test_nullable_cwe.py`는 v11을 문다.
+서빙 판 prefix 글자 수는 59,074(`len(load_prompt(Role.AUDITOR, "v14").prefix)` ·
+2026-10-11 실측)이고 그 숫자를 드는 핀은 없다.
 
 v8·v9는 「앞 판과 바이트 동일」을 세는 핀 파일(`test_auditor_prompt_v8.py` · `_v9.py`)이 있고, 그
 핀의 절반은 노드 상수·러너 문구와 산문을 묶는 것이다. **그 둘은 자기 판 파일만 읽는다** — v10은
@@ -94,10 +97,11 @@ def _served_auditor_version() -> str:
 # 이 파일의 핀이 읽는 판 — v10(동결 기록)과 **서빙 판**(config). 같으면 하나다.
 # 아래 `_V10_ONLY`에 없는 검사는 전부 두 판에서 돈다(`pytest_generate_tests`). 서빙 판이 v10과
 # 다른 문장을 의도로 든 검사(출력 봉투 이름 · `cwe` null 규칙 · 글자 수 · result↔status 짝 · null
-# `audit`↔status 짝)만 v10 전용이다. 서빙 판(v14)의 뒤 둘은 `tests/test_auditor_v14_facts.py`가 직접
-# 문다. 앞 넷은 직접 핀이 없다 — v14 대 v12의 등식(`tests/test_auditor_v14_facts.py`)과 v12 쪽 핀
-# (`tests/test_auditor_v12.py`)이 간접으로 물고, 봉투 이름만 `test_v14_keeps_the_v12_envelope_…`가
-# 직접 문다. `tests/test_nullable_cwe.py`는 v11을 문다 · 서빙 판 prefix 글자 수를 드는 핀은 없다.
+# `audit`↔status 짝)만 v10 전용이다. 서빙 판(v14)의 뒤 둘은 `tests/test_auditor_v14_facts.py`가
+# 직접 문다. 앞 넷 중 봉투 이름은 이름 `"v14"`로 건 핀 하나가 묻고, `cwe` null 금지·글자 수 둘은
+# 서빙 판 직접 핀이 없다 — v14 대 v12(prefix·body 각 한 줄)·v13(body 바이트 동일) 등식과 v12 쪽
+# 핀(`tests/test_auditor_v12.py`)이 간접으로 문다. `tests/test_nullable_cwe.py`는 v11을 문다 ·
+# 서빙 판 prefix 글자 수(59,074 · 2026-10-11 실측)를 드는 핀은 없다.
 SERVED = _served_auditor_version()
 _VERSIONS = tuple(sorted({"v10", SERVED}, key=lambda v: int(v.lstrip("v"))))
 _V10_ONLY = frozenset(
