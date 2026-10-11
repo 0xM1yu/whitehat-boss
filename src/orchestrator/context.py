@@ -363,12 +363,9 @@ class RunContext:
                 response_fields = self._record_failed_responses(
                     role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
                 )
-            except OSError as record_exc:
-                response_fields = {
-                    "response_record_error": (
-                        f"{type(record_exc).__name__}(errno={record_exc.errno})"
-                    )
-                }
+            except Exception as record_exc:  # 원 예외·청구를 가리면 안 된다
+                errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
+                response_fields = {"response_record_error": f"{type(record_exc).__name__}{errno}"}
             self.trace.emit(
                 EventKind.MODEL_CALL,
                 stage=stage,

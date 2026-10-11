@@ -1099,4 +1099,57 @@ def test_a_gateway_rejection_carries_no_raw_text(monkeypatch: pytest.MonkeyPatch
     with pytest.raises(ModelGatewayError) as gateway:
         _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
-    assert getattr(gateway.value, "raw_texts", ()) == ()
+    assert gateway.value.raw_texts == ()
+
+
+def _scripted_post(monkeypatch: pytest.MonkeyPatch, replies: list[object]) -> None:
+    """`_post`를 갈아 끼운다 — 회차마다 다음 것을 낸다(`PostedResponse`면 반환, 예외면 던진다)."""
+    queue = list(replies)
+
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
+        reply = queue.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+
+_USAGE = Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
+
+
+def test_a_null_content_attempt_keeps_its_slot_as_an_empty_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`message.content`가 `null`인 시도도 칸을 지킨다 — `None`이 아니라 `""`다."""
+    null_content = PostedResponse(
+        content=None,  # type: ignore[arg-type]
+        usage=_USAGE,
+        finish_reason="length",
+        output_tokens_reported=True,
+    )
+    _scripted_post(monkeypatch, [null_content, _posted('{"nope": 1}', _USAGE)])
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ("", '{"nope": 1}')
+
+
+def test_a_gateway_error_after_a_schema_failure_keeps_the_earlier_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 스키마 실패 뒤 2차가 게이트웨이 거절이어도 1차 원문은 예외에 실려 올라간다.
+    1차가 게이트웨이 거절이면 올릴 원문이 없다."""
+    _scripted_post(
+        monkeypatch,
+        [_posted('{"nope": 1}', _USAGE), ModelGatewayError("거절", status=400, detail="x")],
+    )
+    with pytest.raises(ModelGatewayError) as late:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    assert late.value.raw_texts == ('{"nope": 1}',)
+
+    _scripted_post(monkeypatch, [ModelGatewayError("거절", status=400, detail="x")])
+    with pytest.raises(ModelGatewayError) as first:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    assert first.value.raw_texts == ()
