@@ -1500,9 +1500,11 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
-    왜 대상이 못 됐는지 센다(판정 실패 · 반박 · 보류 · 판정 없음 · 업홀드 미승격). 판정은
-    `gate.normalize` 뒤 값이다. `_critic_set_aside`와 독립으로 같은 네 갈래를 센다 — 그 함수가
-    바뀌어도 이 helper는 따로 본다(보류는 #604 뒤 K>0에서 항상 0이 되고 K=0에서만 정보 칸)."""
+    왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박·보류 셋은 `_critic_set_aside`가 밀어 내는
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 이 함수와
+    독립으로 센다. K = `pov_attempt_top_n`. 보류 칸은 `_critic_set_aside`가 NEED_EVIDENCE를
+    빼지 않게 되면(#604) K>0에서 항상 0이 된다."""
+    # 풀이 비면 `validated`도 비므로 이 칸(`validated {len}`)은 구조상 0이다 — 방어로 둔다.
     inside = {f.finding_id for f in validated}
     rebut = hold = failed = unjudged = other = 0
     for finding_id in state.findings:

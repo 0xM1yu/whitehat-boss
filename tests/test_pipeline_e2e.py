@@ -4697,29 +4697,36 @@ def test_an_empty_pov_pool_reaches_the_run_warnings(
     assert any(w.startswith("PoV 대상 0건 — validated ") for w in result.warnings), result.warnings
 
 
-def test_a_real_run_whose_critic_holds_every_finding_says_why_the_pov_pool_is_empty(
+def test_a_real_run_whose_critic_rebuts_every_finding_says_why_the_pov_pool_is_empty(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """monkeypatch가 `_pov_targets`가 아니라 **Critic 판정**뿐인 실제 경로 — 모든 판정이 보류
-    (`need_evidence`, F-7 → `QUEUED`)면 validated가 0이고 풀(상한 8)에서 전부 빠져 경고가 오른다."""
-    def hold(ctx, *, decision_id, finding, evidences, source=None):  # noqa: ANN001, ANN202
+    """`_pov_targets`를 갈지 않고 **Critic 판정**만으로 만든 빈 풀 — 모든 판정이 근거 있는 반박
+    (F-6 → `QUEUED`)이면 validated가 0이고 상한 8의 추가 풀에서도 전부 빠져 경고가 오른다.
+    (보류는 안 쓴다: 보류를 풀에서 빼는지는 `_critic_set_aside`가 정하고 바뀔 수 있다.)"""
+
+    def rebut(ctx, *, decision_id, finding, evidences, source=None):  # noqa: ANN001, ANN202
         return Decision(
             decision_id=decision_id,
             run_id=ctx.run_id,
             finding_id=finding.finding_id,
-            verdict=Verdict.NEED_EVIDENCE,
+            verdict=Verdict.REBUT,
             rationale="근거 서술",
-            evidence_refs=[],
+            evidence_refs=["ev_0001"],
             produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
         )
 
-    monkeypatch.setattr(critic, "_ask_model", hold)
+    monkeypatch.setattr(critic, "_ask_model", rebut)
 
-    result, trace_path = _run(tmp_path, name="pov_pool_held", before=_with_index())
+    result, trace_path = _run(tmp_path, name="pov_pool_rebutted", before=_with_index())
 
     assert not _of(_events(trace_path), "pov_generated"), "전제 — pov가 안 돌았다"
     assert any(
-        w.startswith("PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류 ") for w in result.warnings
+        w.startswith(
+            "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류 0 · 판정 실패 0 · Critic 미경유 0"
+            " · pov_attempt_top_n 8. 8단계는 돌지 않았다"
+            "(validated 밖 후보도 Critic이 모두 밀어 냈거나 없다)"
+        )
+        for w in result.warnings
     ), result.warnings
 
 
