@@ -1072,7 +1072,7 @@ def test_declared_request_params_ride_the_payload_and_undeclared_add_no_key(
 # --- 실패한 응답 원문을 실어 올린다 (#603) ------------------------------------
 #
 # 스키마 소진 때 서버가 준 원문은 이 변경 전까지 어디에도 안 남았다(`error_detail`은 pydantic
-# 메시지의 잘린 조각뿐 — ⏵ 2026-10-11 #603이 예외에 실어 올려 상위가 쓴다). 어댑터는 파일을 못
+# 메시지의 잘린 조각뿐 — ⏵ 2026-10-12 #603이 예외에 실어 올려 상위가 쓴다). 어댑터는 파일을 못
 # 쓰므로 `retry_bodies`처럼 예외에 싣는다.
 
 
@@ -1121,10 +1121,10 @@ def _scripted_post(monkeypatch: pytest.MonkeyPatch, replies: list[object]) -> No
 _USAGE = Usage(input_tokens=1, output_tokens=1, cached_tokens=0)
 
 
-def test_a_null_content_attempt_keeps_its_slot_as_an_empty_text(
+def test_a_null_content_attempt_keeps_its_slot_as_none(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`message.content`가 `null`인 시도도 칸을 지킨다 — `None`이 아니라 `""`다."""
+    """`message.content`가 `null`인 시도도 칸을 지킨다 — `""`가 아니라 `None`이다(받은 게 없다)."""
     null_content = PostedResponse(
         content=None,  # type: ignore[arg-type]
         usage=_USAGE,
@@ -1136,7 +1136,7 @@ def test_a_null_content_attempt_keeps_its_slot_as_an_empty_text(
     with pytest.raises(SchemaParseError) as caught:
         _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
 
-    assert caught.value.raw_texts == ("", '{"nope": 1}')
+    assert caught.value.raw_texts == (None, '{"nope": 1}')
 
 
 def test_a_gateway_error_after_a_schema_failure_keeps_the_earlier_raw_text(
