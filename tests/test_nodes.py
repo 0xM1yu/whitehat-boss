@@ -980,8 +980,8 @@ def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -
 
 
 def test_the_extra_pov_targets_are_cut_by_confidence_then_finding_id(ctx: RunContext) -> None:
-    """판정이 없는 시나리오다 — 그러면 정렬 키의 첫 성분(Critic 판정 계단)이 전부 0이라 자르는
-    순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
+    """판정이 없는 시나리오다 — 그러면 정렬 키의 첫 성분(Critic 판정 계단)이 전부 같아(미경유 1)
+    자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
 
     `confidence` 0.9 둘 + 0.3 하나를 넣고 상한을 1로 둔다. 넣는 순서를 **0.3 → 큰 id → 작은
     id**로 해서 ①자리로 고르는 구현(첫째 = 0.3)과 ②동점을 뒤 id로 가르는 구현이 각각 빨개지게
@@ -1046,11 +1046,11 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 
 # --- 추가 대상 풀에서 Critic이 밀어 낸 Finding을 뺀다 (적대적 리뷰 #490 MEDIUM-2) ---------------
 #
-# 정렬 키(판정 계단 → `confidence` → id)에서 반박은 계단 0이라 `confidence`만으로 앞서고 반박돼도
-# 그대로다 - 풀에 두면 반박된 Finding이 「재현
-# 명세가 없어 멈춘」 Finding의 자리를 밀어내고, 최종 지정 사슬은 등급 상한이 같으면
-# `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이
-# 될 수 있다. 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
+# 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이 될 수 있다 -
+# 다른 후보가 없으면 그것이 최종이다. 정렬 키(판정 계단 → `confidence` → id)는 반박을 맨 뒤(3)에
+# 두지만 계단은 순서일 뿐 거르지 못하므로, 아래 검사들은 **상한에 자리가 남는 모양**으로 필터
+# 자체를 문다(⏵ 2026-10-12 - 전엔 상한 1에서 `confidence` 순서가 필터를 대신 시험했다).
+# 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
 # 반박으로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다(⏵ 2026-10-11 - 보류
 # (`need_evidence`)는 든다, 이슈 #604). Critic을
 # **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과 재현 명세가
@@ -1140,9 +1140,9 @@ def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
 def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing_repro_spec(
     ctx: RunContext,
 ) -> None:
-    """리뷰의 시나리오 그대로다 - 반박된 Finding이 `confidence`가 더 높아도 상한 1의 자리는 F-9로
-    멈춘 Finding이 받는다. 풀에서 안 빼면 정렬 키(`confidence` 내림차순)가 반박된 쪽을 먼저
-    고른다."""
+    """리뷰의 시나리오다 - 반박된 Finding은 `confidence`가 더 높아도 풀에 안 든다. ⏵ 2026-10-12 -
+    상한을 **2**로 둔다: 자리가 남아도 반박은 안 든다(판정 계단은 반박을 뒤로 보낼 뿐 풀에서 빼지
+    않는다 - 상한 1이면 계단만으로도 F-9 Finding이 이겨 필터를 시험하지 못한다)."""
     rebutted = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
     held = _finding("find_0002", state=FindingState.HYPOTHESIZED, confidence=0.5)
     state = runner._Accumulator()
@@ -1154,7 +1154,7 @@ def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing
     state.decisions[held.finding_id] = (
         _critic_decision(held.finding_id, Verdict.UPHOLD, grounded=True),
     )
-    _with_top_n(ctx, 1)
+    _with_top_n(ctx, 2)
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
 
@@ -1162,9 +1162,9 @@ def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing
 def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutted_ones(
     ctx: RunContext,
 ) -> None:
-    """보류(`need_evidence`)는 풀에 들되 정렬 키 앞의 판정 계단에서 uphold·미경유 뒤다 - 상한 1에
-    `confidence`가 더 높은 보류가 F-9 uphold의 자리를 못 가져간다. 반박된 Finding은 풀 밖이라
-    그 자리는 보류가 받는다."""
+    """보류(`need_evidence`)는 풀에 들되 정렬 키 앞의 판정 계단에서 uphold·미경유 **뒤**다 -
+    상한 1에 `confidence`가 더 높은 보류가 F-9 uphold의 자리를 못 가져간다. 반박된 Finding은
+    풀 밖이라 그 자리는 보류가 받는다."""
     held = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
     upheld = _finding("find_0002", state=FindingState.HYPOTHESIZED, confidence=0.5)
     state = runner._Accumulator()
@@ -1192,9 +1192,71 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
     assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == ["find_0001"]
 
 
+def _ladder_state() -> runner._Accumulator:
+    """판정 계단 넷이 한 state에 다 있다 - uphold · 미경유(`decisions` 없음) · 보류 · 반박."""
+    state = runner._Accumulator()
+    for finding_id, confidence, verdict in (
+        ("find_0001", 0.1, Verdict.UPHOLD),
+        ("find_0002", 0.3, None),
+        ("find_0003", 0.85, Verdict.NEED_EVIDENCE),
+        ("find_0004", 0.99, Verdict.REBUT),
+    ):
+        state.update(_finding(finding_id, state=FindingState.HYPOTHESIZED, confidence=confidence))
+        if verdict is not None:
+            state.decisions[finding_id] = (_critic_decision(finding_id, verdict, grounded=True),)
+    return state
+
+
+def test_the_verdict_ranks_are_uphold_then_uncritiqued_then_held_then_rebutted() -> None:
+    """판정 계단은 이슈 #604 (b)의 순서 그대로 **넷**이다 - `uphold 0 < 미경유 1 < 보류 2 < 반박 3`.
+    반박(3)은 `_critic_set_aside`가 풀에서 빼므로 **지금 정렬에는 닿지 않는 값**이다 - 이 검사가
+    값 자체를 문다(반박을 보류와 같은 2나 uphold와 같은 0에 두는 변이)."""
+    assert runner._verdict_ranks_by_finding(_ladder_state()) == {
+        "find_0001": 0,
+        "find_0002": 1,
+        "find_0003": 2,
+        "find_0004": 3,
+    }
+
+
+def test_an_upheld_decision_wins_the_rank_even_beside_a_held_one() -> None:
+    """판정이 둘이면(지금은 닿지 않는다 - `state.decisions[...] = (decision,)` 한 자리 대입)
+    uphold를 먼저 본다 - 게이트 `gate.evaluate`의 `upheld`가 `any(normalize == UPHOLD)`라 uphold가
+    하나라도 있으면 게이트는 uphold로 읽기 때문이다."""
+    state = runner._Accumulator()
+    state.update(_finding("find_0001", state=FindingState.HYPOTHESIZED))
+    state.decisions["find_0001"] = (
+        _critic_decision("find_0001", Verdict.NEED_EVIDENCE, grounded=True),
+        _critic_decision("find_0001", Verdict.UPHOLD, grounded=True),
+    )
+
+    assert runner._verdict_ranks_by_finding(state) == {"find_0001": 0}
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        pytest.param(1, ["find_0001"], id="limit_1_takes_the_upheld_one"),
+        pytest.param(2, ["find_0001", "find_0002"], id="limit_2_adds_the_uncritiqued_one"),
+        pytest.param(3, ["find_0001", "find_0002", "find_0003"], id="limit_3_ends_on_the_held_one"),
+    ],
+)
+def test_the_extra_pov_pool_orders_upheld_then_uncritiqued_then_held(
+    ctx: RunContext, limit: int, expected: list[str]
+) -> None:
+    """상한이 차는 쪽에서 자르는 순서다 - `confidence`는 거꾸로(0.1 · 0.3 · 0.85)여도 판정 계단이
+    앞선다. 반박(`find_0004` · 0.99)은 풀 밖이다. 미경유를 보류와 같은 계단에 두거나(`not
+    any(UPHOLD)`) uphold와 같은 계단에 두는 변이는 상한 1·2에서 빨개진다."""
+    _with_top_n(ctx, limit)
+
+    targets = runner._pov_targets(ctx, _ladder_state(), [])
+
+    assert [f.finding_id for f in targets] == expected
+
+
 def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: RunContext) -> None:
-    """위 둘이 보는 `_pov_targets`가 **`_analyze`에 실제로 꽂혀 있다** - 상한 1에 반박된 Finding이
-    더 높은 `confidence`로 있어도 PoV는 재현 명세가 없어 멈춘 쪽에 돈다."""
+    """위 둘이 보는 `_pov_targets`가 **`_analyze`에 실제로 꽂혀 있다** - 상한 2에 자리가 남아도
+    (반박된 Finding이 더 높은 `confidence`로 있다) PoV는 재현 명세가 없어 멈춘 쪽에만 돈다."""
     state, (held,) = _outside_validated(ctx, [("find_0001", 0.5)])
     rebutted = _finding("find_0002", state=FindingState.QUEUED, confidence=0.99)
     state.update(rebutted)
@@ -1202,7 +1264,7 @@ def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: R
     state.decisions[rebutted.finding_id] = (
         _critic_decision(rebutted.finding_id, Verdict.REBUT, grounded=True),
     )
-    _with_top_n(ctx, 1)
+    _with_top_n(ctx, 2)
 
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
@@ -1215,8 +1277,8 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
     """**실제 7단계가 쓴 `state.decisions`가 풀 필터에 읽힌다** - 위 검사들은 `decisions`를 손으로
     꽂는다. 여기서는 `critic.run`의 모델 호출(`_ask_model`)만 갈아 끼워 한 Finding에 근거 있는
     `rebut`를 내게 하고, 정책이 그것을 `QUEUED`(F-6)로 내린 뒤 PoV가 안 도는지 본다.
-    `confidence`는 반박된 쪽이 더 높다 - 필터가 안 이어졌으면 상한 1의 자리를 그쪽이 가져간다.
-    `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
+    `confidence`는 반박된 쪽이 더 높고 상한 2라 자리가 남는다 - 필터가 안 이어졌으면 반박된 쪽도
+    돈다. `_critic_set_aside`가 7단계 루프와 끊기는 변이(결정을 안 읽는다)가 여기서 빨개진다."""
     state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
 
     def ask(
@@ -1234,7 +1296,7 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
         )
 
     monkeypatch.setattr(critic, "_ask_model", ask)
-    _with_top_n(ctx, 1)
+    _with_top_n(ctx, 2)
 
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 

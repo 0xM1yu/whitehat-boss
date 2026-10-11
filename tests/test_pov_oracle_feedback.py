@@ -101,7 +101,9 @@ def test_intermediate_small_bytes_cannot_win_the_frozen_designation_chain():
     ledger.add_attempt(oracle_log.vul_ok("f", b"a", sub, 1, designatable=False))
     final = oracle_log.vul_ok("f", b"long final", sub, 1, designatable=True)
     ledger.add_attempt(final)
-    winner, _, reason = runner._designate_final(ledger, {"f": EvidenceGrade.E0}, {"f": 0.5})
+    winner, _, reason = runner._designate_final(
+        ledger, {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 1}
+    )
     assert winner is final and reason is None
     assert ledger.submitted == 2
     assert ledger.summary()["vul_submitted"] == 2
