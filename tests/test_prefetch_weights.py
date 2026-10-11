@@ -161,6 +161,8 @@ def test_a_real_run_calls_ssh_once_for_pip_and_once_per_model_with_the_keepalive
         assert argv[argv.index("--") + 1] == "root@203.0.113.9"
         assert before[before.index("-p") + 1] == "40123"
         assert "-n" in before
+        assert "-T" in before  # 비대화형 — 암호 프롬프트에 매달리는 회귀를 막는다
+        assert options["BatchMode"] == "yes"
         options = dict(
             v.split("=", 1) for f, v in zip(before, before[1:], strict=False) if f == "-o"
         )
