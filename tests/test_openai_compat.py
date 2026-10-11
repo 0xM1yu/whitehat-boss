@@ -1067,3 +1067,36 @@ def test_declared_request_params_ride_the_payload_and_undeclared_add_no_key(
     assert declared["top_k"] == 20
     assert declared["thinking_token_budget"] == 30720
     assert declared["chat_template_kwargs"] == {"enable_thinking": True}
+
+
+# --- 실패한 응답 원문을 실어 올린다 (#603) ------------------------------------
+#
+# 스키마 소진 때 서버가 준 원문은 어디에도 안 남았다(`error_detail`은 pydantic 메시지의 잘린
+# 조각뿐). 어댑터는 파일을 못 쓰므로 `retry_bodies`처럼 예외에 실어 올리고 상위가 쓴다.
+
+
+def test_a_schema_parse_error_carries_every_attempts_raw_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """소진한 호출의 예외가 시도 순서대로 **서버가 준 원문**을 든다."""
+    raws = iter(('{"nope": 1}', '{"also": "bad"}'))
+
+    def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
+        return _posted(next(raws), Usage(input_tokens=1, output_tokens=1, cached_tokens=0))
+
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ('{"nope": 1}', '{"also": "bad"}')
+
+
+def test_a_gateway_rejection_carries_no_raw_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    """게이트웨이 거절(400)은 받은 응답이 없다 — `raw_texts`를 실어 올리지 않는다."""
+    _raise_http(monkeypatch, _http_error(400, _OVERFLOW))
+
+    with pytest.raises(ModelGatewayError) as gateway:
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert getattr(gateway.value, "raw_texts", ()) == ()
