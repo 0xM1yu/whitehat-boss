@@ -18,18 +18,37 @@ from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_target
-from src.orchestrator.prompt_loader import build_facts, load_prompt
+from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.capsule import ContextCapsule
 from src.schemas.enums import Role
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding
-from src.schemas.pov import PovAction
+from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
 # 이 역할의 구조화 출력 스키마 — 매 홉 `PovAction`이다(gen/inspect/submit). `_call_hop`이 이걸
 # 요청하고, bench·계약 검사(`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)도 같은 값을 본다 — 한 역할 한 스키마.
 OUTPUT_SCHEMA = PovAction
+
+# ⏵ 2026-10-11 — 판마다 요청 스키마가 갈린다: v2~v4는 `PovAction`, v5는 그 형제
+# `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
+# 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
+# `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
+# 값(`PovAction`)으로 남는다.
+ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
+_SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
+
+
+def resolve_output_schema(name: str) -> type[PovAction]:
+    """프롬프트 meta의 `output_schema` 이름을 이 역할이 허용하는 스키마로 푼다."""
+    try:
+        return _SCHEMA_BY_NAME[name]
+    except KeyError:
+        raise PromptError(
+            f"pov meta의 output_schema `{name}`은 이 역할이 낼 수 없다 — "
+            f"허용: {sorted(_SCHEMA_BY_NAME)}"
+        ) from None
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
@@ -165,7 +184,7 @@ def _call_hop(
     result = ctx.call_model(
         role=ROLE,
         prompt=prompt,
-        schema=OUTPUT_SCHEMA,
+        schema=resolve_output_schema(load_prompt(ROLE, prompt.prompt_version).output_schema),
         stage=Stage.VALIDATE,
         subject_kind="finding",
         subject_id=finding.finding_id,

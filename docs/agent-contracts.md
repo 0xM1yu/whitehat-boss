@@ -549,13 +549,16 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   그래서 그 판에서 도구 요약은 둘째 줄이다) + (v3 이상이고 `--oracle-submit`일 때) 직전
   `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
-  직접 내지 않는다. ⏵ 2026-10-11: `submit`만 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 싣고,
-  없으면 마지막 gen이 최종 후보다. 못 찾으면 마지막 gen으로 돌아가고 submit 홉 이벤트가 `submit_digest`(`absent`·`matched`·`unknown`)를 단다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
+  직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
   깎을 수 있다는 **추정**을 피한다(base64는 안 쟀다 · 인접 실측은 enum 강제 verdict라는 다른 현상 —
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
+  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로).
+  `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
+  최종 후보다. 형식은 스키마가 검증하지 않는다 — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
+  `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽 사건(상태 없음·5xx·버릴 수
@@ -631,7 +634,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
   최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
   best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
-  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
+  최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다.
+  ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 best-of 압력이 N개 gen으로 넓어졌다 — FAQ Q3 범위 확인은 여전히 미해결. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
   서버의 실제 id(`arvo:1065`)는 번들의 값 그대로 쓰고, 마스킹 서버의 번들은 조작자가 저자 `mask_map.json`을
@@ -1046,6 +1050,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
+   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
 >

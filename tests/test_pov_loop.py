@@ -37,12 +37,12 @@ from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
 from src.orchestrator.poc_assembly import assemble_poc
-from src.orchestrator.prompt_loader import PROMPTS_DIR
+from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location
 from src.schemas.enums import PovStopReason, Role
-from src.schemas.pov import PovAction, PovSegment, PovSpec
+from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
 
 # `ctx`는 dev_fake로 배선된 픽스처, `_pov_state`는 finding+캡슐을 담은 state 헬퍼다
 # (test_ne_loop이 test_pipeline_e2e에서 헬퍼를 끌어 쓰는 것과 같은 방식).
@@ -160,10 +160,12 @@ class _ScriptedModel:
         self._i = 0
         self.prompts: list[tuple[Role, object]] = []
         self.histories: list[tuple[object, ...]] = []
+        self.schemas: list[type] = []
 
     def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
         self.prompts.append((role, prompt))
         self.histories.append(tuple(history))
+        self.schemas.append(schema)
         action = self._actions[min(self._i, len(self._actions) - 1)]
         self._i += 1
         if isinstance(action, Exception):
@@ -2022,35 +2024,94 @@ def test_pov_schema_caps_are_the_documented_values() -> None:
     assert hex_caps == [2 * _MAX_POC_BYTES]  # hex 16 Mi자 = 바이트 2자
 
 
+# `PovAction.model_json_schema()`의 sha256 — **cf6b28c(이슈 #549 ② 전)에서 잰 값**이다
+# (`json.dumps(schema, ensure_ascii=False)` — `tests/test_auditor_v12.py`와 같은 직렬화).
+# 이 스키마가 v2~v4의 요청 payload라 한 글자도 안 바뀌어야 한다 — 의도적으로 바꾸려면 그 판들의
+# 요청이 바뀐다는 사실을 먼저 받아들인다(evaluation §2.3).
+# 값을 새로 잰 경우 아래 `PovActionNamed` 대조도 같이 본다.
+_POV_ACTION_SCHEMA_SHA256 = "a61a7097011509c14c582f9b972ca382ce41a06fd969f1d1848259d307a70066"
+
+
+def test_pov_action_request_schema_is_the_frozen_one() -> None:
+    """v2~v4가 요청하는 `PovAction`의 JSON 스키마가 #549 ② 전과 바이트 동일하다 — 지명 필드는
+    형제 `PovActionNamed`에만 있다."""
+    text = json.dumps(PovAction.model_json_schema(), ensure_ascii=False)
+
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == _POV_ACTION_SCHEMA_SHA256
+    assert "poc_sha256" not in text
+
+
+def test_the_named_sibling_adds_exactly_one_property() -> None:
+    """`PovActionNamed`의 스키마는 `PovAction`에 `poc_sha256` 하나(맨 뒤 · 선택 · 상한 80)를
+    더하고 이름 말고는 같다 — 액션 서술(description)·`required`·다른 속성이 그대로다."""
+    base = PovAction.model_json_schema()
+    named = PovActionNamed.model_json_schema()
+    prop = named["properties"].pop("poc_sha256")
+
+    assert prop == {
+        "anyOf": [{"maxLength": 80, "type": "string"}, {"type": "null"}],
+        "default": None,
+        "title": "Poc Sha256",
+    }
+    assert named.pop("title") == "PovActionNamed" and base.pop("title") == "PovAction"
+    assert named == base
+    assert list(PovActionNamed.model_json_schema()["properties"])[-1] == "poc_sha256"
+
+
+def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
+    """v2~v4는 `PovAction`, v5는 지명을 받는 `PovActionNamed`를 선언한다 — 요청 스키마는 meta
+    선언이 정한다(`nodes/pov.resolve_output_schema`). v5가 아닌 판이 형제로 옮겨가면
+    그 판의 요청이 바뀐다."""
+    declared = {v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5")}
+
+    assert declared == {
+        "v2": "PovAction", "v3": "PovAction", "v4": "PovAction", "v5": "PovActionNamed",
+    }
+    assert pov_node.resolve_output_schema("PovActionNamed") is PovActionNamed
+    assert pov_node.resolve_output_schema("PovAction") is PovAction
+    with pytest.raises(PromptError):
+        pov_node.resolve_output_schema("Finding")
+
+
+@pytest.mark.parametrize(("version", "expected"), [("v3", PovAction), ("v5", PovActionNamed)])
+def test_the_model_is_asked_for_the_envelope_the_meta_declares(
+    ctx: RunContext, version: str, expected: type  # noqa: F811
+) -> None:
+    """실제로 모델에 가는 `schema=`가 meta가 선언한 봉투다 — hop0·hop k 모두."""
+    scripted = _with_pov_version(ctx, version)
+    scripted = _scripted(scripted, [_gen(count=3), _SUBMIT])
+    state, finding = _pov_state(ctx)
+
+    runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+
+    assert scripted.models.schemas == [expected, expected]
+
+
 _DIGEST = "ab" * 32
 
 
 @pytest.mark.parametrize(
     "named",
-    [f"sha256:{_DIGEST}", _DIGEST, "ab" * 4, f"sha256:{'ab' * 4}", "ABCDEF01"],
+    [
+        f"sha256:{_DIGEST}", _DIGEST, "ab" * 4, f"sha256:{'ab' * 4}", "ABCDEF01",
+        # 환각 꼴은 스키마가 거절하지 않는다(거절하면 재시도 끝에 Finding이 후보를 잃는다).
+        # 해석이 푼다.
+        "abcdef0", " " + _DIGEST + " ", "SHA256:" + _DIGEST, "`" + _DIGEST + "`", "0x" + _DIGEST,
+        "abcd1234…", "", "g" * 8, f"sha256:{_DIGEST}00",
+    ],
 )
-def test_submit_accepts_a_full_digest_or_a_hex_prefix_of_eight_or_more(named: str) -> None:
-    assert PovAction(action="submit", rationale="r", poc_sha256=named).poc_sha256 == named
+def test_the_named_envelope_takes_any_short_string(named: str) -> None:
+    assert PovActionNamed(action="submit", rationale="r", poc_sha256=named).poc_sha256 == named
 
 
-@pytest.mark.parametrize(
-    "named", ["", "abcdef0", "sha256:abcdef0", "g" * 8, _DIGEST + "0", f"sha256:{_DIGEST}00"]
-)
-def test_submit_rejects_a_malformed_digest(named: str) -> None:
-    """8자 미만 · 16진 밖 · 64자 초과는 거절한다 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 지명하는
-    것을 막는다."""
+def test_the_named_envelope_caps_the_length_and_ignores_the_field_off_submit() -> None:
+    """상한 80만 건다. `submit` 밖의 `poc_sha256`은 거절하지 않고 읽히지 않는다(거절하면 파싱 실패로
+    Finding이 후보를 잃는다)."""
     with pytest.raises(ValueError):
-        PovAction(action="submit", rationale="r", poc_sha256=named)
+        PovActionNamed(action="submit", rationale="r", poc_sha256="a" * 81)
+    gen = PovActionNamed(action="gen", spec=_gen().spec, rationale="r", poc_sha256=_DIGEST)
 
-
-@pytest.mark.parametrize("action", ["gen", "inspect"])
-def test_poc_sha256_is_allowed_on_submit_only(action: str) -> None:
-    """지명은 `submit`의 일이다 — 다른 액션에 실리면 조용히 무시하지 않고 거절한다."""
-    fields = (
-        {"spec": _gen().spec} if action == "gen" else {"tool": "poc"}
-    )
-    with pytest.raises(ValueError, match="poc_sha256"):
-        PovAction(action=action, rationale="r", poc_sha256=_DIGEST, **fields)
+    assert gen.poc_sha256 == _DIGEST
 
 
 def test_pov_stop_reason_and_event_kind_spellings_are_pinned() -> None:
