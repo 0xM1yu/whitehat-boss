@@ -114,6 +114,7 @@ class ModelGatewayError(RuntimeError):
         retry_bodies: tuple[str, ...] = (),
         generating: bool | None = None,
         attempt_log: "tuple[AttemptRecord, ...]" = (),
+        raw_texts: tuple[str, ...] = (),
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -133,6 +134,8 @@ class ModelGatewayError(RuntimeError):
         # 여기까지 시도별 (출력 토큰, 종료 사유) — 실패한 호출이 바로 가르려는 대상이다(#550).
         # 응답을 못 받은 시도(이 예외를 낸 시도)도 `AttemptRecord()`로 칸을 지킨다.
         self.attempt_log = attempt_log
+        # 이 시도 앞서 스키마에 실패한 시도들의 응답 원문 — 거절한 시도 자체엔 응답이 없다(#603).
+        self.raw_texts = raw_texts
 
 
 class ModelSwapError(ModelGatewayError):

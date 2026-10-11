@@ -620,7 +620,7 @@ class RunContext:
         """스키마 실패한 시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
 
         **실패 경로만 부른다** — 성공 응답은 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
-        이벤트 키가 늘지 않는다.
+        이벤트 키가 늘지 않는다. 쓰다가 중간에 실패하면 앞서 쓴 파일은 참조가 안 남은 고아로 남는다.
         """
         if not raw_texts or self.prompts is None:
             return {}
