@@ -188,7 +188,7 @@ def test_the_served_auditor_seat_renders_a_facts_without_the_source(
     ctx: RunContext, profile: str
 ) -> None:
     """**성질** 핀 — 서빙 좌석이 실제로 고르는 판의 hop0는 FACTS에 `source`가 없고 원문이 산문에
-    한 번 있다. 판 이름이 아니다: 좌석이 `facts_source`를 안 선언한 판(v14 따위)으로 옮겨가면
+    한 번 있다. 판 이름이 아니다: 좌석이 `facts_source`를 안 선언한 판(예: v12)으로 옮겨가면
     빨개져 그 결정을 명시하게 한다. `test_config`의 이름 핀만으로는 이름을 고친 뒤 안 물린다."""
     version = load_config(profile).model_for(Role.AUDITOR.value).prompt_template_version
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
