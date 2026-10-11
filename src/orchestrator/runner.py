@@ -2370,10 +2370,14 @@ def _run_pov_hops(
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
     쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
     호출부 20여 곳이 쥐고 있다.
-    ⏵ **2026-10-12 (#550) — 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다**: `stop_reason` 없는
+    ⏵ **2026-10-11 (#550) — 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다**: `stop_reason` 없는
     `POV_HOP`을 내고 `[스키마 오류]` 노트(+ 아직 못 받은 관측)를 실어 같은 자리를 다시 묻는다.
     `last_poc`·`seen`은 그대로다. `hop >= pov_tool_hops`(마지막 홉)의 실패만 `PARSE_FAILED`로
     선다. 게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
+    ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
+    「모든 관측의 첫 줄이 홉 줄 · hop 0에는 줄이 없다」). hop0 재질문은 본문 **끝**에 홉 줄+노트가
+    붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 다음 판에서 한 줄로 서술한다(이 PR은
+    프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2604,7 +2608,10 @@ def _pov_hop_line(hop: int, last_hop: int) -> str:
 def _pov_parse_retry_note(
     hop: int, last_hop: int, exc: Exception, *, with_hop_line: bool
 ) -> str:
-    """파싱 실패 뒤 다시 묻는 followup 머리 — 홉 줄(`hop_header` 판만) + `[스키마 오류] <사유>`."""
+    """파싱 실패 뒤 재질문에 싣는 노트 — 홉 줄(`hop_header` 판만) + `[스키마 오류] <사유>`.
+
+    자리는 둘이다: hop≥1이면 followup의 **머리**(노트 다음에 직전 관측), hop 0이면 첫 본문의 **끝**
+    (`open_hop(retry_note=)`). 사유는 `error_detail`로 512자에 자른다."""
     line = f"{_pov_hop_line(hop, last_hop)}\n" if with_hop_line else ""
     return f"{line}[스키마 오류] {error_detail(exc)}"
 
@@ -2677,7 +2684,8 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     """PoV 홉 호출 예외를 흡수 여부로 가른다 — pov 추가형 계약(옛 `_run_pov` 단발판이 쓰던
     `_is_droppable` 판정 그대로).
 
-    per-finding 실패(스키마 파싱·버릴 수 있는 게이트웨이)는 흡수해 이 finding만 건너뛰고,
+    버릴 수 있는 게이트웨이 실패는 흡수해 이 finding만 건너뛰고, **스키마 파싱 실패는 마지막
+    홉에서만** finding을 건너뛴다(앞 홉의 실패는 루프가 홉 하나를 쓰고 다시 묻는다 — #550),
     서버 쪽 사건(status 없음·5xx = `not _is_droppable`)은 `None`으로 두어 올려 보낸다 —
     run의 사실이라 `run_pipeline`이 멈춘다. 크기 거절만 CONTEXT_OVERFLOW로 따로 센다(폭주 차단).
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
