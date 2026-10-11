@@ -1418,19 +1418,26 @@ def _pov_targets(
     끝난다(`_analyze` · #532). 그 밖의 예외는 최종 지정을 안 돈다.
 
     **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
-    ① **Critic이 반박(F-6)·보류(`need_evidence`, F-7)로 판정한 것** — `gate.normalize` 뒤 판정이
-    `uphold`가 아닌 것이다(근거 없는 반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로
-    **든다**) ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
+    ① **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
+    반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류(`need_evidence`, F-7)는
+    **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
+    5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
+    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
+    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
+    입력 구조 탓인지는 미실측).
+    ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
     (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
     Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
     명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
     판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
 
-    **왜 빼나.** 정렬 키가 Auditor `confidence` 하나라 반박돼도 값이 그대로다 — 풀에 두면 반박된
-    Finding이 더 높은 값으로 다른 Finding의 자리를 밀어내고, 최종 지정 사슬(`_designation_key`)은
-    등급 상한이 같으면 `confidence`로 가르므로 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가
-    공식 최종 제출이 될 수 있다.** `need_evidence`는 반박은 아니나 같이 뺐다 — Critic이 판정을
-    남긴 Finding을 Critic을 안 거친 것과 같은 줄에 세우지 않는다(판단이 갈려 보수적으로 뺀 쪽이다).
+    **왜 빼나.** 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출이 될
+    수 있다** — 다른 후보가 없으면(`sole_candidate`) 그것이 최종이고, 상한이 남으면 반박도 풀에
+    든다. 정렬 키(판정 계단 → `confidence` → `finding_id`)는 반박을 맨 뒤(3)에 두지만
+    (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
+    **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
+    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 첫 계단).
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -1459,36 +1466,44 @@ def _pov_targets(
     과제 이미지에 먹이게 됐지만 **게이트 전이는 별건이다**(`p4`가 종료 코드까지 본다 — #232).
     이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
 
-    자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`
-    (정렬이 흔들리면 재현 실행이 갈라진다). ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한
-    값이 아니다** — 그래서 이것은 등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
+    자르는 순서는 Critic 판정(uphold → 미경유 → 보류) 다음 `critic.select`와 **같은 키**다 —
+    `confidence` 내림차순, 동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
+    ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한 값이 아니다** — 그래서 이것은
+    등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
     건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
     """
     limit = ctx.config.thresholds.pov_attempt_top_n
     if limit <= 0:
         return validated
     already = {finding.finding_id for finding in validated}
+    verdicts = _verdict_ranks_by_finding(state)
     rest = sorted(
         (
             f
             for f in state.findings.values()
             if f.finding_id not in already and not _critic_set_aside(state, f.finding_id)
         ),
-        key=lambda f: (-f.confidence, f.finding_id),
+        key=lambda f: (verdicts[f.finding_id], -f.confidence, f.finding_id),
     )
     return [*validated, *rest[:limit]]
 
 
 def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     """7단계가 이 Finding을 **밀어 냈나** — 판정 호출이 실패해 버려졌거나(`_drop_finding`), Critic이
-    반박·보류로 판정했다. 판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이
-    읽는 값과 같아야 `QUEUED`(F-6·F-7)와 이 판정이 어긋나지 않는다.
+    반박(F-6)으로 판정했다. 보류(`need_evidence`, F-7)는 안 밀어 낸 것이다 — 풀에 들고 정렬·지정에서
+    뒤로 간다(`_verdict_ranks_by_finding`). ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). 판정은
+    `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야 `QUEUED`(F-6)와
+    이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
+    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
+    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
+    입력 구조 탓인지는 미실측).
 
     ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
     **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
-    `any(normalize == UPHOLD)`)과 이 `any(normalize != UPHOLD)`가 갈릴 수 있다 — 그때 맞출 것."""
+    `any(normalize == UPHOLD)`)과 이 `any(normalize == REBUT)`가 갈릴 수 있다 — 그때 맞출 것."""
     return finding_id in state.critic_failed_ids or any(
-        gate.normalize(decision) is not Verdict.UPHOLD
+        gate.normalize(decision) is Verdict.REBUT
         for decision in state.decisions.get(finding_id, ())
     )
 
@@ -1885,8 +1900,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
     모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ①내부 근거 등급 ②`confidence`
-    ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓪Critic 판정 ①내부 근거 등급
+    ②`confidence` ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
     그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
@@ -2114,8 +2129,8 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
 
 def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
     """Finding별 `confidence`. **`_grades_by_finding`과 키 집합이 같다** — 둘 다 `state.findings`를
-    전수로 돈다. 최종 PoC 지정이 이 둘을 나란히 읽고, 한쪽에만 있는 `finding_id`는 지정이
-    `grade_unknown`으로 거부한다(`_designate_final`).
+    전수로 돈다. 최종 PoC 지정이 이 둘과 `_verdict_ranks_by_finding`(같은 전수)을 나란히 읽고,
+    셋 중 어느 하나에만 없는 `finding_id`는 지정이 `grade_unknown`으로 거부한다(`_designate_final`).
 
     ⚠ **`confidence`는 모델이 적은 수다** — 게이트가 계산한 등급과 다른 종류의 값이고, 그래서
     지정 사슬에서 등급 **뒤**에 온다. 채점기 응답에서는 안 나온다(Auditor가 Finding에 적는다) —
@@ -2124,10 +2139,46 @@ def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
     return {f.finding_id: f.confidence for f in state.findings.values()}
 
 
+def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
+    """Finding별 Critic 판정 계단 - **0 = uphold · 1 = 판정 없음(미경유) ·
+    2 = 보류(`need_evidence`) · 3 = 반박(`rebut`)**이다. 이슈 #604 (b)가 제안한 순서
+    (`uphold > 미경유 > need_evidence`) 그대로고 반박이 맨 뒤다. 추가 풀 정렬(`_pov_targets`)과
+    최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은 `gate.normalize` 뒤 값이고, 키
+    집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
+
+    ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(sumin 리뷰): 미경유는 6단계 E0
+    `QUEUED`와 `critic_top_n` 절단분이라 Critic이 **보증한** 것이 아닌데 uphold와 동점이 돼
+    등급이 가렸다.
+
+    **반박(3)은 지금 정렬에 닿지 않는 값이다** - `_pov_targets`가 `_critic_set_aside`로 반박을
+    풀에서 먼저 빼고, 최종 후보는 그 풀의 PoC뿐이다. 그래도 값을 3으로 둔 것은 풀 필터가 풀리거나
+    다른 호출처가 생겨도 반박이 보류 **앞**에 서지 않게 하는 방어 심층이다(`test_nodes.py`가 값을
+    문다).
+
+    **uphold를 먼저 본다.** 판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다).
+    둘 이상이 되면 `gate.evaluate`의 `upheld`가 `any(normalize == UPHOLD)`라 uphold가 하나라도
+    있으면 게이트는 그 Finding을 uphold로 읽으므로 이 함수도 0으로 맞춘다 - 다음은 반박, 그다음
+    보류다. 지금은 `state.decisions[...] = (decision,)` 한 자리 대입이라 닿지 않는다."""
+    ranks: dict[str, int] = {}
+    for f in state.findings.values():
+        verdicts = {gate.normalize(d) for d in state.decisions.get(f.finding_id, ())}
+        ranks[f.finding_id] = (
+            0
+            if Verdict.UPHOLD in verdicts
+            else 3
+            if Verdict.REBUT in verdicts
+            else 2
+            if Verdict.NEED_EVIDENCE in verdicts
+            else 1
+        )
+    return ranks
+
+
 # 최종 PoC 지정 사슬의 단계 이름. **`_designation_key`가 내는 튜플과 자리가 하나씩 맞다** — 앞에서
 # 보아 처음 값이 갈리는 자리가 그 run의 `designation`이다. 이름과 키의 길이가 어긋나면
 # `zip(..., strict=True)`가 터진다(키를 늘리고 이름을 안 붙이는 변이를 그 자리가 막는다).
 _DESIGNATION_CHAIN = (
+    oracle_log.DESIGNATION_CRITIC_VERDICT,
     oracle_log.DESIGNATION_TOP_GRADE,
     oracle_log.DESIGNATION_TOP_CONFIDENCE,
     oracle_log.DESIGNATION_SMALLEST_POC,
@@ -2139,10 +2190,16 @@ def _designation_key(
     attempt: oracle_log.VulAttempt,
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
-) -> tuple[int, float, int, str]:
+    verdicts: Mapping[str, int],
+) -> tuple[int, int, float, int, str]:
     """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값뿐이다.
 
-    ①등급 내림차순 ②`confidence` 내림차순 ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
+    ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
+    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
+    「모르겠다」고 한 PoC가 등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604).
+    판정 계단이 등급보다 앞서므로 **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 >
+    E4 보류, E2 uphold > E3 미경유) — 의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은
+    계단에서 떼어 그 사이에 세웠다(sumin 리뷰, `_verdict_ranks_by_finding`).
 
     🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
@@ -2153,6 +2210,7 @@ def _designation_key(
     읽는 쪽이 「해시로 골랐다」를 알아야 한다(§0).
     """
     return (
+        verdicts[attempt.finding_id],
         -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
         -confidences[attempt.finding_id],
         attempt.poc_bytes,
@@ -2164,6 +2222,7 @@ def _designate_final(
     ledger: oracle_log.OracleLedger,
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
+    verdicts: Mapping[str, int],
 ) -> tuple[oracle_log.VulAttempt | None, str, str | None]:
     """run당 한 번, `vul` 제출이 성공한 후보 중에서 최종 PoC를 지정한다 (#386).
 
@@ -2177,15 +2236,18 @@ def _designate_final(
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
       것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
-    - **등급 또는 `confidence`를 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown` — 이름은
-      등급 미상에서 굳었지만 이 검사는 둘을 같이 본다). **방어 분기다** — 후보의 `finding_id`는
+    - **등급·`confidence`·판정 계단을 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown` —
+      이름은 등급 미상에서 굳었지만 이 검사는 셋을 같이 본다). **방어 분기다** —
+      후보의 `finding_id`는
       `_run_pov`가 `state.findings`에서 받은 것이고 `_grades_by_finding`·
       `_confidences_by_finding`이 그 전부를 세므로 현 러너로는 닿지 않는다(직접 호출 검사만 문다 —
       실영향은 없다).
     - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
-      `designation`이다(`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
+      `designation`이다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
+      `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
+      기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, sumin 리뷰).
 
     ⏵ **2026-10-04 — 동점 거부를 없앴다.** 2026-10-03 동결 규칙은 「내부 근거 등급 최댓값 ·
     동점이면 거부」였고 이 함수가 `grade_tie`를 냈다. 그 규칙이 실측에서 **점수를 0으로
@@ -2202,15 +2264,17 @@ def _designate_final(
     금지하지 않는다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 그 값으로
     후보를 가르면 후보를 채점기에 물어 고르는 best-of가 되어 읽지 않기로 했다. 읽는 것은
     `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스가 만든 값**
-    (내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다. 내부 등급은 하네스가 도구를
-    돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
+    (Critic 판정 계단 · 내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다. 내부 등급은
+    하네스가 도구를 돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서
+    안 나온다(`_grades_by_finding`).
 
     `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
-    `==`)을 분기마다(사슬이 갈린 자리 넷 · 같은 바이트 · 등급 또는 `confidence` 미상 · 후보 하나)
-    문다.
+    `==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단 미상 ·
+    후보 하나) 문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
-    docstring)와 후보 0건(읽을 `submission`이 없다).
+    docstring), `verdicts` 사전(`_verdict_ranks_by_finding` 안에서 채점기 장부를 읽는 변이는
+    지금 안 잡힌다 — 이 함수 밖의 값이라 함정이 못 본다)과 후보 0건(읽을 `submission`이 없다).
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
@@ -2225,10 +2289,13 @@ def _designate_final(
         return None, "", ledger.none_reason()
     if len(candidates) == 1:
         return candidates[0], oracle_log.DESIGNATION_SOLE_CANDIDATE, None
-    # 등급이나 confidence를 모르는 후보가 하나라도 있으면 거부한다 — 모르는 값을 0으로 깔면
-    # **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은 0이 아니라 미실측 표시다).
+    # 등급·confidence·판정 계단 중 모르는 값이 있는 후보가 하나라도 있으면 거부한다 —
+    # 모르는 값을 0으로 깔면 **없는 근거로** 나머지를 고르게 된다(CLAUDE.md §0: 안 잰 값은
+    # 0이 아니라 미실측 표시다).
     if any(
-        attempt.finding_id not in grades or attempt.finding_id not in confidences
+        attempt.finding_id not in grades
+        or attempt.finding_id not in confidences
+        or attempt.finding_id not in verdicts
         for attempt in candidates
     ):
         return None, "", oracle_log.REASON_GRADE_UNKNOWN
@@ -2238,7 +2305,7 @@ def _designate_final(
     # 에 이름이 없고 `zip(..., strict=True)`가 그 길이를 맞춰 둔다.
     ordered = sorted(
         candidates,
-        key=lambda a: (*_designation_key(a, grades, confidences), a.finding_id),
+        key=lambda a: (*_designation_key(a, grades, confidences, verdicts), a.finding_id),
     )
     picked = ordered[0]
     # **같은 바이트를 접는 자리다.** 접어서 하나만 남으면 고를 것이 없다 — 지정이 어느 후보를
@@ -2252,8 +2319,8 @@ def _designate_final(
         name
         for name, mine, theirs in zip(
             _DESIGNATION_CHAIN,
-            _designation_key(picked, grades, confidences),
-            _designation_key(rival, grades, confidences),
+            _designation_key(picked, grades, confidences, verdicts),
+            _designation_key(rival, grades, confidences, verdicts),
             strict=True,
         )
         if mine != theirs
@@ -2297,7 +2364,7 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_unknown`)은 `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 같은 바이트를 접은 뒤
-    ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는
+    ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는
     2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
@@ -2328,7 +2395,7 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     with ctx.stage(Stage.VALIDATE):
         grades = _grades_by_finding(state)
         picked, designation, reason = _designate_final(
-            ledger, grades, _confidences_by_finding(state)
+            ledger, grades, _confidences_by_finding(state), _verdict_ranks_by_finding(state)
         )
         if picked is None:
             final = oracle_log.FinalAttempt(status=oracle_log.STATUS_NONE, reason=reason)
