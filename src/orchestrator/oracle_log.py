@@ -55,6 +55,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 PoC 사이의 동점이 남지 않는다 — 거부할 자리가 없어져 사유도 상수도 지웠다. 바꾼 이유: 실측
 run에서 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그
 run의 점수를 0으로 만들었다.
+⏵ 2026-10-11 — 사슬 맨 앞에 **Critic 판정**이 붙어 다섯이다(`critic_verdict`: 보류 PoC는
+uphold·미경유 PoC 뒤다).
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -137,8 +139,10 @@ _HTTP_TOO_MANY_REQUESTS = 429
 # 싣기로 했다(§0 — 지정 근거를 적는다). 앞 둘은 고를 것이 없던 경우고, 뒤 넷은 사슬의 **어느
 # 단계가** 둘을 갈랐는지다. `poc_digest`가 찍힌 run은 등급·`confidence`·바이트 수가 전부 같아
 # **내용 해시로** 갈린 것이다 — 약한 근거이고, 그렇게 적혀 있어야 읽는 쪽이 안다.
+# ⏵ 2026-10-11 — 사슬 맨 앞에 `critic_verdict`가 붙어 일곱이고 사슬은 다섯이다.
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택이 없었다
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
+DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 계단 — uphold·미경유가 보류를 앞선다
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
 DESIGNATION_SMALLEST_POC = "smallest_poc"  # 등급·confidence 동점 — 바이트가 작은 쪽

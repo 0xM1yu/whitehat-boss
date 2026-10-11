@@ -253,8 +253,9 @@ thresholds:
   # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 상한. **0은 종전 동작이고
   # 미실측 표시가 아니다** — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다.
   #
-  # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박·보류(`need_evidence`)로
-  # 판정한 것과 판정 호출이 실패해 버려진 것은 뺀다(`runner._pov_targets`). 드는 것은 Critic을
+  # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박으로 판정한 것과 판정 호출이
+  # 실패해 버려진 것은 뺀다(`runner._pov_targets`). ⏵ 2026-10-11 — 보류(`need_evidence`)는 이제 들고
+  # 정렬·최종 지정에서 uphold·미경유 뒤다(이슈 #604). 드는 것은 Critic을
   # 안 거친 Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어
   # `hypothesized`에 멈춘 것(F-9) 등이다.
   #
