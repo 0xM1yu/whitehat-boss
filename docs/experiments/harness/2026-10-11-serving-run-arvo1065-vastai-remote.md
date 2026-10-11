@@ -62,7 +62,7 @@
 | --- | --- | --- | --- |
 | `gpt-oss-20b` | 300 | **2회 다 TIMEOUT** — 로그가 `MARLIN Mxfp4 MoE backend`에서 끊김 | **ready 62 s**(로드 26.4 s) · run에서는 **35 s**(`swap.log` `ready gpt-oss-20b after 35s`) |
 | `qwen3.8-27b` | 600 | **attempt 1 TIMEOUT** | attempt 2 **147 s** · 다음 run들 **65·66·75 s**(`swap.log`) |
-| `qwen3-14b` + `seccoderx-8b` | 550 · 400 | (같은 교대에서 다운로드) | `qwen3-14b` **25·30 s** · `seccoderx-8b` **25·26·31 s**(콜드 **155 s**) — `swap.log`의 `ready … after` 원값 |
+| `qwen3-14b` + `seccoderx-8b` | 550 · 400 | (같은 교대에서 다운로드) | `qwen3-14b` **25·30·30·30 s** · `seccoderx-8b` **25·26·31 s**(콜드 **155 s**) — `swap.log`의 `ready … after` 원값 |
 
 **콜드 2회 TIMEOUT ↔ 따뜻한 35 s는 사실이고, 그 차이가 선취 때문인지는 미검증이다.** `run_20261011_0001` 전에 `hf_transfer`를 깔고 PoV 가중치(`feyospace-v1-small`
 약 55 GB — HF 모델 카드 가중치 크기 `[출처주장]`)를 **선취**해 뒀다 — 8단계가 돌지 않아 그 선취의 효과는 **미검증**이지만, Critic 좌석은
@@ -80,7 +80,7 @@
 | 4 Scout | 호출 **12/12 성공** · 승격 6 · 기각 6 |
 | 5 Auditor(v13) | 호출 20건 · **실패 1**(스키마) · `auditor_hop` **19** · **Finding 5건**(E2 2 · E1 3 — E1 셋은 Auditor 스스로 「결함 미확립」으로 낸 부정 결론이다: `report.md` confidence 0.20·0.20·0.40 · CWE 없음) · 후보 1건 `target_skipped` |
 | 6 게이트 | `gate_eval` 10 · `promoted_to_critic` **2** · `evidence_weak` **3** — `evidence_weak` 셋도 7단계에 올라 Critic 호출은 5건이다 |
-| 7 Critic(v6) | 호출 **5건 전부 ok** → **`critic_need_evidence` 5건** |
+| 7 Critic(v6) | 호출 **5건 전부 ok** → **`critic_need_evidence` 5건** — 호출 1은 **시도 2회**다: 1차가 `length`(32,768)에 잘려 2차에서 `stop`으로 끝났다(§5 · 출력 58,156은 두 시도 합) |
 | 8 PoV | **`stage_end` 0초** · `oracle_final {status: none, reason: no_poc}` |
 | 9 리포트 | ok · `R-1 finished` · `stopped_after: null` |
 
@@ -111,7 +111,7 @@
 | 출력 토큰 | **386,996** |
 | `gpu_seconds` | **13,868**(3.85시간) |
 | `tool_ms` | 7,353 |
-| 생성 처리량 | **23.3~23.8 tok/s**(`qwen3.8-27b` · trace `output_tokens / wall_ms` 23.3~23.7 · 원격 로그 `Avg generation throughput` 중앙 23.7, 5~95% 23.3~24.0) |
+| 생성 처리량 | **23.3~23.7 tok/s**(`qwen3.8-27b` · trace `output_tokens / wall_ms` 23.3~23.7 · 원격 로그 `Avg generation throughput` 중앙 23.7, 5~95% 23.3~24.0) |
 | 호출 수 | scout 12 · **auditor 20** · critic 5 |
 | 한 홉 최장 | `run_20261010_0003`에서 **2,205초 / 51,383 토큰** |
 | 한 후보 최대 | 출력 토큰 기준 `run_20261010_0003`의 `cand_0005` **109,660 토큰 · 78.4분**(호출 3) · 홉 7개는 둘 — `run_20261010_0004`의 `cand_0004` **109,352 토큰 · 79.2분**(호출 8) · `run_20261011_0001`의 `cand_0007` **87,175 토큰 · 61.6분** — 후보별 `model_call` 합산(계산값). ⚠ 전 판은 run 전체 출력 123,463을 후보 값으로 잘못 적었다 |
@@ -122,13 +122,16 @@
 
 ## 5. Critic이 이 과제에서 처음 판정을 냈다
 
-| 호출 | 벽시계 | 출력 토큰 |
-| --- | --- | --- |
-| 1 | 515 s | 58,156 |
-| 2 | 65 s | 7,365 |
-| 3 | 6 s | 635 |
-| 4 | 6 s | 563 |
-| 5 | 6 s | 578 |
+| 호출 | 벽시계 | 시도 | 시도별 출력 토큰 | 종료 사유 | 출력 토큰(시도 합) |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 515 s | **2** | 32,768 / 25,388 | `length` / `stop` | 58,156 |
+| 2 | 65 s | 1 | 7,365 | `stop` | 7,365 |
+| 3 | 6 s | 1 | 635 | `stop` | 635 |
+| 4 | 6 s | 1 | 563 | `stop` | 563 |
+| 5 | 6 s | 1 | 578 | `stop` | 578 |
+
+출처: `trace.jsonl`의 `model_call`(`role: critic`) `attempts`·`attempt_output_tokens`·`attempt_finish_reasons`(trace에는 문자열로 실린다), 벽시계는 `wall_ms`.
+**호출 1의 58,156은 한 번의 생성이 아니다** — 1차가 상한 32,768(`config/budgets.yaml` `output_max_by_role.critic`)에서 `length`로 잘리고 2차가 25,388에서 끝났다. 58,156 ÷ 515.4 s ≈ **113 tok/s**는 두 시도 합 ÷ 벽시계라 계산값이고 시도별 시간은 trace에 없다.
 
 🔴 **뒤 셋이 6초에 600토큰대다.** 그 셋이 무엇을 보고 보류를 냈는지는 **응답이 저장되지 않아
 모른다**([#603](https://github.com/0xM1yu/whitehat-boss/issues/603)). 5/5가 같은 판정인 것이
@@ -168,7 +171,7 @@
 | 번호 | 내용 | 상태 |
 | --- | --- | --- |
 | [#604](https://github.com/0xM1yu/whitehat-boss/issues/604) | Critic `need_evidence` 5/5가 PoV 풀을 비워 완주하고도 제출 0건 | 신규 |
-| [#602](https://github.com/0xM1yu/whitehat-boss/issues/602) | Auditor v13이 `answer`를 빈 `procedure`로 내고 재시도 2회가 같이 실패 — 25,271 토큰·18분 | 신규 |
+| [#602](https://github.com/0xM1yu/whitehat-boss/issues/602) | Auditor v13이 `answer`를 빈 `procedure`로 내고 시도 2회(1차+재시도 1)가 같이 실패 — 25,271 토큰·18분 | 신규 |
 | [#603](https://github.com/0xM1yu/whitehat-boss/issues/603) | 스키마 실패한 응답이 산출물에 안 남아 #602·#604를 진단할 수 없다 | 신규 |
 | [#571](https://github.com/0xM1yu/whitehat-boss/issues/571) | 콜드 기동 상한 — **300초 좌석에서도 났다**는 실측과 「재개 없음」비용을 코멘트로 붙였다 | 기존 |
 | [#507](https://github.com/0xM1yu/whitehat-boss/issues/507) | `clang-tidy`·`build`가 번들에서 컴파일되지 않는다 | 기존 · 재현 |
