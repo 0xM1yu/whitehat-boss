@@ -345,7 +345,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 ### 교대 명령과 장비 파일 (2026-09-29)
 
 `harness_pool`은 단계 경계에서 서버를 끄고 켠다(콜드 재기동 — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md)
-「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다. ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다.
+「2026-09-29 제안」 절, **제안**). **실장비 종단은 미실측이다** — ATOM에서 먼저 돈다. ⏵ 2026-09-29 — ATOM에서 한 번 돌았다([스모크 보고서](experiments/harness/2026-09-29-stage-swap-smoke-atom.md) — 교대 네 번 전부 `ok=true`, 슬라이스 1개·n=1·비교표 밖). vast는 미실측이다. ⏵ 2026-10-12 — 「vast는 미실측」도 낡았다: vast 교대 종단은 2026-10-03에 처음 성립했고(`config/profiles.yaml`의 ⏵ 2026-10-08), 기동 콜드 ↔ 따뜻한 쌍은 [10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §2가 든다.
 
 - **교대 명령** — `tools/serve/swap.sh`, 장비 무관. 하네스가 단계마다 `bash tools/serve/swap.sh <키…>`를
   부르고 run 끝에 인자 없이 부른다. 계약(인자 · 환경 · 종료코드 · stdout 마지막 줄 JSON 보고 · 서버 로그)은
@@ -359,7 +359,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   | 장비 | 메모리 판정 | 값의 성격 |
   | --- | --- | --- |
   | `atom`(GB10) | 통합메모리 — `nvidia-smi` 메모리 `[N/A]` → 모델 파일 페이지 캐시를 떼고 MemAvailable | 전부 계획값(ATOM 미실측) |
-  | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 |
+  | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 ⏵ 2026-10-12 — 「하나만」은 낡았다: `run_20261011_0001`이 다섯 좌석의 모델 넷(`qwen3-14b` · `seccoderx-8b` · `qwen3.8-27b` · `gpt-oss-20b` — 원격 로그 네 파일)을 vast에서 기동했다([10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §2 — util·창은 그 run의 장비 파일 값 그대로이고 메모리 판정값 자체는 안 적었다) |
 
 - **감시자** — `tools/serve/guard.sh`, **run마다 하나 띄운다.** 교대 명령은 감시자가 떠 있고 다른 run 것이
   아닐 때만 띄우고(띄우는 run이 기동 직전마다 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
