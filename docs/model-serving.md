@@ -359,7 +359,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
   | 장비 | 메모리 판정 | 값의 성격 |
   | --- | --- | --- |
   | `atom`(GB10) | 통합메모리 — `nvidia-smi` 메모리 `[N/A]` → 모델 파일 페이지 캐시를 떼고 MemAvailable | 전부 계획값(ATOM 미실측) |
-  | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 |
+  | `vastai`(RTX PRO 6000 · 97,887 MiB) | 전용 VRAM — `total − used` ≥ util × total | Auditor 기동 하나만 실측(util 0.90 · 창 262,144 — 2026-09-29), 나머지 계획값 ⏵ 2026-10-12 — 「하나만」은 낡았다: `run_20261011_0001`이 다섯 좌석의 모델 넷(`qwen3-14b` · `seccoderx-8b` · `qwen3.8-27b` · `gpt-oss-20b` — 원격 로그 네 파일)을 vast에서 기동했다([10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §2 — util·창은 그 run의 장비 파일 값 그대로이고 메모리 판정값 자체는 안 적었다) |
 
 - **감시자** — `tools/serve/guard.sh`, **run마다 하나 띄운다.** 교대 명령은 감시자가 떠 있고 다른 run 것이
   아닐 때만 띄우고(띄우는 run이 기동 직전마다 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
