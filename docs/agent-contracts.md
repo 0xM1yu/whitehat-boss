@@ -565,7 +565,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   재시도와 같은 자리)에, **hop≥1 재질문이면 followup의 머리**(홉 줄 → 노트 → 아직 못 받은 직전 도구 관측)에
   붙는다. 오류 사유는 어댑터가 응답 원문·URL 없이 만든 `model_error_text`이고 예외 문자열이 아니다.
   hop 0 재질문이 파싱 실패를 **살리는지는 미실측이다**(같은 자리 재시도가 이슈 #550 본문의 find_0005에서
-  2/2 실패했다, n=1). `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패이거나 그 호출의
+  2/2 실패했다, n=1). `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패이거나, ⏵ 2026-10-12부터는 그 호출의
   **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
   `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
   없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는

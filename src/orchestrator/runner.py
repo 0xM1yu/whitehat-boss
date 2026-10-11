@@ -2373,8 +2373,9 @@ def _run_pov_hops(
     호출부 20여 곳이 쥐고 있다.
     ⏵ **2026-10-11 (#550) — 스키마 파싱 실패는 홉 하나를 쓰고 루프가 계속 돈다**: `stop_reason` 없는
     `POV_HOP`을 내고 `[스키마 오류]` 노트(+ 아직 못 받은 관측)를 실어 같은 자리를 다시 묻는다.
-    `last_poc`·`seen`은 그대로다. `PARSE_FAILED`로 서는 것은 둘뿐이다 — `hop >= pov_tool_hops`
-    (마지막 홉)의 실패, 또는 **그 호출의 모든 시도가 `finish_reason == "length"`로 끝난** 실패
+    `last_poc`·`seen`은 그대로다. `PARSE_FAILED`로 서는 것은 둘뿐이다(⏵ 2026-10-12 — 둘째를
+    더했다) — `hop >= pov_tool_hops`(마지막 홉)의 실패, 또는 **그 호출의 모든 시도가
+    `finish_reason == "length"`로 끝난** 실패
     (`_pov_parse_truncated`)다. 후자는 재질문 없이 서고 종단 `POV_HOP`이 `parse_truncated`를
     싣는다 — 같은 프롬프트가 같은 상한에 닿는 것이 체계적일 수 있어서다(그 가능성은 이슈 #550의
     find_0005 한 건에서 봤고 재질문이 절단을 살리는 비율은 측정한 run이 0이다). 일부 시도만
@@ -2722,7 +2723,7 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
     ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
     ⏵ 2026-10-11 이 함수는 **사유만** 가른다 — `PARSE_FAILED`로 실제 서는지는 루프가 홉 여유를 보고
-    정한다(마지막 홉이거나 전 시도가 절단일 때 선다 · `_run_pov_hops`, #550).
+    정한다(마지막 홉이거나, ⏵ 2026-10-12부터는 전 시도가 절단일 때도 선다 · `_run_pov_hops`, #550).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
