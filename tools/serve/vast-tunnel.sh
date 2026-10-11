@@ -4,7 +4,9 @@
 # 사용: SWAP_SSH_HOST=<목적지> [SWAP_SSH_PORT=<포트>] bash tools/serve/vast-tunnel.sh [--loop]
 #   run 전에 별도 터미널에서 띄우고 run 동안 둔다. 끊기면 모델 호출과 교대 뒤 2차 확인(`/v1/models`)이 실패한다.
 #   registry(`config/models.yaml`)의 엔드포인트가 `127.0.0.1`이라 하네스 코드는 그대로다.
-#   --loop: ssh가 끝나면 5초 뒤 다시 잇는다. `${SERVE_DIR:-$HOME/harness-serve}/STOP_GUARD`가 있으면 멈춘다(guard.sh와 같은 표지).
+#   --loop: ssh가 끝나면 5초 뒤 다시 잇는다 — 횟수 제한은 일부러 없다(끊김이 run 전체를 죽이지 않게). 멈춤은 Ctrl-C이거나
+#     이 PC의 `${SERVE_DIR:-$HOME/harness-serve}/STOP_GUARD`다 — **로컬 파일**이고 원격 guard.sh의 표지와 이름만 같다.
+#     옛 표지가 남아 있으면 시작 직후 멈춘다. SIGTERM은 자식 ssh가 끝나야 처리된다(bash trap 의미론).
 #
 # keepalive: ServerAliveCountMax의 기본 3 × Interval 10 s = 30초 무응답이면 터널이 스스로 끊긴다(2026-10-11 run,
 #   docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §6). 12로 올려 2분을 견딘다.

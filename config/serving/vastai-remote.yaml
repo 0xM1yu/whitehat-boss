@@ -57,7 +57,7 @@ servers:
       NCCL_SOCKET_IFNAME: lo
       GLOO_SOCKET_IFNAME: lo
     probe: chat
-    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
+    # 선취 전제는 같다(`tools/serve/prefetch-weights.sh`) — 콜드 기동이 이 상한을 넘는지는 미실측이다(#571 · 2026-10-11 이 좌석의 콜드 155 s는 상한 안).
     ready_timeout_s: 400
 
   qwen3-14b:
@@ -69,7 +69,7 @@ servers:
     extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
     env: *vllm_env
     probe: chat
-    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
+    # 선취 전제는 같다(`tools/serve/prefetch-weights.sh`) — 콜드 기동이 이 상한을 넘는지는 미실측이다(#571 · 2026-10-11 따뜻한 25·30 s만 쟀다).
     ready_timeout_s: 550
 
   # --- 5단계 Auditor — 단독 ---
@@ -93,7 +93,7 @@ servers:
       - xgrammar
     env: *vllm_env
     probe: chat
-    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 2026-10-11 콜드 기동 TIMEOUT 실측(attempt 1 · n=1) · 따뜻한 attempt 2 147 s · 이후 65~75 s는 선취 효과와 분리되지 않는다(#571).
     ready_timeout_s: 600
 
   # --- 7단계 Critic — 단독 ---
@@ -118,7 +118,7 @@ servers:
       <<: *vllm_env
       VLLM_SYSTEM_START_DATE: "2026-09-29"
     probe: chat
-    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
+    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 2026-10-11 콜드 기동 TIMEOUT 실측(2회 · n=1) · 따뜻한 35 s(run 값 n=1 · warmprobe 62 s)는 선취 효과와 분리되지 않는다(#571).
     ready_timeout_s: 300
 
   # --- 8단계 PoV — 단독 ---
@@ -139,5 +139,5 @@ servers:
       - xgrammar
     env: *vllm_env
     probe: chat
-    # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 콜드 기동은 이 안에 안 끝난다(#571 · 2026-10-11 실측: `gpt-oss-20b` 콜드 2회 TIMEOUT ↔ 따뜻한 35 s).
+    # 선취 전제는 같다(`tools/serve/prefetch-weights.sh`) — 콜드 기동이 이 상한을 넘는지는 미실측이다(#571 · 이 좌석은 vast에서 기동한 적 없다).
     ready_timeout_s: 600
