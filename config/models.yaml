@@ -682,7 +682,12 @@ models:
     # v11과 같다. v12는 2026-10-10 열린 PR #580(FT Auditor 계약)이 쓰는 번호라 건너뛰었다. v11 문장을 그
     # 자리에서 고치지 않은 것은 같은 규칙 1이다. v13도 `_CONTENT_AWARE_VERSIONS`에 든다. 이 판으로 돈
     # run은 0건이다.
-    prompt_template_version: "v13"
+    # ⏵ 2026-10-11 — **v14**로 올렸다(이슈 #67 · #578 · 저장소 소유자 결정). v13은 FACTS 변경을 v11 위에 얹어
+    # 봉투가 v11 것(`no_signal`이면 `audit` null)이었다 — FT 정답은 v12 계약(`no_signal`에도 `audit`)이라 그
+    # 데이터로 학습한 Auditor를 서빙하려면 v12 봉투가 필요하다. v14 = v12 + FACTS에서 `source` 사본을 뺀다(봉투는 v12의 `AuditorProcedureAuditAlwaysAction`).
+    # body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`prompts/auditor/v14/meta.yaml`). v13은 머지된
+    # 판이라 그 자리에서 고치지 않았다(규칙 1). 이 판으로 돈 run은 0건이다.
+    prompt_template_version: "v14"
     fallback: null
     benchmark:
       measured_at: null
