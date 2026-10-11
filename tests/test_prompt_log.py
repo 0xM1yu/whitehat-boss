@@ -18,7 +18,7 @@ import pytest
 from src import cli
 from src.adapters.memory_store import InMemoryStateStore
 from src.config import load_config
-from src.ids import IdFactory, sha256_text
+from src.ids import IdFactory, sha256_digest, sha256_text
 from src.interfaces.model_client import ChatTurn, ModelResult, Prompt, SchemaParseError, Usage
 from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
@@ -730,3 +730,40 @@ def test_a_gateway_error_after_a_schema_failure_still_leaves_the_first_response(
     (call2,) = _model_calls(ctx2)
     assert "response_refs" not in call2
     assert not list(other.rglob("*_response*"))
+
+
+def test_a_large_multibyte_response_is_written_whole_and_hashed_from_the_file_bytes(
+    tmp_path: Path,
+) -> None:
+    """수십만 자·멀티바이트 원문이 잘리지 않고 그대로 쓰이고, 해시가 그 파일 바이트의 것이다."""
+    raw = ("한글 abc {" * 40_000)[:300_000]  # 300,000자 · 멀티바이트 포함
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(_exhausted((raw,))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["response_refs"])
+    data = (tmp_path / ref).read_bytes()
+    assert data == raw.encode("utf-8", errors="surrogatepass")
+    assert len(data) > 300_000
+    assert json.loads(call["response_sha256"]) == [sha256_digest(data)]
+
+
+@pytest.mark.parametrize("error", [ValueError("x"), RuntimeError("x")], ids=["value", "runtime"])
+def test_a_non_os_error_while_recording_keeps_the_original_error_and_names_itself(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """가드가 `(OSError, AttributeError)`처럼 좁으면 이 예외가 원 예외를 가린다."""
+    prompts = PromptLog(tmp_path)
+
+    def boom(*_a: object, **_k: object) -> None:
+        raise error
+
+    monkeypatch.setattr(prompts, "write_response", boom)
+    ctx = _context(prompts=prompts, models=_RaisingClient(_exhausted(("a",))))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_record_error"] == type(error).__name__
+    assert ctx.ledger.input_tokens == 300
