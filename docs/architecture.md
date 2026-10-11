@@ -109,7 +109,7 @@ graph LR
 > 렌더가 가고 v4 산문과 어긋난다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
 > 서빙 경로에서 돌지 않는다.)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
->   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · 봉투가 `AuditorProcedureNullableCweAction` · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67)은
+>   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · 봉투가 `AuditorProcedureNullableCweAction` · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67 · ⏵ 2026-10-11 지금 배선된 판은 **v14**다 — v12 + 같은 FACTS 변경 · 봉투가 `AuditorProcedureAuditAlwaysAction`, PR #601)은
 >   `body.md`의 「Target under analysis — original source code」 제목으로 같은 선언을 한다). 슬라이스 타깃이면 슬라이스가 걸친
 >   함수들의 원본이다 — entry 줄을 감싸는 함수(품는 함수를 모르면 — 인덱스가 없거나 그 줄이 어느 정의에도
 >   안 들면(프로토타입·전역·매크로) — entry 앞뒤 고정 창 `_AUDITOR_WINDOW_LINES`)가 먼저이고 나머지는 문자 수 상한(`_AUDITOR_SOURCE_CHARS`)

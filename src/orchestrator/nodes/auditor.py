@@ -698,8 +698,8 @@ def _render_hop0(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
-            # `facts_source: false` 판(v13 · 이슈 #67)은 FACTS에 `source` 사본을 안 싣는다 — 원문은
-            # 아래 산문 `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
+            # `facts_source: false` 판(v13·v14 · 이슈 #67)은 FACTS에 `source` 사본을 안 싣는다 —
+            # 원문은 아래 산문 `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
             include_source=template.facts_source,
             callers=caller_names(capsule),
         ),
