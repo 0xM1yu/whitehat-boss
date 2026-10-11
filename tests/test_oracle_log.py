@@ -232,7 +232,7 @@ def test_submission_failures_are_counted_in_a_warning() -> None:
         ),
         (
             FinalAttempt(status="none", reason="grade_unknown"),
-            "등급 또는 confidence를 모르는 것이 있어",
+            "Critic 판정 중 모르는 것이 있어",
         ),
         # 사유는 **다섯**이다. 이 표가 넷만 들어서 `rate_limited`의 경고가 옛 사유의 글자로
         # 떨어지는 것을 못 잡았다 - 사유를 더할 때 이 표도 같이 늘린다.
@@ -454,7 +454,7 @@ def test_none_is_not_failed_in_the_sidecar(tmp_path: Path) -> None:
 
 
 def test_several_candidates_are_none_with_no_designation_in_the_sidecar(tmp_path: Path) -> None:
-    """후보가 둘 이상인데 **등급 또는 `confidence`를 몰라** 못 가르면 지정하지 않는다 -
+    """후보가 둘 이상인데 **등급·`confidence`·Critic 판정을 몰라** 못 가르면 지정하지 않는다 -
     `designation`은 `null`이고 (근거를 지어내지 않는다) 사유가 `grade_unknown`이다.
     「후보가 없다」(`no_poc`)와 다른 사건이다. ⏵ 2026-10-04 - 앞 판은 `grade_tie`를 썼는데 그
     사유가 없어졌다(사슬이 전순서라 동점에서 거부할 자리가 없다 — `runner._designate_final`)."""

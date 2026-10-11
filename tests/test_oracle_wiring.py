@@ -12,7 +12,8 @@ fix 다리는 후보가 0개면 0번 · 1개 이상이면 정확히 한 번 도�
 점수를 0으로 만들었다. 지금은 같은 바이트끼리 **접고**(`sole_poc`) 남은 동점을 **전순서**로
 가른다 — ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시(⏵ 2026-10-11 — 맨 앞에 Critic
 판정 계단이 붙었다, #604). `designation`에 **실제로 가른
-단계**가 찍힌다. 등급 또는 `confidence`를 모르는 후보가 있으면 여전히 거부다(`grade_unknown`).
+단계**가 찍힌다. 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
+여전히 거부다(`grade_unknown`).
 끝 절의 검사들이 그
 사슬과 **불변식**(지정 로직은 채점기가 돌려준 값을 안 읽는다)을 건다.
 
@@ -1738,8 +1739,8 @@ def test_designation_does_not_read_oracle_fields(
     그 값은 **지정 시점에 손에 있다** - `VulSubmission.response_exit_code`가 후보마다 장부 행에
     실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
     아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(속성·`vars`·`repr`·`==`
-    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 · 등급 또는 confidence 미상 ·
-    후보 하나) 돌린다.
+    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 ·
+    등급·confidence·판정 계단 미상 · 후보 하나) 돌린다.
 
     **오염 테스트다** - 어느 분기에든 `attempt.submission.response_exit_code`를 보거나 `repr`로
     고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인).

@@ -522,7 +522,7 @@ class EventKind(StrEnum):
     # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
     # 갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
-    # 하네스가 만든 값의 전순서다). 등급 또는 `confidence`를 모르는 후보가 있으면
+    # 하네스가 만든 값의 전순서다). 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
     # 지정하지 않는다(`status=none` ·
     # `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이
     # 아니다.
