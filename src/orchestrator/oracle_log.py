@@ -46,7 +46,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 `no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 낼 PoC가 없던 것,
 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
 `grade_unknown`(후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 **규칙이
-거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는 둘을 같이 본다.
+거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는 둘을 같이 본다
+· ⏵ 2026-10-11 등급·`confidence`·Critic 판정 셋이다.
 현 러너로는 닿지 않는 방어 분기다). 어느 쪽이든 `fix` 다리와 판정은 안 돈다.
 
 ⏵ 2026-10-04 — **`grade_tie`는 없어졌다**(그래서 다섯이 아니라 넷이다). 후보가 둘 이상일 때
@@ -114,7 +115,8 @@ OBSERVATION_NO_VERDICT = "no_verdict"
 
 REASON_ALL_VUL_FAILED = "all_vul_submissions_failed"
 # 후보 중에 내부 근거 등급 **또는 `confidence`**를 모르는 것이 있어 규칙이 거부했다. 이름은 등급
-# 미상에서 굳었지만 `runner._designate_final`의 검사가 둘을 같이 본다. 모르는 값을 0으로 깔면
+# 미상에서 굳었지만 `runner._designate_final`의 검사가 둘을 같이 본다(⏵ 2026-10-11 등급·
+# `confidence`·Critic 판정 셋). 모르는 값을 0으로 깔면
 # 없는 근거로 고르게 되기 때문이다(CLAUDE.md §0). 현 러너로는 닿지 않는 방어 분기다.
 REASON_GRADE_UNKNOWN = "grade_unknown"
 
