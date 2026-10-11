@@ -557,7 +557,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
   ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로).
   `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
-  최종 후보다. 형식은 스키마가 검증하지 않는다 — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
+  최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
   `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는

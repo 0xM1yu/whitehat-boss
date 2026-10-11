@@ -2597,13 +2597,16 @@ def _resolve_submit_digest(
 ) -> tuple[bytes | None, str]:
     """`submit`의 `poc_sha256`을 이미 낸 gen에 푼다 → (지명된 바이트 또는 `None`, `submit_digest`).
 
-    스키마는 형식을 검증하지 않으므로(`PovActionNamed`) **여기서 정규화한다** — 앞뒤 공백을 떼고
+    스키마는 길이 80만 걸고 형식은 검증하지 않으므로(`PovActionNamed` — 81자 이상은 파싱 실패라
+    여기에 안 온다) **여기서 정규화한다** — 앞뒤 공백을 떼고
     소문자로 바꾸고 `sha256:` 접두를 뗀 뒤, 8자 이상이고 **정확히 한 gen의 digest에** 전체나 접두로
     맞을 때만 `matched`다. 지명이 없으면 `absent`, 그 밖(7자 이하·16진 밖 글자·어느 gen에도 안 맞음·
     둘 이상에 맞음)은 전부 `unknown`이고 바이트는 `None`이다 — 호출부가 마지막 gen으로 돌아간다.
 
     **`seen`만 본다.** 채점기 값(`state.oracle_ledger`)을 읽지 않는다는 것은 이 docstring의
-    보장이다 — 장부로 고르는 변이는 테스트가 못 가른다(결과가 같은 입력들이 있다).
+    보장이다 — 장부로 고르는 변이는 **결과가 같은 입력에서는** 테스트가 못 가른다(다른 입력에서는
+    `tests/test_pov_prompt_v4.py`의 `test_an_unnamed_submit_still_designates_the_last_gen…`이
+    잡는다).
     """
     if named is None:
         return None, "absent"

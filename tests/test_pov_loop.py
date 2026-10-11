@@ -25,6 +25,8 @@ from typing import get_args
 import pytest
 from pydantic import ValidationError
 
+from src import bench_report
+from src.adapters import fake_model
 from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import resolve
@@ -40,7 +42,7 @@ from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
-from src.schemas.common import Location
+from src.schemas.common import Location, ProducedBy
 from src.schemas.enums import PovStopReason, Role
 from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
 
@@ -2042,18 +2044,26 @@ def test_pov_action_request_schema_is_the_frozen_one() -> None:
 
 
 def test_the_named_sibling_adds_exactly_one_property() -> None:
-    """`PovActionNamed`의 스키마는 `PovAction`에 `poc_sha256` 하나(맨 뒤 · 선택 · 상한 80)를
-    더하고 이름 말고는 같다 — 액션 서술(description)·`required`·다른 속성이 그대로다."""
+    """`PovActionNamed`의 스키마는 `PovAction`에 `poc_sha256` 하나(맨 뒤 · 선택 · 상한 80 · 설명
+    있음)를 더하고, 이름과 **액션 서술(description)** 말고는 같다 — `required`·다른 속성이 그대로다.
+    서술은 달라야 한다: 부모의 「submit = 마지막 gen」은 v2~v4에 참이고, 형제는 모델이 요청
+    스키마에서 읽는 글이라 지명을 말해야 한다(Santa 2라운드 C — 부모 글을 그대로 실어 prefix와
+    어긋났다)."""
     base = PovAction.model_json_schema()
     named = PovActionNamed.model_json_schema()
     prop = named["properties"].pop("poc_sha256")
 
+    assert prop.pop("description").startswith("`submit`에서만 읽는다")
     assert prop == {
         "anyOf": [{"maxLength": 80, "type": "string"}, {"type": "null"}],
         "default": None,
         "title": "Poc Sha256",
     }
     assert named.pop("title") == "PovActionNamed" and base.pop("title") == "PovAction"
+    base_doc, named_doc = base.pop("description"), named.pop("description")
+    assert "마지막 gen의 PoC가 final 후보" in base_doc and "poc_sha256" not in base_doc
+    assert "`poc_sha256`에 이미 낸 gen의 digest" in named_doc
+    assert "안 적으면 마지막 gen의 PoC가 final 후보" in named_doc
     assert named == base
     assert list(PovActionNamed.model_json_schema()["properties"])[-1] == "poc_sha256"
 
@@ -2071,6 +2081,28 @@ def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
     assert pov_node.resolve_output_schema("PovAction") is PovAction
     with pytest.raises(PromptError):
         pov_node.resolve_output_schema("Finding")
+
+
+def test_bench_resolves_the_pov_envelope_the_node_requests() -> None:
+    """`bench_report.schema_for`가 pov도 meta 선언으로 푼다 — 안 풀면 v5 bench가 운영과 다른
+    `PovAction` 문법을 잰다(Santa 2라운드 C: 이 분기를 지워도 초록이었다)."""
+    assert bench_report.schema_for(Role.POV, load_prompt(Role.POV, "v4"), PovAction) is PovAction
+    assert (
+        bench_report.schema_for(Role.POV, load_prompt(Role.POV, "v5"), PovAction) is PovActionNamed
+    )
+
+
+def test_the_fake_builds_every_pov_envelope() -> None:
+    """Fake 빌더 표가 pov 봉투 둘을 다 든다 — 빠지면 그 봉투를 고르는 판의 Fake run이
+    `FakeModelError`로 죽는다(`tests/test_auditor_loop.py`가 Auditor 봉투에 거는 것과 같은 검사).
+    v5 빌더는 지명 없이 낸다(`poc_sha256` None) — fake는 gen 하나라 지명할 것이 없다."""
+    assert set(pov_node.ALLOWED_OUTPUT_SCHEMAS) <= set(fake_model._BUILDERS)
+    context = fake_model.FakeContext(run_id="run_0001", source="memcpy(d, s, n);")
+    action = fake_model._BUILDERS[PovActionNamed](
+        context, ProducedBy(role=Role.POV, model="fake", prompt_version="v5"), ()
+    )
+
+    assert type(action) is PovActionNamed and action.poc_sha256 is None
 
 
 @pytest.mark.parametrize(("version", "expected"), [("v3", PovAction), ("v5", PovActionNamed)])
