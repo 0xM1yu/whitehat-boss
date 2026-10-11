@@ -106,7 +106,7 @@ import json
 import re
 import subprocess
 from collections import Counter
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import partial
@@ -1789,6 +1789,8 @@ def _pov_finish_and_record(
     finding: Finding,
     reason: PovStopReason,
     poc: bytes | None,
+    *,
+    terminal: Mapping[str, TraceValue] | None = None,
 ) -> tuple[bytes | None, PovStopReason]:
     """루프 종단 + 계수기 기록. 반환은 `_run_pov_hops`가 쥔 **2-튜플 그대로**다.
 
@@ -1799,7 +1801,7 @@ def _pov_finish_and_record(
     자리에서 적는다 — `_run_pov_hops`의 네 출구(흡수된 예외·submit·반복·`max_hop`)가 `_pov_finish`를
     직접 부르지 않고 이 함수를 부른다.
     """
-    poc_out, reason_out, ref, _digest = _pov_finish(ctx, finding, reason, poc)
+    poc_out, reason_out, ref, _digest = _pov_finish(ctx, finding, reason, poc, terminal=terminal)
     state.pov_results[finding.finding_id] = _pov_result(
         reason_out, poc_out, ref, persisting=ctx.pocs is not None
     )
@@ -1863,8 +1865,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     **캡슐 미스는 finding을 죽이지 않는다** — `pov_skipped`로 남기고 넘어간다(추가형이라 상태는
     `validate.run`이 이미 정했다, #296과 같은 결). 캡슐이 있으면 `_run_pov_hops`가
     gen→도구→되먹임→submit 루프를 돌려 PoC를 만든다 — 홉/종단 이벤트와 예외 흡수(서버 쪽 사건은
-    올려 보냄)는 루프가 낸다. 마지막 `gen`의 PoC를 run 산출물 사이드카로 남기는 것도 루프 종단
-    (`_pov_finish`)이 한다(#355).
+    올려 보냄)는 루프가 낸다. 최종 후보 PoC(보통 마지막 `gen`)를 run 산출물 사이드카로 남기는
+    것도 루프 종단(`_pov_finish`)이 한다(#355).
     ⏵ **2026-10-09 (ADR 0014) — PoC를 도구에 먹이는 쪽이 섰다**(이슈 #513). `poc` 도구가 과제
     자신의 `-vul` 이미지를 돌린다. **E4 게이트 전이는 여전히 별건이다** — `p4`가 종료 코드까지
     보고(#232) 그 run이 실제로 E4를 내는지는 미실측이다.
@@ -2212,6 +2214,10 @@ def _designate_final(
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
     아니다(그 run의 경고가 실패 건수를 알린다).
+
+    ⏵ **2026-10-11 — 위 「읽지 않는다」는 하네스 코드의 제약이다.** 어느 gen이 후보가 되는지는
+    모델의 `submit`이 정한다(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면 마지막 gen).
+    모델이 관측의 `oracle_vul` 줄을 읽고 고르는 것은 이 범위 밖이 아니라 v5가 이미 하는 일이다.
     """
     candidates = ledger.candidates
     if not candidates:
@@ -2361,15 +2367,16 @@ def _run_pov_hops(
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
     **다음 홉 user 턴**으로 되먹인다. `inspect`는 진단 도구(asan/build/gdb/poc)를 돌린다. `submit`은
-    루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다.
+    루프를 끝낸다 — 마지막 `gen`의 PoC가 final 후보다. ⏵ 2026-10-11: `poc_sha256`이 이미 낸 gen을
+    지명하면 그 gen이다(`_resolve_submit_digest` — 못 찾으면 마지막 gen).
 
     **정지 판정 순서**(홉을 받은 뒤) — 1. `submit` → SUBMITTED 2. `gen`인데 이미 낸 어느 gen과든
     같은 **PoC 바이트**(digest 집합 조회 — A→B→A도 선다) → REPEAT_SPEC(spec JSON이 아니라 조립
     바이트로 본다 — rationale 재작성으로 못
     피하고, 다른 인코딩·같은 바이트도 잡는다) 3. `pov_tool_hops` 소진 → MAX_HOP. 홉 호출 자체가
     실패하면 흡수 여부를 `_pov_classify_exception`이 가른다(`_run_pov`의 추가형 계약 그대로 — 서버
-    쪽 사건은 올려 보낸다). 반환은 (마지막 `gen` PoC 또는 `None`, 정지 사유)다 — 이 2-튜플 모양은
-    호출부 20여 곳이 쥐고 있다.
+    쪽 사건은 올려 보낸다). 반환은 (최종 후보 — 지명한 gen 또는 마지막 `gen` PoC, 없으면 `None` — 와
+    정지 사유)다 — 이 2-튜플 모양은 호출부 20여 곳이 쥐고 있다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2382,7 +2389,8 @@ def _run_pov_hops(
     모델 홉에 싣는다(v3 이상 - #354/#386①). meta가 `hop_header`를 켠 판(v4~)은 followup **맨
     앞**에 홉 줄을 더 받는다(`_pov_hop_line` · #511) - 그 줄이 있어야 모델이 마감을 안다. 여기서는
     홉 이벤트(`POV_HOP`)와 종단 이벤트(`POV_GENERATED`=submit·`POV_SKIPPED`)를 내고, 종단에서
-    **마지막 `gen`의 PoC를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    **최종 후보 PoC(보통 마지막 `gen`)를 run 산출물 사이드카로 남긴다**(`_pov_finish` — #355).
+    종단 이벤트는 `last_gen_excluded_while_earlier_not`(`_terminal_fields` — 로그)를 단다.
     그 파일이 **없는** 경로가 있다: `BudgetExhausted`·서버 쪽 게이트웨이 오류는 올려 보내므로
     종단을 건너뛴다(그 한계와 `pov_hop`(gen)의 `poc_sha256`이 하는 일은 `poc_log` 모듈 docstring).
     도구 호출에서 난 `BudgetExhausted`는 그 홉의 `pov_hop`을 낸 **뒤에** 올린다(#394).
@@ -2398,8 +2406,12 @@ def _run_pov_hops(
     workdir = state.workdirs.get(finding.finding_id, ".")
     with ctx.stage(Stage.VALIDATE):
         last_poc: bytes | None = None
-        # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) — 바이트는 안 든다.
-        seen: set[str] = set()
+        # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) → 그 바이트. 반복 판정은
+        # 키 조회이고, `submit`이 `poc_sha256`으로 지명한 gen을 여기서 찾는다.
+        seen: dict[str, bytes] = {}
+        # gen마다의 `vul` 종료 코드(없으면 `None`) — **로그 전용**이다. 종단 이벤트의 계측 플래그만
+        # 읽고 지정(`_designate_final`)은 읽지 않는다.
+        gen_codes: list[int | None] = []
         followup = ""
         prev: pov.PovHop | None = None
         hop = 0
@@ -2460,13 +2472,18 @@ def _run_pov_hops(
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
             action = current.action
             if action.action == "submit":
+                # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
+                named_poc, submit_digest = _resolve_submit_digest(action.poc_sha256, seen)
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
                     fuzz=fuzz if hop == 0 else None,
+                    submit_digest=submit_digest,
                 )
                 return _pov_finish_and_record(
-                    ctx, state, finding, PovStopReason.SUBMITTED, last_poc
+                    ctx, state, finding, PovStopReason.SUBMITTED,
+                    last_poc if named_poc is None else named_poc,
+                    terminal=_terminal_fields(pov_wide, gen_codes),
                 )
             hop_poc: bytes | None = None  # 이 홉의 gen이 조립한 PoC — inspect 홉에는 없다
             oracle_observation = "oracle_vul=unavailable"
@@ -2484,9 +2501,10 @@ def _run_pov_hops(
                     )
                     # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
-                        ctx, state, finding, PovStopReason.REPEAT_SPEC, hop_poc
+                        ctx, state, finding, PovStopReason.REPEAT_SPEC, hop_poc,
+                        terminal=_terminal_fields(pov_wide, gen_codes),
                     )
-                seen.add(digest)
+                seen[digest] = hop_poc
                 last_poc = hop_poc
                 # 마지막 홉(`hop >= pov_hops`)의 gen은 관측을 읽을 다음 홉이 없다 - 내면 제출·조회
                 # 두 번이 레이트 예산만 쓰고 버려진다.
@@ -2494,6 +2512,7 @@ def _run_pov_hops(
                     oracle_observation = _submit_vul_to_oracle(
                         ctx, state, finding, hop_poc, designatable=False, in_validate_span=True
                     )
+                gen_codes.append(_oracle_code(oracle_observation))
                 tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
@@ -2529,7 +2548,10 @@ def _run_pov_hops(
                     stop_reason=PovStopReason.MAX_HOP.value,
                     fuzz=fuzz if hop == 0 else None,
                 )
-                return _pov_finish_and_record(ctx, state, finding, PovStopReason.MAX_HOP, last_poc)
+                return _pov_finish_and_record(
+                    ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
+                    terminal=_terminal_fields(pov_wide, gen_codes),
+                )
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
                 fuzz=fuzz if hop == 0 else None,
@@ -2555,6 +2577,43 @@ def _run_pov_hops(
                 followup = f"{_pov_hop_line(hop + 1, pov_hops)}\n{followup}"
             prev = current
             hop += 1
+
+
+_ORACLE_VUL_CODE = re.compile(r"oracle_vul exit_code=(-?\d+)")
+
+
+def _oracle_code(observation: str) -> int | None:
+    """`_submit_vul_to_oracle`의 관측 줄에서 원시 종료 코드를 뗀다(`unavailable`이면 `None`)."""
+    match = _ORACLE_VUL_CODE.match(observation)
+    return None if match is None else int(match.group(1))
+
+
+def _resolve_submit_digest(
+    named: str | None, seen: Mapping[str, bytes]
+) -> tuple[bytes | None, str]:
+    """`submit`의 `poc_sha256`을 이미 낸 gen에 푼다 → (지명된 바이트 또는 `None`, `submit_digest`).
+
+    `sha256:` 접두는 떼고 대소문자는 무시하며, 전체나 **유일하게 맞는** 접두만 `matched`다.
+    지명이 없으면 `absent`, 어느 gen에도 안 맞거나 둘 이상에 맞으면 `unknown`이고 바이트는
+    `None`이다 — 호출부가 마지막 gen으로 돌아간다. 채점기 값은 읽지 않는다.
+    """
+    if named is None:
+        return None, "absent"
+    want = named.lower().removeprefix("sha256:")
+    hits = [poc for digest, poc in seen.items() if digest.removeprefix("sha256:").startswith(want)]
+    return (hits[0], "matched") if len(hits) == 1 else (None, "unknown")
+
+
+def _terminal_fields(pov_wide: bool, gen_codes: Sequence[int | None]) -> dict[str, TraceValue]:
+    """종단 이벤트의 계측 — 마지막 gen의 `vul` 코드가 제외 코드(또는 없음)인데 앞선 gen 중에
+    제외 코드 밖이 있었나. v5 규율(「셋 밖이면 다음 턴에 submit」)의 준수를 사후에 세는 **로그**이고
+    지정 입력이 아니다. 코드를 읽는 판(`pov_wide`)만 싣는다."""
+    if not pov_wide:
+        return {}
+    *earlier, last = gen_codes or [None]
+    lost = last is None or last in oracle_log.NO_CRASH_VUL_EXIT_CODES
+    won = any(c is not None and c not in oracle_log.NO_CRASH_VUL_EXIT_CODES for c in earlier)
+    return {"last_gen_excluded_while_earlier_not": lost and won}
 
 
 def _pov_hop_line(hop: int, last_hop: int) -> str:
@@ -2666,6 +2725,7 @@ def _emit_pov_hop(
     failed: tuple[Exception, float | None] | None = None,
     wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
+    submit_digest: str | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
@@ -2682,6 +2742,8 @@ def _emit_pov_hop(
     `fuzz`는 **hop0에만** 준다 — 퍼즈 진입점 조회의 결과다(`_fuzz_entrypoint`). 그것을 여기 싣는
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
     이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
+
+    `submit_digest`는 `submit` 홉에만 준다 — `poc_sha256` 지명의 결과(`absent`·`matched`·`unknown`).
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
@@ -2699,6 +2761,8 @@ def _emit_pov_hop(
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
         data["stop_reason"] = stop_reason
+    if submit_digest is not None:
+        data["submit_digest"] = submit_digest
     if failed is not None:
         exc, latency_s = failed
         data["schema_ok"] = not isinstance(exc, SchemaParseError)
@@ -2717,7 +2781,12 @@ def _emit_pov_hop(
 
 
 def _pov_finish(
-    ctx: RunContext, finding: Finding, reason: PovStopReason, poc: bytes | None
+    ctx: RunContext,
+    finding: Finding,
+    reason: PovStopReason,
+    poc: bytes | None,
+    *,
+    terminal: Mapping[str, TraceValue] | None = None,
 ) -> tuple[bytes | None, PovStopReason, str | None, str | None]:
     """루프 종단 이벤트. `POV_GENERATED`는 **모델이 submit해 최종 PoC가 나온 경우만** 낸다 —
     나머지(max_hop·repeat·흡수된 예외·gen 없는 submit)는 `POV_SKIPPED`다. 부분 PoC(중간 gen까지는
@@ -2736,7 +2805,9 @@ def _pov_finish(
 
     반환은 `(poc, reason, ref, digest)`다 — `ref`·`digest`는 방금 쓴 사이드카의 것이고 안 썼으면
     (배선 없음·바이트 없음·쓰기 실패) `None`이다. 읽는 곳은 아직 없다(`_run_pov_hops`가 `[:2]`로
-    뗀다) — 파일 참조가 필요해질 때 디렉터리를 글로브하지 않고 쓰게 내 둔다."""
+    뗀다) — 파일 참조가 필요해질 때 디렉터리를 글로브하지 않고 쓰게 내 둔다.
+
+    `terminal`은 종단 이벤트에 그대로 얹는 계측 필드다(`_terminal_fields`)."""
     ref: str | None = None
     digest: str | None = None
     sidecar: dict[str, TraceValue] = {}
@@ -2765,6 +2836,7 @@ def _pov_finish(
             poc_bytes=len(poc),
             poc_sha256=hashlib.sha256(poc).hexdigest(),
             **sidecar,
+            **(terminal or {}),
         )
         return poc, reason, ref, digest
     data: dict[str, TraceValue] = {"reason": reason.value}
@@ -2772,6 +2844,7 @@ def _pov_finish(
         data["poc_bytes"] = len(poc)
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
         data.update(sidecar)
+    data.update(terminal or {})
     ctx.trace.emit(
         EventKind.POV_SKIPPED,
         stage=Stage.VALIDATE,

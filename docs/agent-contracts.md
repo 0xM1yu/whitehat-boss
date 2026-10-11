@@ -549,7 +549,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   그래서 그 판에서 도구 요약은 둘째 줄이다) + (v3 이상이고 `--oracle-submit`일 때) 직전
   `gen`의 채점기 `vul` 원시 종료 코드 한 줄(`oracle_vul`).
 - 출력: 매 홉 **`PovAction`**(gen/inspect/submit). `gen`이 **`PovSpec`**을 싣고, 어느 액션도 바이트를
-  직접 내지 않는다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
+  직접 내지 않는다. ⏵ 2026-10-11: `submit`만 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 싣고,
+  없으면 마지막 gen이 최종 후보다. 못 찾으면 마지막 gen으로 돌아가고 submit 홉 이벤트가 `submit_digest`(`absent`·`matched`·`unknown`)를 단다(council 2026-09-30, fork B-iii). 이유: 모델이 쓴
   스크립트를 돌리는 임의 코드 실행을 안 열고, 큰 base64를 구조화 출력에 물릴 때 문법 마스크가 출력을
   깎을 수 있다는 **추정**을 피한다(base64는 안 쟀다 · 인접 실측은 enum 강제 verdict라는 다른 현상 —
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
@@ -593,7 +594,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
   접었다(2026-10-02 결정, 아래 한계로 남긴다).
-- 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
+- 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
   게이트웨이 오류로 끊긴 루프는 종단 이벤트가 없어 파일도 없다 — 잃은 PoC의 해시는 그 gen 홉의

@@ -12,6 +12,16 @@
 #   prefix.md sha256 — 전 `14486e57f90f439fbf5eab7a905cd6ac5c66a2c334a891a9d35453a9f8c21ada`
 #   · 후 `e19e7e7bf81f560a863d4eee768da8234143ab16bc12e1072b0aaf54df37d799`.
 #   그 창에 run이 돌았다면 같은 "v5"로 다른 텍스트를 받은 것이다 — 호출의 `prompt_sha256`으로 가른다.
+# ⏵ 2026-10-11 — **예외 둘째: 이 판의 prefix를 제자리에서 더 고쳤다(세 자리)**(이슈 #549 ② · `submit`이 `poc_sha256`으로
+#   앞선 gen을 지명한다 — `PovAction.poc_sha256` · `runner._resolve_submit_digest`). 이유: 고친 시점에 v5로 모델 호출이 난 run이
+#   0건이다 — `docs/experiments`에 pov v5 호출 기록이 없고(`git grep`), 로컬 run 다섯(`run_20261010_0001`~`run_20261011_0001`)의
+#   `run_manifest.json`은 `prompt_versions.pov`가 v5로 배선돼 있으나 `trace.jsonl`의 `pov_hop`이 0건이고 `prompts/`에 pov 호출 파일이 없다.
+#   prefix.md sha256 — 전 `e19e7e7bf81f560a863d4eee768da8234143ab16bc12e1072b0aaf54df37d799`
+#   · 후 `6e757474396dc222cdea0252926967033033962682ee3ebde27e220fa8186407`.
+#   세 자리를 고쳤다: ① `submit` 항목에 `poc_sha256` 한 문장 ② `final-hop` 덩어리의 「마지막 홉에서 `submit`은 (`poc_sha256`을 안 적으면) …」
+#   ③ `trap` 덩어리의 「(`poc_sha256`을 안 적으면)」 둘 — ②③은 마지막 gen 지정이 이름을 안 적을 때의 기본임을 밝힌다.
+#   이 창에 v5로 도는 run이 있으면 호출의 `prompt_sha256`으로 가른다. 아래 description은 그날의 서술이다 — 「`submit`은 마지막 gen을
+#   지정」은 `poc_sha256`을 안 적었을 때의 기본이다.
 role: pov
 version: v5
 output_schema: PovAction

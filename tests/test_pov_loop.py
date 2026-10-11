@@ -2022,6 +2022,37 @@ def test_pov_schema_caps_are_the_documented_values() -> None:
     assert hex_caps == [2 * _MAX_POC_BYTES]  # hex 16 Mi자 = 바이트 2자
 
 
+_DIGEST = "ab" * 32
+
+
+@pytest.mark.parametrize(
+    "named",
+    [f"sha256:{_DIGEST}", _DIGEST, "ab" * 4, f"sha256:{'ab' * 4}", "ABCDEF01"],
+)
+def test_submit_accepts_a_full_digest_or_a_hex_prefix_of_eight_or_more(named: str) -> None:
+    assert PovAction(action="submit", rationale="r", poc_sha256=named).poc_sha256 == named
+
+
+@pytest.mark.parametrize(
+    "named", ["", "abcdef0", "sha256:abcdef0", "g" * 8, _DIGEST + "0", f"sha256:{_DIGEST}00"]
+)
+def test_submit_rejects_a_malformed_digest(named: str) -> None:
+    """8자 미만 · 16진 밖 · 64자 초과는 거절한다 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 지명하는
+    것을 막는다."""
+    with pytest.raises(ValueError):
+        PovAction(action="submit", rationale="r", poc_sha256=named)
+
+
+@pytest.mark.parametrize("action", ["gen", "inspect"])
+def test_poc_sha256_is_allowed_on_submit_only(action: str) -> None:
+    """지명은 `submit`의 일이다 — 다른 액션에 실리면 조용히 무시하지 않고 거절한다."""
+    fields = (
+        {"spec": _gen().spec} if action == "gen" else {"tool": "poc"}
+    )
+    with pytest.raises(ValueError, match="poc_sha256"):
+        PovAction(action=action, rationale="r", poc_sha256=_DIGEST, **fields)
+
+
 def test_pov_stop_reason_and_event_kind_spellings_are_pinned() -> None:
     """정지 사유·홉 이벤트의 **값 문자열**을 고정한다 — trace 주석·직렬화가 이 철자에 의존한다.
 
@@ -2561,7 +2592,7 @@ def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> 
     finished = runner._pov_finish(scripted, finding, reason, poc)
     assert isinstance(finished, tuple) and len(finished) == 4
     assert list(inspect.signature(runner._pov_finish).parameters) == [
-        "ctx", "finding", "reason", "poc",
+        "ctx", "finding", "reason", "poc", "terminal",  # `terminal`은 키워드 전용·기본 `None`
     ]
     assert list(inspect.signature(runner._run_pov).parameters) == ["ctx", "state", "finding"]
     assert runner._run_pov(scripted, state, finding) is None

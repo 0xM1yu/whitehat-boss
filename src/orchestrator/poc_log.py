@@ -6,7 +6,8 @@
 ## 무엇을 남기나 — 루프당 **최대 한 파일**
 
 `runner._pov_finish`(루프 종단)가 한 번 쓴다. 쓰는 것은 그 루프의 **마지막 `gen`이 조립한 PoC**
-뿐이다 — 중간 `gen`들의 PoC는 파일로 안 남고(그 해시는 `pov_hop`(gen)의 `poc_sha256`에 있다),
+뿐이다(⏵ 2026-10-11: `submit`이 `poc_sha256`으로 앞선 gen을 지명했으면 그 gen의 PoC) —
+중간 `gen`들의 PoC는 파일로 안 남고(그 해시는 `pov_hop`(gen)의 `poc_sha256`에 있다),
 조립한 PoC가 하나도 없는 루프(gen 없는 submit·hop0 실패)는 파일도 `poc_ref`도 없다. submit 못 한
 부분 PoC(max_hop·repeat·흡수된 홉 실패)도 남긴다 — 회수가 목적이라 종단 사유로 가르지 않는다.
 
