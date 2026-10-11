@@ -40,6 +40,7 @@ from src.bench import (
 from src.bench_metrics import METRIC_KV_USAGE
 from src.config import PROMPTED_ROLES, HarnessConfig
 from src.orchestrator.nodes import auditor as auditor_node
+from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import scout as scout_node
 from src.orchestrator.prompt_loader import PromptTemplate, load_prompt
 from src.schemas.enums import Role
@@ -125,6 +126,7 @@ def schema_for(
     v8·v9=`AuditorAction`, v10=`AuditorProcedureAction`이다(위 `AuditorAction`은 v8·v9의 이름).
     ⏵ 2026-10-09 — v11=`AuditorProcedureNullableCweAction`(이슈 #525)이 셋째다.
     ⏵ 2026-10-10 — v12=`AuditorProcedureAuditAlwaysAction`(이슈 #578)이 넷째다.
+    ⏵ 2026-10-11 — pov도 갈린다: v2~v4=`PovAction`, v5=`PovActionNamed`(이슈 #549).
     노드가 프롬프트 meta가 선언한 것을
     요청하므로(`nodes/scout.py`·`nodes/auditor.py`) bench도 같은 것을 재야 **운영 grammar**를 재는
     것이 된다 — 그 자리에서 `ROLE_SPEC`의 스키마는 캡슐 레벨 전용이 된다.
@@ -137,6 +139,8 @@ def schema_for(
         return scout_node.resolve_output_schema(template.output_schema)
     if role_enum is Role.AUDITOR:
         return auditor_node.resolve_output_schema(template.output_schema)
+    if role_enum is Role.POV:
+        return pov_node.resolve_output_schema(template.output_schema)
     return declared
 
 
