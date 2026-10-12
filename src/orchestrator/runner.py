@@ -2020,7 +2020,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
     # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다.
     # 적대적 리뷰가 설정만으로 닿는 둘을 재현했다 — pov 좌석 `prompt_template_version` 오타의
-    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부르던 때의 사례다 —
+    # ⏵ 2026-10-13 #600 H3: 이제 `run()`도 시작 전에 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
     # ⏵ 2026-10-10 도구 호출 둘레의 `except BudgetExhausted`(#394)는 홉 이벤트를 낸 뒤 그대로
     # 올리므로 사유 0건은 여전하고 이 `finally`가 메운다.
@@ -2561,7 +2562,8 @@ def _run_pov_hops(
     게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
-    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트).
+    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
+    v6이다**(`config/models.yaml` · S19 Phase 6-2) — 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
