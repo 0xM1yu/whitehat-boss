@@ -433,7 +433,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    냈다」에 가장 가까운 것을 쓴 것이고 같은 뜻은 아니다. 둘은 trace `auditor_hop.stop_reason`으로 갈린다).
    🔴 **이 선택은 [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 6과 충돌한다** — 그 결정은 C-5(캡슐 확장
    길)를 폐기하고 코드 삭제를 따로 하기로 했다. 삭제 PR이 C-5를 지우면 이 정지의 `queued` 전이가
-   `IllegalTransition`이 되므로, 그때 전용 사유(전이 표 행 포함)로 옮긴다 — `tests/test_auditor_loop.py`가 지금
+   `IllegalTransition`이 된다(⏵ 2026-10-13(#514) 소비자가 `REPEAT_REQUEST`·`MAX_HOP`·`CONTEXT_OVERFLOW` 셋이다). 그때 전용 사유(전이 표 행 포함)로 옮긴다 — `tests/test_auditor_loop.py`가 지금
    이 사유로 전이가 일어난다는 사실을 문다.
    **러너가 `AuditorHopLimit`을 후보 단위로 받는다** — `runner._step_auditor`가 잡아 `False`를 돌려 그 후보만
    멈추고(게이트로 안 간다) run은 간다. 모델이 같은 요청을 두 번 내거나 조사만 하는 것은 정상적인 모델 행동이라,
