@@ -113,3 +113,21 @@ def plant_link(kind: str, link: Path, outside: Path) -> None:
             link.symlink_to(outside)
     except (OSError, NotImplementedError) as exc:
         pytest.skip(f"{kind}를 만들 수 없는 환경이다: {type(exc).__name__}: {exc}")
+
+
+def declare_scout_input(monkeypatch: pytest.MonkeyPatch, kind: str) -> None:
+    """Scout 노드가 읽는 프롬프트 meta의 `input` 선언을 `kind`로 바꾼다(디스크 프롬프트는 그대로).
+
+    노드가 `SOURCE`의 모양을 이 선언으로 고른다(#529). `dev_fake`의 Scout(`scout/v2`)는 선언이
+    `source`라, 슬라이스 렌더를 보는 Scout(v3)를 재는 검사가 `slice`로 바꿔 돌린다.
+    """
+    import dataclasses
+
+    from src.orchestrator.nodes import scout
+
+    real = scout.load_prompt
+    monkeypatch.setattr(
+        scout,
+        "load_prompt",
+        lambda role, version, **kw: dataclasses.replace(real(role, version, **kw), input=kind),
+    )
