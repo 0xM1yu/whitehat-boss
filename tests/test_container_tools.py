@@ -1953,3 +1953,26 @@ def test_compile_reason_reaches_the_pov_observation_head_before_the_log_tail() -
 
     head = text.splitlines()[0]
     assert "unknown type name 'uint8_t'" in head, "사유가 머리줄에 없다 (꼬리 절단에 기댐)"
+
+
+def test_clang_tidy_reason_counts_only_compile_errors_not_promoted_lint_findings() -> None:
+    """`--warnings-as-errors=*`가 린트 소견도 `error:`로 찍는다 — 태그된 줄만 컴파일 오류다."""
+    stdout = (
+        "/src/a.c:2:3: error: Value stored to 'x' is never read "
+        "[clang-analyzer-deadcode.DeadStores,-warnings-as-errors]\n"
+        "/src/a.c:4:1: error: unknown type name 'u8' [clang-diagnostic-error]\n"
+    )
+    _, _, error = judge("clang-tidy", [Step(1, stdout, "")], 1)
+
+    assert "1건, 첫 오류: unknown type name 'u8'" in error
+    assert "Value stored" not in error
+
+
+def test_compile_reason_is_capped_and_one_line() -> None:
+    cr = chr(13)
+    stderr = f"a.c:1:1: error: {'x' * 500}{cr}\na.c:2:1: error: bad{cr}tab{chr(9)}\n"
+    reason = container_tools.compile_failure_reason(stderr)
+
+    assert len(reason.split("첫 오류: ", 1)[1]) == container_tools._COMPILE_REASON_CHARS
+    assert cr not in reason and "\n" not in reason
+    assert cr not in container_tools.compile_failure_reason(f"a.c:1:1: error: bad{cr}tab\n")
