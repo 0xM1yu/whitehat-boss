@@ -115,6 +115,9 @@ class ScoutSession:
     # 다시 안 싣고 hop0 본문을 재사용하므로 이 집합은 hop0에서 고정돼 세션마다 그대로 이어진다.
     # `None`은 안 잘렸다(또는 슬라이스 없음) — resolver가 `SliceRef.lines` 전체를 `visible`로 쓴다.
     shown_lines: tuple[tuple[str, int], ...] | None = None
+    # hop0 프롬프트의 `FACTS.target`(= `capsule.target`) — 되묻기 홉이 후보의 `location.symbol`을
+    # 같은 값으로 채우려고 이어 쥔다(`_stamp_target_symbol`). `None`이면 안 채운다(손으로 짠 세션).
+    target: Location | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +210,7 @@ def open_session(
         hop_response=hop_response,
         history=(),
         shown_lines=hop_response.shown_lines,
+        target=capsule.target,
     )
 
 
@@ -233,6 +237,7 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
         schema=ScoutResponse,
         history=session.history,
         hop=hop,
+        target=session.target,
     )
     return _session_from_hop(
         candidate_id=session.candidate_id,
@@ -243,6 +248,7 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
         history=session.history,
         # 되묻기 홉은 SOURCE를 다시 안 싣는다 — hop0에서 고정된 집합을 그대로 이어 간다(#375 M-2).
         shown_lines=session.shown_lines,
+        target=session.target,
     )
 
 
@@ -285,6 +291,7 @@ def _session_from_hop(
     hop_response: _HopResponse,
     history: tuple[ChatTurn, ...],
     shown_lines: tuple[tuple[str, int], ...] | None,
+    target: Location | None,
 ) -> ScoutSession:
     requested = (
         tuple(hop_response.summary.requested_context) if hop_response.summary is not None else ()
@@ -310,6 +317,7 @@ def _session_from_hop(
         prompt_version=hop_response.prompt_version,
         history=new_history,
         shown_lines=shown_lines,
+        target=target,
     )
 
 
@@ -323,6 +331,7 @@ def _call_hop(
     schema: type[Candidate] | type[ScoutResponse],
     history: Sequence[ChatTurn],
     hop: int,
+    target: Location | None,
 ) -> _HopResponse:
     """모델 호출 하나 — hop0·hop k 공통. 예외를 그대로 올린다(호출자가 흡수 여부를 정한다)."""
     started = ctx.monotonic_ms()
@@ -367,6 +376,7 @@ def _call_hop(
         subject_kind="candidate",
         subject_id=candidate_id,
     )
+    candidate = _stamp_target_symbol(ctx, candidate, target, hop=hop)
     return _HopResponse(
         candidate=candidate,
         summary=summary,
@@ -376,6 +386,45 @@ def _call_hop(
         body=prompt.body,
         prefix=prompt.prefix,
         prompt_version=prompt.prompt_version,
+    )
+
+
+def _stamp_target_symbol(
+    ctx: RunContext, candidate: Candidate, target: Location | None, *, hop: int
+) -> Candidate:
+    """후보의 `location.symbol`이 `null`이면 `FACTS.target.symbol`을 도장 찍는다 (이슈 #633).
+
+    v4 prefix는 「`location`을 `FACTS.target`에서 복사하라」고 하는데 두 실모델이 `symbol`을 못
+    옮겼다(s17 12/12 null). 값의 원천이 모델이 아니라 하네스가 쥔 대상이라 `stamp_issued`와 같은
+    논법으로 덮는다 — 단 **셋 다 맞을 때만**이다:
+
+    - 모델이 `symbol`을 안 썼다(`None`) — 쓴 값은 틀려도 그대로 둔다(`""`도 쓴 값이다).
+    - 후보가 **대상 파일**에 있다 — 다른 파일 후보에 대상 함수 이름을 붙이면 거짓이다. 슬라이스
+      Scout는 여러 파일을 보므로 이 경우가 실재한다.
+    - 대상이 `symbol`을 든다 — 이름 없는 대상(Case B entry 등)에서는 지어내지 않는다.
+
+    `file`·`line_*`는 안 건드린다. 건드린 건마다 `scout_symbol_stamped`를 남긴다 — 모델이 쓴
+    `null`과 하네스가 채운 값이 `state.db`의 후보에서는 구별되지 않아서다. `stamp_issued`의
+    `issued_override`와 섞지 않았다: 그 이벤트는 「부재 = 모델이 발급값을 그대로 썼다」로 읽히고
+    테스트가 0건을 단언한다.
+    """
+    if (
+        target is None
+        or not target.symbol
+        or candidate.location.symbol is not None
+        or candidate.location.file != target.file
+    ):
+        return candidate
+    ctx.trace.emit(
+        EventKind.SCOUT_SYMBOL_STAMPED,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate.candidate_id,
+        hop=hop,
+        symbol=target.symbol,
+    )
+    return candidate.model_copy(
+        update={"location": candidate.location.model_copy(update={"symbol": target.symbol})}
     )
 
 
@@ -434,6 +483,7 @@ def _ask_model(
             schema=schema,
             history=(),
             hop=0,
+            target=capsule.target,
         )
     except BudgetExhausted:
         _queue_previous(ctx, previous, ReasonCode.BUDGET_EXHAUSTED)

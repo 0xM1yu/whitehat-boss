@@ -1556,6 +1556,138 @@ def test_scout_v3_follow_up_hop_is_stamped_too(ctx: RunContext) -> None:
     assert override.data["written.state"] == "triaged"
 
 
+# --- 후보 `location.symbol` 도장 (이슈 #633) ----------------------------------
+
+
+def _with_symbol(location: Location, symbol: str | None, *, file: str | None = None) -> Location:
+    return Location(
+        file=file or location.file,
+        symbol=symbol,
+        line_start=location.line_start,
+        line_end=location.line_end,
+    )
+
+
+def _triage_writing_location(ctx: RunContext, target: Location, written: Location):  # noqa: ANN202
+    """모델이 후보 `location`을 `written`으로 낸 것처럼 Scout를 돌린다."""
+    stub = _RewritingModelClient(ctx.models, lambda value: value.transition(location=written))
+    return _triage(dataclasses.replace(ctx, models=stub), target)
+
+
+def _stamped_symbols(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SYMBOL_STAMPED]
+
+
+def test_scout_stamps_the_target_symbol_when_the_model_left_it_null(ctx: RunContext) -> None:
+    """모델이 `symbol`을 `null`로 낸 후보(s17 12/12)는 `FACTS.target.symbol`을 받는다.
+
+    `file`·`line_*`는 모델이 쓴 값 그대로이고(여기선 `line_end`를 일부러 다르게 냈다), 저장된 후보도
+    같은 값이다. 채운 홉은 `scout_symbol_stamped`로 남는다.
+    """
+    written = _with_symbol(VULN_TARGET, None)
+    written = Location(file=written.file, line_start=3, line_end=9)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location == Location(
+        file="parser.c", symbol="parse_header", line_start=3, line_end=9
+    )
+    assert ctx.store.get("candidate", candidate.candidate_id).location == candidate.location
+    (event,) = _stamped_symbols(ctx)
+    assert event.subject_id == candidate.candidate_id
+    assert (event.data["hop"], event.data["symbol"]) == (0, "parse_header")
+
+
+def test_scout_keeps_a_symbol_the_model_wrote(ctx: RunContext) -> None:
+    """모델이 쓴 `symbol`은 대상과 달라도 그대로다 — 도장은 `null`만 채운다. `""`도 쓴 값이다."""
+    for written_symbol in ("other_fn", ""):
+        written = _with_symbol(VULN_TARGET, written_symbol)
+
+        candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+        assert candidate.location.symbol == written_symbol
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_does_not_stamp_a_candidate_in_another_file(ctx: RunContext) -> None:
+    """대상 파일이 아닌 곳의 후보에 대상 함수 이름을 붙이지 않는다 — 슬라이스는 여러 파일을 본다."""
+    written = _with_symbol(VULN_TARGET, None, file="util.c")
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.file == "util.c"
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_stamps_nothing_when_the_target_has_no_symbol(ctx: RunContext) -> None:
+    """이름 없는 대상(`FACTS.target.symbol`이 `null`)에서는 지어내지 않는다."""
+    nameless = _with_symbol(VULN_TARGET, None)
+
+    candidate, _, _ = _triage_writing_location(ctx, nameless, nameless)
+
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_v3_follow_up_hop_stamps_the_symbol_from_the_hop0_target(ctx: RunContext) -> None:
+    """되묻기 홉의 후보도 `symbol`이 `null`이면 hop0의 `FACTS.target`으로 채운다.
+
+    `finish()`가 마지막 홉의 후보를 저장하므로 hop0만 막으면 되묻기를 거친 후보는 도로 `null`이다.
+    """
+    session = dataclasses.replace(_ne_session(), target=VULN_TARGET)
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            written = session.candidate.transition(
+                location=_with_symbol(VULN_TARGET, None), reason_codes=["triage_review"]
+            )
+            value = ScoutResponse(candidate=written, analysis_summary=AnalysisSummary(claim="h1"))
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    next_session = scout.continue_session(
+        dataclasses.replace(ctx, models=_Stub()), session, "FOLLOWUP"
+    )
+
+    assert next_session.candidate.location.symbol == "parse_header"
+    assert next_session.target == VULN_TARGET, "다음 홉이 또 쓸 수 있게 이어 쥔다"
+    (event,) = _stamped_symbols(ctx)
+    assert (event.data["hop"], event.data["symbol"]) == (1, "parse_header")
+
+
+def test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt(ctx: RunContext) -> None:
+    """도장이 닿는 곳은 합성 `repro_spec` 문구 하나다 — Auditor·Critic 프롬프트 바이트는 안 변한다.
+
+    Auditor는 후보를 `_describe_candidate`(ID·CWE·신호)로만 렌더하고 FACTS의 `target`은
+    `capsule.target`이라 `Candidate.location`을 안 읽는다. Critic은 Finding만 읽는다. 이 핀이
+    깨지면(후보 위치를 프롬프트에 싣기 시작하면) 도장이 요청 바이트를 바꾸기 시작한 것이니
+    `docs/agent-contracts.md`의 ⏵ 2026-10-13 문단(Scout)을 같이 고친다.
+    """
+    stamped, capsule, evidences = _triage_writing_location(
+        ctx, VULN_TARGET, _with_symbol(VULN_TARGET, None)
+    )
+    assert stamped.location.symbol == "parse_header", "전제 — 도장이 찍혔다"
+    unstamped = stamped.transition(location=_with_symbol(VULN_TARGET, None))
+
+    assert auditor._synthesize_repro_spec(stamped).expected_signal == (
+        "sanitizer crash at parse_header"
+    )
+    assert auditor._synthesize_repro_spec(unstamped).expected_signal == (
+        "sanitizer crash at parser.c"
+    )
+    auditor.run(ctx, candidate=stamped, capsule=capsule, evidences=evidences)
+    auditor.run(ctx, candidate=unstamped, capsule=capsule, evidences=evidences)
+    prompt_a, prompt_b = [p for role, p in ctx.models.prompts if role is Role.AUDITOR][-2:]
+    issued = re.compile(r"(?:find|mev)_\d+")  # 호출마다 새로 발급되는 ID만 가린다
+    assert prompt_a.prefix == prompt_b.prefix
+    assert issued.sub("<id>", prompt_a.body) == issued.sub("<id>", prompt_b.body)
+
+
 def test_auditor_stamps_the_issued_ids_over_the_ones_the_model_wrote(ctx: RunContext) -> None:
     """D83 ② — Auditor가 **남의** `finding_id`·`candidate_id`, 다른 `run_id`를 써도 둘 다 남는다."""
     first_candidate, capsule, evidences = _triage(ctx, VULN_TARGET)

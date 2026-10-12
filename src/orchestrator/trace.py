@@ -609,6 +609,14 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # Scout 후보의 `location.symbol`을 하네스가 `FACTS.target.symbol`로 채웠다 (이슈 #633).
+    # 내는 곳은 `nodes/scout._stamp_target_symbol`이고 **채운 홉마다 1행**이다 —
+    # `subject_id`는 후보, `hop`은 그 홉 번호(되묻기 홉도 모델이 다시 `null`을 쓰면 다시 채운다),
+    # `symbol`은 채운 값이다.
+    # **이벤트 부재 = 채우지 않았다** — 모델이 `symbol`을 썼거나, 후보가 대상 파일 밖이거나, 대상이
+    # `symbol`을 안 들었다. `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
+    # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
+    SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #
