@@ -1183,6 +1183,11 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **8단계가 재현을 시도하지 못한 `validated` Finding도 같은 자리에 올린다 (#326).** 상태를 안
+    # 바꾸므로(`validate.run`) 보고서에서는 멀쩡한 `validated`로 보이고 사유는 trace에만 있다.
+    not_measured_warning = _repro_not_measured_warning(trace)
+    if not_measured_warning is not None:
+        warnings.append(not_measured_warning)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1554,6 +1559,24 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     return (
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
+    )
+
+
+def _repro_not_measured_warning(trace: TraceWriter) -> str | None:
+    """8단계 `validate.run`이 재현을 시도하지 못한 Finding이 있으면 run 경고, 없으면 `None`(#326).
+
+    사유별 건수를 싣는다(`repro_not_measured`의 `reason`). 이 건들은 「제거율 — Tool」에 안 들고,
+    `poc` 신호는 PoV 루프가, 컴파일 안 되는 대상(#507)은 아무도 재현하지 않은 채
+    `validated`에 남는다."""
+    reasons = Counter(
+        str(e.data.get("reason")) for e in trace.events if e.kind is EventKind.REPRO_NOT_MEASURED
+    )
+    if not reasons:
+        return None
+    detail = " · ".join(f"{reason} {count}" for reason, count in sorted(reasons.items()))
+    return (
+        f"8단계가 재현을 시도하지 못한 validated Finding {sum(reasons.values())}건({detail}) - "
+        f"상태는 그대로이고 도구 검증 제거율에 안 든다 (#326)"
     )
 
 
