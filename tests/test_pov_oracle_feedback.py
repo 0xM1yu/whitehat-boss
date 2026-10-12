@@ -17,7 +17,7 @@ from src.orchestrator.prompt_loader import load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, Role
 from src.schemas.pov import PovAction
-from tests.conftest import REPO_ROOT
+from tests.conftest import REPO_ROOT, tracked_files
 from tests.oracle_fakes import TASK_ID, FakeOracle
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
 from tests.test_pov_loop import _gen, _scripted, _served_pov_version, _with_pov_version
@@ -527,8 +527,9 @@ def test_ledger_constructors_have_no_default_for_designatable():
 def test_no_live_source_says_pov_v3_is_unwired():
     """Proposition pin (CLAUDE.md 2.5): 'the wired PoV prompt is v2 / v3 is not wired'.
 
-    Scans every live doc and source (dated reports under docs/research and docs/experiments and
-    this tests/ tree are excluded) for the forms the review found plus the nearby phrasings.
+    Scans every live doc and source that git tracks (dated reports under docs/research and
+    docs/experiments and this tests/ tree are excluded) for the forms the review found plus the
+    nearby phrasings. Tracked-only: see the accident in `tracked_files`.
     """
     import re
 
@@ -538,17 +539,18 @@ def test_no_live_source_says_pov_v3_is_unwired():
     skipped = ("docs/research", "docs/experiments", "docs/decisions", "tests", "_workspace", ".git")
     offenders = []
     scanned = 0
-    # 저장소 루트로 고정한다 - `Path(".")`는 다른 디렉터리에서 pytest를 돌리면 아무것도 안
-    # 훑고 초록이다.
-    for suffix in ("*.md", "*.py", "*.yaml"):
-        for path in REPO_ROOT.rglob(suffix):
-            posix = path.relative_to(REPO_ROOT).as_posix()
-            if posix.startswith(skipped):
-                continue
-            scanned += 1
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if forms.search(line):
-                    offenders.append(f"{posix}:{number}")
+    # **추적되는 파일만** 훑는다(`tracked_files` docstring의 2026-10-12 사고) - `rglob`는
+    # 체크아웃에 같이 있는 `.claude/worktrees/<이름>/`까지 걸어서 **남의 낡은 문서**를 이
+    # 저장소의 결함으로 보고한다. 루트도 거기서 고정한다 - `Path(".")`는 다른 디렉터리에서
+    # pytest를 돌리면 아무것도 안 훑고 초록이다.
+    for path in tracked_files("*.md", "*.py", "*.yaml"):
+        posix = path.relative_to(REPO_ROOT).as_posix()
+        if posix.startswith(skipped):
+            continue
+        scanned += 1
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if forms.search(line):
+                offenders.append(f"{posix}:{number}")
     assert scanned > 100, "훑은 파일이 너무 적다 - 저장소 루트가 틀렸다"
     assert not offenders, offenders
 

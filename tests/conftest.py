@@ -6,6 +6,7 @@
 """
 
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -49,6 +50,46 @@ def served_scout_config():  # noqa: ANN201 - src.config를 모듈 머리에서 �
         adapters=base.profile.adapters.transition(state_store="sqlite"),
     )
     return base.transition(models={**base.models, SERVED_SCOUT_KEY: entry}, profile=profile)
+
+
+def tracked_files(*patterns: str, root: Path | None = None) -> list[Path]:
+    """`git ls-files`가 내놓는 추적 파일. git이 없으면 검사를 건너뛴다.
+
+    **워킹트리는 저장소가 아니다.** 전수 검사가 `rglob`로 걸으면 체크아웃에 같이 있는
+    미추적 트리까지 읽는다 — `.claude/worktrees/<이름>/`(다른 세션의 linked worktree로,
+    그 안에는 **낡은 판의 문서가 그대로** 있다)·`_workspace/`·`artifacts/`.
+    CLAUDE.md §1이 검사 대상을 *"추적되는 `*.md`는 전부"*로 정한 것이 이 함수다.
+
+    **사고 —** 2026-10-12, 체크아웃에 `.claude/worktrees/` 아래 worktree가 5개 있는
+    상태에서 전수 검사 셋(`test_no_live_source_says_pov_v3_is_unwired` ·
+    `test_no_live_source_names_v3_alone_as_the_pov_prompt` ·
+    `test_no_live_source_puts_last_gen_on_the_first_line_of_the_observation`)이
+    offender 목록이 **전부 `.claude/worktrees/...`** 인 채로 깨졌다(#631). 이 저장소의 산문은
+    한 줄도 틀리지 않았는데 빨개졌고, 읽는 쪽에는 고칠 곳이 없다 — 남의 체크아웃이다.
+
+    `root`는 오염 핀 전용이다(임시 저장소를 가리킨다). 기본값은 `REPO_ROOT`다.
+
+    **`-z`가 필수다.** 기본 출력은 비ASCII 경로를 큰따옴표로 감싸고 바이트를 8진
+    이스케이프로 바꾼다(`.claude/노트.md` → `".claude/\\353\\205\\270...md"`). 그대로
+    `Path`에 넣으면 없는 파일을 가리켜 `OSError`가 나고, 검사기가 **문서의 결함처럼 보이는
+    실패**를 낸다 — 원인이 문서가 아니라 여기라서 읽는 사람이 엉뚱한 곳을 고친다.
+    `-z`는 이스케이프를 끄고 NUL로 가른다.
+    """
+    base = REPO_ROOT if root is None else root
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z", *patterns],
+            cwd=base,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            check=False,
+        )
+    except OSError:  # pragma: no cover - git 없는 환경
+        pytest.skip("git을 실행할 수 없다")
+    if result.returncode != 0:  # pragma: no cover - 저장소 밖
+        pytest.skip("저장소가 아니다")
+    return [base / name for name in result.stdout.split("\0") if name]
 
 
 def plant_link(kind: str, link: Path, outside: Path) -> None:
