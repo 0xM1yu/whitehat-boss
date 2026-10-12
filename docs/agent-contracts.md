@@ -586,7 +586,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
   「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다. 도구는
   `asan`·`build`·`poc`·`gdb`
-  (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
+  (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 (도구, 입력)을 `inspect`가 또
+  요청하면 도구를 안 돌리고 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 입력은 `poc`만 PoC 바이트이고
+  나머지는 도구만이 키다 · `v5` prefix는 이 거절을 아직 서술하지 않는다) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다

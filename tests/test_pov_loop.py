@@ -3163,3 +3163,71 @@ def test_a_parse_error_without_model_text_gets_a_fixed_note_not_its_message() ->
 
     assert note.startswith("[스키마 오류] ")
     assert "SECRET" not in note and "input_value" not in note
+
+
+# --- #619 — 같은 (도구, 입력) inspect는 다시 돌리지 않는다 ---------------------------------
+
+
+def _repeat_hops(scripted: RunContext) -> list[object]:  # noqa: F811
+    return [h for h in _hops(scripted) if "inspect_repeat_of_hop" in h.data]
+
+
+def test_inspect_of_the_tool_a_gen_just_ran_is_a_repeat_not_a_rerun(ctx: RunContext) -> None:  # noqa: F811
+    """gen이 `poc`를 돌린 같은 바이트에 `inspect poc`는 도구를 안 돌리고(이슈 #619 홉 3→5), 모델은
+    그 사실과 옛 관측을 받으며, 루프는 서지 않고 다음 홉을 받는다."""
+    scripted, recorded, bodies = _drive(
+        ctx, [_gen(), _inspect("poc"), _SUBMIT], version="v3"
+    )
+
+    assert [tool for tool, _ in recorded] == ["poc"]  # 재실행 0
+    [rep] = _repeat_hops(scripted)
+    assert (rep.data["hop"], rep.data["tool"], rep.data["inspect_repeat_of_hop"]) == (1, "poc", 0)
+    assert rep.data["action"] == "inspect"
+    assert not {"tool_ok", "exit_code", "evidence_kind", "stop_reason"} & set(rep.data)
+    assert "inspect_repeat tool=poc same_as_hop=0 rerun=false" in bodies[2]
+    assert "tool=poc action=inspect" in bodies[2]  # 옛 결과도 같이 간다
+    assert _stop_reasons_of(scripted)[-1] == PovStopReason.SUBMITTED.value
+
+
+def test_inspect_build_twice_is_a_repeat_even_without_a_new_gen(ctx: RunContext) -> None:  # noqa: F811
+    """`build`는 PoC를 안 읽는다 — 키가 (도구, 없음)이라 gen 없이 두 번째가 반복이다."""
+    scripted, recorded, bodies = _drive(
+        ctx, [_inspect("build"), _inspect("build"), _SUBMIT], version="v3"
+    )
+
+    assert [tool for tool, _ in recorded] == ["build"]
+    [rep] = _repeat_hops(scripted)
+    assert (rep.data["hop"], rep.data["inspect_repeat_of_hop"]) == (1, 0)
+    assert "inspect_repeat tool=build same_as_hop=0" in bodies[2]
+
+
+def test_inspect_on_a_different_input_or_tool_still_runs(ctx: RunContext) -> None:  # noqa: F811
+    """음성 핀 — 입력(바이트)이 다르거나 도구가 다르면 돌린다: hop0 `poc`(입력 없음) ≠ gen 뒤 `poc`,
+    둘째 gen 뒤 `poc`는 둘째 바이트에 대해 처음이다."""
+    scripted, recorded, _ = _drive(
+        ctx, [_inspect("poc"), _gen(count=8), _gen(count=9), _inspect("asan"), _SUBMIT]
+    )
+
+    assert [(tool, args.input_bytes) for tool, args in recorded] == [
+        ("poc", None),
+        ("poc", b"A" * 8),
+        ("poc", b"A" * 9),
+        ("asan", b"A" * 9),
+    ]
+    assert _repeat_hops(scripted) == []
+
+
+def test_a_model_that_only_repeats_inspect_still_stops_at_the_hop_limit(ctx: RunContext) -> None:  # noqa: F811
+    """반복은 모델 홉 하나를 쓴다(도구 실행만 안 쓴다) — 끝없이 반복해도 `MAX_HOP`에서 선다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, recorded, _ = _drive(ctx, [_gen(), _inspect("poc")])
+
+    assert [tool for tool, _ in recorded] == ["poc"]
+    hops = _hops(scripted)
+    assert len(hops) == pov_hops + 1
+    assert hops[-1].data["stop_reason"] == PovStopReason.MAX_HOP.value
+    assert hops[-1].data["inspect_repeat_of_hop"] == 0
+
+
+def _stop_reasons_of(scripted: RunContext) -> list[object]:  # noqa: F811
+    return [h.data.get("stop_reason") for h in _hops(scripted)]
