@@ -1671,6 +1671,46 @@ def test_a_candidate_the_server_refuses_for_size_is_dropped_loudly_and_the_next_
     assert "cand_0001" in warning and "홉 2" in warning and "#514" in warning
 
 
+def test_the_one_shot_path_keeps_c6_and_emits_no_hop_event_on_a_size_rejection(
+    ctx: RunContext,
+) -> None:
+    """한 방 경로는 종전 그대로다(C-6 · 홉 이벤트 없음).
+
+    루프의 크기 거절만 C-5+`context_overflow`다(#514).
+
+    한 방 호출은 홉 번호도 `AuditorStopReason`도 없다. 여기까지 C-5로 읽으면 꺼진 run의 사유
+    분포가 이전 run과 달라져 비교가 깨진다(evaluation §2.3)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(auditor_tool_hops=0)
+    )
+    ctx.models = _ScriptedModel([], fail_at=(0, _context_overflow()))
+
+    with pytest.raises(ModelGatewayError):
+        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert _hops(ctx) == []
+    assert _queue_transitions(ctx, candidate) == [("C-6", "schema_parse_failed")]
+
+
+def test_every_candidate_refused_for_size_in_the_loop_stops_the_run_via_the_success_zero_backstop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모든 후보가 루프에서 크기 거절이면 run은 완주로 안 읽힌다 - #296 백스톱이 선다.
+
+    노드가 크기 거절을 삼키지 않으므로 러너의 `_drop`이 받고, 5단계에서 한 번도 성공하지 못한
+    자리가 끝에서 `_stop_if_a_caller_saw_nothing`에 걸린다. 후보마다 #514 경고 한 줄이 남는다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    _failing_model(monkeypatch, [_context_overflow()] * 16, role_under_test=Role.AUDITOR)
+
+    result, _ = _run(tmp_path, before=_with_index(), configure=lambda c: _loop_config(c, hops=4))
+
+    assert result.record.stopped_after == 4, "5단계에서 서야 한다 - 4단계까지만 끝난 run"
+    assert not result.findings
+    assert any("5단계" in w and "한 번도 성공하지 못했다" in w for w in result.warnings)
+    assert len(_overflow_warnings(result)) >= 1
+
+
 def test_a_rejection_that_is_not_about_size_still_stops_the_run_and_raises_no_overflow_line(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
