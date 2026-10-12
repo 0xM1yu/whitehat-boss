@@ -966,7 +966,7 @@ def _spy_connect(
 @pytest.mark.parametrize(
     ("stored", "code_version", "says"),
     [
-        (2, None, "더 새 코드"),
+        (3, None, "더 새 코드"),
         (5, None, "더 새 코드"),
         (2**31 - 1, None, "더 새 코드"),
         (-1, None, "더 옛 코드"),

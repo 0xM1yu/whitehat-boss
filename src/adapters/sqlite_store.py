@@ -29,7 +29,9 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 `src/schemas/finding.py`의 `_FindingCwe`).
 
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
-#525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
+#525). 판 2 = `Evidence`에 `crashed`·`banner`가 늘어난 판이다(#232) — 기본값이 있어 이 코드는
+판 1 행도 읽지만 옛 코드는 새 행을 못 읽는다(`extra="forbid"`). 그래서 판 1 파일은 이제 거부된다.
+게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 이 판의
 파일을 여는 것은 여전히 막지 못한다.
 """
 
@@ -52,7 +54,7 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 """
 
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
-STATE_DB_SCHEMA_VERSION = 1
+STATE_DB_SCHEMA_VERSION = 2
 
 
 class StateDbVersionError(RuntimeError):

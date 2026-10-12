@@ -192,6 +192,16 @@ class EventKind(StrEnum):
     # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # ⏵ 2026-10-13(#232) — `crashed`·`crash_banner`는 도구가 **크래시 관측을 쟀을 때만** 실린다
+    # (`Evidence.crashed`가 `None`이 아닐 때 — 컨테이너 러너의 asan·gdb·poc 중 대상이 뜬 호출).
+    # `crashed`는 `true`(로그에 sanitizer 배너나 gdb 신호 정지가 있었다) 또는 `false`(로그를 읽었고
+    # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
+    # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
+    # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 크래시 녹음이 0건이라
+    # 미검증이다.
+    # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
+    # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
