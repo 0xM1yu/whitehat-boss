@@ -1550,6 +1550,58 @@ def test_the_runner_survives_a_candidate_the_loop_stopped_without_a_finding(
     assert queued.count("capsule_expansion_exhausted") == 1
 
 
+# --- 러너 — 루프가 돌았는데 probe가 0이면 run 경고 (#617) -----------------------------
+
+
+def _probe_less(monkeypatch: pytest.MonkeyPatch) -> None:
+    """fake가 hop1에서 `probe` 대신 곧장 `answer`한다 - 실서빙 Auditor가 한 행동(lookup만)."""
+    real = fake_model._auditor_investigation
+
+    def investigate(context, history):  # noqa: ANN001, ANN202
+        return None if len(history) // 2 == 1 else real(context, history)
+
+    monkeypatch.setattr(fake_model, "_auditor_investigation", investigate)
+
+
+def _zero_probe_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "probe를 한 번도 고르지 않았다" in w]
+
+
+def test_a_loop_run_that_never_probes_says_so_in_the_run_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """루프가 돌고(lookup -> answer) `probe`가 0건이면 `RunResult.warnings`에 오른다.
+    8단계 빈 풀 경고와 같은 자리다 - 리포트 본문은 둘 다 안 싣는다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    _probe_less(monkeypatch)
+
+    result, trace_path = _run(tmp_path, configure=lambda c: _loop_config(c, hops=4))
+
+    actions = [
+        e["data"]["action"]
+        for e in map(json.loads, trace_path.read_text(encoding="utf-8").splitlines())
+        if e["kind"] == "auditor_hop"
+    ]
+    assert actions and "probe" not in actions, "전제 - 루프가 돌았고 probe는 0건"
+    (warning,) = _zero_probe_warnings(result)
+    assert f"{len(actions)}홉" in warning and f"lookup {actions.count('lookup')}" in warning
+
+
+def test_a_loop_run_that_probes_or_never_looped_says_nothing_about_probes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 쌍 - probe가 한 번이라도 있으면 없고, 루프가 꺼졌으면(홉 이벤트 0건) 없다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    probed, probed_trace = _run(tmp_path, "probed", configure=lambda c: _loop_config(c, hops=4))
+    assert '"action":"probe"' in probed_trace.read_text(encoding="utf-8").replace(" ", ""), "전제"
+    assert _zero_probe_warnings(probed) == []
+
+    _probe_less(monkeypatch)
+    off, off_trace = _run(tmp_path, "off")  # dev_fake 한 방 판 - 홉 이벤트가 없다
+    assert "auditor_hop" not in off_trace.read_text(encoding="utf-8"), "전제 - 루프 꺼짐"
+    assert _zero_probe_warnings(off) == []
+
+
 # --- B7: 켜졌는데 프롬프트가 도구 루프를 못 받친다 ---------------------------------
 
 
