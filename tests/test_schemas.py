@@ -829,6 +829,14 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
     # 항상 값을 남기므로(비어도) `None`은 **옛 manifest에서만** 나온다.
     assert "compile_flags" not in payload, "fixture가 낡지 않았다 — 검사가 공허해진다"
     assert record.compile_flags is None
+    # 분모 전용 집계 셋(#613·#618)도 같다 - 옛 기록은 `None`(안 쟀다)이지 `{}`·`0`이 아니다.
+    for key in (
+        "schema_failure_max_run_by_role",
+        "schema_recovered_calls_by_role",
+        "pov_inspect_max_run_by_finding",
+    ):
+        assert key not in payload, "fixture가 낡지 않았다 — 검사가 공허해진다"
+        assert getattr(record, key) is None, key
 
 
 # ## required 두 필드 — 이 계약은 모델이 무엇을 채우는가를 가른다

@@ -13,6 +13,7 @@
 import dataclasses
 import inspect
 import io
+import itertools
 import json
 import re
 import socket
@@ -6003,3 +6004,61 @@ def test_doctor_errors_on_an_undescribed_auditor_source_option(
     text = _doctor_text("dev_fake", tmp_path)
     lines = [line for line in text.splitlines() if "source_options" in line]
     assert lines and all(line.startswith("[ERROR") for line in lines)
+
+
+# --- 분모 전용 집계 셋 (#613·#618) — 매니페스트와 report.md까지 가는 배선 -------------
+
+
+def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> None:
+    """dev_fake 완주 run: 집계가 trace에서 센 값 그대로 매니페스트·report.md에 실린다. Fake는 스키마
+    실패도 재시도도 없으므로 역할마다 잰 `0`이고 `None`이 아니다."""
+    result, trace_path = _run(tmp_path)
+
+    events = _events(trace_path)
+    roles = {e["data"]["role"] for e in _of(events, "model_call")}
+    assert roles, "model_call이 없으면 이 검사가 공허하다"
+    findings = {e["subject_id"] for e in _of(events, "pov_hop") if "action" in e["data"]}
+    assert findings, "PoV 홉이 없으면 이 검사가 공허하다"
+    expected = {
+        "schema_failure_max_run_by_role": {r: 0 for r in sorted(roles)},
+        "schema_recovered_calls_by_role": {r: 0 for r in sorted(roles)},
+        "pov_inspect_max_run_by_finding": {
+            f: max(
+                (
+                    sum(1 for _ in grp)
+                    for is_inspect, grp in itertools.groupby(
+                        e["data"]["action"] == "inspect"
+                        for e in _of(events, "pov_hop")
+                        if e["subject_id"] == f and "action" in e["data"]
+                    )
+                    if is_inspect
+                ),
+                default=0,
+            )
+            for f in sorted(findings)
+        },
+    }
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key, value in expected.items():
+        assert manifest[key] == value, key
+        assert getattr(result.record, key) == value, key
+    rendered = result.report.render()
+    assert "연속 스키마 파싱 실패 최장(역할별, 분모만)" in rendered
+    assert "스키마 재시도로 살아난 호출(역할별, 분모만)" in rendered
+    assert "PoV 연속 inspect 최장(Finding별, 분모만)" in rendered
+
+
+def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Path) -> None:
+    """모델을 한 번도 안 부른 run의 집계는 `None`이다 - `{}`도 `0`도 아니다 (CLAUDE.md §0).
+    report.md는 그 줄을 내지 않는다."""
+    result, trace_path = _run(tmp_path, stop_after=int(Stage.RETRIEVAL))
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key in (
+        "schema_failure_max_run_by_role",
+        "schema_recovered_calls_by_role",
+        "pov_inspect_max_run_by_finding",
+    ):
+        assert key in manifest and manifest[key] is None, key
+    assert "분모만" not in result.report.render()
