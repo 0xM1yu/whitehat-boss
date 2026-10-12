@@ -63,7 +63,13 @@ from src.adapters.symbol_render import (
     render_unfilled,
 )
 from src.schemas.enums import UnfilledReason
-from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
+from src.schemas.need_evidence import (
+    AlreadyEntry,
+    Resolution,
+    ResolveQuery,
+    RetrievedBlock,
+    Unfilled,
+)
 from src.schemas.scout_response import RequestedContext
 
 # --- 동명 점수 ---------------------------------------------------------------
@@ -875,8 +881,10 @@ def _cost(lines: Sequence[str]) -> int:
     return sum(len(line) + 2 for line in lines)  # `_fit_budget`과 같은 어림
 
 
-def _fit_already(lines: Sequence[str], budget: int) -> list[str]:
-    """Already 줄을 남은 예산에 first-fit으로 싣고, 넘친 줄은 수만 한 줄로 남긴다."""
+def _fit_already(lines: Sequence[str], budget: int) -> tuple[int, list[str]]:
+    """Already 줄을 남은 예산에 first-fit으로 싣고, 넘친 줄은 수만 한 줄로 남긴다.
+
+    (실린 줄 수, 실린 줄 + 생략 한 줄)을 돌려준다 - 앞쪽 `kept`개가 입력의 앞 `kept`개다."""
     kept: list[str] = []
     for line in lines:
         if _cost([*kept, line]) > budget:
@@ -885,8 +893,10 @@ def _fit_already(lines: Sequence[str], budget: int) -> list[str]:
     omitted = len(lines) - len(kept)
     if omitted:
         plural = "" if omitted == 1 else "s"
+        count = len(kept)
         kept.append(f"(+{omitted} more Already in SOURCE line{plural} omitted for budget.)")
-    return kept
+        return count, kept
+    return len(kept), kept
 
 
 def resolve(
@@ -937,19 +947,20 @@ def resolve(
 
     kept: list[_Block] = []
     already: list[str] = []
+    already_entries: list[AlreadyEntry] = []
     for block in all_blocks:
         visible_here = query.visible.get(block.file, frozenset())
         if is_duplicate_in_source(frozenset(block.lines), visible_here):
             lo, hi = min(block.lines), max(block.lines)
-            already.append(
-                render_already_in_source(
-                    kind=block.request_kind,
-                    name=block.name,
-                    file=block.file,
-                    line_start=lo,
-                    line_end=hi,
-                )
+            entry = AlreadyEntry(
+                kind=block.request_kind,
+                name=block.name,
+                file=block.file,
+                line_start=lo,
+                line_end=hi,
             )
+            already_entries.append(entry)
+            already.append(render_already_in_source(**entry.model_dump()))
         else:
             kept.append(block)
 
@@ -961,10 +972,8 @@ def resolve(
     # Not resolved를 뒤에 넣는다(모듈 docstring "명세 밖이거나 해석이 든 자리").
     # Already 줄은 블록이 쓰고 남은 예산에 든다 — 전역 대입(라벨 13)이 전부 SOURCE와
     # 겹치면 요청 하나가 수십 줄을 낼 수 있어서다. Not resolved는 요청당 하나라(3 이하) 늘 싣는다.
-    alert_lines = [
-        *_fit_already(already, query.max_chars - _cost(fragments)),
-        *(item.text for item in unfilled),
-    ]
+    shown, already_lines = _fit_already(already, query.max_chars - _cost(fragments))
+    alert_lines = [*already_lines, *(item.text for item in unfilled)]
     note = needs_assignment_note(block.label for block in fitted)
     followup_text = (
         render_followup(
@@ -987,4 +996,5 @@ def resolve(
         truncated=tuple(truncated),
         writes_available=table("writes") is not None,
         alert_lines=tuple(alert_lines),
+        already_entries=tuple(already_entries[:shown]),
     )
