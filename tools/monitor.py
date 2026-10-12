@@ -45,6 +45,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# 경로 실행(`python tools/monitor.py`)은 sys.path[0]이 tools/라 `src`를 못 찾는다(#616).
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
 if TYPE_CHECKING:
     from src.config import HarnessConfig
 
