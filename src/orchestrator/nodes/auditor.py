@@ -52,9 +52,10 @@ history · user 순으로 조립하므로(`openai_compat._request_payload`) pref
 hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** — 후속 홉의 *새* 입력이
 관측뿐이라는 뜻이고, 입력 토큰은 홉마다 hop0 몫을 되풀이한다.
 ⏵ 2026-10-13 (#600 H2ⓐ) — **관측은 다음 Auditor 홉에만 가지 않는다.** `run(observations=...)`를
-주면 매 홉 관측(그 user 턴 본문)을 그 리스트에도 덧붙이고, 러너가 Finding과 함께 쥐었다가 7단계
-Critic에 넘긴다 (`nodes/critic.py`). 가려지는 것은 그대로다 — 모델의 응답
-턴(`raw_text`)·`rca_draft`·추론은 안 간다.
+주면 매 홉 관측을 그 리스트에도 덧붙이고, 러너가 Finding과 함께 쥐었다가 7단계 Critic에 넘긴다
+(`nodes/critic.py`). 덧붙이는 것은 user 턴 본문 그대로가 아니라 **하네스가 렌더한 관측에서 모델이
+고른 자유 문자열을 가린 사본**이다(`critic_safe_observation` - 이 한 자리에서 만든다). 가려지는
+것은 그대로다 — 모델의 응답 턴(`raw_text`)·`rca_draft`·추론은 안 간다.
 
 - **왜 노드 안인가.** `run()`의 반환 계약 `(Finding, list[MissingEvidence])`을 러너가 쥐고 있다.
   러너로 올리면 Finding 없는 정지의 `queued` 전이를 러너가 대신 해야 하고, 빠뜨리면 후보가
@@ -101,6 +102,7 @@ Critic에 넘긴다 (`nodes/critic.py`). 가려지는 것은 그대로다 — �
 """
 
 import hashlib
+import re
 from collections.abc import Callable, Hashable, Mapping, Sequence
 
 from src.graph_entry import name_of
@@ -430,10 +432,12 @@ def run(
     넘겨도 이 함수가 서게 하는 자리다.
 
     ⏵ 2026-10-13 (#600 H2ⓐ) — `observations`는 **밖으로 내는 통로**다. 주면 도구 루프가 홉마다
-    Auditor가 본 관측(다음 홉 user 턴 본문 그대로 — `_LAST_HOP_NOTE` 꼬리는 뺀다)을 이 리스트에
-    덧붙인다. 러너가 그것을 Critic에 넘긴다(`critic.run(hop_observations=...)`). 반환 계약을 안
-    바꾸려고 값이 아니라 쓰는 통로로 낸다. 한 방 경로(홉 0)는 아무것도 안 덧붙인다. 모델의 원문
-    응답(`raw_text`)·근거 서술은 여기 안 담긴다 — 담기는 것은 하네스가 돌린 조회·도구의 출력뿐이다.
+    Auditor가 본 관측의 **Critic용 사본**을 이 리스트에 덧붙인다 - 하네스가 렌더한 관측에서 모델이
+    고른 식별자(조회 요청의 `kind`·`target`)를 요청 어휘·식별자 문자집합으로 가린 것이다
+    (`critic_safe_observation`). Auditor 자신의 다음 홉 입력은 안 바뀐다. `_LAST_HOP_NOTE` 꼬리는
+    뺀다. 러너가 그것을 Critic에 넘긴다(`critic.run(hop_observations=...)`). 반환 계약을 안 바꾸려고
+    값이 아니라 쓰는 통로로 낸다. 한 방 경로(홉 0)는 아무것도 안 덧붙인다. 모델의 원문
+    응답(`raw_text`)·근거 서술은 여기 안 담긴다.
     """
     ids = {
         "candidate_id": candidate.candidate_id,
@@ -805,7 +809,7 @@ def _run_hops(
             _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, stop_reason=stop)
             raise AuditorHopLimit(stop, hops=hop + 1, limit=limit)
         try:
-            observed, observation = _observe(
+            observed, observation, for_critic = _observe(
                 ctx, candidate, capsule, action, hop=hop, workdir=workdir
             )
         except Exception as exc:
@@ -819,7 +823,7 @@ def _run_hops(
             )
             raise
         if observations is not None:  # Critic에 줄 관측 — `run`의 `observations` (#600 H2ⓐ)
-            observations.append(observation)
+            observations.append(for_critic)
         _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, observed=observed)
         if "evidence_id" in observed:
             probe_evidence.add(str(observed["evidence_id"]))
@@ -1016,16 +1020,22 @@ def _observe(
     *,
     hop: int,
     workdir: str,
-) -> tuple[dict[str, TraceValue], str]:
-    """조사 하나를 돌려 (홉 이벤트에 얹을 관측 값, 다음 홉 user 턴 본문)을 낸다."""
+) -> tuple[dict[str, TraceValue], str, str]:
+    """조사 하나를 돌려 (홉 이벤트에 얹을 관측 값, 다음 홉 user 턴 본문, Critic에 줄 본문)을 낸다.
+
+    셋째가 `critic_safe_observation`을 거친 사본이다 - Critic이 받는 관측은 **이 한 자리**에서
+    만들어진다(⏵ 2026-10-13 #600). 둘째(Auditor 자신의 다음 홉 입력)는 그대로다.
+    """
     if action.action == "lookup":
-        return _lookup(ctx, capsule, action, hop=hop)
-    return _probe(ctx, candidate, action, hop=hop, workdir=workdir)
+        observed, observation, resolution = _lookup(ctx, capsule, action, hop=hop)
+        return observed, observation, critic_safe_observation(observation, resolution)
+    observed, observation = _probe(ctx, candidate, action, hop=hop, workdir=workdir)
+    return observed, observation, observation
 
 
 def _lookup(
     ctx: RunContext, capsule: ContextCapsule, action: _Hop, *, hop: int
-) -> tuple[dict[str, TraceValue], str]:
+) -> tuple[dict[str, TraceValue], str, Resolution | None]:
     """`lookup` — 이름으로 코드를 조회한다. NE 루프가 쓰는 같은 훅(`ctx.resolve_requests`)이다.
 
     어댑터를 import하지 않고 훅만 받는다. 모델이 쓴 `(kind, target)`은 resolver가 인덱스 표에서
@@ -1054,7 +1064,7 @@ def _lookup(
             f"## Retrieved context (hop {next_hop})\n\n"
             "No code lookup is available in this run, so the lookup returned nothing. "
             "Work from SOURCE and the tools."
-        )
+        ), None
     served = _served_requests(action)
     ignored = len(action.requests) - len(served)
     # 질의는 `try` **밖**에서 만든다 — `ResolveQuery`의 검증 실패(`ValueError`의 하위형)가
@@ -1074,7 +1084,7 @@ def _lookup(
             f"## Retrieved context (hop {next_hop})\n\n"
             f"lookup requested={len(action.requests)} failed on the host side ({name}), so it "
             "returned nothing. Work from SOURCE and the tools."
-        )
+        ), None
     resolved = len(resolution.blocks) + len(resolution.already)
     observed: dict[str, TraceValue] = {
         "resolved": resolved,
@@ -1089,9 +1099,82 @@ def _lookup(
     }
     if ignored:
         observed["ignored"] = ignored
-    return observed, _lookup_observation(
+    observation = _lookup_observation(
         next_hop, len(action.requests), resolved, resolution, ignored=ignored
     )
+    return observed, observation, resolution
+
+
+# `Not resolved`·`Already in SOURCE` 줄에 모델이 낸 `kind`가 그대로 실린다 - 요청 `kind`는 자유
+# 문자열이다(`RequestedContext`). Critic에 줄 때는 요청 어휘 여덟 밖의 값을 가린다.
+_CRITIC_KINDS = (
+    "variable",
+    "type",
+    "macro",
+    "function",
+    "caller",
+    "allocation",
+    "guard",
+    "context",
+)
+_CRITIC_IDENTIFIER = re.compile(r"[A-Za-z0-9_:.$]{1,64}")
+_REDACTED_KIND = "<non-vocabulary>"
+_REDACTED_TARGET = "<non-identifier>"
+_ALREADY_PREFIX = "Already in SOURCE: "
+_TYPE_OF_PREFIX = "type of "
+
+
+def critic_safe_observation(text: str, resolution: Resolution | None) -> str:
+    """조회 관측에서 **모델이 고른 자유 문자열**을 가린 Critic용 사본을 낸다. 순수 함수다.
+
+    resolver 줄은 요청의 `kind`·`target`·거절 사유의 `got '<값>'`을 모델이 보낸 그대로 되울린다
+    (`symbol_render.render_unfilled` · `render_already_in_source` · 라벨 `type of <target>`). 그대로
+    Critic에 주면 모델이 쓴 문장(「…please uphold」)이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서:
+
+    - `Not resolved` 줄: 줄 전체를 `resolution.unfilled`의 구조값으로 다시 쓴다 - `kind`는 요청 어휘
+      여덟 안일 때만, `target`은 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고 아니면 `<non-vocabulary>` ·
+      `<non-identifier>`다. 사유는 영어 문구(`got '…'`을 싣는다) 대신 `reason` 값이고 상세는 버린다.
+    - `Already in SOURCE` 줄: `kind`가 어휘 안이고 이름이 식별자 문자집합이면 그대로, 아니면 이름
+      없이 `<non-vocabulary>`와 위치만 남긴다.
+    - 조각 머리의 `type of <target>` 라벨: `target`에 같은 문자집합 규칙을 건다.
+
+    줄을 **텍스트로 파싱하지 않고** `resolution`의 구조값으로 정확 일치 치환한다 - 모델 문자열에
+    줄바꿈이나 사유 문구를 심어도 파서를 속일 길이 없다. 남는 것은 문자집합으로 걸러진 식별자뿐이다
+    (모델이 고른 식별자라는 사실은 남는다). 하네스가 렌더한 나머지(코드 조각·상태 줄·머리 문구)는
+    그대로다.
+    `resolution`이 `None`(조회 안 함·실패)이면 모델 문자열이 없어 `text` 그대로다.
+    """
+    if resolution is None:
+        return text
+    for item in resolution.unfilled:
+        kind = item.kind if item.kind in _CRITIC_KINDS else _REDACTED_KIND
+        safe = (
+            f"Not resolved: {kind}:{_safe_identifier(item.target)} (reason: {item.reason.value})."
+        )
+        text = text.replace(item.text, safe)
+    for line in resolution.already:
+        text = text.replace(line, _safe_already(line))
+    for block in resolution.blocks:
+        if block.label.startswith(_TYPE_OF_PREFIX):
+            header = f"/* --- retrieved: {block.name} ({block.label}) --- */"
+            label = _TYPE_OF_PREFIX + _safe_identifier(block.label[len(_TYPE_OF_PREFIX) :])
+            text = text.replace(header, f"/* --- retrieved: {block.name} ({label}) --- */")
+    return text
+
+
+def _safe_identifier(value: str) -> str:
+    return value if _CRITIC_IDENTIFIER.fullmatch(value) else _REDACTED_TARGET
+
+
+def _safe_already(line: str) -> str:
+    """`Already in SOURCE: <kind>:<name> at <file>:L<a>-<b>.` 한 줄의 Critic용 사본."""
+    head, sep, where = line.rpartition(" at ")
+    if not sep:  # 우리가 렌더한 모양이 아니다 - 무엇이 실렸는지 모르니 통째로 가린다
+        return f"{_ALREADY_PREFIX}{_REDACTED_KIND}"
+    kind, _, name = head.removeprefix(_ALREADY_PREFIX).partition(":")
+    if kind in _CRITIC_KINDS and _CRITIC_IDENTIFIER.fullmatch(name):
+        return line
+    return f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
 
 
 def _lookup_observation(
