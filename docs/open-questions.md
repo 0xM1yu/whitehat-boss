@@ -141,8 +141,8 @@
 | D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
-| D90 | ~~Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다~~ ((a) 정렬 PR #324 · cap-off 재측정은 실험팀 · 남은 두 원소는 D94) | 닫힘 | [본문](open-questions/D/D90.md) |
-| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (앵커 확장 ROI는 실험팀 · level-3에서 다섯 중 넷 포착 · 잔여 main_38은 D96) | 닫힘 | [본문](open-questions/D/D91.md) |
+| D90 | **Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다** (줄 기준 재검증 +2 · (a) 정렬 PR #324) | 열림 | [본문](open-questions/D/D90.md) |
+| D91 | **앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다** | 열림 | [본문](open-questions/D/D91.md) |
 | D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 | D94 | **Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다 — 남은 미포착 7개의 원인** ((a) 보류 · hot 우위 held-out 미재현 · level-3 확인 대기) | 열림 | [본문](open-questions/D/D94.md) |

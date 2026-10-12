@@ -52,7 +52,7 @@
 
 > 하네스의 `single`(`prompts/single/v2/`)은 단일 패스 프롬프트 이름이지 이 표의 B1이 아니다 -> `roles`에 `single`을 둔 프로필이 없어 `cli run`에 배선되지 않는다(2026-10-10 `config/profiles.yaml` 확인). 조건 B1의 뜻은 실험팀 몫이다.
 
-> 조건 B1'(바이너리·펌웨어 포함)는 인덱스가 있는 프로필(`harness_pool`·`harness_pool_hybrid` — `tool_runner: docker`)에서 **실행되지만 후보를 0건 낸다** — 러너(`src/orchestrator/runner.py`의 `_ANALYZABLE`)는 바이너리 artifact를 받는데 인덱서(`tools/harness-tools/indexer.py`)가 안 받아 `symbols_for()`가 비고 `no_symbol_artifacts`로 센다. 그래서 **이 조건의 셀을 측정으로 채우지 않는다.** 지금 재는 대상은 오픈소스 소스다(2026-09-19 팀 구두 확인, `run_id` 없음 — [D79](open-questions/D/D79.md)). 인덱서가 바이너리를 받게 하는 일은 [architecture.md](architecture.md) §3 1단계의 책임이고 B1'를 실제로 재기로 할 때의 선행이다.
+> 조건 B1'(바이너리·펌웨어 포함)는 지금 코드에서 **바이너리 입력이 후보가 되지 않는다** — 러너(`src/orchestrator/runner.py`의 `_ANALYZABLE`)는 바이너리 artifact를 받지만, 인덱스가 생기는 프로필(`tool_runner`가 `fake`가 아닌 것 — `harness_pool` 등)의 슬라이스 없는 경로에서는 인덱서(`tools/harness-tools/indexer.py`)가 바이너리를 안 받아 `symbols_for()`가 비고 `no_symbol_artifacts`로 세며, `--slices` run은 `_plan_slice_targets`가 슬라이스 조각만 대상으로 잡는다. **그래서 이 조건을 재려면 인덱서의 바이너리 지원((a), [architecture.md](architecture.md) §3 1단계의 책임)이 선행이다.** 지금 재는 대상은 오픈소스 소스다(2026-09-19 팀 구두 확인, `run_id` 없음 — [D79](open-questions/D/D79.md)).
 
 > ~~2.1의 2×2와 2.2의 파이프라인 조건은 같은 라벨을 쓰지만 축이 다르다. 실행 시 `RunRecord.condition`에 **어느 정의를 쓴 조건인지** 명시한다(`B1@2x2` / `B1@pipeline`). 라벨 통합 여부는 [open-questions.md](open-questions.md)에서 확정한다.~~
 >
@@ -172,13 +172,13 @@
 | 항목 | 본 시스템 | Frontier 기준선 |
 | --- | --- | --- |
 | 탐지 성능 | 측정값 | 공개 기준선(CodeQL 27, GPT-4 55 등) |
-| 취약점 1건당 비용 | GPU-hour × 대여 시급(가동시간 × 실시급 — ⏵ 2026-10-12, 전력·감가 환산은 ATOM 종료로 소멸) | API 요금 |
+| 취약점 1건당 비용 | 대여 박스 가동시간 × 시급(⏵ 2026-10-12 — 전력·감가 환산은 ATOM 종료로 소멸. 가동시간은 §5.2의 GPU-hour(도구 시간 제외)와 다른 양이다) | API 요금 |
 | 사람 검토 시간 | 실측 | 실측 또는 문헌 |
-| 외부 전송 데이터량 | 0 (온프레미스) | 전송 코드량 |
+| 외부 전송 데이터량 | 0 (온프레미스) — ⏵ 2026-10-12 운영이 vast.ai 대여 박스라 분석 대상 소스가 그 박스로 간다. 이 칸의 정의·값은 미정 | 전송 코드량 |
 
-비용 환산식(GPU-hour → 금액)은 ~~전력 단가와 감가 가정을 명시해 고정한다~~ ⏵ 2026-10-12 — 운영 장비가 대여(vast.ai)라 가동시간 × 실시급(기본 + 저장료)으로 계산한다. 전력·감가 가정은 ATOM 사용 종료(2026-09-29, PR #340)로 전제가 소멸했다 — [D5](open-questions/D/D5.md). 비교표 칸을 어떻게 채울지는 실험팀 몫이다([ADR 0012](decisions/0012-harness-canon-v2.md) 결정 5).
+비용 환산식(GPU-hour → 금액)은 ~~전력 단가와 감가 가정을 명시해 고정한다~~ ⏵ 2026-10-12 — 운영 장비가 대여(vast.ai)라 박스 가동시간 × 시급으로 계산한다([10-11 실서빙 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md) §7 「계산값(대여 시간 × 시급)」 · 시급은 저장료 제외 $1.444/hr). 전력·감가 가정은 ATOM 사용 종료(2026-09-29, PR #340)로 전제가 소멸했다 — [D5](open-questions/D/D5.md). 비교표 칸을 어떻게 채울지는 실험팀 몫이다([ADR 0012](decisions/0012-harness-canon-v2.md) 결정 5).
 
-> 킥오프 02-2는 "자체 장비에서 실행한 로컬 모델은 (CyberGym 규칙상) 비용 0으로 산정 가능"이라고 본다. 이 프로젝트는 **두 값을 모두** 보고한다: 외부 벤치마크 규칙에 맞춘 API 비용 0, 그리고 실제 소모 자원인 GPU-hour 환산 비용. 후자를 빼면 "싸다"는 주장이 검증 불가능해진다. ⏵ 2026-10-12 — 「GPU-hour 환산 비용」은 대여 시급 기준이다(10-12 실서빙 보고서(PR #621) §11: 가동시간 × 시급, 계산값).
+> 킥오프 02-2는 "자체 장비에서 실행한 로컬 모델은 (CyberGym 규칙상) 비용 0으로 산정 가능"이라고 본다. 이 프로젝트는 **두 값을 모두** 보고한다: 외부 벤치마크 규칙에 맞춘 API 비용 0, 그리고 실제 소모 자원인 GPU-hour 환산 비용. 후자를 빼면 "싸다"는 주장이 검증 불가능해진다. ⏵ 2026-10-12 — 「GPU-hour 환산 비용」은 대여 박스 가동시간 × 시급이다(10-11 보고서 §7 · 10-12 보고서(PR #621, 미머지) §11 — 둘 다 계산값).
 
 ## 6. 실행 기록
 
