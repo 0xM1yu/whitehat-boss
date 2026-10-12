@@ -30,7 +30,8 @@ from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import critic, gate_node
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.trace import TraceWriter
+from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import (
     Evidence,
     EvidenceGrade,
@@ -440,3 +441,59 @@ def test_the_grade_tracks_the_indexer_not_the_evidence_when_the_graph_fails() ->
         "인덱서가 죽으면 같은 근거·같은 경로인데 등급이 내려간다 — 등급이 인덱서 가동률을 "
         "잰다는 사실이 바뀌었으면 이슈 #576과 D106을 같이 고친다"
     )
+
+
+# --- 핀 ③ 계측: 부착 전 모델 인용 수가 `gate_eval`에 남는다 (이슈 #554) ---------------------
+
+
+def _gate_evals(ctx: RunContext, stage: Stage = Stage.GATE) -> list:
+    return [
+        e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL and e.stage == int(stage)
+    ]
+
+
+def test_cited_by_model_counts_the_refs_before_the_harness_attaches(ctx: RunContext) -> None:
+    """모델 인용 2건 + 하네스 관측 3건 → 저장된 Finding은 5건이고 `gate_eval`은 **2**다.
+
+    부착이 `state.db`의 목록을 덮으므로 저장소로는 이 2를 못 되찾는다 - 그게 이 키의 존재 이유다.
+    """
+    pool = (
+        _evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),
+        _evidence("ev_b", EvidenceKind.STATIC, source="clang-tidy"),
+        _evidence("ev_c", EvidenceKind.STATIC, source="cppcheck"),
+        _evidence("ev_d", EvidenceKind.STATIC, source="flawfinder"),
+        _evidence("ev_e", EvidenceKind.STATIC, source="infer"),
+    )
+    finding = _finding(refs=["ev_a", "ev_b"])
+
+    graded, _ = gate_node.run(
+        ctx, finding=finding, evidences=pool, candidate_location=CANDIDATE_LOCATION
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 2
+    assert len(graded.evidence_refs) == 5
+    stored = ctx.store.get("finding", finding.finding_id)
+    assert len(stored.evidence_refs) == 5, "전제 - 저장소 행은 덮였다(그래서 이 키가 필요하다)"
+
+
+def test_cited_by_model_zero_is_a_measured_zero(ctx: RunContext) -> None:
+    """인용 0건이면 키가 있고 값이 0이다 - 「안 쟀다」(키 부재)와 갈린다."""
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=[]),
+        evidences=(_static_signal(),),
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" in row.data
+    assert row.data["cited_by_model"] == 0
+
+
+def test_cited_by_model_is_absent_when_the_caller_does_not_measure(ctx: RunContext) -> None:
+    """`evaluate_gate`를 인자 없이 부르면 키가 없다 - `None`·`0`으로 채우지 않는다(CLAUDE.md §0)."""
+    ctx.evaluate_gate(_finding(refs=["ev_a"]), (_static_signal(),), stage=Stage.GATE)
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" not in row.data

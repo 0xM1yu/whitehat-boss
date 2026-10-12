@@ -751,6 +751,7 @@ class RunContext:
         *,
         stage: Stage,
         candidate_location: Location | None = None,
+        cited_by_model: int | None = None,
     ) -> GateResult:
         """순수 판정(gate.evaluate) + `gate_eval`·`gate_ambiguous` 기록.
 
@@ -761,6 +762,14 @@ class RunContext:
         아직 성립할 수 없는 술어를 거짓으로 기록하게 되고, 그 행이 제거율의 분모에
         섞인다. 여기서 막지 않으면 `GATE_STAGES`는 **아무도 안 보는 상수**가 된다 —
         실제로 그랬고, 그동안 8단계에는 호출이 아예 없었다(W3).
+
+        **`cited_by_model`은 하네스가 부착하기 *전*에 센 모델 자신의 인용 수다 (이슈 #554).**
+        `gate_node.attach_observed`가 `Finding.evidence_refs`에 관측 Evidence를 덧붙여 `state.db`
+        행을 덮으므로 부착 뒤에는 모델의 원본을 셀 수 없다. 6단계(`gate_node.run`)만 넘긴다 —
+        그 시점의 `evidence_refs`는 5단계가 모델 출력에서 옮긴 그대로이기 때문이다. **넘기지
+        않으면 `gate_eval`에 키가 없다**(`None`을 쓰지 않는다 - 키 부재 = 안 쟀다, CLAUDE.md §0).
+        0은 「쟀더니 0건」이다. 7·8단계는 넘기지 않는다: 그 시점의 목록에는 하네스 부착분이
+        섞여 있어 「모델이」라는 이름이 거짓이 된다.
         """
         if stage not in GATE_STAGES:
             raise ValueError(
@@ -769,6 +778,7 @@ class RunContext:
         result = gate.evaluate(
             finding, evidences, decisions, missings, candidate_location=candidate_location
         )
+        measured = {} if cited_by_model is None else {"cited_by_model": cited_by_model}
         self.trace.emit(
             EventKind.GATE_EVAL,
             stage=stage,
@@ -776,6 +786,7 @@ class RunContext:
             subject_id=finding.finding_id,
             grade=result.grade.value,
             **dict(result.predicates),
+            **measured,
         )
         if result.ambiguous:
             self.trace.emit(
