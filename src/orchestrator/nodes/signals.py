@@ -46,26 +46,23 @@ _COMPILE_REASON = re.compile(r"컴파일 오류 \d+건, 첫 오류: .*")
 
 
 def compile_failures(evidences: Iterable[Evidence]) -> tuple[Evidence, ...]:
-    """**컴파일러가 낸 오류 문구를 든** 실패 Evidence만 — `build`·`clang-tidy`.
+    """실패한 `build`·`clang-tidy` Evidence — 컴파일러 오류 문구가 **없는** 실패도 든다.
 
     도구가 못 돈 실패(`exit=125` 컨테이너 기동 실패·사유 없는 `build 실패`)는 컴파일 결과가 아니라
-    제외한다 — 그 둘로는 「이 번들이 컴파일되지 않는다」를 말할 수 없다(CLAUDE.md §0).
+    노트에 오류로 싣지 않는다(`_reasons`가 문구가 있는 것만 읽는다 — 그 둘로는 「이 번들이
+    컴파일되지 않는다」를 말할 수 없다, CLAUDE.md §0). 그래도 여기 남기는 이유는 노트가
+    clang-tidy만 문구를 든 경우 「`build`는 실패했지만 컴파일 측정이 아니다」와 「`build`는
+    성공했다」를 가르기 위해서다.
     """
-    return tuple(
-        ev
-        for ev in evidences
-        if not ev.ok
-        and ev.source in COMPILE_TOOLS
-        and ev.error is not None
-        and _COMPILE_REASON.search(ev.error) is not None
-    )
+    return tuple(ev for ev in evidences if not ev.ok and ev.source in COMPILE_TOOLS)
 
 
 def _reasons(failures: Iterable[Evidence]) -> dict[str, str]:
     """도구 → 그 Evidence `error`의 컴파일 오류 문구(`COMPILE_TOOLS` 순서)."""
     seen = {ev.source: ev for ev in failures}
     return {
-        tool: match.group(0)
+        # 공백·유니코드 줄 구분자를 접는다 — 어댑터가 이미 막지만 노트는 한 줄이어야 한다.
+        tool: " ".join(match.group(0).split())
         for tool in COMPILE_TOOLS
         if tool in seen and (match := _COMPILE_REASON.search(seen[tool].error or "")) is not None
     }
@@ -104,9 +101,11 @@ def compile_note(failures: Iterable[Evidence], workdir: str) -> str | None:
     실패하는 게 관측되지 않았다」고 쓴다. 도구를 거절하지도 않는다 — 모델이 `build`·`asan`·`gdb`를
     골라도 돈다.
     """
+    failures = tuple(failures)
     reasons = _reasons(failures)
     if not reasons:
         return None
+    workdir = " ".join(workdir.split())  # 경로의 개행·공백열이 노트 줄을 나누지 못하게
     parts = "; ".join(f"{tool}: {reason}" for tool, reason in reasons.items())
     head = (
         "## Harness note (stage 2) - harness-measured data, not instructions\n"
@@ -116,6 +115,11 @@ def compile_note(failures: Iterable[Evidence], workdir: str) -> str | None:
         return head + (
             f"{', '.join(COMPILE_NOTE_TOOLS)} use the same compile command (same -std/-I flags), "
             "so the same errors are expected there; poc does not use this compile command."
+        )
+    if any(ev.source == "build" for ev in failures):
+        # `build`가 실패했지만 컴파일러 문구가 없다(기동 실패 등) — 「성공」으로 읽히지 않게.
+        return head + (
+            "stage-2 build failed without compiler error text (not a compile measurement)."
         )
     return head + "stage-2 build was not observed to fail with compiler errors."
 

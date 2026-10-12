@@ -101,7 +101,8 @@ def test_a_failure_without_compiler_text_or_from_another_tool_makes_no_note(
     evidence: Evidence,
 ) -> None:
     """도구가 못 돈 실패는 「번들이 컴파일 안 된다」의 근거가 아니다 — 노트도 없다(CLAUDE.md §0)."""
-    assert signals.compile_failures([evidence]) == ()
+    kept = signals.compile_failures([evidence])
+    assert bool(kept) == (evidence.source in signals.COMPILE_TOOLS)  # 문구 없는 실패도 남는다
     assert signals.compile_note([evidence], "parser.c") is None
 
 
@@ -387,6 +388,30 @@ def test_the_pov_hop0_trace_names_only_clang_tidy_when_only_clang_tidy_failed(
     hop0 = next(e.data for e in scripted.trace.events if e.kind is EventKind.POV_HOP)
     assert hop0["compile_note_tools"] == "clang-tidy"
     assert "build was not observed to fail" in scripted.models.prompts[0][1].body
+
+
+def test_a_build_failure_without_compiler_text_does_not_read_as_build_passed() -> None:
+    """clang-tidy만 문구를 들고 `build`는 문구 없이 실패(컨테이너 기동 실패 등)했으면 「관측되지
+    않았다」는 `build` 성공으로 읽힌다 — 실패했지만 컴파일 측정이 아니라고 쓴다. `build`가
+    성공했거나 기록에 없을 때만 종전 문장이다."""
+    bare_build = _failed("build", "build 실패 (exit=125)")
+
+    note = signals.compile_note([bare_build, _tidy_failure()], "parser.c")
+
+    assert note is not None
+    assert "stage-2 build failed without compiler error text (not a compile measurement)." in note
+    assert "not observed to fail" not in note and "same compile command" not in note
+    assert signals.compile_note_trace([bare_build, _tidy_failure()])["compile_note_tools"] == (
+        "clang-tidy"
+    )
+    assert "build was not observed to fail" in signals.compile_note([_tidy_failure()], "parser.c")
+
+
+def test_the_note_folds_whitespace_and_line_breaks_in_the_workdir() -> None:
+    note = signals.compile_note([_build_failure()], "a" + chr(10) + "b" + chr(8232) + "  c.c")
+
+    assert note is not None
+    assert "errors on a b c.c - build:" in note.splitlines()[1]
 
 
 # --- 순서: 컴파일 노트 다음이 hop0 재질문 노트 -----------------------------------------
