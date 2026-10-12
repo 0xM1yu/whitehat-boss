@@ -326,6 +326,7 @@ class OpenAICompatModelClient:
                 retry_bodies=tuple(retry_bodies),
                 raw_text=raw,
                 attempt_log=tuple(attempt_log),
+                failed_raw_texts=tuple(raw_texts),
             )
         raise SchemaParseError(
             f"{role} 역할의 {self.model_name}이 {self.retries + 1}회 안에 "
