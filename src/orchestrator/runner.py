@@ -2441,7 +2441,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     올리고, `run_pipeline`의 예산·게이트웨이 갈래가 그 노트를 `warnings`에 싣는다.
     ⚠ **추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`로 남는다** —
     의도한 것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다).
-    「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
+    「PoV가 끝까지 돌아 submit을 못 냈다(후보 없음 - 중간 gen은 `vul_intermediate`가 센다)」와
+    「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
     후자는 run 수준의 `stopped_after`·`BUDGET_EXHAUSTED`·`MODEL_GATEWAY_UNAVAILABLE`·경고가 말한다.
     후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이
     없던 run은 `vul_submitted` - 와 `stopped_after`로 재구성한다).
