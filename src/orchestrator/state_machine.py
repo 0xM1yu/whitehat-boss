@@ -49,6 +49,11 @@
 | F-14 | 새 Evidence 유입 | — | `queued` | `hypothesized` | `new_evidence_requeue` |
 | F-15 | 2인 검증 승인 (**자동 전이 없음**) | — | `proven` | `reported` | `human_verified` |
 
+⏵ 2026-10-13 (이슈 #326) - 8단계에는 이 표에 **규칙 번호가 없는 출구**가 하나 더 있다: 재현을
+시도하지 못한 건(`poc` 신호 · 도구 층이 측정을 못 낸 `ok=False`)은 전이도 `policy_decision`도
+없이 `validated`에 남고 trace `repro_not_measured`만 낸다 - F-10b와 달리 `from == to` 행이
+**없다.**
+
 F-5의 `uphold`에는 **근거 없는 `rebut`을 정규화한 것**도 포함된다(gate.normalize,
 agent-contracts.md §2.3). 정규화가 일어난 사건 자체는 `critic_normalized`로 따로 남는다.
 

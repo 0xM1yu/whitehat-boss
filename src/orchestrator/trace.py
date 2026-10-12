@@ -126,6 +126,9 @@ count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패
 `repro_spec_missing`(F-9)은 **잡는다** — 양쪽으로 틀리는 것을 stage 필터 하나가 겨우
 막고 있었다. 8단계 사유가 늘면 이 산식을 같이 고친다(#68).
 
+⏵ 2026-10-13 (이슈 #326) - 8단계에는 전이 없는 출구가 하나 더 있다: 재현을 시도하지 못한 건은
+`repro_not_measured`만 내고 규칙 번호도 `transition` 행도 없다 - 위 산식의 분자·분모에 안 든다.
+
 검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
 파싱 실패율"의 분모가 `model_call`들의 시도 합(`Σ attempts`)인데 스키마가 없는 호출이
 섞이면 그 값이 조용히 희석된다. embedding·reranker는 `Role`도 아니다(ADR 0004).
