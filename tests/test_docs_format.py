@@ -43,12 +43,13 @@ import ast
 import difflib
 import functools
 import re
-import subprocess
 from pathlib import Path
 from urllib.parse import unquote, urlparse
 
 import pytest
 import yaml
+
+from tests.conftest import tracked_files
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -88,29 +89,13 @@ _REPORT_NAME = re.compile(r"^(\d{4}-\d{2}-\d{2})-(.+-.+)\.md$")
 _DEVICE_ROW = re.compile(r"^\|\s*`--device`\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE)
 
 
-def _tracked(*patterns: str) -> list[Path]:
-    """`git ls-files`가 내놓는 추적 파일. git이 없으면 검사를 건너뛴다.
-
-    **`-z`가 필수다.** 기본 출력은 비ASCII 경로를 큰따옴표로 감싸고 바이트를 8진
-    이스케이프로 바꾼다(`.claude/노트.md` → `".claude/\\353\\205\\270...md"`). 그대로
-    `Path`에 넣으면 없는 파일을 가리켜 `OSError`가 나고, 검사기가 **문서의 결함처럼 보이는
-    실패**를 낸다 — 원인이 문서가 아니라 여기라서 읽는 사람이 엉뚱한 곳을 고친다.
-    `-z`는 이스케이프를 끄고 NUL로 가른다.
-    """
-    try:
-        result = subprocess.run(
-            ["git", "ls-files", "-z", *patterns],
-            cwd=REPO_ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            check=False,
-        )
-    except OSError:  # pragma: no cover - git 없는 환경
-        pytest.skip("git을 실행할 수 없다")
-    if result.returncode != 0:  # pragma: no cover - 저장소 밖
-        pytest.skip("저장소가 아니다")
-    return [REPO_ROOT / name for name in result.stdout.split("\0") if name]
+# 이 수집기는 `tests/conftest.py`의 `tracked_files`로 옮겼다 — 전수 검사 셋이 `rglob`로 걸어서
+# `.claude/worktrees/<이름>/`의 **남의 낡은 문서**를 이 저장소의 결함으로 보고한 2026-10-12 사고
+# 뒤, 저장소 전역 전수의 수집기를 한 함수로 모았다. `--eol` 필터나 하위 경로(`.github/workflows` ·
+# `eval/datasets` · `src/*.py`)로 좁힌 수집은 각 파일이 따로 `git ls-files`를 부른다 — 이 말은
+# **전역 전수**에 한정된다. 이름은 그대로 둔다 — 이 파일이 열두 곳에서 부르고, 아래 docstring들이
+# `_tracked()`를 이름으로 든다.
+_tracked = tracked_files
 
 
 def _read(path: Path) -> str:
