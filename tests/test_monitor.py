@@ -6,6 +6,8 @@
 """
 
 import json
+import subprocess
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -373,3 +375,16 @@ def test_the_stuck_ceiling_follows_the_longest_declared_request_timeout() -> Non
     assert monitor.call_timeout_s(declared, default=300) == 1800
     real = loaded.model_for("auditor").request_timeout_s
     assert monitor.call_timeout_s(loaded, default=300) == real
+
+
+def test_monitor_runs_by_path_and_as_module(tmp_path: Path) -> None:
+    # cwd=저장소 루트: `python tools/monitor.py`는 sys.path[0]이 tools/라 루트가 없다(#616).
+    # `--help`는 늦은 import 앞에서 끝나 못 쓴다 — 빈 run_dir + --once가 가장 싼 경로다.
+    root = Path(__file__).resolve().parent.parent
+    for args in (["tools/monitor.py"], ["-m", "tools.monitor"]):
+        proc = subprocess.run(
+            [sys.executable, *args, str(tmp_path), "--once"],
+            cwd=root, capture_output=True, text=True, timeout=60, check=False,
+        )
+        assert proc.returncode == 0, (args, proc.stderr)
+        assert "ModuleNotFoundError" not in proc.stderr
