@@ -731,7 +731,8 @@ def test_a_poc_call_without_input_is_failed_evidence(tmp_path: Path, spy: _Spy) 
     `except ValueError → _fail`을 `ZeroDivisionError`로 바꿔도 154건이 통과하는 것을 보였다.
 
     **이 경로는 실제로 돈다** — Auditor `probe(poc)`는 `ToolArgs`에 `input_bytes`를 안 싣고
-    (`nodes/auditor._probe`), hop0의 `inspect(poc)`도 직전 `gen`이 없어 입력이 없다.
+    (`nodes/auditor._probe`) 입력 없는 `poc` 호출은 이제 그것뿐이다. ⏵ 2026-10-13 (#572) — PoV 홉의
+    `inspect(poc)`는 PoC가 없으면 러너가 도구 전에 거절한다(`runner._POV_INSPECT_WITHOUT_POC`).
     """
     evidence = _runner(tmp_path, poc_target=ARVO).run(
         "poc", ToolArgs(argv=["poc"], workdir="."), SANDBOX

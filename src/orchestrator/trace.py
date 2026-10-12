@@ -501,6 +501,9 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 (#619) — **이미 돌린 도구를 다시 요청한 `inspect` 홉은 도구를 안 돌린다**:
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
+    # ⏵ 2026-10-13 (#572) — **돌릴 PoC가 없는 `inspect poc` 홉**(첫 `gen` 전이거나 마지막 gen이
+    # 0바이트)도 도구를 안 돌린다: `inspect_without_poc: true`만 싣고 `tool`·`tool_ok`·`exit_code`·
+    # `evidence_kind`는 없다. `tool_call` 이벤트도 없고 홉은 소비된다.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대
