@@ -676,9 +676,10 @@ def _scripted_adapter(monkeypatch: pytest.MonkeyPatch, replies: list[object]):  
         reply = queue.pop(0)
         if reply == "gateway":
             raise ModelGatewayError("거절", status=400, detail="x")
+        reply, finish = reply if isinstance(reply, tuple) else (reply, "stop")
         usage = Usage(input_tokens=5, output_tokens=5, cached_tokens=0)
         return PostedResponse(
-            content=reply, usage=usage, finish_reason="stop", output_tokens_reported=True
+            content=reply, usage=usage, finish_reason=finish, output_tokens_reported=True
         )
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
@@ -965,3 +966,45 @@ def test_the_cli_flag_is_opt_in_and_names_prompted_roles() -> None:
         "critic", "auditor")
     with pytest.raises(SystemExit):
         parse([*base, "--keep-responses", "nonsense"])
+
+
+def test_a_length_truncated_first_attempt_is_kept_whole_and_stays_out_of_the_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#618의 가장 비싼 모양: `finish_reason=length`로 잘린 거대한 1차 -> 재시도 성공.
+    절단 문자열도 검증 실패라 같은 길로 파일에 바이트 그대로 남고, trace에는 참조만 간다."""
+    good = Candidate(
+        candidate_id="cand_0001", run_id=RUN_ID, artifact_id="art_0001",
+        location=Location(file="parser.c"), score=0.7, state=FindingState.CANDIDATE,
+    ).model_dump_json()
+    truncated = '{"candidate_id": "' + "한글a" * 100_000  # 닫히지 않은 300,000자
+    client = _scripted_adapter(monkeypatch, [(truncated, "length"), good])
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is True and call["attempts"] == 2
+    assert json.loads(call["attempt_finish_reasons"]) == ["length", "stop"]
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == truncated.encode()
+    assert len(json.dumps(call)) < 2_000  # 원문 복제 없음
+
+
+def test_cli_run_keep_responses_reaches_the_files_and_the_manifest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`cli.main` -> `RunSpec` -> 파일. 진입점 배선이 끊기면(`keep_responses=()`) 여기서 빨개진다.
+    스위치를 켠 run은 manifest에 역할이 박제되고, 안 켠 run은 파일도 박제도 없다."""
+    on, off = tmp_path / "on", tmp_path / "off"
+    base = ["run", "--profile", "dev_fake", "--target", str(TARGET), "--artifacts-root"]
+
+    assert cli.main([*base, str(on), "--keep-responses", "scout"]) == 0, capsys.readouterr().err
+    assert cli.main([*base, str(off)]) == 0, capsys.readouterr().err
+
+    (on_manifest,) = on.glob("*/run_manifest.json")
+    (off_manifest,) = off.glob("*/run_manifest.json")
+    assert json.loads(on_manifest.read_text("utf-8"))["keep_responses"] == ["scout"]
+    assert json.loads(off_manifest.read_text("utf-8")).get("keep_responses") is None
+    assert list(on_manifest.parent.rglob("*_scout*_response.txt"))
+    assert not list(off_manifest.parent.rglob("*_response*"))
