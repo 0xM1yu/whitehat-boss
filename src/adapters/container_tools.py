@@ -872,7 +872,9 @@ def compile_failure_reason(text: str, *, tagged_only: bool = False) -> str:
     found = _COMPILE_ERROR_LINE.findall(text)
     if not found:
         return ""
-    first = re.sub(r"[\x00-\x1f\x7f]", " ", found[0])[:_COMPILE_REASON_CHARS]
+    # 제어문자 + 유니코드 줄 구분자(`\x85`·` `·` `) — `#error` 메시지가 노트·관측에서 새 줄을
+    # 시작하지 못하게 한다(`str.splitlines`가 줄로 읽는 것들).
+    first = re.sub(r"[\x00-\x1f\x7f\x85  ]", " ", found[0])[:_COMPILE_REASON_CHARS]
     return f" — 컴파일 오류 {len(found)}건, 첫 오류: {first}"
 
 

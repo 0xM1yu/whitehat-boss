@@ -1977,3 +1977,15 @@ def test_compile_reason_is_capped_and_one_line() -> None:
     assert len(reason.split("첫 오류: ", 1)[1]) == container_tools._COMPILE_REASON_CHARS
     assert cr not in reason and "\n" not in reason
     assert cr not in container_tools.compile_failure_reason(f"a.c:1:1: error: bad{cr}tab\n")
+
+
+def test_compile_reason_folds_unicode_line_separators() -> None:
+    """`#error` 메시지의 `\x85`·` `·` `는 `str.splitlines`가 줄로 읽는다 — 이 문구가 들어가는
+    노트·관측에서 새 줄을 시작하면 안 된다."""
+    for separator in ("\x85", " ", " "):
+        stderr = f"a.c:1:1: error: bad{separator}injected line\n"
+        reason = container_tools.compile_failure_reason(stderr)
+
+        assert "bad injected line" in reason, repr(separator)
+        assert len(reason.splitlines()) == 1, repr(separator)
+        assert separator not in reason
