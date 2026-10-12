@@ -1467,7 +1467,20 @@ def _pov_targets(
     결론**이다 — `trigger_status=no_signal` · `confidence` 0.10·0.10·0.05(같은 날 WSL
     `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
     풀은 그것을 거르지 않는다(결정 대기). **그런 Finding에서 PoV가 낼 PoC가 있는지는
-    미측정이다**(`pov_attempt_top_n`을 켠 run은 0건). 출처는 위 보고서 §4·결과 표다.
+    미측정이다**. 출처는 위 보고서 §4·결과 표다.
+
+    ⏵ 2026-10-12 — `pov_attempt_top_n`(8 — `config/budgets.yaml`)을 켠 실모델 run은 이미 있다.
+    그중 8단계가 돌아 PoV가 채점기에 PoC를 낸 run은 둘이다.
+    - 2026-10-08(`run_20261007_0001` · Critic 미경유 E0 Finding 5건 · 제출 7건) —
+      `docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` §3·§5
+    - 2026-10-12(PoC 4건·채점 0) —
+      `docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md` §4·§5
+      (PR #621, 미머지)
+
+    10-08 보고서는 PoC를 Finding의 `trigger_status`에 잇지 않아(Auditor 판정은 no_signal 1 ·
+    guarded 2 · triggerable 2) 부정 결론 Finding발 PoC가 있었는지는 그 보고서로 안 갈린다 —
+    위 「미측정」은 그대로다(#615). 10-10 넷은 8단계 전에 죽었고 10-11은 PoV 풀이 비었다
+    (`docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md` §1·§3).
 
     🔴 **`validate.run` 루프는 안 넓힌다.** 그쪽은 유일한 결정론 E4 게이트이고 `from=validated`를
     요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓히는 것은 **PoV
