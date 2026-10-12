@@ -5057,6 +5057,7 @@ def test_the_empty_answer_count_is_per_call_not_per_attempt() -> None:
     call(attempts=2)  # 세는 것 - 한 호출
     call(hop=3, attempts=2)  # 세는 것 - 홉 번호와 무관하다
     call(ok=True, error=None, error_detail=None)  # 재시도로 살아난 호출
+    call(ok=True)  # 문구가 남아 있어도 ok면 안 센다 - `ok is False` 항을 문다
     call(error_detail="answer 액션에 다른 액션의 필드가 실렸다: ['tool']")
     call(error="ModelGatewayError")
     call(role="critic")
