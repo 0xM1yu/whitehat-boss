@@ -5,8 +5,9 @@
 # - body는 v14와 바이트 동일이다. prefix는 아래 여섯 군데만 v14와 다르다(`tests/test_auditor_v15.py`가 그 차이를 묶는다).
 #   1. `probe`가 `spec`을 받는다 — 하네스가 조립한 바이트를 도구에 싣고 응답 머리줄에 `input_bytes`·`input_sha256`을 단다.
 #      읽는 도구는 `poc`뿐이다(`asan`·`gdb`·`build`는 안 읽고 머리줄이 그렇게 적는다). 반복 판정의 키도 `poc`에 한해
-#      입력 바이트를 본다(`nodes/auditor._input_aware_key`). 이슈 #419 · #572.
-#   2. 조회·도구 응답은 Critic에도 간다(모델이 고른 식별자는 가린 사본). 이슈 #600.
+#      입력 바이트를 본다(`nodes/auditor._input_aware_key`). 이슈 #419 · #572. 반복 규칙의 문장도 「앞선 어느 호출과
+#      같은 요청」으로 쓴다 — 하네스가 지나온 모든 홉과 견주는 PR #642(이슈 #514)에 의존한다.
+#   2. 조회·도구 응답은 Critic에도 간다(조회 응답은 모델이 고른 식별자를 가린 사본, 도구 응답은 그대로). 이슈 #600 · PR #660.
 #   3. `triggerable`은 `probe` 뒤에 답한다 — **지시일 뿐 하네스가 검사하지 않는다**(검사하는 코드가 없다).
 #   4. 「유계 발췌」 문장을 뺀다(접힌 semgrep 로그는 발췌가 아니다) + `K of N shown` 줄이 접힘 표지임을 적는다. 이슈 #562 ③.
 #   5. `answer`의 `procedure`는 비지 않아야 한다 — 스키마 거절 문구를 그대로 적는다. 이슈 #602.
@@ -14,10 +15,12 @@
 # - 봉투는 새 클래스 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 — 최종 답 `AuditProcedureAuditAlways`·필드
 #   순서 그대로, `spec` 설명과 클래스 설명만 다시 쓴다). v8~v14의 봉투 클래스는 한 글자도 안 바꿨다 — 그 JSON 스키마가 그
 #   판들의 요청 payload라서다(agent-contracts §4 규칙 1).
-# ⚠ **의존 PR 셋이 머지돼야 이 판의 문장이 코드와 맞는다**: 1은 `probe`가 `spec`을 싣는 PR #644, 2는 Critic이 홉 관측을
-#   받는 PR #600, 6은 hop-0 컴파일 노트 PR #648. main에 안 들어온 채 이 판이 서빙되면 그 문장은 거짓이다(CLAUDE.md §2.1).
+# ⚠ **의존 PR 넷이 머지돼야 이 판의 문장이 코드와 맞는다**: 1은 `probe`가 `spec`을 싣는 PR #644와 반복을 전 홉과 견주는
+#   PR #642, 2는 Critic이 홉 관측을 받는 PR #660(이슈 #600), 6은 hop-0 컴파일 노트 PR #648. 머지 순서는 #642 → #644 → #648
+#   → #660 → 이 PR이다(`docs/agent-contracts.md` 「v14 → v15」 ⏵). main에 안 들어온 채 이 판이 서빙되면 그 문장은
+#   거짓이다(CLAUDE.md §2.1).
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
-#   prefix.md sha256 `e9ffb595583c2fdfbfe9b4281b1aa1dddfbbe6410d1e8529459268fcf2aa5e51`
+#   prefix.md sha256 `1d80e4861bd3cc93befa1954beea76abf14df7d597ca098e79c6e735a0975bee`
 #   body.md   sha256 `c4799594df6cc3e6d84658674e82bf357d9127479a27c255b93a5a093acb9584` (v14 body와 같다)
 # ⚠ 이 판은 어느 run에도 안 쓰였다. 모델이 `spec`을 보내는지·`probe` 먼저 하는지는 미실측이다. v14 이하와 직접 비교하지
 # 않는다(`docs/evaluation.md` §2.3 규칙 4).
