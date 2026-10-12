@@ -147,5 +147,5 @@ embedding `DEFAULT_TOP_K=32` → 리랭커 `DEFAULT_TOP_N=5` → `_fit_related`(
 2. **client instruction 틀**(D63 (b)) — Q1 순위를 바꿨다. 착수 전 미확인②(서버가 무엇을 붙이나)를
    vLLM 소스로 확인.
 
-**상태: [D63](../../open-questions/D/D63.md)은 `열림` 그대로다.** (a)의 첫 실측이 나왔지 D63이
+**상태: ~~[D63](../../open-questions/D/D63.md)은 `열림` 그대로다.~~ (⏵ 2026-10-12 — D63은 닫혔다.)** (a)의 첫 실측이 나왔지 D63이
 닫힌 게 아니다 — 크기 축·32건·잘린 조각·기준선·HF 대조가 남았다.

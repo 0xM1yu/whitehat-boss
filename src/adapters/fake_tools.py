@@ -188,7 +188,8 @@ class FakeToolRunner:
         )
         # 신호 없음은 실패가 아니다(architecture.md §3: "신호 부재로 기록").
         # **semgrep만** location을 싣는다 — 컨테이너의 `first_hit_location`이 semgrep 한정이라
-        # 그쪽과 맞춘다(clang-tidy는 #70 후속). 그러지 않으면 Fake가 clang-tidy에도 값을 실어
+        # 그쪽과 맞춘다(clang-tidy는 #70 후속 — 미착수, #507이 선행). 그러지 않으면 Fake가
+        # clang-tidy에도 값을 실어
         # 두 어댑터의 location 계약이 갈린다.
         return self.make_evidence(
             tool,

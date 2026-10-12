@@ -3170,7 +3170,8 @@ def _symbol_signal_rank(location: Location, signal_lines: list[int], has_static:
       `results[0]` 한 줄만 싣거나(#70 초석) 위치를 못 뽑은 신호(실 clang-tidy)라 같은 파일의
       다른 히트를 못 본 경우다. **1로 두는 것이 핵심이다** — artifact에 신호가 있는데 이
       심볼만 0으로 내리면 같은 파일의 두 번째 실히트가 신호 없는 심볼(0) 아래로 밀린다
-      (#249 리뷰 HIGH-1). 신호 1건당 Evidence(#70 (a))가 오면 이 1이 2/0으로 갈린다.
+      (#249 리뷰 HIGH-1). 신호 1건당 Evidence(#70 (a) — 미착수, 2026-10-12 닫음)가 오면 이 1이
+      2/0으로 갈린다.
     - **0** = 이 artifact에 정적 신호가 없다.
     """
     if not has_static:
@@ -3255,7 +3256,7 @@ def _artifact_signals(
     줄은 #70에서 채운 `Evidence.location`이다. 그 줄을 품는 심볼에만 신호를 귀속한다 —
     예전엔 artifact의 모든 심볼에 똑같이 붙었다. **점수 축과는 갈린다**:
     `fake_model._has_static_signal()`은 여전히 artifact 단위 evidence를 보므로 가산점은
-    artifact 전체에 간다. 순서만 심볼 단위로 정밀해진다(#70 후속).
+    artifact 전체에 간다. 순서만 심볼 단위로 정밀해진다(#70 후속 — 미착수 · 등급 영향 0).
     """
     found = signals.with_signal(signals.run(ctx, workdir=artifact.path))
     static = [ev for ev in found if ev.kind is EvidenceKind.STATIC]

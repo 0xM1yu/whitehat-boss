@@ -7,7 +7,8 @@
 ## 재생이 아니라 재구성이다 — 그리고 그 차이가 결과의 성질을 정한다
 
 `run_20260912_0001`의 `prompts/`에 **critic 프롬프트가 0건**이다. Critic이 한 번도 안 불렸기
-때문이고, 원인은 D67(#172)이다: Finding 120건 전부가 `evidence_refs=[]`이라
+때문이고, 원인은 D67(#172)이었다(2026-09-12 run 기준 — 서빙은 6단계 부착으로 근거 블록이 안 빈다):
+Finding 120건 전부가 `evidence_refs=[]`이라
 `gate.evaluate`가 첫 줄에서 E0을 반환하고(`gate.py` *"if not finding.evidence_refs"*)
 E2 미만은 7단계에 못 간다.
 
@@ -17,8 +18,10 @@ E2 미만은 7단계에 못 간다.
 
 - `reconstructed: true` — 그때 간 요청이 아니라 **지금 코드로 다시 만든 것**이다.
 - `gate_bypassed: true` — 게이트가 막은 건을 손으로 넘겼다.
-- `evidence_refs_empty: true` — **근거 블록이 비어 있다.** D67이 살아 있는 한 이것이
-  실제 상태이지만, D67이 고쳐지면 프롬프트는 이것보다 **커진다**. 그러므로 이 측정이 내는
+- `evidence_refs_empty: true` — **근거 블록이 비어 있다.** 2026-09-12 run의 재구성에서는 D67이 살아
+  있었다 —
+  서빙은 6단계 부착으로 근거 블록이 안 빈다. 이 재구성에서는 이것이 실제 상태이지만,
+  근거가 붙으면 프롬프트는 이것보다 **커진다**. 그러므로 이 측정이 내는
   프롬프트 크기는 **하한**이다.
 - `run_id: null` — 하네스 run이 아니므로 조건 비교표 밖이다(evaluation.md §6).
 
@@ -54,7 +57,8 @@ E2 미만은 7단계에 못 간다.
    살아남는다 — CLAUDE.md §2.2가 기록한 사고가 정확히 그 모양이고, 이슈 #157이 그 결함
    클래스다.
 
-**진짜 꼬리는 D67을 고치고 다시 돌려야 나온다.** 그때는 재구성이 아니라 실측이다.
+**진짜 꼬리는 근거 블록이 붙은 입력(서빙 6단계 부착 — D67은 2026-10-12 닫았다)으로 다시 돌려야
+나온다.** 그때는 재구성이 아니라 실측이다.
 
 ## 공백 폭주를 상한 표본에서 뺀다
 
@@ -346,7 +350,10 @@ def main(argv: list[str] | None = None) -> int:
     print(f"[모델]     {model_key} @ {entry.endpoint}  prompt={ROLE.value}/{template.version}")
     print("[입력 범위] metadata-only 재구성: SOURCE·근거 본문·위치는 빠져 있다")
     print(f"[Finding]  {len(built)}건 · Evidence {len(evidences)}건")
-    print(f"[근거 붙은 Finding] {grounded}/{len(built)}  ← 0이면 D67이 살아 있다는 뜻이다")
+    print(
+        f"[근거 붙은 Finding] {grounded}/{len(built)}  ← 0이면 근거 블록이 빈 재구성이다"
+        f"(2026-09-12 run에서는 D67이 살아 있었다)"
+    )
     print(f"[프롬프트 추정토큰] {_distribution([r.est_tokens for r in built])}")
     print(f"[프롬프트 글자]     {_distribution([r.chars for r in built])}")
 
