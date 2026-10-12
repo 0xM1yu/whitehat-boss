@@ -807,8 +807,9 @@ class _Accumulator:
     # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
     # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
-    # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 1..N의 관측(Auditor가
-    # 홉마다 본 관측에서 모델이 고른 식별자를 가린 사본, 모델 응답 턴은 없다).
+    # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 관측의
+    # Critic용 사본(Auditor가 홉마다 본 관측에서 모델이 고른 식별자를 가린 것 - 가림에 실패한 홉은
+    # 빠진다. 모델 응답 턴은 없다).
     # `auditor.run(observations=...)`가 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다.
     # `finding_sources`와 같은 자리에 두는 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가
     # 물려받는다(#600 H2ⓐ). 8단계 PoV는 안 읽는다.
@@ -1574,7 +1575,8 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
 
 def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
     """Critic에 Auditor 홉 관측을 실은 요청이 (a) 추정 입력 몫을 넘을 수 있거나 (b) 크기 거절을
-    받아 관측 절을 빼고 다시 물은 건이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
+    받아 관측 절을 빼고 다시 물은 건이 있거나 (c) 홉의 Critic 사본을 못 만든 건
+    (`observation_sanitize_failed`)이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
 
     `critic_hop_observations`는 두 모양이다: 관측을 실은 호출마다 1건(`over_input_share`)과, 그
     호출이 400/413으로 거절돼 `critic.run`이 절을 통째로 빼고 한 번 다시 물었다는 표지
@@ -1586,9 +1588,17 @@ def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
     dropped = [d for d in events if d.get("observations_dropped")]
     carried = [d for d in events if not d.get("observations_dropped")]
     over = [d for d in carried if d.get("over_input_share")]
-    if not over and not dropped:
+    # 가림에 실패해 Critic 사본을 못 만든 홉 - Critic 절의 사본 수가 돈 홉 수보다 작은 이유다.
+    unsanitized = sum(
+        1
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP and "observation_sanitize_failed" in e.data
+    )
+    if not over and not dropped and not unsanitized:
         return None
     parts = [f"Critic 요청 {len(carried)}건이 Auditor 홉 관측을 실었다"]
+    if unsanitized:
+        parts.append(f"Critic 사본을 만들지 못한 홉 {unsanitized}건(가림 실패 · 사유는 trace)")
     if over:
         alone = sum(1 for d in over if d.get("over_without_observations"))
         parts.append(

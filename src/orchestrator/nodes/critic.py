@@ -16,10 +16,11 @@ Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 �
 `kind`는 어휘 여덟 중 하나일 때만, `target`·이름은 식별자 문자집합 64자까지일 때만 남는다. 못
 가린 홉은 사본이 없다 - 이 절은 그 홉을 건너뛴다). 안 주면 Critic은 Auditor가 도구로 확인한 것을
 모른 채 반박한다(오반박 쪽).
-content-aware 판만 EVIDENCE 끝에 절 하나로 받고(`_describe_hop_observations`), FACTS에는 홉
-수(`auditor_hops`)만 더한다 — 홉이 없는 Finding의 프롬프트는 바이트가 그대로다. **스위치는
-없다**(켜는 문은 프롬프트 판이다). **자르지 않는다** — 더한 글자가 이 좌석의 입력 몫을 넘을 수
-있으면 그 사실만 trace(`critic_hop_observations`)와 run 경고에 남긴다(`_record_hop_observations`;
+content-aware 판만 EVIDENCE 끝에 절 하나로 받고(`_describe_hop_observations`), FACTS에는 사본
+수(`auditor_hops` - 홉 수가 아니다)만 더한다 — 사본이 없는 Finding의 프롬프트는 바이트가
+그대로다. **스위치는 없다**(켜는 문은 프롬프트 판이다). **자르지 않는다** — 더한 글자가 이 좌석의
+입력 몫을 넘을 수 있으면 그 사실만 trace(`critic_hop_observations`)와 run 경고에
+남긴다(`_record_hop_observations`;
 값은 글자/토큰 최악 비 1.22로 나눈 **계산값**이고 잰 값이 아니다).
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
