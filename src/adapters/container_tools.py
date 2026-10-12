@@ -188,6 +188,13 @@ INDEX_TOOL = "index"
 # 인덱서가 stdout에 남기는 요약 한 줄(`indexer.main()`)의 심볼 수. `judge()`가 0개를 가른다(#576).
 # 줄 머리에 고정한다 — 줄 중간에 같은 철자가 있어도 요약으로 읽지 않는다.
 # `tests/test_indexer.py`가 실제 인덱서 출력으로 이 철자를 문다.
+#
+# **인덱서 쪽은 안 고친다.** `tools/harness-tools/indexer.py`는 심볼 0개를 실패로 안 본다(그
+# 스크립트 docstring의 「종료 코드」 절 — 헤더뿐인 대상은 정상이라 exit 0). 그리고 그 파일은
+# 이미지의 `/opt/indexer.py`와 **바이트가 같아야** 한다 — `src/preflight.py`가 sha256을 대조하고
+# 한 글자(docstring 포함)만 달라도 ERROR다. 그래서 「0개 = 근거 아님」은 읽는 쪽 `judge()`가 든다.
+# 그 스크립트 docstring의 「빈 그래프로 E2가 열린다 … 이슈 #576이 든다」는 서술은 이 날 이후
+# 낡았다(#576 · 2026-10-13 — 0개는 `ok=False`로 내려 E2가 안 열린다).
 _INDEX_SYMBOL_COUNT = re.compile(r"^# index: (\d+) symbols,", re.MULTILINE)
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
