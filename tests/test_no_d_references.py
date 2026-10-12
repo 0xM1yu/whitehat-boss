@@ -12,24 +12,14 @@ D 번호가 아니라 이슈 번호(`#91`)를 쓴다. 그러면 표가 사라져
 """
 
 import re
-import subprocess
 from pathlib import Path
+
+from tests.conftest import tracked_files
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # `test_decision_references_point_at_a_real_row`와 같은 패턴이다 — 한쪽만 고치면 갈린다.
 _D_REF = re.compile(r"(?<![A-Za-z0-9])D(\d+)(?![0-9A-Za-z])")
-
-
-def _tracked(*globs: str) -> list[Path]:
-    out = subprocess.run(
-        ["git", "ls-files", *globs],
-        cwd=REPO_ROOT,
-        capture_output=True,
-        text=True,
-        check=True,
-    )
-    return [REPO_ROOT / line for line in out.stdout.split() if line]
 
 
 def test_production_code_does_not_reference_open_questions_d_rows() -> None:
@@ -39,7 +29,7 @@ def test_production_code_does_not_reference_open_questions_d_rows() -> None:
     그것을 닫은 PR·ADR을 쓴다. **D 번호는 폐기되는 표에만 있는 좌표다.**
     """
     offenders: list[str] = []
-    for path in _tracked("src/*", "config/*"):
+    for path in tracked_files("src/*", "config/*"):
         if path.suffix not in {".py", ".yaml", ".yml"}:
             continue
         text = path.read_text(encoding="utf-8")

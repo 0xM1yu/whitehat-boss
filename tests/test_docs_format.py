@@ -91,8 +91,10 @@ _DEVICE_ROW = re.compile(r"^\|\s*`--device`\s*\|\s*`([^`]+)`\s*\|", re.MULTILINE
 
 # 이 수집기는 `tests/conftest.py`의 `tracked_files`로 옮겼다 — 전수 검사 셋이 `rglob`로 걸어서
 # `.claude/worktrees/<이름>/`의 **남의 낡은 문서**를 이 저장소의 결함으로 보고한 2026-10-12 사고
-# 뒤, 「무엇을 훑는가」의 단일 출처가 필요해졌다. 이름은 그대로 둔다 — 이 파일이 열두 곳에서
-# 부르고, 아래 docstring들이 `_tracked()`를 이름으로 든다.
+# 뒤, 저장소 전역 전수의 수집기를 한 함수로 모았다. `--eol` 필터나 하위 경로(`.github/workflows` ·
+# `eval/datasets` · `src/*.py`)로 좁힌 수집은 각 파일이 따로 `git ls-files`를 부른다 — 이 말은
+# **전역 전수**에 한정된다. 이름은 그대로 둔다 — 이 파일이 열두 곳에서 부르고, 아래 docstring들이
+# `_tracked()`를 이름으로 든다.
 _tracked = tracked_files
 
 
