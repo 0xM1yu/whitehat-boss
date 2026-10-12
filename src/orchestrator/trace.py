@@ -477,11 +477,12 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-09 — v11은 셋째 봉투 `AuditorProcedureNullableCweAction`이다(이슈 #525).
     # ⏵ 2026-10-10 — v12는 넷째 봉투 `AuditorProcedureAuditAlwaysAction`이다(이슈 #578).
     # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
-    # (`"build,asan,gdb"` — 쉼표로 이은 문자열)를 싣는다: 2단계 `build`·`clang-tidy`가 컴파일
-    # 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인 호출이었다(`nodes/signals.compile_note`).
-    # **키 부재 = 노트 없음**(실패한 컴파일 Evidence가 없었거나 한 방 판). 「노트 뒤 재선택률」은
-    # 이 키가 있는 후보의 이후 `probe` 홉 `tool`이 `compile_note_tools`에 드는 비율로 잰다 —
-    # 노트가 도구를 거절하지 않아 모델이 골라도 도구는 돈다.
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` — 쉼표로 이은 문자열)를
+    # 싣는다: 2단계 `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(`nodes/signals.compile_note`). **키 부재 = 노트 없음**(실패한 컴파일 Evidence가
+    # 없었거나 한 방 판). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `probe` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노트가 도구를
+    # 거절하지 않아 모델이 골라도 도구는 돈다.
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
@@ -508,11 +509,12 @@ class EventKind(StrEnum):
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
     # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
-    # (`"build,asan,gdb"`)를 싣는다: 2단계 `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문
-    # 끝에 하네스 노트를 붙인 호출이었다(코드를 읽는 판 v3 이상만 — `fuzz_*`와 같은 경계). **키
-    # 부재 = 노트 없음.** hop0 파싱 실패 뒤 다시 여는 호출(`hop` 1)의 본문에도 같은 노트가
-    # 실리지만 키는 실패한 hop 0 이벤트에만 있다(`fuzz_*`와 같다). 「노트 뒤 재선택률」은 이 키가
-    # 있는 finding의 이후 `inspect` 홉 `tool`이 `compile_note_tools`에 드는 비율이다.
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"`)를 싣는다: 2단계
+    # `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(코드를 읽는 판 v3 이상만 — `fuzz_*`와 같은 경계). **키 부재 = 노트 없음.** hop0
+    # 파싱 실패 뒤 다시 여는 호출(`hop` 1)의 본문에도 같은 노트가 실리지만 키는 실패한 hop 0
+    # 이벤트에만 있다(`fuzz_*`와 같다). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `inspect` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율이다.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대

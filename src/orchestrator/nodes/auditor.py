@@ -97,10 +97,11 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
 - ⏵ **2026-10-13 (이슈 #507) — 컴파일 기반 도구는 hop0 본문이 미리 알린다, 거절하지 않는다.**
   2단계 `build`·`clang-tidy`가 컴파일러 오류로 실패했으면(`ctx.compile_failures[workdir]` —
   `signals.run`이 `with_signal()`이 거르기 전에 남긴다) **루프 판**의 hop0 본문 끝에 하네스 노트가
-  붙는다 (`signals.compile_note`: 건수·첫 오류와 「`build`·`asan`·`gdb`는 같은 컴파일 명령」).
-  실패가 없으면 `None`이라 본문이 종전과 같다. 한 방 판에는 안 붙는다 — 도구를 고르는 자리가 없다.
-  모델이 그 뒤에도 `probe build`를 고르면 종전대로 돈다. hop0 `auditor_hop` 이벤트가
-  `compile_note`·`compile_note_tools`를 싣는다(노트를 안 붙였으면 키가 없다).
+  붙는다 (`signals.compile_note`: 도구마다 측정한 건수·첫 오류, `build`가 실패했을 때만
+  「`build`·`asan`·`gdb`는 같은 컴파일 명령」). 실패가 없으면 `None`이라 본문이 종전과 같다. 한 방
+  판에는 안 붙는다 — 도구를 고르는 자리가 없다. 모델이 그 뒤에도 `probe build`를 고르면 종전대로
+  돈다. hop0 `auditor_hop` 이벤트가 `compile_note`·`compile_note_tools`를 싣는다(노트를 안
+  붙였으면 키가 없다).
 """
 
 import hashlib
@@ -516,11 +517,8 @@ def _ask_model(
         raise PromptError(problem)
     # ⏵ 2026-10-13 (이슈 #507) — 루프 판만 받는다(도구를 고르는 자리가 루프 판뿐이다). 2단계가 잰
     # 컴파일 실패가 없으면 둘 다 `None`이다.
-    note = (
-        signals.compile_note(ctx.compile_failures.get(workdir, ()), workdir)
-        if envelope is not None
-        else None
-    )
+    failures = ctx.compile_failures.get(workdir, ()) if envelope is not None else ()
+    note = signals.compile_note(failures, workdir)
     prompt = _render_hop0(
         ctx,
         template,
@@ -541,7 +539,7 @@ def _ask_model(
                 prompt=prompt,
                 workdir=workdir,
                 schema=envelope,
-                hop0_note=signals.COMPILE_NOTE_TRACE if note is not None else None,
+                hop0_note=signals.compile_note_trace(failures) if note is not None else None,
             )
         except BudgetExhausted:
             # 모델 호출 쪽 소진은 `_call_model`이 이미 내렸다(`_queue_candidate`는 `triaged`가
