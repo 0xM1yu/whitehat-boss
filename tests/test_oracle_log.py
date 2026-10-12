@@ -54,13 +54,29 @@ def _cached_vul() -> VulSubmission:
 
 
 def test_no_poc_and_all_submissions_failed_are_different_reasons() -> None:
-    """「낼 PoC가 없었다」와 「냈는데 전부 실패했다」는 다른 사건이다(§0)."""
+    """「모델 submit이 없었다」와 「냈는데 전부 실패했다」는 다른 사건이다(§0)."""
     empty = OracleLedger(wired=True)
     broken = OracleLedger(wired=True)
     broken.add_attempt(_failed("find_0001"))
 
     assert empty.none_reason() == oracle_log.REASON_NO_POC
     assert broken.none_reason() == oracle_log.REASON_ALL_VUL_FAILED
+
+
+def test_no_poc_with_intermediate_submissions_is_told_apart_by_the_counts() -> None:
+    """`no_poc`는 「PoC 0건」이 아니라 「지정 가능한 후보 0건」이다 - 중간 gen 4건이 나간 run도 같은
+    사유다. 둘은 `final_reason`이 아니라 `vul_submitted`·`vul_candidates`가 가른다 (#620)."""
+    nothing = OracleLedger(wired=True)
+    intermediates = OracleLedger(wired=True)
+    for n in range(4):
+        intermediates.add_attempt(
+            oracle_log.vul_ok(f"find_{n}", bytes([n]), _SUBMISSION, wall_ms=1, designatable=False)
+        )
+
+    assert nothing.none_reason() == intermediates.none_reason() == oracle_log.REASON_NO_POC
+    assert nothing.summary()["vul_submitted"] == 0
+    summary = intermediates.summary()
+    assert (summary["vul_submitted"], summary["vul_candidates"]) == (4, 0)
 
 
 class _RateLimited(RuntimeError):
