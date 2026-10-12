@@ -342,6 +342,31 @@ def test_a_seat_missing_from_the_remote_cache_is_a_warn_naming_it_and_the_prefet
     assert pf.exit_code(checks) == 0
 
 
+def test_a_seat_without_a_pinned_rev_is_a_warn_naming_it_not_a_silent_skip(world: World) -> None:
+    config, serving = load_config(PROFILE), load_serving(DEVICE)
+    key = next(iter(serving.servers))
+    unpinned = config.models[key].model_copy(update={"source": "hf://org/name"})
+    config = config.model_copy(update={"models": {**config.models, key: unpinned}})
+
+    check = pr.check_weights_cached(config, serving, world.env, world.probes())
+
+    assert check.severity is WARN and "rev가 없어" in check.message and key in check.message
+
+
+def test_the_not_applicable_ok_is_only_for_zero_hf_sources(world: World) -> None:
+    config, serving = load_config(PROFILE), load_serving(DEVICE)
+    models = {
+        k: m.model_copy(update={"source": "file:///x"}) if k in serving.servers else m
+        for k, m in config.models.items()
+    }
+    config = config.model_copy(update={"models": models})
+
+    check = pr.check_weights_cached(config, serving, world.env, world.probes())
+
+    assert check.severity is OK and "해당 없음" in check.message
+    assert "ssh" not in world.tools_called()
+
+
 def test_every_seat_missing_names_every_seat(world: World) -> None:
     pairs = prefetch_weights.targets(PROFILE)
     world.uncached = {f"{r}@{v}" for r, v in pairs}
@@ -373,8 +398,8 @@ def test_the_remote_snippet_sees_a_complete_snapshot_and_not_a_partial_or_absent
     world: World, tmp_path: Path
 ) -> None:
     """가짜 ssh가 아니라 진짜 bash로 원격 조각을 돌린다 — 캐시 배치를 문다."""
-    (done, partial, absent) = prefetch_weights.targets(PROFILE)[:3]
-    for repo, rev in (done, partial):
+    (done, partial, absent, other) = prefetch_weights.targets(PROFILE)[:4]
+    for repo, rev in (done, partial, (other[0], "f" * 40)):  # other: 다른 rev만 받아 둔 모델
         model = tmp_path / f"models--{repo.replace('/', '--')}"
         (model / "snapshots" / rev).mkdir(parents=True)
         (model / "blobs").mkdir()
@@ -394,6 +419,7 @@ def test_the_remote_snippet_sees_a_complete_snapshot_and_not_a_partial_or_absent
 
     assert check.severity is WARN
     assert _seat_key(partial) in check.message and _seat_key(absent) in check.message
+    assert _seat_key(other) in check.message  # revision 고정 — 다른 rev의 스냅샷은 캐시가 아니다
     assert _seat_key(done) not in check.message
 
 
