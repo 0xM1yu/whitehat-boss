@@ -67,7 +67,7 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
 
 # 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
 # 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다

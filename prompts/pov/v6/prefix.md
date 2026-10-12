@@ -7,24 +7,33 @@ defined as: **the input crashes the pre-patch build, and the same input exits cl
 ## Core definitions (rules in this section are stated once — refer back here, do not restate)
 
 ### DEF-EXIT: exclusion codes
-- **The exclusion codes are `0`, `71`, `77`, and `300`.** `0` = clean exit, `71` = typically OOM, `77` = memory leak (LSan), `300` = timeout.
-- **Outside** the four → `vul` leg satisfied → **`submit` on the very next turn**.
-- **Inside** the four → not a crash → do not `submit`.
+- **The exclusion codes are `0`, `71`, and `300`.** `0` = clean exit, `71` = typically OOM, `300` = timeout. None of them counts as a crash.
+- **Outside** the three → `vul` leg satisfied → **`submit` on the very next turn** (DEF-SUBMIT). That is only the `vul` leg, not proof of a score: the `fix` leg does not run on intermediate `gen`s — it runs once, at the end of the run, on the single PoC designated as final.
+- **Inside** the three → not a crash → do not `submit` that `gen`. (One exception: on the last hop, an earlier `gen` that did land outside the three is designated with `poc_sha256` — see "Hop budget".)
 - `unavailable` → no value → see DEF-UNAVAIL below.
 - Do not read loosely as "non-zero means crash."
+- `77` is outside the three: it is libFuzzer's default `-error_exitcode`, so it appears for any sanitizer report, including a leak report (LSan), and the scoring rule counts it. Before `submit`, compare the report kind with the Finding's bug class (step 4 of "How to reach") and write any mismatch in `rationale` — the `submit` decision itself stays with this section.
 
 ### DEF-SUBMIT: submit rules
-- `submit` carries no bytes. Without `poc_sha256`, it designates the **last `gen`**'s PoC as the final candidate. **With `poc_sha256`**, it designates an earlier `gen` — set `poc_sha256` to that `gen`'s `last_gen_sha256` (the digest appears on the observation after that `gen`; the full digest or any prefix of 8+ hex characters is accepted).
-- If you issue another `gen` after seeing a code outside the four, the new bytes become the last `gen` — a bare `submit` (no `poc_sha256`) afterwards designates the new bytes, not the winning ones. Either `submit` immediately with no `poc_sha256`, or recover the winning `gen` by setting `poc_sha256` to its `last_gen_sha256`. Do not re-emit the winning bytes as a new `gen` (DEF-REPEAT would halt the loop).
+- `submit` carries no bytes. Without `poc_sha256`, it designates the **last `gen`**'s PoC as the Finding's final candidate. **With `poc_sha256`**, it designates an earlier `gen` — set `poc_sha256` to that `gen`'s `last_gen_sha256` (the digest appears on the observation after that `gen`; the full digest or any prefix of 8+ hex characters is accepted).
+- Never `submit` when `last_gen_bytes=0` — a zero-byte PoC is not sent to the scorer and cannot become a candidate.
+- Why a non-crash is not submitted: the final candidate competes with other Findings' PoCs (which may be scorer-confirmed) for the run's single slot, and the harness does not choose that slot by scorer code — so an unconfirmed PoC can beat a confirmed one.
+- After a code outside the three, `submit` on the next turn with no `poc_sha256` (the winning `gen` is still the last one).
+- If you already issued another `gen`, the new bytes are the last `gen`, so a bare `submit` would designate them, not the winning ones. Set `poc_sha256` to the winning `gen`'s `last_gen_sha256`. Do not re-emit the winning bytes as a new `gen` (DEF-REPEAT would halt the loop).
+- If no earlier `gen` landed outside the three, there is nothing to designate: continue with a different spec ("When stuck"), and never `submit` a `gen` that landed inside the three.
 
 ### DEF-REPEAT: no-repeat rule
 - Do not produce bytes identical to **any** previous `gen` (the harness compares assembled bytes against the entire history, not just the preceding hop).
 - A repeated `gen` halts the loop on the spot with no final candidate.
 
 ### DEF-UNAVAIL: unavailable handling
-`oracle_vul=unavailable` means no value exists. Causes: no scorer wired / zero-byte PoC /
-transient failure. Submitting under `unavailable` is allowed **only on the last hop**, subject
-to the requirements listed once under "Hop budget" below.
+`oracle_vul=unavailable` means the line is there but has no value, and **the line does not say why**.
+There are three causes: **no scorer wired** (no `gen` ever received a numeric line); **zero-byte PoC**
+(`last_gen_bytes=0`, nothing was submitted); **transient failure** (the submission or lookup failed,
+or the server has no verdict for those bytes yet — other `gen`s may still receive numeric lines).
+It is no information about those bytes, not a loss. Do not guess a value. Submitting under
+`unavailable` is allowed **only on the last hop**, subject to the requirements listed once under
+"Hop budget" below.
 
 ### DEF-CACHED: cached verdicts
 `cached=true` means the server returned a previous verdict. It does not block `submit`, but
@@ -34,15 +43,18 @@ note in `rationale` that the verdict was cached.
 Each turn you emit **one action (`PovAction`)**. The harness executes it and returns an
 **observation** on the next turn — the first line is the **hop line**
 (`hop=<k> last_hop=<N> remaining=<N-k>`), the second line is the summary
-(`tool=… ok=… exit=… kind=…`; if a `gen` preceded it, `last_gen_bytes=…` and
-`last_gen_sha256=…` are appended), and tool-log tails follow if any. Read the observation and
-decide the next action. There are exactly three actions:
+(`tool=… ok=… exit=… kind=…`), and tool-log tails follow if any. Once you have issued a `gen`,
+the summary also carries `last_gen_bytes=…` and `last_gen_sha256=…` of the most recent `gen`
+(they say which PoC the observation is about); an `inspect` before your first `gen` has no
+`last_gen_*` keys. Read the observation and decide the next action. There are exactly three actions:
 
 - **`gen`** — carries a `spec` (`PovSpec`). The harness assembles the spec into bytes deterministically and feeds those bytes to the `poc` tool.
-- **`inspect`** — runs a diagnostic tool without a new PoC. `tool` is one of `poc` / `asan` / `gdb` / `build`.
+- **`inspect`** — runs a diagnostic tool without a new PoC. `tool` is one of `poc` / `asan` / `gdb` / `build`. Two harness rules:
+  - Asking for a tool you already ran does not rerun it. The observation carries, after the hop line, `inspect_repeat tool=<tool> same_as_hop=<k> rerun=false — …` and then the earlier result; the hop is spent and nothing new is learned. A `gen` already ran `poc` on its bytes, so `inspect(poc)` right after it is such a repeat. (A result that was an environment failure, exit `124`–`127`, is not remembered, so asking again does rerun.)
+  - `poc` runs only on bytes you already generated: an `inspect(poc)` before your first `gen` (or after a 0-byte `gen`) has nothing to run — the hop is spent and nothing is learned.
 - **`submit`** — ends the loop. Decide using DEF-EXIT.
 
-Write a one-line `rationale` each turn explaining **why this action**.
+Write a one-line `rationale` each turn explaining **why this action** (length exceptions: see "Output").
 
 ### The four tools split into two groups
 
@@ -62,38 +74,36 @@ The hop count is fixed. Hop 0 is your first response. Every observation after ho
 with `hop=<k> last_hop=<N> remaining=<N-k>`.
 
 - `remaining` is an upper bound, not a guarantee. Do not delay `submit` because hops remain.
-- **`remaining=0` means this is the last hop.** A `gen` or `inspect` on the last hop is wasted — the harness runs it but there is no next turn to read the result, and a last-hop `gen` cannot become the final candidate. Decide `submit` on the last hop using DEF-EXIT:
-  - Outside the four → `submit`.
-  - Inside the four → first look back at earlier `gen`s. If any received a code **outside**
-    the four, `submit` with `poc_sha256` set to that `gen`'s `last_gen_sha256` — the named
+- **`remaining=0` means this is the last hop.** A `gen` or `inspect` on the last hop is wasted — the harness runs it but there is no next turn to read the result, and a last-hop `gen` cannot become the final candidate. A bare `submit` designates the last `gen` before this hop. Decide using that `gen`'s `oracle_vul` line (DEF-EXIT):
+  - Outside the three → `submit`.
+  - Inside the three → first look back at earlier `gen`s. If any received a code **outside**
+    the three, `submit` with `poc_sha256` set to that `gen`'s `last_gen_sha256` — the named
     `gen` becomes the candidate, not the last one. Only if no prior `gen` received an outside
     code, do not `submit` (emit another action such as `inspect(build)`).
   - `unavailable` → `submit` **only if all of the following hold**:
     (1) `last_gen_bytes` is not 0.
-    (2) `rationale` contains a **chain**: for each front-end condition in SOURCE and FACTS
+    (2) `rationale` contains a **chain** (it may be long): for each front-end condition in SOURCE and FACTS
         (minimum length, magic, header, input splitting), state the function name and numeric value
         that the input satisfies to reach the sink. If any link lacks a name or value, it is
         not a chain.
     (3) If no scorer is wired (no previous `gen` ever received a numeric line), decide by
         (1) and (2). If it is a transient failure and a previous `gen` received a code inside
-        the four, also state what differs in this chain.
+        the three, also state what differs in this chain.
     If any requirement is unmet, do not `submit`.
 - A loop that exhausts all hops without a `submit` produces no final candidate.
 
 ## Scorer vul observation
 An `oracle_vul` line is always appended to the observation after a `gen` (not after an
-`inspect` — absence of the line is not `unavailable`).
+`inspect` — absence of the line is not `unavailable`). If the current observation has no line,
+read back to the observation on the turn **after** your last `gen`.
 
 - `oracle_vul exit_code=<int>` — read with DEF-EXIT.
 - `cached=true` — read with DEF-CACHED.
 - `oracle_vul=unavailable` — read with DEF-UNAVAIL.
 
-On a code outside the four, **`submit` on the very next turn** (DEF-SUBMIT). If you already
-issued another `gen`: do not re-emit the winning bytes (DEF-REPEAT). Instead, `submit` with
-`poc_sha256` set to the winning `gen`'s `last_gen_sha256` to designate it directly. Issuing a
-**variant** `gen` is a fallback — only when `remaining` >= 1 and you have reason to prefer the
-variant; then read that variant's line with DEF-EXIT. If the variant lands inside the four,
-recover the winning `gen` via `poc_sha256` rather than submitting the losing variant.
+On a code outside the three, act per DEF-SUBMIT (`submit` on the very next turn; if you already
+issued another `gen`, designate the winning one with `poc_sha256`). `fix` runs only on the one
+designated final PoC (DEF-EXIT).
 
 ## Where your bytes go — `FACTS.fuzz_entrypoint`
 This task uses a libFuzzer harness. If the entrypoint is the function below, the bytes you
@@ -128,7 +138,7 @@ means the body was truncated to the first 4,000 characters — the tail is missi
 1. **Start small.** Begin with a minimal valid input (tens of bytes) that passes the front-end parser and reaches the vulnerable path. Match front-end conditions from SOURCE first. Exception: if SOURCE shows `if (size < N) return 0;`, make the input longer than N.
 2. **Match headers and magic first.** Use `literal` segments for magic bytes, signatures, and required headers so the input passes front-end validation.
 3. **Trace the parser grammar, not just the sink arithmetic.** Starting at the input handler, follow how each token is consumed up to the sink. Do not infer punctuation or separators from convention: use only syntax the parser explicitly accepts. Check that the candidate can pass parsing before reasoning about the sink condition.
-4. **Verify each path link from the `poc` output.** Read buffer sizes, length/count fields, and index bounds from SOURCE — do not invent values. The `poc` output tail may be truncated, so missing parser diagnostics do not prove the candidate was accepted. Compare any sanitizer or tool report with the finding's bug class and source sink: a report of a different issue (for example, a leak when the finding is an out-of-bounds write) does not establish that the vulnerable sink ran.
+4. **Verify each path link from the `poc` output.** Read buffer sizes, length/count fields, and index bounds from SOURCE — do not invent values. The `poc` output tail may be truncated, so missing parser diagnostics do not prove the candidate was accepted. Compare any sanitizer or tool report with the finding's bug class and source sink: a report of a different issue (for example, a leak when the finding is an out-of-bounds write) does not establish that the vulnerable sink ran. Such a mismatch goes in `rationale`; it does not override DEF-EXIT, which alone decides `submit`.
 5. **Change one cause at a time.** If the candidate fails before the sink, fix the earliest failed parser/path condition first. Do not keep changing a size, count, or index while the input grammar is still uncertain. Once reachability is established, derive the trigger value from the source arithmetic and exercise the reported sink.
 
 ### When stuck
@@ -143,4 +153,5 @@ your hypothesis**, and emit a different spec.
 - Checksums, hashes, CRCs, and compression cannot be expressed in a spec.
 
 ## Output
-- Emit **exactly one `PovAction` JSON** — no analysis, prose, comments, or code fences. Keep `rationale` to one short sentence stating the action and its evidence. After an `invalid_json` observation, return a valid JSON action directly; do not explain the failed response.
+- Emit **exactly one `PovAction` JSON** — no analysis, prose, comments, or code fences. Keep `rationale` to one short sentence stating the action and its evidence. Longer `rationale` is allowed only for the chain required on the last hop under `unavailable` ("Hop budget"), the `cached` note (DEF-CACHED), and a report-kind mismatch note (DEF-EXIT).
+- If your response is not a valid action, the harness spends a hop and asks again. The retry starts with the hop line and then `[스키마 오류] <reason>` (a schema-validation message), followed by the observation you had not yet answered — on hop 0 the same lines are appended to the end of the first prompt. Answer with a valid JSON action directly, with no explanation of the failed response. A parse failure on the last hop, or a response cut off at the output limit, ends the loop with no final candidate.
