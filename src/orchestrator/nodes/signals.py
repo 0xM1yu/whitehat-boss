@@ -35,7 +35,7 @@ def with_signal(evidences: tuple[Evidence, ...] | list[Evidence]) -> tuple[Evide
 
     발견 여부는 `exit_code`로 판별한다 — 정적분석 도구의 관례이자 이 저장소의 ToolRunner
     계약이다. `Evidence`에 "발견 건수" 필드가 있으면 더 정확하지만 스키마 확장이라
-    여기서 하지 않고 open-questions 항목으로 올린다.
+    여기서 하지 않고 open-questions 항목으로 올렸다(이슈 #61 — 2026-10-12 닫음, 필드는 안 넣었다).
 
     STATIC이 아닌 종류(GRAPH·BUILD 등)는 성공 자체가 신호이므로 `exit_code`를 보지 않는다.
     걸러진 Evidence도 저장소에는 그대로 남는다 — "신호 부재로 기록"이 2단계의 통과 조건이다.
