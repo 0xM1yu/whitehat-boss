@@ -3,8 +3,12 @@
 가짜 세계는 `tests/preflight_fakes.py`다. 종료 코드·CLI·잠금 테스트는 `test_preflight_wiring.py`.
 """
 
+import os
+import re
 import shlex
+import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -16,7 +20,7 @@ from src import preflight_remote as pr
 from src.adapters import model_swap
 from src.adapters.canary_report import read_canary_report
 from src.cli import Severity
-from src.config import load_config
+from src.config import load_config, load_serving
 from src.interfaces.model_client import ModelSwapError
 from tests.conftest import ALL_PROFILES
 from tests.oracle_fakes import TASK_ID
@@ -41,6 +45,11 @@ from tests.preflight_fakes import (
     text_of,
 )
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools" / "serve"))
+import prefetch_weights  # noqa: E402
+
+_REAL_RUN = subprocess.run  # `forbid_real_world`가 갈아 끼우기 전의 것 — bash 조각 시험만 쓴다
+
 
 @pytest.fixture(autouse=True)
 def _no_real_world(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -62,7 +71,7 @@ def test_a_clean_world_reports_every_item_ok_and_exits_zero(world: World) -> Non
     assert [c.render() for c in checks if c.severity is not OK] == []
     for label in (
         "교대 환경변수:", "bash 해소:", "터널 포트:", "원격 커밋:", "모델 checksum:",
-        "채점기 서버:",
+        "가중치 캐시:", "채점기 서버:",
         "CYBERGYM_API_KEY:", "카나리:", "카나리 boot_id:", "카나리 mmap_rnd_bits:", "과제 번들:",
         "도구 이미지:",
     ):  # fmt: skip
@@ -290,6 +299,128 @@ def test_the_default_runner_never_uses_a_shell_and_always_passes_a_timeout(
     assert seen["argv"] == ["ssh", "-V"] and seen["timeout"] == 7.0
     assert not seen.get("shell")
     assert done.stdout == "abc\r\n"  # CR을 접지 않는다 — 교대 스크립트의 정확 비교와 같은 값이다
+
+
+# --- 4b. 원격 가중치 캐시 (#571) ---------------------------------------------------------------
+
+
+def _weights_ssh(world: World) -> str:
+    return next(a[-1] for a, _ in world.calls if a[0] == "ssh" and "snapshots" in a[-1])
+
+
+def _seat_key(rev_pair: tuple[str, str]) -> str:
+    models = load_config(PROFILE).models
+    return next(
+        k for k, m in models.items() if (m.source or "").endswith(f"{rev_pair[0]}@{rev_pair[1]}")
+    )
+
+
+def test_cached_weights_are_ok_and_the_check_asks_for_exactly_what_prefetch_downloads(
+    world: World,
+) -> None:
+    check = one(world.check(), "가중치 캐시:")
+
+    assert check.severity is OK
+    asked = set(re.findall(r'echo "have ([^"]+)"', _weights_ssh(world)))
+    assert asked == {f"{r}@{v}" for r, v in prefetch_weights.targets(PROFILE)}
+
+
+def test_a_seat_missing_from_the_remote_cache_is_a_warn_naming_it_and_the_prefetch_command(
+    world: World,
+) -> None:
+    pairs = prefetch_weights.targets(PROFILE)
+    gone, kept = pairs[0], pairs[1:]
+    world.uncached = {f"{gone[0]}@{gone[1]}"}
+
+    checks = world.check()
+    check = one(checks, "가중치 캐시:")
+
+    assert check.severity is WARN  # ERROR가 아니다 — 선취는 사람이 하고 run은 막지 않는다
+    assert _seat_key(gone) in check.message and gone[1][:12] in check.message
+    assert "prefetch-weights.sh" in check.message
+    assert not any(_seat_key(p) in check.message for p in kept)
+    assert pf.exit_code(checks) == 0
+
+
+def test_a_seat_without_a_pinned_rev_is_a_warn_naming_it_not_a_silent_skip(world: World) -> None:
+    config, serving = load_config(PROFILE), load_serving(DEVICE)
+    key = next(iter(serving.servers))
+    unpinned = config.models[key].model_copy(update={"source": "hf://org/name"})
+    config = config.model_copy(update={"models": {**config.models, key: unpinned}})
+
+    check = pr.check_weights_cached(config, serving, world.env, world.probes())
+
+    assert check.severity is WARN and "rev가 없어" in check.message and key in check.message
+
+
+def test_the_not_applicable_ok_is_only_for_zero_hf_sources(world: World) -> None:
+    config, serving = load_config(PROFILE), load_serving(DEVICE)
+    models = {
+        k: m.model_copy(update={"source": "file:///x"}) if k in serving.servers else m
+        for k, m in config.models.items()
+    }
+    config = config.model_copy(update={"models": models})
+
+    check = pr.check_weights_cached(config, serving, world.env, world.probes())
+
+    assert check.severity is OK and "해당 없음" in check.message
+    assert "ssh" not in world.tools_called()
+
+
+def test_every_seat_missing_names_every_seat(world: World) -> None:
+    pairs = prefetch_weights.targets(PROFILE)
+    world.uncached = {f"{r}@{v}" for r, v in pairs}
+
+    check = one(world.check(), "가중치 캐시:")
+
+    assert check.severity is WARN and all(_seat_key(p) in check.message for p in pairs)
+
+
+def test_an_unreachable_remote_is_one_unverified_warn_not_an_error(world: World) -> None:
+    world.weights_ssh_exit = 255
+
+    check = one(world.check(), "가중치 캐시:")
+
+    assert check.severity is WARN and "확인 불가" in check.message and "255" in check.message
+    assert "prefetch-weights.sh" not in check.message  # 없다고 단정하지 않는다
+
+
+def test_the_cache_probe_only_reads_the_remote(world: World) -> None:
+    world.check()
+
+    remote = _weights_ssh(world)
+    assert not re.search(r"(rm|mv|cp|mkdir|touch|tee|hf|pip|chmod)", remote)
+    assert ">" not in remote.replace(">/dev/null", "").replace("2>&1", "")
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash가 없다")
+def test_the_remote_snippet_sees_a_complete_snapshot_and_not_a_partial_or_absent_one(
+    world: World, tmp_path: Path
+) -> None:
+    """가짜 ssh가 아니라 진짜 bash로 원격 조각을 돌린다 — 캐시 배치를 문다."""
+    (done, partial, absent, other) = prefetch_weights.targets(PROFILE)[:4]
+    for repo, rev in (done, partial, (other[0], "f" * 40)):  # other: 다른 rev만 받아 둔 모델
+        model = tmp_path / f"models--{repo.replace('/', '--')}"
+        (model / "snapshots" / rev).mkdir(parents=True)
+        (model / "blobs").mkdir()
+    blobs = tmp_path / f"models--{partial[0].replace('/', '--')}" / "blobs"
+    (blobs / "x.incomplete").write_text("")
+
+    def local_bash(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+        env = {k: os.environ[k] for k in ("PATH", "SYSTEMROOT") if k in os.environ}
+        env["HF_HUB_CACHE"] = tmp_path.as_posix()
+        return _REAL_RUN(
+            [str(shutil.which("bash")), "-c", argv[-1]], capture_output=True, text=True, env=env
+        )
+
+    probes = pp.Probes(run=local_bash, environ=world.env)
+    config, serving = load_config(PROFILE), load_serving(DEVICE)
+    check = pr.check_weights_cached(config, serving, world.env, probes)
+
+    assert check.severity is WARN
+    assert _seat_key(partial) in check.message and _seat_key(absent) in check.message
+    assert _seat_key(other) in check.message  # revision 고정 — 다른 rev의 스냅샷은 캐시가 아니다
+    assert _seat_key(done) not in check.message
 
 
 # --- 5. 오라클 서버 ----------------------------------------------------------------------------
