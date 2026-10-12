@@ -275,8 +275,8 @@ location_ok`이고 위치가 붙는 것이 STATIC Evidence뿐이라 `static_ok`�
 그 위치의 쓰임은 target 순서다(#249 — + 2026-10-04부터 content-aware 프롬프트의 FACTS·Critic 줄, 이슈 #475). #248 뒤로 커밋된 실측 run 기록은 없다(`docs/experiments/`의 마지막
 보고서가 2026-09-22). ⏵ 2026-10-08 — 그 뒤 2026-09-24 스모크가 있다 -> `run_20260924_0003` 6단계
 `location_ok`·`static_ok` 모두 36/36 참이라 등급은 안 바뀐다([보고서](experiments/harness/2026-09-24-roster-smoke-atom.md)
-§3 실험 3, `checksum` 0 스모크라 비교표 밖). ⏵ 2026-10-13 (#563) — 그 뒤 값이 둘 더 있다: `run_20261007_0001` 5/5 거짓 · 2026-10-12 보고서의
-첫 `gate_eval` 1건 거짓(둘 다 semgrep 히트가 후보 줄과 안 겹쳤다). run마다의 횟수는 이제 `RunRecord.location_overlap`이 싣는다.
+§3 실험 3, `checksum` 0 스모크라 비교표 밖). ⏵ 2026-10-13 (#563) — 그 뒤 값이 하나 더 있다: 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖, semgrep 히트가 후보
+줄과 안 겹쳤다). `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(그 run의 오프라인 재등급은 run 실측이 아니다). run마다의 횟수는 이제 `RunRecord.location_overlap`이 싣는다.
 
 **7 · Critic (모델 자리 ⑦).** Auditor와 **다른 계열**. 같은 계열이면 같은 실수를 승인한다 —
 크기보다 *다르게 틀리는 것*이 중요하다. 고도화는 GRPO이고 보상이 8단계에서 결정론적으로
