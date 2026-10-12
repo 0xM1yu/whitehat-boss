@@ -424,7 +424,8 @@ class EventKind(StrEnum):
     # Critic 요청에 **Auditor 도구 루프의 홉 관측**을 실었다는 기록과 그 크기의 계산값 (#600 H2ⓐ).
     # 내는 곳은 `nodes/critic._record_hop_observations`이고 홉 관측이 1개 이상인 Critic 호출마다
     # 1건, 모델 호출 **앞**에서다. **이벤트 부재 = 관측을 안 실었다**(홉 0 · content-aware가 아닌
-    # 판). `subject_id`는 Finding이다. 싣는 값: `hops`(관측 수 = 홉 1..N) ·
+    # 판). `subject_id`는 Finding이다. 싣는 값: `hops`(Critic 사본 수 - 돈 홉 수가 아니다,
+    # 가림에 실패한 홉은 빠진다) ·
     # `added_chars`(EVIDENCE에 더한 절의 글자, 구분 줄바꿈 포함 · FACTS의 `auditor_hops` 한 줄은
     # 안 셌다) · `prompt_chars`(prefix+body) · `est_input_tokens`(= `prompt_chars` ÷ 글자/토큰
     # 최악 비 1.22, 올림) · `input_share_tokens`(= 그 좌석 모델 `context_limit` − 역할
@@ -491,7 +492,8 @@ class EventKind(StrEnum):
     #   만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과
     #   어긋났다). 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고
     #   run은 안 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가
-    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다.
+    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다. run 경고
+    #   (`runner._critic_hop_observations_warning`)가 이 키가 든 홉 수를 센다.
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
     # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
     # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.

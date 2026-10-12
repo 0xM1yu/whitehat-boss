@@ -399,6 +399,9 @@ def test_a_hop_whose_copy_cannot_be_made_is_left_out_and_the_run_goes_on(
     assert "Already in SOURCE: macro:BUF" in scripted.prompts[1][1].body, "Auditor 입력은 그대로"
     (hop,) = [e for e in _events(ctx, EventKind.AUDITOR_HOP) if "resolved" in e.data]
     assert "observation_sanitize_failed" in hop.data and "observation_error" not in hop.data
+    # run 경고가 가림에 실패한 홉을 센다 - 사본 수가 돈 홉 수보다 작은 이유가 경고에 보인다.
+    warning = runner._critic_hop_observations_warning(ctx.trace)
+    assert warning is not None and "Critic 사본을 만들지 못한 홉 1건" in warning
 
 
 def test_the_copy_is_not_built_when_nobody_reads_it(

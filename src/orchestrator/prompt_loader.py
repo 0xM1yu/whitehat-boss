@@ -124,7 +124,7 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
-#   - `auditor_hops` — **Critic만, content-aware 판이고 Auditor 도구 루프가 홉을 돌린 Finding에만**
+#   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
 #     (아래 그 항목의 주석 · #600 H2ⓐ).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14)이 뺀다.
 # 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
@@ -684,9 +684,9 @@ def build_facts(
     「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트
     그대로다.
 
-    `auditor_hops`도 같은 opt-in이다 — **Critic만**, 도구 루프가 홉을 1개 이상 돈 Finding일 때만
-    준다(수). 홉이 없으면 `None`이라 키가 없다 — `0`으로 적으면 홉 0 Finding의 FACTS 바이트가
-    바뀐다(#600 H2ⓐ).
+    `auditor_hops`도 같은 opt-in이다 — **Critic만**, Critic용 홉 관측 사본이 1개 이상인
+    Finding일 때만 준다(**사본 수** - 돈 홉 수가 아니다). 사본이 없으면 `None`이라 키가 없다 —
+    `0`으로 적으면 사본 0 Finding의 FACTS 바이트가 바뀐다(#600 H2ⓐ).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
