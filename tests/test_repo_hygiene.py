@@ -37,6 +37,8 @@ import pytest
 import yaml
 from packaging.specifiers import SpecifierSet
 
+from tests.conftest import tracked_files
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # `git ls-files --eol`의 작업 트리 열. `w/none`은 바이너리라 개행 개념이 없다.
@@ -503,4 +505,91 @@ def test_the_declared_python_floor_covers_the_tarfile_filter_api() -> None:
         assert "3.11.4" in allowed, (
             f"{where}({spec!r})가 3.11.4를 배제한다 — 하한을 올렸으면 `task_loader` docstring·"
             "`docs/portability.md`·이 검사를 같이 고친다."
+        )
+
+
+# --- 전수 수집의 오염 핀: 「체크아웃이 아니라 저장소를 센다」 -----------------------------------
+#
+# 명제: 전수 검사는 **git이 추적하는 파일**만 읽는다. 체크아웃에 같이 있는 미추적 트리는
+# 이 저장소의 소스가 아니다 — `.claude/worktrees/<이름>/`은 다른 세션의 linked worktree고
+# 그 안에는 낡은 판의 문서가 그대로 있다.
+#
+# **사고 —** 2026-10-12, `.claude/worktrees/` 아래 worktree가 다섯 있는 체크아웃에서 전수
+# 검사 셋이 깨졌다(#631). offender 목록이 **전부 `.claude/worktrees/...`** 였다 — 이 저장소가
+# 추적하는 산문은 한 줄도 틀리지 않았고, 읽는 쪽에는 고칠 파일이 없다. 그 셋이
+# `_TRACKED_ONLY_SWEEPS`다.
+#
+# ⚠ **이 핀이 무는 것을 세게 적지 않는다.** 아래 셋이 단언하는 것은 ① 수집기가 추적 파일만
+# 낸다 ② 살아 있는 수집에 `.claude/`가 없다 ③ 그 셋의 소스가 `REPO_ROOT.rglob`로 안 걷는다 —
+# 까지다. **다른 파일에 새로 생기는 `rglob` 전수는 안 본다**(이름을 손으로 적는 목록이라서다).
+_TRACKED_ONLY_SWEEPS = (
+    ("tests/test_pov_oracle_feedback.py", "test_no_live_source_says_pov_v3_is_unwired"),
+    ("tests/test_pov_prompt_v4.py", "test_no_live_source_names_v3_alone_as_the_pov_prompt"),
+    (
+        "tests/test_pov_prompt_v4.py",
+        "test_no_live_source_puts_last_gen_on_the_first_line_of_the_observation",
+    ),
+)
+
+# 2026-10-12에 실제로 보고된 offender의 경로 꼴. 그날의 실형태다.
+_PLANTED_WORKTREE = ".claude/worktrees/stale-demo"
+# 그 worktree 사본에 들어 있던 낡은 산문 — `test_no_live_source_says_pov_v3_is_unwired`의
+# 감지기가 무는 문형이다(지어낸 문장이 아니라 그날 재현에 쓴 줄이다).
+_STALE_LINE = "PoV 프롬프트는 v3가 아직 미배선이다."
+
+
+def test_the_tracked_sweep_counts_the_repository_not_the_checkout(tmp_path: Path) -> None:
+    """오염 핀(CLAUDE.md §2.5). 임시 저장소에 같은 줄을 **둘** 심는다 — 추적되는 `docs/live.md`와
+    미추적 `.claude/worktrees/stale-demo/docs/live.md`.
+
+    **양성**: 추적된 쪽은 수집에 든다. **음성**: worktree 사본은 안 든다. 둘을 한 단언에
+    넣는다 — 수집이 통째로 비어도 음성만으로는 초록이기 때문이다.
+    """
+    try:
+        subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, capture_output=True)
+    except OSError:  # pragma: no cover - git 없는 환경
+        pytest.skip("git을 실행할 수 없다")
+
+    tracked = tmp_path / "docs" / "live.md"
+    tracked.parent.mkdir(parents=True)
+    tracked.write_text(_STALE_LINE, encoding="utf-8")
+    subprocess.run(
+        ["git", "add", "docs/live.md"], cwd=tmp_path, check=True, capture_output=True
+    )
+
+    copy = tmp_path / _PLANTED_WORKTREE / "docs" / "live.md"
+    copy.parent.mkdir(parents=True)
+    copy.write_text(_STALE_LINE, encoding="utf-8")
+
+    collected = [
+        path.relative_to(tmp_path).as_posix()
+        for path in tracked_files("*.md", root=tmp_path)
+    ]
+    assert collected == ["docs/live.md"], collected
+
+
+def test_the_live_tracked_sweep_pulls_no_untracked_checkout_tree() -> None:
+    """살아 있는 저장소에서 같은 명제를 센다. 체크아웃에 worktree가 있든 없든 통과해야 한다 —
+    없는 기계에서는 공허하므로 **훑은 수**도 같이 단언한다."""
+    collected = [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in tracked_files("*.md", "*.py", "*.yaml")
+    ]
+    assert len(collected) > 100, f"수집이 너무 적다 - 저장소 루트가 틀렸다: {len(collected)}"
+    strays = [name for name in collected if name.startswith((".claude/", "_workspace/"))]
+    assert strays == [], strays
+
+
+def test_the_live_source_sweeps_do_not_walk_the_working_tree() -> None:
+    """그 셋이 **수집기를 통해** 돈다. `REPO_ROOT.rglob`로 되돌리면 빨개진다.
+
+    이름이 실재하는지도 같이 본다 — 테스트가 개명되면 이 핀이 아무것도 안 지키게 된다.
+    """
+    for posix, name in _TRACKED_ONLY_SWEEPS:
+        source = (REPO_ROOT / posix).read_text(encoding="utf-8")
+        assert f"def {name}(" in source, (posix, name)
+        assert "tracked_files(" in source, (posix, name)
+        assert "REPO_ROOT.rglob" not in source, (
+            f"{posix}가 작업 트리를 걷는다 - `.claude/worktrees/`의 남의 낡은 문서가 "
+            "offender로 올라온다(2026-10-12). `tracked_files`를 쓴다."
         )
