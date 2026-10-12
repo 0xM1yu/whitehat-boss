@@ -48,6 +48,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
+| 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
@@ -637,6 +638,14 @@ class EventKind(StrEnum):
     # 이 이벤트가 생기기 전에는 리포트의 `중복 제거: N건`이 전부였다 — 실측 `run_20260827_0004`에서
     # E2·`upheld`였던 `find_0005`가 사라졌는데 무엇과 합쳐졌는지를 run 산출물로 답할 수 없었다.
     FINDING_DEDUPED = "finding_deduped"
+    # 8단계가 **재현을 시도하지 못한** `validated` Finding 하나 (이슈 #326). 내는 곳은
+    # `nodes/validate.run`이고 **상태를 안 바꾼다** - 전이도 `policy_decision`도 없으므로
+    # 「제거율 — Tool」의 분자(`repro_failed`)에도 분모에도 안 든다.
+    # `reason`: `poc_runs_in_the_pov_loop`(신호가 `poc`를 가리키는데 이 노드는 `poc`를
+    # 안 돌린다) · `tool_produced_no_measurement`(`build`·`asan`이 `ok=False` - 컴파일·링크가
+    # 안 됐거나 대상이 안 떴다. 원인 Evidence의 `exit_code`·`error`를 싣는다).
+    # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
+    REPRO_NOT_MEASURED = "repro_not_measured"
 
 
 class TraceEvent(HarnessModel):

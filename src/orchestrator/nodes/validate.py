@@ -2,6 +2,21 @@
 
 전이 표 F-10(재현 성공, E4) / F-10b(재현 성공, E4 미만) / F-11(실패) / F-12(tool_policy 위반).
 
+## ⏵ 2026-10-13 (이슈 #326) — 이 경로는 서빙 점수 경로 밖이다 (선택지 (c))
+
+여기서 도구를 고르는 것은 `build`와 `asan`뿐이고, 둘 다 **우리 clang이 대상을 직접 컴파일한다**
+(`container_tools.plan`이 `repro_spec.steps`를 무시하고 소스를 자체 링크한다). ADR 0014가 대상
+빌드를 우리가 짓지 않기로 했고 CyberGym 번들은 우리 clang으로 컴파일되지 않는다(#507) - 그래서
+**그 번들에서는 이 경로가 E4를 못 낸다.** 서빙 점수 경로는 PoV 루프의 `poc`(과제 이미지에 PoC를
+먹인다)이고, 이 노드는 `poc`를 **돌리지 않는다**(입력 바이트를 실을 길이 없어 항상 거절당했다).
+
+**측정하지 못한 것을 재현 실패로 세지 않는다.** 도구 층이 측정을 못 낸 건(`build`·`asan`이
+`ok=False`이고 종료 코드가 있다 - 컴파일·링크가 안 됐거나 대상이 안 떴다)과 `poc` 신호는 F-11로
+내리지 않고 `validated`에 그대로 둔다(`repro_not_measured` 이벤트 + Evidence는 `ok=False`로 남는다).
+F-11을 쓰면 「도구 검증 제거율」(`trace.py`)의 분자가 하네스 한계로 부풀고 보고서에는 Critic을
+통과한 Finding이 재현에 실패한 것으로 찍힌다. **PoV 풀에는 영향이 없다** - 러너가 8단계 진입 시점의
+`validated` 목록으로 PoV 대상을 잡는다(`runner._analyze`).
+
 **`expected_signal` 매칭은 도구 선택 시점에 한다.** 게이트는 `expected_signal`을 안 보고 E4를
 `Evidence.ok`·`kind`·`exit_code`로만 가르므로(계획 §2), "asan을 돌렸는데 기대 신호는
 PoC 크래시였다" 같은 어긋남이 `ok=True`·비-0 종료 코드로 남으면 E4가 잘못 성립한다. 그래서
@@ -46,14 +61,15 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence
 
 BUILD_TOOL = "build"
+# 기대 신호가 가리키는 도구이지만 이 노드는 **돌리지 않는다**(모듈 docstring) - PoV 루프의 몫이다.
+POC_TOOL = "poc"
 
 # 거절한 요청의 Evidence에 찍는 `kind` — `adapters.fake_tools.TOOL_KINDS`의 사본이다(노드는
-# 어댑터를 import하지 못한다). 이 노드가 부르는 도구만 든다 — `tests/test_nodes.py`가 화이트리스트와
-# 대조한다.
+# 어댑터를 import하지 못한다). 이 노드가 **부르는** 도구만 든다(`POC_TOOL`은 안 부른다) —
+# `tests/test_nodes.py`가 화이트리스트와 대조한다.
 REFUSED_KINDS: dict[str, EvidenceKind] = {
     BUILD_TOOL: EvidenceKind.BUILD,
     "asan": EvidenceKind.SANITIZER,
-    "poc": EvidenceKind.POC_RUN,
 }
 # 거절한 Evidence의 관측 시각 — 어댑터가 모든 Evidence에 찍는 고정 시각과 같다(`fake_tools`·
 # `container_tools`의 기본값). 아무것도 관측하지 않았고 재현 실행에서 같은 값이 나와야 한다.
@@ -63,12 +79,13 @@ _REFUSED_AT = datetime(2026, 9, 1, tzinfo=UTC)
 # 화이트리스트 안에 있어야 한다. 위에서부터 처음 걸리는 것을 쓴다.
 _SIGNAL_TOOLS: tuple[tuple[tuple[str, ...], str], ...] = (
     (("sanitizer", "asan", "addresssanitizer", "ubsan", "msan"), "asan"),
-    (("poc", "exploit", "crash", "segfault"), "poc"),
+    (("poc", "exploit", "crash", "segfault"), POC_TOOL),
 )
 
 
 def tool_for(expected_signal: str) -> str | None:
-    """기대 신호를 만들 수 있는 도구. 없으면 `None`(= tool_policy 밖 요구)."""
+    """기대 신호를 만들 수 있는 도구. 없으면 `None`(= tool_policy 밖 요구). `POC_TOOL`은 분류일 뿐
+    `run`이 돌리지 않는다."""
     lowered = expected_signal.lower()
     for needles, tool in _SIGNAL_TOOLS:
         if any(needle in lowered for needle in needles):
@@ -102,7 +119,7 @@ def run(
     tool = tool_for(spec.expected_signal)
     with ctx.stage(Stage.VALIDATE):
         produced: list[Evidence] = []
-        if tool is not None:
+        if tool is not None and tool != POC_TOOL:
             produced.append(_call(ctx, BUILD_TOOL, [BUILD_TOOL, *spec.steps], workdir, finding))
             produced.append(_call(ctx, tool, [tool, *spec.steps], workdir, finding))
         finding = attach_observed(ctx, finding, produced)
@@ -127,6 +144,22 @@ def run(
             missings,
             stage=Stage.VALIDATE,
         )
+        unmeasured = _not_measured(tool, produced)
+        if unmeasured is not None:
+            reason, culprit = unmeasured
+            # 상태를 안 바꾼다 - 전이도 `policy_decision`도 없다. 「제거율 — Tool」의 분자(F-11)에도
+            # 분모(F-10·10b·11)에도 안 든다: 재현을 **시도하지 못한** 건이다(모듈 docstring).
+            ctx.trace.emit(
+                EventKind.REPRO_NOT_MEASURED,
+                stage=Stage.VALIDATE,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                tool=tool,
+                reason=reason,
+                exit_code=culprit.exit_code if culprit is not None else None,
+                error=culprit.error if culprit is not None else None,
+            )
+            return finding, produced
         action = ctx.decide(
             RoutingRequest(
                 point=DecisionPoint.REPRO_RESULT,
@@ -141,6 +174,30 @@ def run(
             )
         )
         return ctx.apply_action(finding, action, stage=Stage.VALIDATE), produced
+
+
+# `repro_not_measured`의 `reason`. trace를 읽는 쪽이 가르는 값이다.
+NOT_MEASURED_POC = "poc_runs_in_the_pov_loop"
+NOT_MEASURED_TOOL = "tool_produced_no_measurement"
+
+
+def _not_measured(tool: str | None, produced: list[Evidence]) -> tuple[str, Evidence | None] | None:
+    """이 건이 **재현을 시도하지 못했으면** `(사유, 원인 Evidence)`, 아니면 `None`.
+
+    - `poc` 신호: 이 노드는 `poc`를 안 돌린다(입력 바이트를 실을 길이 없다 - PoV 루프의 몫).
+    - 도구 층이 측정을 못 낸 Evidence: `ok=False`이고 `exit_code`가 있다.
+      `container_tools.judge()`의
+      계약이 그것이다 - `build`·`asan`의 `ok=False`는 컴파일·링크가 안 됐거나 대상이 안 떴다는
+      뜻이고, 대상이 떠서 비-0으로 끝난 것은 `ok=True`다(크래시는 신호). **종료 코드가 `None`인
+      것은 안 센다** - 모델이 쓴 `steps`가 예약 자리표와 같아 우리가 요청을 안 보낸 `_refuse`이고,
+      그것은 명세의 실패라 기존대로 F-11이다.
+    """
+    if tool == POC_TOOL:
+        return NOT_MEASURED_POC, None
+    for evidence in produced:
+        if not evidence.ok and evidence.exit_code is not None:
+            return NOT_MEASURED_TOOL, evidence
+    return None
 
 
 def _call(ctx: RunContext, tool: str, argv: list[str], workdir: str, finding: Finding) -> Evidence:
