@@ -107,8 +107,8 @@ STATUS_NOT_REACHED = "not_reached"
 # **전순서**이고, 서로 다른 PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도
 # 없앴다. 지우지 않고 두면 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
 # 「최종 지정 가능한 후보(모델 `submit`)가 없다」이지 「PoC가 0건」이 아니다 - 중간 gen이 vul에
-# 나갔어도 후보가 아니라 이 사유다. 둘은 매니페스트의 `vul_submitted`·`vul_candidates`가
-# 가른다(#620).
+# 나갔어도 후보가 아니라 이 사유다. 둘은 매니페스트의 `vul_intermediate`(중간 gen 시도 수 - 실패한
+# 것도 센다. `vul_submitted`는 성공한 제출만 세서 못 가른다)가 가른다(#620).
 REASON_NO_POC = "no_poc"
 # 제출 전에 거부한 0바이트 PoC의 사유 — 제출이 **없었으므로** 실패로 세지 않는다(이슈 #423).
 ERROR_EMPTY_POC = "empty_poc"

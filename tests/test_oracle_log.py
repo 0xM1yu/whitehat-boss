@@ -75,8 +75,20 @@ def test_no_poc_with_intermediate_submissions_is_told_apart_by_the_counts() -> N
 
     assert nothing.none_reason() == intermediates.none_reason() == oracle_log.REASON_NO_POC
     assert nothing.summary()["vul_submitted"] == 0
+    assert "vul_intermediate" not in nothing.summary()
     summary = intermediates.summary()
     assert (summary["vul_submitted"], summary["vul_candidates"]) == (4, 0)
+    assert summary["vul_intermediate"] == 4
+
+    # 실패한 중간 gen만 있는 run은 vul_submitted가 0이다 - 가르는 키는 vul_intermediate다.
+    failed = OracleLedger(wired=True)
+    for n in range(2):
+        failed.add_attempt(
+            oracle_log.vul_failed(f"find_{n}", b"x", RuntimeError("down"), 1, designatable=False)
+        )
+    summary = failed.summary()
+    assert failed.none_reason() == oracle_log.REASON_NO_POC
+    assert (summary["vul_submitted"], summary["vul_intermediate"]) == (0, 2)
 
 
 class _RateLimited(RuntimeError):
