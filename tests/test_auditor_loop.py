@@ -1918,19 +1918,40 @@ def test_the_probe_observation_reports_the_input_it_fed_and_no_longer_says_it_wa
     assert f"input_bytes={len(poc)} input_sha256={hashlib.sha256(poc).hexdigest()}" in head
     assert "evidence_id=" in head and head.index("evidence_id=") < head.index("input_bytes=")
     assert "NOT given" not in fed and "does not depend" not in fed
+    assert "not read by" not in head  # poc는 입력을 읽는 도구다 — 머리줄이 그대로다
     hop = next(h for h in _hops(ctx) if h.data["action"] == "probe")
     assert hop.data["poc_sha256"] == hashlib.sha256(poc).hexdigest()
     assert hop.data["poc_bytes"] == len(poc)
 
 
+@pytest.mark.parametrize("tool", ["asan", "gdb", "build"])
+def test_the_probe_observation_says_a_non_poc_tool_did_not_read_the_input_it_was_fed(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+) -> None:
+    """`poc`가 아닌 도구에 입력을 실었으면 `input_*` 바로 뒤에 *「(not read by this tool …)」* 사실
+    문구가 붙는다 — `input_*`는 「실었다」이지 「읽혔다」가 아니다(컨테이너에서 읽는 도구는 `poc`
+    하나, 이슈 #507). 지시가 아니라 사실이고, `error=`가 있으면 그 앞이 아니라 **뒤**다."""
+    poc = assemble_poc(_spec())
+
+    _spy, _calls, fed = _run_one_probe(
+        ctx, monkeypatch, tmp_path, _probe_action(tool, spec=_spec())
+    )
+
+    head = fed.splitlines()[1]
+    fed_line = f"input_bytes={len(poc)} input_sha256={hashlib.sha256(poc).hexdigest()}"
+    assert f"{fed_line} (not read by this tool — only poc reads the input;" in head
+    assert head.endswith("asan·gdb·build run our own build)") or "error=" in head
+
+
 def test_the_probe_observation_has_no_input_line_without_a_spec(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """`spec` 없는 `probe`의 관측에는 입력 줄도 옛 "NOT given" 줄도 없다."""
-    _spy, _calls, plain = _run_one_probe(ctx, monkeypatch, tmp_path, _probe_action("poc"))
+    """`spec` 없는 `probe`의 관측에는 입력 줄도 「안 읽는다」 문구도 옛 "NOT given" 줄도 없다
+    (읽히지 않는 도구여도 실은 것이 없으면 말할 것이 없다)."""
+    _spy, _calls, plain = _run_one_probe(ctx, monkeypatch, tmp_path, _probe_action("asan"))
 
     assert "input_bytes" not in plain and "input_sha256" not in plain
-    assert "NOT given" not in plain
+    assert "not read by" not in plain and "NOT given" not in plain
 
 
 # --- probe 관측 — 로그가 없는 것과 로그가 빈 것 · 인용 ----------------------------------

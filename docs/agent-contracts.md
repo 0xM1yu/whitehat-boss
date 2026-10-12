@@ -336,10 +336,8 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    **`SOURCE`와 겹치는 조각이 올 수 있다**. 훅이 없는 run(resolver 미배선)은 정지하지 않고 「조회가 없다」는
    관측을 받는다.
 
-3. **`probe` 도구 여섯, 그리고 `spec`은 도구 입력으로 실린다**(⏵ 2026-10-13(#419) — 전에는 ⚠ *이 경로는
-   입력을 안 싣는다*였다: `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를 안 실었다. 이제 `spec`을
-   `assemble_poc`으로 조립해 PoV `run_tool`과 같은 계약으로 싣는다 — `[tool, INPUT_PLACEHOLDER]` +
-   `input_bytes`, `spec`이 없으면 `[tool]`).
+3. **`probe` 도구 여섯, 그리고 ⚠ 이 경로는 입력을 안 싣는다**(⏵ 2026-10-09 — 컨테이너 `poc`는 받을 수
+   **있게** 됐지만 `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를 안 싣는다. 싣게 하는 것은 이슈 #419).
    `tool`은 닫힌 `Literal`이라 모델 문자열이 아니라
    **이 여섯 이름 중 하나만** argv에 들어간다. `index`는 화이트리스트에 있으나 일부러 뺐다 — 코드 열람은
    `lookup`의 일이다.
@@ -353,33 +351,36 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    | `gdb` | `crash` | 새로 빌드한 `gdb.bin`을 고정 `gdb.batch`로 실행 |
    | `poc` | `poc_run` | ⏵ 2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 과제 `-vul` 이미지를 돌리고 PoC를 `/tmp/poc`로 바인드한다 |
 
-   ⏵ **2026-10-13(#419) — 아래 단락은 이제 낡았다(그 이전의 기록이다).** 노드는 `spec`을 싣는다. 홉 이벤트는
-   `poc_sha256`·`poc_bytes`를 남기고(`tool_call` 이벤트도 `input_sha256`·`input_bytes`를 따로 싣는다)
-   관측 머리줄에는 `input_bytes=<크기> input_sha256=<hex>`가 붙는다(`_probe_observation` — PoV 관측의
-   `last_gen_bytes`·`last_gen_sha256`과 같은 모양). *"recorded but NOT given to the tool"* 줄은 없다.
-   ⚠ **싣는 것과 읽히는 것은 다르다** — 컨테이너에서 입력을 읽는 도구는 `poc` 하나다(아래 ⏵ 2026-10-09).
-   ⚠ **동결된 프롬프트(v8~v14)와 그 요청 스키마의 설명은 아직 "안 싣는다"고 말한다** — 요청 payload라
-   고칠 수 없고 다음 판(auditor v15)에서 고친다. 그 전까지 모델은 `spec`을 안 보낸다고 읽는다(이슈 #617).
-   반복 판정의 키(`_request_key`)도 아직 도구 이름만 본다 — `spec`만 바꾼 `probe`를 같은 요청으로 읽는다.
-   같은 판과 같이 움직인다.
-
-   ⚠ (2026-10-13 이전) **이 경로(Auditor `probe`)는 모델이 준 바이트를 도구에 안 실었다.** `probe`가 `spec`을
-   싣더라도 노드는 `assemble_poc`으로 조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘겼다 — 관측은
-   `spec`의 함수가 아니었다(저장소 코드만의 함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was
-   recorded but NOT given to the tool"* 줄이 붙었다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가
-   구성한 입력으로 돌렸더니」라고 쓴다** — 그 문장은 거짓이고 학습 궤적에 거짓이 들어간다
-   ([D99](open-questions/D/D99.md) 「선행 둘」 ②). 그 사실을 거꾸로 읽어도 같다: 이제 싣는데 프롬프트가 안
-   싣는다고 적으면 모델이 `spec`을 안 보낸다.
+   ⚠ **이 경로(Auditor `probe`)는 모델이 준 바이트를 도구에 안 싣는다.** `probe`가 `spec`을 싣더라도 노드는
+   `assemble_poc`으로 조립해 sha256과 길이만 홉 이벤트에 남기고 도구에는 안 넘긴다 — 관측은 `spec`의 함수가
+   아니다(저장소 코드만의 함수). 모델이 `spec`을 보냈으면 관측에 *"the spec you sent was recorded but NOT
+   given to the tool"* 줄이 붙는다. **프롬프트가 이 사실을 먼저 안 적으면 모델이 「내가 구성한 입력으로
+   돌렸더니」라고 쓴다** — 그 문장은 거짓이고 학습 궤적에 거짓이 들어간다
+   ([D99](open-questions/D/D99.md) 「선행 둘」 ②).
 
    ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 이유가 바뀌었다.** 컨테이너
    `poc`는 이제 입력을 **먹일 수 있고**(과제 `-vul` 이미지의 `/tmp/poc`) 8단계 PoV 경로가 그것을 쓴다.
-   이 경고가 Auditor 경로에서 여전히 참인 이유는 **도구의 능력이 아니라 이 노드가 안 싣는다는 것**이었다
-   (`nodes/auditor._probe`의 `ToolArgs`에 `input_bytes`가 없었다). 그래서 `probe(poc)`는 입력 없는 호출이라
-   실패 Evidence였다 — 싣게 하는 것은 이슈 #419였다(⏵ 2026-10-13: 섰다, 위). 🔴 **`asan`·`gdb`·`build`는 8단계에서도 안 받는다**:
+   이 경고가 Auditor 경로에서 여전히 참인 이유는 **도구의 능력이 아니라 이 노드가 안 싣는다는 것**이다
+   (`nodes/auditor._probe`의 `ToolArgs`에 `input_bytes`가 없다). 그래서 `probe(poc)`는 입력 없는 호출이라
+   실패 Evidence다 — 싣게 하는 것은 이슈 #419다. 🔴 **`asan`·`gdb`·`build`는 8단계에서도 안 받는다**:
    셋을 바꾸려면 우리가 대상을 빌드해야 하고 그것이 기각된 A안이다(이슈 #507).
    ⚠ 관측 헤더의 `exit`는 크래시의 **대용 지표일 뿐**이다 — 비-0이 곧 「그 위치에서 터졌다」가 아니다
    (`src/orchestrator/gate.py` 모듈 docstring, 이슈 #232). 프롬프트가 `exit`≠0을 근거 문장으로 승격시키지
    않게 한다.
+
+   ⏵ **2026-10-13(#419) — 위 셋(머리의 ⚠·⚠ 단락·⏵ 2026-10-09 단락)은 이제 그 이전의 기록이다.** 노드는 `spec`을
+   싣는다: `nodes/auditor._probe`가 `spec`을 `assemble_poc`으로 조립해 PoV `run_tool`과 같은 계약으로 보낸다 —
+   `[tool, INPUT_PLACEHOLDER]` + `ToolArgs.input_bytes`, `spec`이 없으면 `[tool]`. 홉 이벤트는
+   `poc_sha256`·`poc_bytes`를 남기고(`tool_call` 이벤트도 `input_sha256`·`input_bytes`를 따로 싣는다)
+   관측 머리줄에는 `input_bytes=<크기> input_sha256=<hex>`가 붙는다(`_probe_observation` — PoV 관측의
+   `last_gen_bytes`·`last_gen_sha256`과 같은 모양). *"recorded but NOT given to the tool"* 줄은 없다.
+   ⚠ **싣는 것과 읽히는 것은 다르다** — 컨테이너에서 입력을 읽는 도구는 `poc` 하나다(위 ⏵ 2026-10-09).
+   `poc`가 아닌 도구에 실은 입력은 머리줄에 *"not read by this tool"* 사실 문구가 붙는다.
+   ⚠ **동결된 프롬프트(v8~v14)와 그 요청 스키마의 설명은 아직 "안 싣는다"고 말한다** — 요청 payload라
+   고칠 수 없고 다음 판(auditor v15)에서 고친다. 그 전까지 모델은 `spec`을 안 보낸다고 읽는다(이슈 #617).
+   반복 판정의 키(`_request_key`)도 아직 도구 이름만 본다 — `spec`만 바꾼 `probe`를 같은 요청으로 읽는다.
+   같은 판과 같이 움직인다. 그리고 "프롬프트가 이 사실을 안 적으면 모델이 거짓을 쓴다"는 위 경고는 거꾸로도
+   같다: 이제 싣는데 프롬프트가 안 싣는다고 적으면 모델이 `spec`을 안 보낸다.
 
 4. **관측 형식.** 도구·조회 결과는 **다음 홉의 user 턴 본문**으로 온다. prefix(역할 지시·스키마 서술)와 hop0의
    `SOURCE`·`FACTS`는 hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청을
@@ -426,8 +427,11 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    가르는 것은 이 변경이 안 했다. 정지는 셋이다.
    - `answer` → `ANSWERED`. 최종 답을 `Finding`으로 돌려준다 — `Finding`을 싣는 봉투(`AuditorAction`)면 그대로, v10이면 `procedure`를 옮긴 것이다.
    - **직전 홉과 같은 요청**을 또 냄 → `REPEAT_REQUEST`. `lookup`은 `(kind, target)` 집합이 같으면, `probe`는
-     **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 그 값을 안 받는다 — ⏵ **2026-10-13(#419) 그 근거는 낡았다**: 노드가 이제 `spec`을 싣는다. 키는 동결된 프롬프트(v8~v14)의 반복 규칙과 짝이라 도구 이름만 보는 채로 두었고, PoC digest를 더하는 것은 다음 판(auditor v15)과 같이 간다. ⏵ 2026-10-07 「그래서 같은 관측이 온다」는 **과장이라 뺐다**: 나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다). 직전
+     **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 그 값을 안 받는다 — ⏵ 2026-10-07 「그래서 같은 관측이 온다」는 **과장이라 뺐다**: 나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다). 직전
      홉하고만 비교한다 — A,B,A는 안 잡히고 상한이 막는다.
+     ⏵ **2026-10-13(#419) — 위 괄호 「`spec`만 바꿔도 도구가 그 값을 안 받는다」의 근거는 낡았다**: 노드가
+     이제 `spec`을 싣는다. 키는 동결된 프롬프트(v8~v14)의 반복 규칙과 짝이라 도구 이름만 보는 채로 두었고,
+     PoC digest를 더하는 것은 다음 판(auditor v15)과 같이 간다.
    - 상한까지 조사만 함(hop N이 `answer`가 아님) → `MAX_HOP`.
 
    뒤 둘은 `Finding`이 없다 — **그 홉의 조사는 돌리지 않고** `AuditorHopLimit`을 올리며 후보는 `queued`에 둔다
