@@ -77,6 +77,11 @@ class Resolution(HarnessModel):
     # 지금은 `Resolution`에만 실린다(읽는 코드 0) — trace 반영은 후속.
     # 기본값 `True`는 `index_available`과 같은 이유다(이 필드 전의 생성자 호출을 그대로 둔다).
     writes_available: bool = True
+    # `followup_text`에서 조각 뒤·꼬리 앞에 **실제로 렌더된** 알림 줄들의 순서(싣다 만 `Already in
+    # SOURCE`와 그 생략 한 줄, 그리고 맨 끝에 `unfilled`의 `text` 전부). 글자 상한 때문에
+    # `already`의 앞쪽만 실리므로 `already`·`unfilled`만으로는 어느 줄이 실렸는지 못 가린다.
+    # `None`은 이 필드가 없던 생성자 호출이다 - 읽는 쪽이 `(*already, *unfilled 줄)`로 본다.
+    alert_lines: tuple[str, ...] | None = None
 
     @property
     def fixable_count(self) -> int:

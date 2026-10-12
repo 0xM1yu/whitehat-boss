@@ -62,11 +62,17 @@ _HOP_OBSERVATIONS_NOTE = (
     "These are not Evidence entries; cite only Evidence IDs listed in FACTS.evidence."
 )
 
-# 글자/토큰 **최악 비** 1.22 — `config/budgets.yaml`의 `auditor_tool_hops` 주석과
-# `nodes/auditor._LOOKUP_MAX_CHARS` 주석이 같은 수로 셈한다(옛 Auditor `qwen3.6-35b-a3b` 프롬프트
-# v1의 147호출 실측 1.22~3.32 — `runner._AUDITOR_SOURCE_CHARS` 주석). ⚠ **그 실측은 Auditor 좌석의
-# 것이다.** 이 좌석(gpt-oss)의 비는 안 쟀다 — 그래서 이 값은 「넘을 수 있다」를 가르는 보수적
-# 계산값이고, 넘는다는 판정도 넘지 않는다는 판정도 실측이 아니다.
+# 글자/토큰 **최악 비** 1.22 - 옛 Auditor `qwen3.6-35b-a3b` 프롬프트 v1의 147호출 실측 1.22~3.32에서
+# 가장 낮은 값이다(`runner._AUDITOR_SOURCE_CHARS` 주석 · [스모크 보고서](docs/experiments/harness/
+# 2026-09-26-slice-smoke-atom.md) 표 「비가 가장 낮은 호출」). `config/budgets.yaml`의
+# `auditor_tool_hops` 주석과 `nodes/auditor._LOOKUP_MAX_CHARS` 주석이 같은 수로 셈한다.
+# ⚠ **그 값은 Auditor 좌석의 것을 이 좌석에 빌려 온 보수적 근사다.** 이 좌석(gpt-oss-20b)의 비는
+# 따로 잰 것이 있다 - 2026-10-11 실서빙 run `run_20261011_0001`(v6, 홉 관측 없는 요청)의 Critic 호출
+# 다섯: find_0003 프롬프트 69,788자 ↔ 서버가 센 `input_tokens` 22,514 = **3.10**(계산값 - 저장된
+# `prompts/0031_critic.md`의 글자 수 ÷ trace `model_call`의 토큰 수), 같은 run의 나머지 넷은
+# 3.10·3.10·4.04·3.76이다(`artifacts/`는 gitignore라 커밋된 출처가 없다). 그래서 1.22는 이 좌석의
+# 실제 비보다 훨씬 낮은 하한이고 「넘을 수 있다」를 넉넉히 잡는 쪽이다 - 넘는다는 판정도 넘지
+# 않는다는 판정도 홉 관측을 실은 요청에서 잰 것이 아니다.
 _WORST_CHARS_PER_TOKEN = 1.22
 
 # 상한에 밀려 7단계에 못 올라간 사유. `runner._REASON_OVER_MAX`("over_candidate_max")와

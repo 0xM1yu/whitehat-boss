@@ -144,7 +144,7 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence, ReproSpec
-from src.schemas.need_evidence import Resolution, ResolveQuery
+from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
 from src.schemas.scout_response import RequestedContext
 
 ROLE = Role.AUDITOR
@@ -1138,43 +1138,99 @@ def critic_safe_observation(text: str, resolution: Resolution | None) -> str:
       없이 `<non-vocabulary>`와 위치만 남긴다.
     - 조각 머리의 `type of <target>` 라벨: `target`에 같은 문자집합 규칙을 건다.
 
-    줄을 **텍스트로 파싱하지 않고** `resolution`의 구조값으로 정확 일치 치환한다 - 모델 문자열에
-    줄바꿈이나 사유 문구를 심어도 파서를 속일 길이 없다. 남는 것은 문자집합으로 걸러진 식별자뿐이다
-    (모델이 고른 식별자라는 사실은 남는다). 하네스가 렌더한 나머지(코드 조각·상태 줄·머리 문구)는
-    그대로다.
+    **바꿀 자리를 글에서 찾지 않고 렌더 구조의 위치로 정한다.** 관측은
+    `조각들 + 알림 줄들 + 상태 줄`(`_lookup_observation`)이고 알림 줄들은
+    `resolution.alert_lines` 그대로다. (1) 상태 줄은 **마지막** `\\n\\nlookup requested=`로 떼고
+    (그 뒤에는 모델 글이 없다), (2) 알림 줄들은 그 바로 앞에서 `alert_lines`를 이은 글과 **통째로**
+    맞춰 떼며, (3) 조각 머리는 `resolution.blocks` 순서대로 앞 머리가 **끝난 자리부터** 찾는다.
+    줄마다 `text.replace(줄, 안전한 줄)`을 하면 한 줄이 다른 줄의 모델 글 속에 통째로 들어 있을 때
+    (요청 (b)의 `target`이 요청 (a)의 렌더 줄을 포함) 먼저 바꾼 쪽이 나중 줄의 글을 깨뜨려 그 줄의
+    모델 글이 그대로 남았다. 위치로 자르면 모델 글이 무엇이든 다른 줄의 경계가 되지 못한다.
+    **보장:** 알림 줄은 전부, 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 안전한 줄로
+    바뀐다(요청 순서와 무관). 구조를 못 찾으면(렌더러 모양이 바뀌었다) 가리지 못한 채 주지 않고
+    `PromptError`로 선다. **보장 밖:** 코드 조각 본문(저장소 원문)과 하네스 문구는 그대로고,
+    문자집합으로 걸러진 식별자는 남는다(모델이 고른 식별자라는 사실은 남는다).
     `resolution`이 `None`(조회 안 함·실패)이면 모델 문자열이 없어 `text` 그대로다.
     """
     if resolution is None:
         return text
-    for item in resolution.unfilled:
-        kind = item.kind if item.kind in _CRITIC_KINDS else _REDACTED_KIND
-        safe = (
-            f"Not resolved: {kind}:{_safe_identifier(item.target)} (reason: {item.reason.value})."
+    unfilled = resolution.unfilled
+    alerts = resolution.alert_lines
+    if alerts is None:  # 이 필드가 없던 생성자 호출 - 줄은 `already`, `unfilled` 순이었다
+        alerts = (*resolution.already, *(item.text for item in unfilled))
+    split = len(alerts) - len(unfilled)
+    if split < 0 or alerts[split:] != tuple(item.text for item in unfilled):
+        raise PromptError("resolver alert_lines 끝이 unfilled 줄과 다르다 - 사본을 못 만든다")
+    if not alerts and not any(b.label.startswith(_TYPE_OF_PREFIX) for b in resolution.blocks):
+        return text
+    cut = text.rfind(_STATUS_ANCHOR)
+    joined = "\n\n".join(alerts)
+    if cut < 0 or not text[:cut].endswith(joined):
+        raise PromptError(
+            "조회 관측에서 알림 줄·상태 줄 자리를 못 찾았다 - `_lookup_observation`의 모양이 "
+            "바뀌었다. 모델 글을 가리지 못한 채 Critic에 줄 수 없다"
         )
-        text = text.replace(item.text, safe)
-    for line in resolution.already:
-        text = text.replace(line, _safe_already(line))
-    for block in resolution.blocks:
+    head = text[: cut - len(joined)]
+    already = frozenset(resolution.already)
+    safe_alerts = [_safe_already(line) if line in already else line for line in alerts[:split]]
+    safe_alerts += [_safe_unfilled(item) for item in unfilled]
+    return _safe_headers(head, resolution.blocks) + "\n\n".join(safe_alerts) + text[cut:]
+
+
+_STATUS_ANCHOR = "\n\nlookup requested="
+
+
+def _safe_unfilled(item: Unfilled) -> str:
+    kind = item.kind if item.kind in _CRITIC_KINDS else _REDACTED_KIND
+    return f"Not resolved: {kind}:{_safe_identifier(item.target)} (reason: {item.reason.value})."
+
+
+def _safe_headers(head: str, blocks: tuple[RetrievedBlock, ...]) -> str:
+    """조각 머리 `/* --- retrieved: <name> (<label>) --- */`를 블록 순서대로 한 번씩 찾아 바꾼다.
+
+    찾기는 앞 머리가 끝난 자리부터다 - 모델 글이 든 라벨(`type of <target>`) 속에 다른 머리 모양이
+    있어도 이미 지나간 자리라 다시 안 잡힌다.
+    """
+    out: list[str] = []
+    pos = 0
+    for block in blocks:
+        header = f"/* --- retrieved: {block.name} ({block.label}) --- */"
+        start = head.find(header, pos)
+        if start < 0:
+            raise PromptError(f"조각 머리를 못 찾았다: {block.name!r} - 렌더 모양이 바뀌었다")
+        end = start + len(header)
         if block.label.startswith(_TYPE_OF_PREFIX):
-            header = f"/* --- retrieved: {block.name} ({block.label}) --- */"
             label = _TYPE_OF_PREFIX + _safe_identifier(block.label[len(_TYPE_OF_PREFIX) :])
-            text = text.replace(header, f"/* --- retrieved: {block.name} ({label}) --- */")
-    return text
+            header = f"/* --- retrieved: {block.name} ({label}) --- */"
+        out.append(head[pos:start] + header)
+        pos = end
+    out.append(head[pos:])
+    return "".join(out)
 
 
 def _safe_identifier(value: str) -> str:
     return value if _CRITIC_IDENTIFIER.fullmatch(value) else _REDACTED_TARGET
 
 
+# `Already in SOURCE: <kind>:<name> at <file>:L<a>-<b>.` - 이름은 식별자 문자집합이라 공백이 없다.
+# 그래서 이름 뒤 **첫** ` at `이 경계이고 파일 경로가 ` at `을 품어도 위치는 끝까지 남는다.
+_ALREADY_LINE = re.compile(
+    r"Already in SOURCE: ([^:]*):([A-Za-z0-9_:.$]{1,64}) at (.+:L\d+-\d+\.)", re.DOTALL
+)
+_ALREADY_WHERE = re.compile(r".+:L\d+-\d+\.", re.DOTALL)
+
+
 def _safe_already(line: str) -> str:
     """`Already in SOURCE: <kind>:<name> at <file>:L<a>-<b>.` 한 줄의 Critic용 사본."""
-    head, sep, where = line.rpartition(" at ")
-    if not sep:  # 우리가 렌더한 모양이 아니다 - 무엇이 실렸는지 모르니 통째로 가린다
-        return f"{_ALREADY_PREFIX}{_REDACTED_KIND}"
-    kind, _, name = head.removeprefix(_ALREADY_PREFIX).partition(":")
-    if kind in _CRITIC_KINDS and _CRITIC_IDENTIFIER.fullmatch(name):
-        return line
-    return f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
+    parsed = _ALREADY_LINE.fullmatch(line)
+    if parsed:
+        kind, _, where = parsed.groups()
+        return line if kind in _CRITIC_KINDS else f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
+    # 이름이 식별자가 아니다 - 이름은 버리고, 끝의 위치가 우리 모양이면 위치만 남긴다.
+    _, _, where = line.rpartition(" at ")
+    if _ALREADY_WHERE.fullmatch(where):
+        return f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
+    return f"{_ALREADY_PREFIX}{_REDACTED_KIND}"
 
 
 def _lookup_observation(
