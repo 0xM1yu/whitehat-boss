@@ -1663,6 +1663,7 @@ def run(args: argparse.Namespace) -> int:
         device=args.device,
         slices_path=args.slices,
         vuln_description=description,
+        keep_responses=tuple(args.keep_responses),
         started_at=started_at,
     )
     # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
@@ -2145,6 +2146,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="CyberGym 과제 description.txt 경로. 주면 캡슐에 vuln_description 섹션으로 실려 "
         "Scout·Auditor·PoV가 본다(PoV 배선). 번들을 통째로 주려면 --task-dir를 쓴다 "
         "(그러면 아카이브까지 풀고 설명도 거기서 읽는다) - 둘을 같이 주지 않는다",
+    )
+    run_cmd.add_argument(
+        "--keep-responses",
+        nargs="+",
+        choices=PROMPTED_ROLES,
+        default=(),
+        metavar="ROLE",
+        help="이 역할들의 성공한 호출도 응답 원문을 prompts/에 남긴다(#612). 안 주면 스키마 실패 "
+        "시도의 원문만 남는다. Auditor 응답은 수십만 자일 수 있다. --dry-run에서는 prompts/가 "
+        "없어 조용히 무효다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")

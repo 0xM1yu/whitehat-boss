@@ -354,6 +354,10 @@ class RunRecord(UtcModel):
     # run이고 이 필드 이전의 manifest도 같다 — 둘 다 「제출 안 함」이라 구별할 이유가 없다.
     # 그래서 이 필드를 늘려도 manifest 하위호환이 깨지지 않는다.
     oracle: dict[str, str | int | None] | None = None
+    # `run --keep-responses`로 성공 응답까지 남기게 한 역할(#612). 스위치가 `prompts/` 파일 집합과
+    # `model_call.response_refs` 키를 바꾸므로 박제한다. `None` = 안 켰다(이 필드 이전의 manifest도
+    # 같다 - `slicer`와 같은 관용구라 하위호환이 안 깨진다).
+    keep_responses: list[str] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime
