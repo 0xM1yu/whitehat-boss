@@ -11,6 +11,7 @@
 import errno
 import hashlib
 import json
+import re
 import sqlite3
 import tempfile
 from datetime import UTC, datetime
@@ -1042,6 +1043,46 @@ def test_a_refused_state_db_is_left_untouched(tmp_path: Path) -> None:
     with pytest.raises(sqlite_store.StateDbVersionError):
         SqliteStateStore(path)
     assert path.read_bytes() == before
+
+
+def _normalized_ddl_hash(ddl: str) -> str:
+    """DDL에서 SQL 주석(`-- …` · `/* … */`)을 떼고 공백을 한 칸으로 접어 sha256을 낸다.
+
+    식별자·키워드 대소문자는 그대로다.
+    ponytail: 문자열 리터럴 안의 `--`도 주석으로 읽는다 — 이 DDL엔 리터럴이 없다.
+    생기면 토크나이저로 바꾼다.
+    """
+    body = re.sub(r"/\*.*?\*/", " ", ddl, flags=re.DOTALL)
+    body = re.sub(r"--[^\n]*", " ", body)
+    return hashlib.sha256(" ".join(body.split()).encode("utf-8")).hexdigest()
+
+
+# (STATE_DB_SCHEMA_VERSION, `_SCHEMA`의 정규화 해시). **`_SCHEMA`(DDL)를 고쳤으면 같은 커밋에서
+# 판을 올리고 이 짝을 같이 갱신한다.** 주석만 고친 것은 해시를 안 바꾼다. (이슈 #594 (a))
+# ⚠ 이 짝은 **DDL만** 문다. 판을 올려야 하는 주된 경우 — `store_common.KIND_MAP` 모델의
+# 필드·값 집합이 바뀌어 저장된 JSON을 못 읽게 되는 것 — 은 DDL이 그대로라 여기서 안 잡힌다
+# (`sqlite_store.py` 모듈 docstring).
+_PINNED_SCHEMA = (1, "6a9e60b5a393697a75091c7a5bc4f5a5bd1ff057dae198eec3ab3423737cb43a")
+
+
+def test_the_state_db_ddl_and_its_version_move_together() -> None:
+    now = (sqlite_store.STATE_DB_SCHEMA_VERSION, _normalized_ddl_hash(sqlite_store._SCHEMA))
+    assert now == _PINNED_SCHEMA, (
+        f"`_SCHEMA` 또는 `STATE_DB_SCHEMA_VERSION`이 바뀌었다: {now}. DDL을 고쳤으면 판을 올리고 "
+        "`_PINNED_SCHEMA`를 이 값으로 갱신한다(같은 커밋). 판만 올렸다면 짝만 갱신한다."
+    )
+
+
+def test_the_ddl_normalizer_ignores_comments_and_spacing_but_not_a_token() -> None:
+    base = sqlite_store._SCHEMA
+    tail = base.replace("NOT NULL,\n    PRIMARY", "NOT NULL, -- 뒤 주석\n    PRIMARY")
+    commented = ("-- 머리 주석\n" + tail).replace("kind    TEXT", "/* 블록 */ kind\n\n  TEXT")
+    assert commented.count("--") == 2 and "/*" in commented  # 변이가 실제로 일어났다
+    assert _normalized_ddl_hash(commented) == _normalized_ddl_hash(base)
+    # 음성 — 토큰 하나(열 제약)를 바꾸면 해시가 달라진다.
+    changed = base.replace("payload TEXT NOT NULL", "payload TEXT")
+    assert changed != base
+    assert _normalized_ddl_hash(changed) != _normalized_ddl_hash(base)
 
 
 # --- factory ----------------------------------------------------------------

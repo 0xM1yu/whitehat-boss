@@ -24,9 +24,10 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 **판을 올리는 것은 사람이다.** `store_common.KIND_MAP`의 모델이 **한쪽 방향이라도** 못 읽는
 행을 만들게 바뀌면 올린다 — 필드 추가(기본값이 있어도: `extra="forbid"`라 옛 코드가 새 행을 못
 읽는다)·삭제·값 집합을 넓히거나 좁히기·뜻만 바뀐 필드. docstring만 바뀐 것은 아니다.
-올리지 않고 바꾸면 게이트는 공회전한다 — 그것을 잡는 테스트는 없다(JSON 스키마 지문은 못
+올리지 않고 바꾸면 게이트는 공회전한다 — **모델 쪽**을 잡는 테스트는 없다(JSON 스키마 지문은 못
 문다: `Finding.cwe`는 검증이 `None`을 받는데 JSON 스키마는 종전 그대로다 —
-`src/schemas/finding.py`의 `_FindingCwe`).
+`src/schemas/finding.py`의 `_FindingCwe`). **DDL(`_SCHEMA`) 쪽**만 `tests/test_adapters.py`의
+`_PINNED_SCHEMA`(판 ↔ 정규화 해시 짝)가 문다 — 이슈 #594 (a).
 
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
