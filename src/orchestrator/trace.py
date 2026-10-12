@@ -198,7 +198,7 @@ class EventKind(StrEnum):
     # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
     # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
     # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
-    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 크래시 녹음이 0건이라
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 로그 대조가 재생 14건뿐이라
     # 미검증이다.
     # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
     # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
