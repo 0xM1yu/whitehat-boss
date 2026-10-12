@@ -519,11 +519,19 @@ def test_the_v10_prose_counts_the_ways_a_hop_loop_ends_without_an_answer() -> No
     뺀 수와 같고 번호 항목도 그 수다 — 사유가 하나 늘면(예: `nothing_resolved`) 산문이 거짓이 된다.
 
     ⚠ 열거형 독스트링이 「셋이다」를 적는 이유와 같은 규율이다 — 그 수가 움직이면 두 군데가 같이
-    움직인다."""
+    움직인다.
+
+    ⏵ 2026-10-13(#514) `CONTEXT_OVERFLOW`는 뺀다: 그 정지는 **모델이 답을 낸 뒤의 결과가 아니라**
+    서버가 호출을 거절한 것이라 모델 턴에 오는 일이 없고(모델은 그 홉을 못 본다) 프롬프트가 모델에게
+    말할 「끝나는 길」이 아니다. 이 검사는 **모델이 낸 답이 부르는 정지**의 수를 문다."""
     prefix = _prefix()
     word = re.search(r"(\w+) things end the audit", prefix)
     assert word, "산문에 「N things end the audit」이 없다"
-    without_finding = set(AuditorStopReason) - {AuditorStopReason.ANSWERED}
+    # CONTEXT_OVERFLOW는 모델이 낸 답이 부르는 정지가 아니라 서버 거절이다(위 docstring).
+    without_finding = set(AuditorStopReason) - {
+        AuditorStopReason.ANSWERED,
+        AuditorStopReason.CONTEXT_OVERFLOW,
+    }
 
     assert _NUMBER_WORDS[word.group(1).lower()] == len(without_finding)
     lines = prefix.splitlines()
