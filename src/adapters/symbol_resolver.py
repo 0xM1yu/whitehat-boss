@@ -986,4 +986,5 @@ def resolve(
         already=tuple(already),
         truncated=tuple(truncated),
         writes_available=table("writes") is not None,
+        alert_lines=tuple(alert_lines),
     )
