@@ -43,8 +43,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
 「최종 PoC가 없다」가 「최종 PoC가 실패했다」로 읽히면 안 된다. `none`의 `reason`은 **넷**이다:
-`no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 낼 PoC가 없던 것,
-낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
+`no_poc`·`all_vul_submissions_failed`·`rate_limited`(지정할 후보가 **없다** — 모델이 `submit`한
+PoC가 없던 것, 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 서로 다른 사건이다)와
 `grade_unknown`(후보 중에 내부 근거 등급·`confidence`·Critic 판정 계단 중 하나라도 모르는 것이
 있어 **규칙이 거부했다** — `runner._designate_final`. 이름은 등급 미상에서 굳었지만 그 검사는
 셋을 같이 본다 · ⏵ 2026-10-11 판정 계단이 셋째로 들었다).
@@ -106,6 +106,9 @@ STATUS_NOT_REACHED = "not_reached"
 # 사유가 아니고 사슬의 다음 단계로 넘어간다(`runner._designate_final`). 사슬의 끝이 PoC 해시라
 # **전순서**이고, 서로 다른 PoC가 끝까지 동점일 수 없다 — 못 가리는 분기가 없어졌으니 사유도
 # 없앴다. 지우지 않고 두면 어느 run도 못 내는 사유가 문서와 경고에 남는다(닿지 않는 코드다).
+# 「최종 지정 가능한 후보(모델 `submit`)가 없다」이지 「PoC가 0건」이 아니다 - 중간 gen이 vul에
+# 나갔어도 후보가 아니라 이 사유다. 둘은 매니페스트의 `vul_intermediate`(중간 gen 시도 수 - 실패한
+# 것도 센다. `vul_submitted`는 성공한 제출만 세서 못 가른다)가 가른다(#620).
 REASON_NO_POC = "no_poc"
 # 제출 전에 거부한 0바이트 PoC의 사유 — 제출이 **없었으므로** 실패로 세지 않는다(이슈 #423).
 ERROR_EMPTY_POC = "empty_poc"
@@ -371,7 +374,7 @@ class OracleLedger:
         return sum(1 for a in self.attempts if a.error_status == _HTTP_TOO_MANY_REQUESTS)
 
     def none_reason(self) -> str:
-        """지정할 후보가 없을 때의 사유 — 시도가 없었나, 전부 한도에 걸렸나, 전부 실패했나.
+        """지정할 후보가 없을 때의 사유 — 모델 submit이 없었나, 전부 한도에 걸렸나, 전부 실패했나.
 
         셋을 가르는 이유는 같은 「점수 없음」으로 읽힐 만큼 **다른 사건**이기 때문이다(§0).
         """
