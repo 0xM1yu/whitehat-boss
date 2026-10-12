@@ -296,7 +296,8 @@ _SEMGREP_PARTIAL_PARSE = "PartialParsing"
 #
 # - 오류: `PartialParsing` 1건 · `warn` · `apprentice.c:118: 'int' was unexpected`. 118줄은
 #   `private int getvalue(...)`이고 `private`는 `file.h:88`의 `#define private static`이다.
-# - 건너뛴 구간: **148개 · 155줄**(3,344줄 중) - 머리 매크로 93(`private` 84 · `protected` 9) ·
+# - 건너뛴 구간: **148개 · 134줄**(구간 길이 합은 155 - 21줄은 구간 둘이 겹친다 · 3,343줄 중) -
+#   머리 매크로 93(`private` 84 · `protected` 9) ·
 #   `CAST(type, ..)` 문장 44 · 그 밖 11(`#define`·`SIZE_T_FORMAT` 문자열 이음 등). 🔴 **파일
 #   전체가 아니다** - 거의 한 줄씩이고 함수 **본문은 분석된다**.
 # - `--lang c`: **쓸 수 없다.** `--config`와 같이 주면 exit 2(`-e/--pattern and -l/--lang must
