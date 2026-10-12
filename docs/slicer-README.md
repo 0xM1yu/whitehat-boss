@@ -828,7 +828,7 @@ HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파�
 `tools/slicer_v2/` **둘 다**다. 포크가 들고 있던 `tools/slicer` 사본·하네스 코드 사본(`attach/`·`indexer.py`)·정답 주도 도구는
 들이지 않았다.
 
-**정본에 들어간 것 둘 — 둘 다 켜지 않으면 기존 출력이 바이트 단위로 그대로다.**
+**정본에 들어간 것 둘 — 둘 다 켜지 않으면 출력 바이트 동일.** 단 `run_signature`는 `code_hashes`(`slicer*.py` 해시) 때문에 바뀐다 — 이전 체크포인트의 `--resume`/`--export-only`는 `code_hashes` 불일치로 거절된다(`--case-order` 절의 ⚠와 같은 규칙이다).
 
 | 옵션 | 뜻 | 계약 |
 | --- | --- | --- |
