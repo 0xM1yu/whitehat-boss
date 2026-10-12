@@ -3371,3 +3371,31 @@ def test_no_action_rows_means_unmeasured_not_zero(ctx: RunContext) -> None:  # n
     scripted, _ = _parse_run(ctx, [SchemaParseError("bad")], pov_hops=0)
     assert [h.data.get("action") for h in _hops(scripted)] == [None]
     assert _inspect_runs(scripted) is None
+
+
+def test_the_inspect_run_does_not_carry_over_from_one_finding_to_the_next(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """A가 `inspect`로 끝나고 B가 `inspect`로 열어도 두 Finding의 연속은 이어지지 않는다 - 세는
+    칸이 Finding마다 따로다. 칸 하나를 같이 쓰면 B가 1이 아니라 3으로 읽힌다."""
+    state, finding_a = _pov_state(ctx)
+    capsule = state.finding_capsules[finding_a.finding_id]
+    finding_b = finding_a.model_copy(update={"finding_id": finding_a.finding_id + "-b"})
+    def _loop(actions: list[object], finding):  # noqa: ANN202, ANN001
+        # Finding마다 대본·울타리가 따로고 trace는 `ctx`의 것을 같이 쓴다.
+        scripted = _scripted(ctx, actions)
+        scripted.config = scripted.config.transition(
+            thresholds=scripted.config.thresholds.transition(pov_tool_hops=2)
+        )
+        return runner._run_pov_hops(scripted, state, finding, capsule)[1]
+
+    # A: 홉 상한(2)에서 inspect로 끝난다. B: inspect로 열고 gen이 끊는다.
+    reason_a = _loop([_gen(count=1), _inspect("asan"), _inspect("gdb")], finding_a)
+    reason_b = _loop([_inspect("asan"), _gen(count=2), _SUBMIT], finding_b)
+
+    assert (reason_a, reason_b) == (PovStopReason.MAX_HOP, PovStopReason.SUBMITTED)
+    ends = {fid: [h.data["action"] for h in _hops(ctx) if h.subject_id == fid]
+            for fid in (finding_a.finding_id, finding_b.finding_id)}
+    assert ends[finding_a.finding_id][-1] == "inspect"
+    assert ends[finding_b.finding_id][0] == "inspect"
+    assert _inspect_runs(ctx) == {finding_a.finding_id: 2, finding_b.finding_id: 1}

@@ -36,6 +36,9 @@ _GRADE_UNKNOWN = "-"
 _GRADE_RANK_UNKNOWN = 99
 # 요약 줄에 등급을 높은 것부터 적는다 (PR #37).
 _GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
+# PoV 연속 `inspect` 최장 줄이 Finding을 나열하는 하한(#619 (d)). 줄이 Finding 수에 비례해 자라지
+# 않게 하는 표시 규칙일 뿐 판정 임계값이 아니다 - 값은 manifest에 Finding별로 전부 남는다.
+_INSPECT_LISTED_MIN = 2
 
 
 @dataclass(frozen=True)
@@ -110,9 +113,10 @@ class Report:
     # `finding_deduped`가 건당 1행으로 싣는다. `render()`는 목록을 안 찍는다 — `deferred`의
     # 목록을 `target_skipped`에 둔 것과 같은 이유다(리포트는 요약이라 수백 줄이 Finding을 묻는다).
     merged_into: dict[str, str] = field(default_factory=dict)
-    # trace에서 센 **분모 전용** 집계 셋(#613·#618) — 러너가 `RunRecord`에 싣는 값을 그대로
-    # 받는다(산식은 `trace.py`). `None`은 그 종류의 trace 행이 없었다(안 쟀다)이고 그 줄은 안
-    # 낸다 - `0`을 지어 찍지 않는다(CLAUDE.md §0). 임계값이 아니다: 값은 실험팀 몫이다.
+    # trace에서 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 (d)) — 러너가 `RunRecord`에 싣는
+    # 값을 그대로 받는다(산식은 `trace.py`). `None`은 그 종류의 trace 행이 없었다(안 쟀다)이고
+    # 「미측정」 줄로 찍는다 - `0`을 지어 찍지도, 줄을 빼지도 않는다(CLAUDE.md §0). 임계값이
+    # 아니다: 값은 실험팀 몫이다.
     schema_failure_max_run: dict[str, int] | None = None
     schema_recovered_calls: dict[str, int] | None = None
     pov_inspect_max_run: dict[str, int] | None = None
@@ -120,6 +124,40 @@ class Report:
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
         return self.grades.get(finding.finding_id)
+
+    def _aggregate_lines(self) -> list[str]:
+        """분모 전용 집계 셋(#613·#618, 셋째는 #619 (d))의 줄. `None`은 **생략이 아니라 「미측정」
+        줄**이다 - 안 쟀다와 안 그렸다가 페이지에서 갈려야 한다(CLAUDE.md §0). 임계값이 아니다."""
+        unmeasured = "미측정 (해당 trace 행 없음 - 0이 아니다)"
+
+        def per_key(label: str, counts: dict[str, int] | None) -> str:
+            if counts is None:
+                return f"{label}: {unmeasured}"
+            return f"{label}: " + " · ".join(f"{key} {n}" for key, n in counts.items())
+
+        runs = self.pov_inspect_max_run
+        if runs is None:
+            inspect_line = f"PoV 연속 inspect 최장(Finding별, 분모만): {unmeasured}"
+        else:
+            # 줄이 Finding 수에 비례해 자라지 않게 한다 - 최장 2 이상만 나열하고 나머지는 건수다.
+            long_runs = {fid: n for fid, n in runs.items() if n >= _INSPECT_LISTED_MIN}
+            rest = len(runs) - len(long_runs)
+            listed = " · ".join(f"{fid} {n}" for fid, n in long_runs.items()) or "없음"
+            inspect_line = (
+                f"PoV 연속 inspect 최장(Finding별, 분모만 - 최장 {_INSPECT_LISTED_MIN} 이상인 "
+                f"Finding만 나열): {listed} · 나열하지 않은 Finding {rest}건 "
+                f"(최장 {_INSPECT_LISTED_MIN - 1} 이하)"
+            )
+        return [
+            "### 분모 전용 집계 (임계값 아님)",
+            "",
+            per_key("연속 스키마 파싱 실패 최장(역할별, 분모만)", self.schema_failure_max_run),
+            "",
+            per_key("스키마 재시도로 살아난 호출(역할별, 분모만)", self.schema_recovered_calls),
+            "",
+            inspect_line,
+            "",
+        ]
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -178,15 +216,6 @@ class Report:
                 f"PoV 정지 사유 (시도 {len(self.pov_results)}건): {parts}",
                 "",
             ]
-        if self.schema_failure_max_run is not None:
-            parts = " · ".join(f"{role} {n}" for role, n in self.schema_failure_max_run.items())
-            lines += [f"연속 스키마 파싱 실패 최장(역할별, 분모만): {parts}", ""]
-        if self.schema_recovered_calls is not None:
-            parts = " · ".join(f"{role} {n}" for role, n in self.schema_recovered_calls.items())
-            lines += [f"스키마 재시도로 살아난 호출(역할별, 분모만): {parts}", ""]
-        if self.pov_inspect_max_run is not None:
-            parts = " · ".join(f"{fid} {n}" for fid, n in self.pov_inspect_max_run.items())
-            lines += [f"PoV 연속 inspect 최장(Finding별, 분모만): {parts}", ""]
         if self.critic_deferred:
             # **앞머리 명사구에 잘린 사유를 넣는다.** "반박받지 못한 Finding"으로 적으면
             # `insufficient_evidence`로 6단계에서 떨어진 건(실측 11건)도 같은 이름에 들어가
@@ -198,6 +227,7 @@ class Report:
                 f"(상한 {self.critic_top_n} · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
+        lines += self._aggregate_lines()
         for state in _STATE_ORDER:
             group = [f for f in self.findings if f.state is state]
             if not group:
