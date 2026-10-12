@@ -42,6 +42,20 @@ class RetrievedBlock(HarnessModel):
     lines: tuple[int, ...]
 
 
+class AlreadyEntry(HarnessModel):
+    """`Already in SOURCE` 줄 하나를 렌더한 **구조값** - 줄 글을 다시 읽지 않고 쓰라고 싣는다.
+
+    `kind`는 모델이 요청에 쓴 자유 문자열이다(`RequestedContext.kind`) - 줄에 그대로 되울린다.
+    나머지는 인덱스가 정한 값이다(`name`은 블록 이름, 파일·줄은 인덱스 표).
+    """
+
+    kind: str
+    name: str
+    file: str
+    line_start: int
+    line_end: int
+
+
 class Unfilled(HarnessModel):
     """요청 하나를 못 채운 사유. 명세 §4.3의 UNFILLED 사유 8개가 `reason`으로 온다."""
 
@@ -82,6 +96,13 @@ class Resolution(HarnessModel):
     # `already`의 앞쪽만 실리므로 `already`·`unfilled`만으로는 어느 줄이 실렸는지 못 가린다.
     # `None`은 이 필드가 없던 생성자 호출이다 - 읽는 쪽이 `(*already, *unfilled 줄)`로 본다.
     alert_lines: tuple[str, ...] | None = None
+    # `alert_lines` 앞쪽에 **실제로 렌더된** `Already in SOURCE` 줄들의 구조값(같은 순서,
+    # 생략 한 줄은 없다). 글자 상한에 걸려 안 실린 줄은 여기에도 없다. 읽는 쪽(Critic 사본)이
+    # 렌더된 글을 정규식으로 다시 읽지 않고 이 값에서 줄을 다시 쓰게 하려는 것이다 - `kind`가
+    # 모델 글이라 글에서 `kind`/`name` 경계를 되읽으면 모델이 경계를 속인다. `None`은 이 필드가
+    # 없던 생성자 호출이다 - `already`가 비지 않았으면 다시 쓸 구조가 없어 가리지 못한 채
+    # 주지 않는다.
+    already_entries: tuple[AlreadyEntry, ...] | None = None
 
     @property
     def fixable_count(self) -> int:

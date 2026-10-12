@@ -487,6 +487,11 @@ class EventKind(StrEnum):
     #   붙이므로(이슈 #552) 이 값은 **등급과 무관한 순수 인용 지표**다.
     # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
+    # - ⏵ 2026-10-13 (#600 H2ⓐ) `observation_sanitize_failed` — `lookup` 홉의 Critic용 사본을 못
+    #   만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과
+    #   어긋났다). 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고
+    #   run은 안 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가
+    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다.
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
     # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
     # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.

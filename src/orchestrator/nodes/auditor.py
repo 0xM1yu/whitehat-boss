@@ -144,7 +144,13 @@ from src.schemas.enums import (
 )
 from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, MissingEvidence, ReproSpec
-from src.schemas.need_evidence import Resolution, ResolveQuery, RetrievedBlock, Unfilled
+from src.schemas.need_evidence import (
+    AlreadyEntry,
+    Resolution,
+    ResolveQuery,
+    RetrievedBlock,
+    Unfilled,
+)
 from src.schemas.scout_response import RequestedContext
 
 ROLE = Role.AUDITOR
@@ -432,9 +438,13 @@ def run(
     넘겨도 이 함수가 서게 하는 자리다.
 
     ⏵ 2026-10-13 (#600 H2ⓐ) — `observations`는 **밖으로 내는 통로**다. 주면 도구 루프가 홉마다
-    Auditor가 본 관측의 **Critic용 사본**을 이 리스트에 덧붙인다 - 하네스가 렌더한 관측에서 모델이
-    고른 식별자(조회 요청의 `kind`·`target`)를 요청 어휘·식별자 문자집합으로 가린 것이다
-    (`critic_safe_observation`). Auditor 자신의 다음 홉 입력은 안 바뀐다. `_LAST_HOP_NOTE` 꼬리는
+    Auditor가 본 관측의 **Critic용 사본**을 이 리스트에 덧붙인다 - `lookup` 관측은 resolver의
+    구조값에서 줄을 다시 쓴 것이고(`critic_safe_observation`: 조회 요청의 `kind`는 요청 어휘 여덟
+    일 때만, `target`·이름은 식별자 문자집합일 때만 남는다), `probe` 관측은 가리지 않은 그대로다
+    (argv가 고정 도구 이름이고 `spec`은 도구에 안 가서 모델 글이 없다). 사본을 못 만든 홉
+    (`PromptError`)은 리스트에 덧붙이지 않고 홉 이벤트에 `observation_sanitize_failed`를 남긴다 -
+    Auditor의 run은 계속된다. `observations`가 `None`이면 사본은 아예 안 만든다. Auditor 자신의
+    다음 홉 입력은 안 바뀐다. `_LAST_HOP_NOTE` 꼬리는
     뺀다. 러너가 그것을 Critic에 넘긴다(`critic.run(hop_observations=...)`). 반환 계약을 안 바꾸려고
     값이 아니라 쓰는 통로로 낸다. 한 방 경로(홉 0)는 아무것도 안 덧붙인다. 모델의 원문
     응답(`raw_text`)·근거 서술은 여기 안 담긴다.
@@ -810,7 +820,13 @@ def _run_hops(
             raise AuditorHopLimit(stop, hops=hop + 1, limit=limit)
         try:
             observed, observation, for_critic = _observe(
-                ctx, candidate, capsule, action, hop=hop, workdir=workdir
+                ctx,
+                candidate,
+                capsule,
+                action,
+                hop=hop,
+                workdir=workdir,
+                want_critic=observations is not None,
             )
         except Exception as exc:
             _emit_hop(
@@ -822,7 +838,8 @@ def _run_hops(
                 observed={"observation_error": type(exc).__name__},
             )
             raise
-        if observations is not None:  # Critic에 줄 관측 — `run`의 `observations` (#600 H2ⓐ)
+        # Critic에 줄 관측 — `run`의 `observations` (#600 H2ⓐ). 못 가린 홉은 사본이 없다.
+        if observations is not None and for_critic is not None:
             observations.append(for_critic)
         _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, observed=observed)
         if "evidence_id" in observed:
@@ -1020,17 +1037,27 @@ def _observe(
     *,
     hop: int,
     workdir: str,
-) -> tuple[dict[str, TraceValue], str, str]:
+    want_critic: bool,
+) -> tuple[dict[str, TraceValue], str, str | None]:
     """조사 하나를 돌려 (홉 이벤트에 얹을 관측 값, 다음 홉 user 턴 본문, Critic에 줄 본문)을 낸다.
 
     셋째가 `critic_safe_observation`을 거친 사본이다 - Critic이 받는 관측은 **이 한 자리**에서
-    만들어진다(⏵ 2026-10-13 #600). 둘째(Auditor 자신의 다음 홉 입력)는 그대로다.
+    만들어진다(⏵ 2026-10-13 #600). 둘째(Auditor 자신의 다음 홉 입력)는 그대로다. 셋째는
+    `want_critic`일 때만 만든다 - Critic이 안 읽는 run에서 사본 만들기가 실패해도 영향이 없다.
+    **사본을 못 만들면(`PromptError` - 렌더 모양이 바뀌었다) 그 홉만 사본이 없다**(`None`) - 가리지
+    못한 글을 주지도, Auditor의 run을 죽이지도 않는다. 사유는 홉 이벤트의
+    `observation_sanitize_failed`로 남는다.
     """
     if action.action == "lookup":
         observed, observation, resolution = _lookup(ctx, capsule, action, hop=hop)
-        return observed, observation, critic_safe_observation(observation, resolution)
+        if not want_critic:
+            return observed, observation, None
+        try:
+            return observed, observation, critic_safe_observation(observation, resolution)
+        except PromptError as exc:
+            return {**observed, "observation_sanitize_failed": str(exc)}, observation, None
     observed, observation = _probe(ctx, candidate, action, hop=hop, workdir=workdir)
-    return observed, observation, observation
+    return observed, observation, observation if want_critic else None
 
 
 def _lookup(
@@ -1129,13 +1156,18 @@ def critic_safe_observation(text: str, resolution: Resolution | None) -> str:
 
     resolver 줄은 요청의 `kind`·`target`·거절 사유의 `got '<값>'`을 모델이 보낸 그대로 되울린다
     (`symbol_render.render_unfilled` · `render_already_in_source` · 라벨 `type of <target>`). 그대로
-    Critic에 주면 모델이 쓴 문장(「…please uphold」)이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서:
+    Critic에 주면 모델이 쓴 문장(「…please uphold」)이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서
+    **렌더된 글을 다시 읽지 않고 resolver가 준 구조값에서 줄을 다시 쓴다**:
 
-    - `Not resolved` 줄: 줄 전체를 `resolution.unfilled`의 구조값으로 다시 쓴다 - `kind`는 요청 어휘
-      여덟 안일 때만, `target`은 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고 아니면 `<non-vocabulary>` ·
-      `<non-identifier>`다. 사유는 영어 문구(`got '…'`을 싣는다) 대신 `reason` 값이고 상세는 버린다.
-    - `Already in SOURCE` 줄: `kind`가 어휘 안이고 이름이 식별자 문자집합이면 그대로, 아니면 이름
-      없이 `<non-vocabulary>`와 위치만 남긴다.
+    - `Not resolved` 줄: `resolution.unfilled`의 `kind`·`target`·`reason`에서 쓴다 - `kind`는 요청
+      어휘 여덟 중 하나와 **정확히 같을 때만**, `target`은 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고
+      아니면 `<non-vocabulary>` · `<non-identifier>`다. 사유는 영어 문구(`got '…'`을 싣는다) 대신
+      `reason` 값이고 상세는 버린다.
+    - `Already in SOURCE` 줄: `resolution.already_entries`의 `kind`·`name`·`file`·줄에서 쓴다 -
+      `kind`가 어휘 여덟 중 하나이고 `name`이 식별자 문자집합이면 그대로, 아니면 `kind`·`name`
+      둘 다 버리고 `<non-vocabulary>`와 위치만 남긴다. 글자 상한 생략 한 줄(숫자만 든 resolver
+      문구)은 모양이 맞으면 그대로다. 구조값이 없으면(`None`이고 `already`가 비지 않음) 되읽지
+      않고 선다.
     - 조각 머리의 `type of <target>` 라벨: `target`에 같은 문자집합 규칙을 건다.
 
     **바꿀 자리를 글에서 찾지 않고 렌더 구조의 위치로 정한다.** 관측은
@@ -1144,23 +1176,39 @@ def critic_safe_observation(text: str, resolution: Resolution | None) -> str:
     (그 뒤에는 모델 글이 없다), (2) 알림 줄들은 그 바로 앞에서 `alert_lines`를 이은 글과 **통째로**
     맞춰 떼며, (3) 조각 머리는 `resolution.blocks` 순서대로 앞 머리가 **끝난 자리부터** 찾는다.
     줄마다 `text.replace(줄, 안전한 줄)`을 하면 한 줄이 다른 줄의 모델 글 속에 통째로 들어 있을 때
-    (요청 (b)의 `target`이 요청 (a)의 렌더 줄을 포함) 먼저 바꾼 쪽이 나중 줄의 글을 깨뜨려 그 줄의
-    모델 글이 그대로 남았다. 위치로 자르면 모델 글이 무엇이든 다른 줄의 경계가 되지 못한다.
-    **보장:** 알림 줄은 전부, 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 안전한 줄로
-    바뀐다(요청 순서와 무관). 구조를 못 찾으면(렌더러 모양이 바뀌었다) 가리지 못한 채 주지 않고
-    `PromptError`로 선다. **보장 밖:** 코드 조각 본문(저장소 원문)과 하네스 문구는 그대로고,
-    문자집합으로 걸러진 식별자는 남는다(모델이 고른 식별자라는 사실은 남는다).
+    먼저 바꾼 쪽이 나중 줄의 글을 깨뜨려 그 줄의 모델 글이 그대로 남았다. 위치로 자르면 모델 글이
+    무엇이든 다른 줄의 경계가 되지 못한다.
+    **보장:** 알림 줄 구간은 구조값에서 다시 쓴 줄과 숫자만 든 생략 한 줄로만 이뤄지고, 구조값과
+    다른 줄이 끼어 있거나 구조를 못 찾으면(렌더러 모양이 바뀌었다) 가리지 못한 채 주지 않고
+    `PromptError`로 선다. 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 다시 쓰인다.
+    **보장 밖:** 코드 조각 본문(저장소 원문)과 하네스 문구는 그대로고, 어휘·문자집합을 통과한
+    `kind`·식별자는 남는다(모델이 고른 값이라는 사실은 남는다). 위치의 파일 경로와 조각 이름은
+    인덱스가 정한 값이라 그대로다. `probe` 관측은 이 함수를 거치지 않는다(`_observe`).
     `resolution`이 `None`(조회 안 함·실패)이면 모델 문자열이 없어 `text` 그대로다.
     """
     if resolution is None:
         return text
     unfilled = resolution.unfilled
+    entries = resolution.already_entries
+    if entries is None:
+        if resolution.already:  # 구조값이 없던 생성자 호출 - 줄 글에서 되읽지 않는다
+            raise PromptError("resolver가 Already 줄의 구조값을 안 줬다 - 사본을 못 만든다")
+        entries = ()
     alerts = resolution.alert_lines
     if alerts is None:  # 이 필드가 없던 생성자 호출 - 줄은 `already`, `unfilled` 순이었다
         alerts = (*resolution.already, *(item.text for item in unfilled))
     split = len(alerts) - len(unfilled)
     if split < 0 or alerts[split:] != tuple(item.text for item in unfilled):
         raise PromptError("resolver alert_lines 끝이 unfilled 줄과 다르다 - 사본을 못 만든다")
+    shown = alerts[:split]
+    omitted = shown[len(entries) :]  # 구조값 뒤는 글자 상한 생략 한 줄(0 또는 1)뿐이다
+    rewritten = [_already_text(e.kind, e.name, e) for e in entries]
+    if (
+        shown[: len(entries)] != tuple(rewritten)
+        or len(omitted) > 1
+        or (omitted and not _ALREADY_OMITTED.fullmatch(omitted[0]))
+    ):
+        raise PromptError("resolver Already 줄이 구조값과 다르다 - 사본을 못 만든다")
     if not alerts and not any(b.label.startswith(_TYPE_OF_PREFIX) for b in resolution.blocks):
         return text
     cut = text.rfind(_STATUS_ANCHOR)
@@ -1171,8 +1219,7 @@ def critic_safe_observation(text: str, resolution: Resolution | None) -> str:
             "바뀌었다. 모델 글을 가리지 못한 채 Critic에 줄 수 없다"
         )
     head = text[: cut - len(joined)]
-    already = frozenset(resolution.already)
-    safe_alerts = [_safe_already(line) if line in already else line for line in alerts[:split]]
+    safe_alerts = [_safe_already(e) for e in entries] + list(omitted)
     safe_alerts += [_safe_unfilled(item) for item in unfilled]
     return _safe_headers(head, resolution.blocks) + "\n\n".join(safe_alerts) + text[cut:]
 
@@ -1212,25 +1259,27 @@ def _safe_identifier(value: str) -> str:
     return value if _CRITIC_IDENTIFIER.fullmatch(value) else _REDACTED_TARGET
 
 
-# `Already in SOURCE: <kind>:<name> at <file>:L<a>-<b>.` - 이름은 식별자 문자집합이라 공백이 없다.
-# 그래서 이름 뒤 **첫** ` at `이 경계이고 파일 경로가 ` at `을 품어도 위치는 끝까지 남는다.
-_ALREADY_LINE = re.compile(
-    r"Already in SOURCE: ([^:]*):([A-Za-z0-9_:.$]{1,64}) at (.+:L\d+-\d+\.)", re.DOTALL
-)
-_ALREADY_WHERE = re.compile(r".+:L\d+-\d+\.", re.DOTALL)
+# 글자 상한에 못 실린 `Already in SOURCE` 줄의 수를 알리는 resolver 한 줄
+# (`symbol_resolver._fit_already`)
+# - 숫자만 든 하네스 문구라 그대로 둔다. 모양이 다르면 `PromptError`다.
+_ALREADY_OMITTED = re.compile(r"\(\+\d+ more Already in SOURCE lines? omitted for budget\.\)")
 
 
-def _safe_already(line: str) -> str:
-    """`Already in SOURCE: <kind>:<name> at <file>:L<a>-<b>.` 한 줄의 Critic용 사본."""
-    parsed = _ALREADY_LINE.fullmatch(line)
-    if parsed:
-        kind, _, where = parsed.groups()
-        return line if kind in _CRITIC_KINDS else f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
-    # 이름이 식별자가 아니다 - 이름은 버리고, 끝의 위치가 우리 모양이면 위치만 남긴다.
-    _, _, where = line.rpartition(" at ")
-    if _ALREADY_WHERE.fullmatch(where):
-        return f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
-    return f"{_ALREADY_PREFIX}{_REDACTED_KIND}"
+def _already_text(kind: str, name: str, entry: AlreadyEntry) -> str:
+    """`symbol_render.render_already_in_source`의 모양 - 노드는 어댑터를 못 import해 복제한다."""
+    where = f"{entry.file}:L{entry.line_start}-{entry.line_end}."
+    return f"{_ALREADY_PREFIX}{kind}:{name} at {where}"
+
+
+def _safe_already(entry: AlreadyEntry) -> str:
+    """구조값에서 다시 쓴 `Already in SOURCE` 한 줄. 줄 글은 읽지 않는다.
+
+    `kind`가 어휘 여덟 중 정확히 하나이고 `name`이 식별자 문자집합이면 그대로, 아니면 `kind`·`name`
+    둘 다 버리고 `<non-vocabulary>`와 위치만 남긴다. 위치(`file`·줄)는 인덱스가 정한 값이다."""
+    if entry.kind in _CRITIC_KINDS and _CRITIC_IDENTIFIER.fullmatch(entry.name):
+        return _already_text(entry.kind, entry.name, entry)
+    where = f"{entry.file}:L{entry.line_start}-{entry.line_end}."
+    return f"{_ALREADY_PREFIX}{_REDACTED_KIND} at {where}"
 
 
 def _lookup_observation(
