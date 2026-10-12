@@ -2286,7 +2286,8 @@ def _designate_final(
     **넷으로 갈린다:**
 
     - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed`·`rate_limited` —
-      낼 PoC가 없던 것, 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
+      모델 `submit`이 없던 것(중간 gen이 `vul`에 나갔어도 후보가 아니다 · #620), 낸 것이 다 실패한
+      것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
       사건이다**, §0. 사유를 가르는 것은 `oracle_log.OracleLedger.none_reason`이고 이 함수는
       그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
