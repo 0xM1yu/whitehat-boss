@@ -22,7 +22,8 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
 | Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage
 (⏵ 2026-10-13 크기 거절당한 홉도 1건: `stop_reason=context_overflow` · action 없음, #514). **루프
-꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 실패하면 0건) — 꺼짐은 `model_call.schema`가
+꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 파싱 실패·예산 소진으로 죽어도 0건 -
+루프의 hop 0 크기 거절만 `context_overflow` 1건을 낸다) — 꺼짐은 `model_call.schema`가
 `Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |

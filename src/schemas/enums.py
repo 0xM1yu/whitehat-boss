@@ -371,10 +371,11 @@ class AuditorStopReason(StrEnum):
       같은 출력(Finding 하나)으로 5단계를 빠져나간다.
     - `REPEAT_REQUEST` — **앞선 어느 홉과** 같은 요청을 또 냈다(같은 도구, 또는 같은
       `(kind, target)` 집합 - 직전 홉만 보던 판은 A→B→A→B가 안 섰다, #514). NE 루프의
-      `NeStopReason.REPEAT_REQUEST`와 같은 자리다 — 그쪽은 요청 키를
-      `frozenset((kind, target))`으로 보고(`runner._run_ne_hops`), pov는 조립 **바이트**로
-      본다(`PovStopReason.REPEAT_SPEC`). Auditor는 액션이 둘(`lookup`·`probe`)이라 비교 축도
-      둘이다. **Finding이 없다.**
+      `NeStopReason.REPEAT_REQUEST`와 같은 자리다 - 단 NE는 아직 직전 홉만 비교하고
+      (`runner._run_ne_hops`의 `previous_keys`) Auditor는 앞선 모든 홉을 비교한다(#514).
+      그쪽은 요청 키를 `frozenset((kind, target))`으로 보고(`runner._run_ne_hops`), pov는
+      조립 **바이트**로 본다(`PovStopReason.REPEAT_SPEC`). Auditor는 액션이 둘(`lookup`·`probe`)이라
+      비교 축도 둘이다. **Finding이 없다.**
     - `MAX_HOP` — 상한(`thresholds.auditor_tool_hops`)을 조사만으로 소진했다. **Finding이
       없다.**
     - `CONTEXT_OVERFLOW` — 그 홉의 **모델 호출이 크기 거절**(`model_client.is_size_rejection` -

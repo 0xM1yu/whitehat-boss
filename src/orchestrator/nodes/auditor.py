@@ -366,7 +366,10 @@ _LAST_HOP_NOTE = (
 # 캡슐 확장 길(C-5·`Retriever.expand`·`capsule_expansion_max`)」을 **폐기**하고 코드 삭제를 따로
 # 하기로 했다. 그 삭제 PR이 C-5 전이나 `CAPSULE_EXPANSION_EXHAUSTED`를 지우면 아래
 # `_queue_candidate`가 `IllegalTransition`을 내서 `REPEAT_REQUEST`·`MAX_HOP` 후보가 `queued`로 못
-# 내려가고 `triaged`에 남는다. 그때 이 상수를 전용 사유로 옮긴다 — `tests/test_auditor_loop.py`가
+# 내려가고 `triaged`에 남는다. ⏵ 2026-10-13(#514) 셋째 소비자 `CONTEXT_OVERFLOW`가 생겼다 - 그
+# 경우 `IllegalTransition`은 `_call_model`의 `except` 안에서 나므로 게이트웨이 예외를 가려
+# 버린다(러너가 크기 거절을 못 알아보고 run이 엉뚱한 사유로 선다). 삭제 PR은 셋을 다 옮겨야 한다.
+# 그때 이 상수를 전용 사유로 옮긴다 — `tests/test_auditor_loop.py`가
 # 지금 이 사유로 전이가 일어난다는 사실을 문다(삭제하면 거기서 먼저 빨개진다).
 _NO_FINDING_REASON = ReasonCode.CAPSULE_EXPANSION_EXHAUSTED
 
