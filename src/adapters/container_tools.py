@@ -852,6 +852,24 @@ def container_argv(
     return argv
 
 
+_COMPILE_ERROR_LINE = re.compile(
+    r"\berror: (.+?)(?:\s+\[clang-diagnostic-[^\]]*\])?\s*$", re.MULTILINE
+)
+_COMPILE_REASON_CHARS = 160
+
+
+def compile_failure_reason(text: str) -> str:
+    """컴파일러 출력의 첫 `error:` 메시지와 건수를 한 줄로 — 없으면 빈 문자열 (#507).
+
+    `Evidence.error`는 PoV·Auditor 관측의 **머리줄**에 실리므로(`runner._pov_observation`·
+    `auditor`의 probe 관측) 로그 꼬리가 잘려도 모델에 닿는다. 경로는 떼고 메시지만 싣는다.
+    """
+    found = _COMPILE_ERROR_LINE.findall(text)
+    if not found:
+        return ""
+    return f" — 컴파일 오류 {len(found)}건, 첫 오류: {found[0][:_COMPILE_REASON_CHARS]}"
+
+
 def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | None]:
     """실행 결과 → (ok, exit_code, error). `ok`와 `exit_code`의 의미를 섞지 않는다.
 
@@ -880,7 +898,10 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     code = last.exit_code
     if tool in _RUNTIME_TOOLS:
         if len(steps) < total:
-            return False, code, f"{tool}: 빌드 단계에서 끊겨 프로그램이 실행되지 않았다"
+            return False, code, (
+                f"{tool}: 빌드 단계에서 끊겨 프로그램이 실행되지 않았다"
+                + compile_failure_reason(last.stderr)
+            )
         if tool == "gdb":
             # 마지막 명령이 gdb 자신이다 — 종료 코드는 대상이 떴는지 못 알린다(안 떠도
             # 1·255, 대상이 `return 127;`이면 127 — 2026-09-30 실측, gdb 12.1·15.1).
@@ -930,7 +951,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
         # 진단은 stdout으로 나온다("N warnings generated."만 stderr다).
         if _COMPILE_ERROR_MARKER in last.stdout:
             # exit code로는 "경고 발견"과 구분되지 않는다(모듈 docstring, #61).
-            return False, code, "clang-tidy: 대상이 컴파일되지 않는다"
+            return False, code, (
+                "clang-tidy: 대상이 컴파일되지 않는다" + compile_failure_reason(last.stdout)
+            )
         # **non-zero인데 진단이 한 줄도 없으면 돌지 않은 것이다.** `--warnings-as-errors=*`가
         # non-zero를 만드는 경로는 경고 발견뿐이고, 그 경고는 stdout에 찍힌다(`--quiet`는
         # "N warnings generated." 요약만 지운다). 위 `_EXEC_FAILED`가 지금 아는 코드를 막지만
@@ -945,7 +968,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
         return True, code, None
     if code == 0:
         return True, 0, None
-    return False, code, f"{tool} 실패 (exit={code})"
+    return False, code, f"{tool} 실패 (exit={code})" + (
+        compile_failure_reason(last.stderr) if tool == "build" else ""
+    )
 
 
 def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
