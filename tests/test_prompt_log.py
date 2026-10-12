@@ -676,9 +676,10 @@ def _scripted_adapter(monkeypatch: pytest.MonkeyPatch, replies: list[object]):  
         reply = queue.pop(0)
         if reply == "gateway":
             raise ModelGatewayError("거절", status=400, detail="x")
+        reply, finish = reply if isinstance(reply, tuple) else (reply, "stop")
         usage = Usage(input_tokens=5, output_tokens=5, cached_tokens=0)
         return PostedResponse(
-            content=reply, usage=usage, finish_reason="stop", output_tokens_reported=True
+            content=reply, usage=usage, finish_reason=finish, output_tokens_reported=True
         )
 
     monkeypatch.setattr(OpenAICompatModelClient, "_post", fake_post)
@@ -819,3 +820,191 @@ def test_an_interrupt_while_recording_is_not_swallowed(
 
     with pytest.raises(interrupt):
         _call_failing(ctx)
+
+
+# --- 회복된 실패·성공 응답 보존 (#618 · #612) --------------------------------
+
+OK_RAW = '{"ok": true}'
+
+
+class _RecoveredClient:
+    """1차가 스키마에서 떨어졌다 2차에 산 호출 — 버려진 1차 원문을 결과에 싣는다."""
+
+    def __init__(self, failed: tuple[str | None, ...] = ("버려진 1차\r\n원문",)) -> None:
+        self._failed = failed
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        ok = StubModelClient().complete(role=role, prompt=prompt, schema=schema)
+        return ok.model_copy(
+            update={"attempts": 1 + len(self._failed), "failed_raw_texts": self._failed,
+                    "raw_text": OK_RAW}
+        )
+
+
+def _call_ok(ctx: RunContext, role: Role = Role.SCOUT) -> None:
+    ctx.call_model(role=role, prompt=PROMPT, schema=Candidate, stage=Stage.SCOUT)
+
+
+def test_a_recovered_call_keeps_the_discarded_attempts_raw_text(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredClient())
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is True
+    (ref,) = json.loads(call["response_refs"])  # 칸 0 = 1차 시도
+    assert ref == f"{DIR_NAME}/0001_scout_response.txt"
+    assert (tmp_path / ref).read_bytes() == "버려진 1차\r\n원문".encode()
+    assert json.loads(call["response_sha256"]) == [sha256_text("버려진 1차\r\n원문")]
+    assert OK_RAW not in (tmp_path / ref).read_text(encoding="utf-8")  # 성공 응답은 안 섞인다
+    assert OK_RAW not in json.dumps(call)  # 원문은 파일에만 있고 trace에 복제되지 않는다
+
+
+def test_a_clean_success_leaves_no_response_file_or_key(tmp_path: Path) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredClient(failed=()))
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" not in call and "response_sha256" not in call
+    assert not list(tmp_path.rglob("*_response*"))
+
+
+def test_keep_responses_adds_the_final_response_for_the_chosen_role_only(tmp_path: Path) -> None:
+    """스위치는 성공 응답을 마지막 칸에 붙인다 — 칸 번호가 시도 번호와 정렬된다."""
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredClient())
+    ctx.keep_responses = frozenset({"scout"})
+
+    _call_ok(ctx)
+    _call_ok(ctx, role=Role.CRITIC)  # 고르지 않은 역할 — 버려진 1차만
+
+    scout, critic = _model_calls(ctx)
+    refs = json.loads(scout["response_refs"])
+    assert refs == [f"{DIR_NAME}/0001_scout_response.txt",
+                    f"{DIR_NAME}/0001_scout_response_retry1.txt"]
+    assert (tmp_path / refs[1]).read_bytes() == OK_RAW.encode()
+    assert json.loads(critic["response_refs"]) == [f"{DIR_NAME}/0002_critic_response.txt"]
+
+
+def test_keep_responses_keeps_a_clean_success_and_the_default_does_not(tmp_path: Path) -> None:
+    on = _context(prompts=PromptLog(tmp_path / "on"), models=_RecoveredClient(failed=()))
+    on.keep_responses = frozenset({"scout"})
+    _call_ok(on)
+    (call,) = _model_calls(on)
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / "on" / ref).read_bytes() == OK_RAW.encode()
+
+    off = _context(prompts=PromptLog(tmp_path / "off"), models=_RecoveredClient(failed=()))
+    _call_ok(off)
+    assert not list((tmp_path / "off").rglob("*_response*"))
+
+
+def test_a_response_write_failure_on_a_recovered_call_keeps_the_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """수십 분 걸려 끝난 호출을 진단 기록 쓰기가 죽이면 안 된다 — 사유만 남고 청구·결과는 산다."""
+    prompts = PromptLog(tmp_path)
+
+    def disk_full(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(prompts, "write_response", disk_full)
+    ctx = _context(prompts=prompts, models=_RecoveredClient())
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is True and call["response_record_error"] == "OSError(errno=28)"
+    assert "response_refs" not in call
+    assert ctx.ledger.input_tokens == 40
+
+
+def test_the_real_adapter_hands_the_discarded_attempt_up_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """어댑터 → `ModelResult.failed_raw_texts` → 파일. 1차 content=None이면 그 칸은 null이다."""
+    good = Candidate(
+        candidate_id="cand_0001", run_id=RUN_ID, artifact_id="art_0001",
+        location=Location(file="parser.c"), score=0.7, state=FindingState.CANDIDATE,
+    ).model_dump_json()
+    client = _scripted_adapter(monkeypatch, ['{"x": 1}', good])
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["attempts"] == 2
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == b'{"x": 1}'
+
+    nulled = _context(
+        prompts=PromptLog(tmp_path / "n"), models=_scripted_adapter(monkeypatch, [None, good])
+    )
+    _call_ok(nulled)
+    (call2,) = _model_calls(nulled)
+    assert call2["response_refs"] == "[null]"
+
+
+def test_run_keep_responses_reaches_the_context_end_to_end(tmp_path: Path) -> None:
+    """`RunSpec.keep_responses` → `RunContext` → 파일. 안 주면 정상 run에 응답 파일이 없다."""
+    off_dir, _ = _run(tmp_path / "off")
+    assert not list(off_dir.rglob("*_response*"))
+
+    on_dir, trace = _run(tmp_path / "on", keep_responses=("scout",))
+    scout = [c for c in _traced_model_calls(trace) if c["role"] == "scout" and c["ok"]]
+    assert scout and all("response_refs" in c for c in scout)
+    others = [c for c in _traced_model_calls(trace) if c["role"] != "scout"]
+    assert not any("response_refs" in c for c in others)
+    assert list(on_dir.rglob("*_scout*_response.txt"))
+
+
+def test_the_cli_flag_is_opt_in_and_names_prompted_roles() -> None:
+    parse = cli.build_parser().parse_args
+    base = ["run", "--profile", "dev_fake", "--target", "t"]
+    assert tuple(parse(base).keep_responses) == ()
+    assert tuple(parse([*base, "--keep-responses", "critic", "auditor"]).keep_responses) == (
+        "critic", "auditor")
+    with pytest.raises(SystemExit):
+        parse([*base, "--keep-responses", "nonsense"])
+
+
+def test_a_length_truncated_first_attempt_is_kept_whole_and_stays_out_of_the_trace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#618의 가장 비싼 모양: `finish_reason=length`로 잘린 거대한 1차 -> 재시도 성공.
+    절단 문자열도 검증 실패라 같은 길로 파일에 바이트 그대로 남고, trace에는 참조만 간다."""
+    good = Candidate(
+        candidate_id="cand_0001", run_id=RUN_ID, artifact_id="art_0001",
+        location=Location(file="parser.c"), score=0.7, state=FindingState.CANDIDATE,
+    ).model_dump_json()
+    truncated = '{"candidate_id": "' + "한글a" * 100_000  # 닫히지 않은 300,000자
+    client = _scripted_adapter(monkeypatch, [(truncated, "length"), good])
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is True and call["attempts"] == 2
+    assert json.loads(call["attempt_finish_reasons"]) == ["length", "stop"]
+    (ref,) = json.loads(call["response_refs"])
+    assert (tmp_path / ref).read_bytes() == truncated.encode()
+    assert len(json.dumps(call)) < 2_000  # 원문 복제 없음
+
+
+def test_cli_run_keep_responses_reaches_the_files_and_the_manifest(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`cli.main` -> `RunSpec` -> 파일. 진입점 배선이 끊기면(`keep_responses=()`) 여기서 빨개진다.
+    스위치를 켠 run은 manifest에 역할이 박제되고, 안 켠 run은 파일도 박제도 없다."""
+    on, off = tmp_path / "on", tmp_path / "off"
+    base = ["run", "--profile", "dev_fake", "--target", str(TARGET), "--artifacts-root"]
+
+    assert cli.main([*base, str(on), "--keep-responses", "scout"]) == 0, capsys.readouterr().err
+    assert cli.main([*base, str(off)]) == 0, capsys.readouterr().err
+
+    (on_manifest,) = on.glob("*/run_manifest.json")
+    (off_manifest,) = off.glob("*/run_manifest.json")
+    assert json.loads(on_manifest.read_text("utf-8"))["keep_responses"] == ["scout"]
+    assert json.loads(off_manifest.read_text("utf-8")).get("keep_responses") is None
+    assert list(on_manifest.parent.rglob("*_scout*_response.txt"))
+    assert not list(off_manifest.parent.rglob("*_response*"))
