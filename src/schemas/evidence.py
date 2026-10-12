@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from pydantic import model_validator
+from pydantic import Field, model_validator
 
 from src.schemas.common import (
     Identifier,
@@ -39,6 +39,17 @@ class Evidence(UtcModel):
     ok: bool = True
     exit_code: int | None = None
     error: str | None = None
+    # ⏵ 2026-10-13(#232) — 런타임 도구(asan·gdb·poc)가 낸 로그에서 **크래시 흔적을 관측했는가**.
+    # `True` = 로그에 sanitizer 배너나 신호 정지가 있었다 · `False` = 로그를 읽었고 없었다 ·
+    # `None` = **안 쟀다**(런타임 도구가 아니거나, 대상이 안 떴거나, 로그가 없다 — CLAUDE.md §0).
+    # ⚠ **기록뿐이다 — 게이트·정책·최종 지정 어느 것도 읽지 않는다.** E4의 `p4`는 여전히
+    # `exit_code`만 본다. 이 필드를 `p4`가 읽게 하는 일은 실제 크래시 녹음이 쌓인 뒤로 미뤘다(#232).
+    # `UndefinedBehaviorSanitizer`의 `runtime error:`는 프로그램을 끝내지 않을 수 있어 `True`가
+    # 「죽었다」가 아니라 「배너가 찍혔다」다.
+    crashed: bool | None = None
+    # `crashed`가 `True`일 때 처음 맞은 배너 줄. 제어 문자는 공백으로 바꾸고 200자로 묶는다 —
+    # 대상이 찍은 날것이 trace·DB로 가므로 무한정 싣지 않는다(`compile_failure_reason`과 같은 관례).
+    banner: str | None = Field(default=None, max_length=200)
 
     @model_validator(mode="after")
     def _error_matches_ok(self) -> "Evidence":
@@ -51,4 +62,16 @@ class Evidence(UtcModel):
             raise ValueError("ok=True인 Evidence에 error를 넣을 수 없다")
         if not self.ok and not self.error:
             raise ValueError("ok=False인 Evidence는 error가 필요하다 (engineering-guide §8.3)")
+        return self
+
+    @model_validator(mode="after")
+    def _crash_observation_needs_a_run(self) -> "Evidence":
+        """돌지 않은 도구는 크래시를 관측하지 못한다 — 안 잰 값(`None`)이어야 한다 (CLAUDE.md §0).
+
+        배너는 `crashed=True`의 증거로만 실린다. `crashed=False`에 배너가 있으면 모순이다.
+        """
+        if not self.ok and self.crashed is not None:
+            raise ValueError("ok=False인 Evidence에 crashed를 넣을 수 없다 — 대상이 안 돌았다")
+        if self.banner is not None and self.crashed is not True:
+            raise ValueError("banner는 crashed=True일 때만 싣는다")
         return self

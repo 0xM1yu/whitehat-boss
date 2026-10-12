@@ -78,6 +78,20 @@ F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸
 ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신 대상 소스의 존재를 보고
 `ok=True`를 낸다.
 
+⏵ **2026-10-13 (#232) — 환경이 낸 종료 코드는 `p4`에 안 닿는다 (코드 대조).** `124`는 `_execute`가
+타임아웃을 `ok=False`로 쓰고 `judge()`까지 오지 않는다. `125`~`127`은 asan에서 `_EXEC_FAILED`로,
+`poc`에서 `_poc_is_harness_failure`로 `ok=False`가 되고 gdb는 수명주기 줄이 없으면 `ok=False`다.
+`poc`의 `137`·`255`·`>255`·음수도 `ok=False`다. ⚠ **남은 구멍 하나: asan은 `137`·`255`·`>255`·음수를
+거르지 않는다**(위 「한 도구만 바꾼다」) — 그 값이 `ok=True`로 올라와 `p4`를 참으로 만든다. 환경의
+SIGKILL(`--memory`)과 대상 자신의 OOM이 갈리지 않고, `255`는 gdb 신호 정지의 값이기도 해서
+게이트에서 일괄로 못 뺐다. 이 PR은 바꾸지 않았고 `p4` 스위치를 다시 여는 날 함께 정한다.
+
+⏵ **2026-10-13 (#232) — 크래시 관측을 기록한다 (읽지 않는다).** `observe_crash()`가 대상 로그의
+sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **어느 소비자도 이 값을 읽지 않는다** —
+배너 철자가 sanitizer 문서에서 왔고 이 저장소에 실제 크래시 녹음이 0건이라
+미검증이다(`_CRASH_BANNER` 주석). 실제 `poc_run` 크래시 녹음이 쌓이면 그것으로 철자를 대조한 뒤
+`p4`를 읽게 할지 정한다.
+
 ## 입력 바이트 — `poc`는 먹인다, 나머지 셋은 안 받는다 (ADR 0014)
 
 `ToolArgs.input_bytes`가 있으면 그 도구의 scratch(`/work`)에 `write_input`으로 쓰고, 로그 머리의
@@ -491,6 +505,28 @@ _GDB_TARGET_LIFECYCLE = re.compile(
     r"|Program (?:received|terminated with) signal \S+"
     r'|Thread [\d.]+(?: "[\s\S]{0,64}")? received signal \S+'
 )
+
+# ⏵ 2026-10-13(#232) — **크래시 흔적을 로그에서 찾는 배너.** 대상의 stdout·stderr
+# **전체**에서 찾는다 (로그 머리줄은 `# node argv: …`라 거기만 보면 안 맞는다).
+# 🔴 **이 철자들은 sanitizer 문서에서 왔고 이 저장소에는 실제 크래시 녹음이 0건이다** —
+# 이 하네스의 로그에 대해 **미검증**이다
+# (CLAUDE.md §0). 그래서 `Evidence.crashed`는 **기록뿐**이고 `gate.py`·`policy.py`·최종 지정은
+# 읽지 않는다. 철자가 틀렸으면 `crashed=False`가 거짓으로 쌓이므로, 이 값으로 `p4`를 가르려면
+# 먼저 실제 `poc_run` 녹음으로 이 목록을 대조한다.
+#   `==N==ERROR: <Address|Memory|UndefinedBehavior|Leak>Sanitizer` — 치명 보고의 머리줄
+#   `MemorySanitizer: use-of-uninitialized-value` — MSan은 `==N==WARNING:`으로 시작한다
+#   `runtime error:` — UBSan. ⚠ 대상이 같은 글을 직접 찍어도 맞는다(오탐 가능)
+#   `libFuzzer: deadly signal` — libFuzzer 하네스의 치사 신호
+#   `AddressSanitizer: SEGV` — ASan의 SEGV 보고
+_CRASH_BANNER = re.compile(
+    r"==\d+==\s*ERROR: (?:Address|Memory|Undefined ?Behavior|Leak)Sanitizer"
+    r"|MemorySanitizer: use-of-uninitialized-value"
+    r"|runtime error:"
+    r"|libFuzzer: deadly signal"
+    r"|AddressSanitizer: SEGV"
+)
+# `Evidence.banner`의 글자 상한. `Evidence.banner`의 `max_length`와 같아야 한다.
+_BANNER_CHARS = 200
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
 _TIMEOUT_EXIT = 124
@@ -980,6 +1016,45 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     )
 
 
+def _banner_line(text: str, start: int) -> str:
+    """`start`가 든 줄. 제어 문자는 공백으로, 200자로 묶는다 — 대상이 찍은 날것이다."""
+    begin = text.rfind("\n", 0, start) + 1
+    end = text.find("\n", start)
+    line = text[begin : end if end != -1 else len(text)]
+    return re.sub(r"[\x00-\x1f\x7f]", " ", line).strip()[:_BANNER_CHARS]
+
+
+def observe_crash(tool: str, steps: list[Step], total: int) -> tuple[bool | None, str | None]:
+    """실행 로그에서 크래시 흔적을 관측한다 → (crashed, banner). **기록뿐이다** (#232).
+
+    - `True` — 배너(`_CRASH_BANNER`) 또는 gdb의 신호 정지 줄이 있다. `banner`는 그 첫 줄.
+    - `False` — 대상이 떴고 로그를 읽었는데 없다.
+    - `None` — **안 쟀다**: 런타임 도구가 아니거나, 명령이 다 안 돌아 대상이 안 떴다(빌드에서 끊김).
+
+    호출부가 `judge()`의 `ok`가 참일 때만 부른다 — 대상이 안 뜬 건(`poc`의 환경 실패 코드 포함)에는
+    관측이 없고 `Evidence`가 `ok=False`에 `crashed`를 못 싣게 막는다.
+
+    로그는 **마지막 명령**의 stdout+stderr다. asan·poc는 그 명령이 대상이고, 앞 명령은 빌드라
+    컴파일러 출력이 배너 철자를 우연히 품어도 대상의 흔적으로 안 읽는다. gdb는 마지막 명령이
+    gdb 자신이라 대상 수명주기 줄(`_GDB_TARGET_LIFECYCLE`)로 가른다 — 신호 정지는 `True`, 정상
+    종료는 `False`. 같은 로그에 둘 다 있으면 신호 정지가 이긴다.
+    """
+    if tool not in _RUNTIME_TOOLS or not steps or len(steps) < total:
+        return None, None
+    last = steps[-1]
+    if tool == "gdb":
+        for match in _GDB_TARGET_LIFECYCLE.finditer(last.stdout):
+            if not match.group(0).startswith("[Inferior"):
+                return True, _banner_line(last.stdout, match.start())
+        # 수명주기 줄이 아예 없으면 대상이 안 뜬 것이고 `judge()`가 이미 `ok=False`로 내렸다.
+        return (False, None) if _GDB_TARGET_LIFECYCLE.search(last.stdout) else (None, None)
+    text = f"{last.stdout}\n{last.stderr}"
+    match = _CRASH_BANNER.search(text)
+    if match is None:
+        return False, None
+    return True, _banner_line(text, match.start())
+
+
 def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
     """semgrep은 **exit code를 믿지 않는다.** 실측 근거가 있다.
 
@@ -1415,6 +1490,8 @@ class ContainerToolRunner:
         if note is not None:
             sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
+        # 기록뿐이다(#232) — 대상이 뜬(`ok`) 런타임 도구에만 잰다. 게이트는 이 값을 읽지 않는다.
+        crashed, banner = observe_crash(tool, steps, len(commands)) if ok else (None, None)
         summary = summary_line(tool, steps)
         if summary is not None:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
@@ -1437,6 +1514,8 @@ class ContainerToolRunner:
             exit_code=exit_code,
             error=error,
             location=first_hit_location(tool, steps),
+            crashed=crashed,
+            banner=banner,
         )
 
     def _kill(self, name: str) -> None:
@@ -1515,6 +1594,8 @@ class ContainerToolRunner:
         exit_code: int,
         error: str | None,
         location: Location | None = None,
+        crashed: bool | None = None,
+        banner: str | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -1544,6 +1625,8 @@ class ContainerToolRunner:
             ok=ok,
             exit_code=exit_code,
             error=error,
+            crashed=crashed,
+            banner=banner,
         )
 
 
