@@ -135,6 +135,21 @@ agent:
   (`call_model`·`_call_hop`)와 `slice_id`(`scout.finish`)도 하네스가 덮지만 **기록 없이** 덮는다 — 그 둘의 이탈은
   `issued_override`가 없으니 「모델이 맞게 썼다」가 아니라 「안 쟀다」다. `location`은 덮지 않는다 — 모델이
   사실 블록의 대상을 옮겨 적는 값이다.
+
+  ⏵ 2026-10-13 — 위 `location`은 덮지 않는다는 말에 **예외 하나**가 생겼다: 후보의 `location.symbol`이
+  `null`이면 하네스가 `FACTS.target.symbol`(= `capsule.target.symbol`)을 채운다(이슈 #633 선택지 (a) —
+  `nodes/scout._stamp_target_symbol`, 발급값 도장 **뒤**의 별도 도장). 세 조건이 다 맞을 때만이다 —
+  모델이 `symbol`을 안 썼다(`null`; `""`·틀린 이름은 쓴 값이라 그대로) · 후보 `location.file`이 대상
+  `file`과 같다(다른 파일 후보는 안 건드린다) · 대상이 `symbol`을 든다(이름 없는 대상에서는 지어내지
+  않는다). `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
+  `scout_symbol_stamped`(`hop`·`symbol`)가 남는다 — **이벤트 부재 = 채우지 않았다**이고 `issued_override`와는
+  섞지 않는다. **한계:** 이것은 후보 객체의 빈 칸을 채울 뿐 모델이 `symbol`을 옮겼다는 뜻이 아니다 — 모델의
+  복사 실패율(s17 12/12 `null`)은 그대로이고 도장은 그 실패를 가린다. **모델 요청 바이트는 안 변한다** —
+  Auditor는 후보를 ID·CWE·신호로만 렌더하고 FACTS `target`은 `capsule.target`이며 Critic은 Finding만 읽는다
+  (`tests/test_nodes.py::test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt`). 값이 닿는 곳은
+  저장된 후보, 합성 `repro_spec`의 문구(`nodes/auditor._synthesize_repro_spec`이 `symbol or file`을 쓴다 —
+  `sanitizer crash at <file>`이 `<symbol>`로 바뀐다)와 러너의 「분석 안 된 대상」 비교 키
+  (`_target_key`에 `symbol`이 든다)다.
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
