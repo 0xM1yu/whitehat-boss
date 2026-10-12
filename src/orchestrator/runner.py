@@ -116,11 +116,13 @@ from typing import Protocol
 from src.config import SCOUT_POOL_ROLES, ConfigError, HarnessConfig
 from src.ids import IdFactory, sha256_digest, sha256_text
 from src.interfaces.model_client import (
+    CONTEXT_OVERFLOW,
     ModelClient,
     ModelGatewayError,
     ModelSwapError,
     SchemaParseError,
     error_detail,
+    is_size_rejection,
     truncate_detail,
 )
 from src.interfaces.oracle import Oracle
@@ -289,7 +291,7 @@ _REASON_SCHEMA = "schema_parse_failed"
 # 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
 # 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
 # 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
-_CONTEXT_OVERFLOW = "maximum context length"
+_CONTEXT_OVERFLOW = CONTEXT_OVERFLOW  # 정의는 `model_client` - critic 노드도 쓴다(#600)
 
 # 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
 # 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
@@ -358,9 +360,7 @@ def _is_size_rejection(exc: Exception) -> bool:
     413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
     게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
     """
-    if not isinstance(exc, ModelGatewayError):
-        return False
-    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
+    return is_size_rejection(exc)
 
 
 def _rejects_every_request(exc: Exception) -> bool:
@@ -808,10 +808,10 @@ class _Accumulator:
     # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
     # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 1..N의 관측(Auditor가
-    # 홉마다 user 턴으로 본 텍스트 그대로, 모델 응답 턴은 없다). `auditor.run(observations=...)`가
-    # 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다. `finding_sources`와 같은 자리에 두는
-    # 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가 물려받는다(#600 H2ⓐ). 8단계 PoV는 안
-    # 읽는다.
+    # 홉마다 본 관측에서 모델이 고른 식별자를 가린 사본, 모델 응답 턴은 없다).
+    # `auditor.run(observations=...)`가 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다.
+    # `finding_sources`와 같은 자리에 두는 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가
+    # 물려받는다(#600 H2ⓐ). 8단계 PoV는 안 읽는다.
     finding_observations: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
@@ -1573,22 +1573,35 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
 
 
 def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
-    """Critic 요청에 Auditor 홉 관측을 실었는데 **추정 토큰이 입력 몫을 넘은** 건이 있으면 run
-    경고, 아니면 `None`(#600 H2ⓐ). `critic_hop_observations`(홉 관측을 실은 Critic 호출마다 1건)의
-    `over_input_share`를 센다. 그 값은 글자 수 ÷ 최악 비 1.22의 **계산값**이라 경고도 「넘을 수
-    있다」이지 「넘었다」가 아니다 - 서버의 크기 거절은 `critic_failed`가 따로 남긴다. 관측 절을
-    뺀 프롬프트도 넘는 건(`over_without_observations`)은 원인이 관측이 아니라 따로 센다."""
+    """Critic에 Auditor 홉 관측을 실은 요청이 (a) 추정 입력 몫을 넘을 수 있거나 (b) 크기 거절을
+    받아 관측 절을 빼고 다시 물은 건이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
+
+    `critic_hop_observations`는 두 모양이다: 관측을 실은 호출마다 1건(`over_input_share`)과, 그
+    호출이 400/413으로 거절돼 `critic.run`이 절을 통째로 빼고 한 번 다시 물었다는 표지
+    (`observations_dropped`).
+    (a)는 글자 수 ÷ 최악 비 1.22의 **계산값**이라 「넘을 수 있다」이지 「넘었다」가 아니다 - 서버의
+    크기 거절은 (b)가 실제로 센다. 관측 절을 뺀 프롬프트도 넘는 건(`over_without_observations`)은
+    원인이 관측이 아니라 따로 센다."""
     events = [e.data for e in trace.events if e.kind is EventKind.CRITIC_HOP_OBSERVATIONS]
-    over = [d for d in events if d.get("over_input_share")]
-    if not over:
+    dropped = [d for d in events if d.get("observations_dropped")]
+    carried = [d for d in events if not d.get("observations_dropped")]
+    over = [d for d in carried if d.get("over_input_share")]
+    if not over and not dropped:
         return None
-    alone = sum(1 for d in over if d.get("over_without_observations"))
-    return (
-        f"Critic 요청 {len(events)}건이 Auditor 홉 관측을 실었고 그중 {len(over)}건의 추정 입력이 "
-        f"입력 몫({over[0].get('input_share_tokens')}토큰)을 넘을 수 있다 - 글자/토큰 최악 비 "
-        f"1.22로 센 계산값이고 하네스는 자르지 않았다(관측 절 없이도 넘는 건 {alone}). "
-        "trace의 critic_hop_observations가 목록이다 (#600)"
-    )
+    parts = [f"Critic 요청 {len(carried)}건이 Auditor 홉 관측을 실었다"]
+    if over:
+        alone = sum(1 for d in over if d.get("over_without_observations"))
+        parts.append(
+            f"그중 {len(over)}건의 추정 입력이 입력 몫({over[0].get('input_share_tokens')}토큰)을 "
+            f"넘을 수 있다 - 글자/토큰 최악 비 1.22로 센 계산값이고 하네스는 자르지 않았다"
+            f"(관측 절 없이도 넘는 건 {alone})"
+        )
+    if dropped:
+        parts.append(
+            f"{len(dropped)}건은 서버가 크기로 거절해 관측 절을 통째로 빼고 한 번 다시 물었다 "
+            "(실측한 거절이다)"
+        )
+    return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
 
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:

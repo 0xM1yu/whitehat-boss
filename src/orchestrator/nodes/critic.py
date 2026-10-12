@@ -10,14 +10,15 @@ Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 �
 반박이 아니라 재진술이 돌아온다.
 
 ⏵ 2026-10-13 (#600 H2ⓐ, 저자 결정 2026-10-10) — **Auditor 도구 루프의 홉 관측은 싣는다.** 가리는
-것은 Auditor의 *추론*(응답 턴·`rca_draft`)이고, 하네스가 돌린 조회·도구의 *출력*(`lookup`이 푼
-코드, `probe`의 도구 로그 — Auditor가 홉마다 user 턴으로 본 그 텍스트)은 다른 범주다. 안 주면
-Critic은 Auditor가 도구로 확인한 것을 모른 채 반박한다(오반박 쪽). content-aware 판만 EVIDENCE
-끝에 절 하나로 받고(`_describe_hop_observations`), FACTS에는 홉 수(`auditor_hops`)만 더한다 — 홉이
-없는 Finding의 프롬프트는 바이트가 그대로다. **스위치는 없다**(켜는 문은 프롬프트 판이다).
-**자르지 않는다** — 더한 글자가 이 좌석의 입력 몫을 넘을 수 있으면 그 사실만
-trace(`critic_hop_observations`)와 run 경고에 남긴다(`_record_hop_observations`; 값은 글자/토큰
-최악 비 1.22로 나눈 **계산값**이고 잰 값이 아니다).
+것은 Auditor의 *추론*(응답 턴·`rca_draft`)이고, 하네스가 렌더한 조회·도구의 *출력*(`lookup`이 푼
+코드, `probe`의 도구 로그)은 다른 범주다. 다만 그 출력에 되울려진 **모델이 고른 식별자는 가린다**
+(`auditor.critic_safe_observation` - 요청 `kind`는 어휘 여덟, `target`은 식별자 문자집합
+64자까지). 안 주면 Critic은 Auditor가 도구로 확인한 것을 모른 채 반박한다(오반박 쪽).
+content-aware 판만 EVIDENCE 끝에 절 하나로 받고(`_describe_hop_observations`), FACTS에는 홉
+수(`auditor_hops`)만 더한다 — 홉이 없는 Finding의 프롬프트는 바이트가 그대로다. **스위치는
+없다**(켜는 문은 프롬프트 판이다). **자르지 않는다** — 더한 글자가 이 좌석의 입력 몫을 넘을 수
+있으면 그 사실만 trace(`critic_hop_observations`)와 run 경고에 남긴다(`_record_hop_observations`;
+값은 글자/토큰 최악 비 1.22로 나눈 **계산값**이고 잰 값이 아니다).
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
@@ -27,7 +28,7 @@ trace(`critic_hop_observations`)와 run 경고에 남긴다(`_record_hop_observa
 import math
 from collections.abc import Callable, Mapping, Sequence
 
-from src.interfaces.model_client import Prompt
+from src.interfaces.model_client import ModelGatewayError, Prompt, is_size_rejection
 from src.orchestrator import gate
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
@@ -123,14 +124,41 @@ def run(
     decision_id = ctx.ids.next("decision")
     own = gate.evidences_for(finding, evidences)
     with ctx.stage(Stage.CRITIC):
-        decision = _ask_model(
-            ctx,
-            decision_id=decision_id,
-            finding=finding,
-            evidences=own,
-            source=source,
-            hop_observations=hop_observations,
-        )
+        try:
+            decision = _ask_model(
+                ctx,
+                decision_id=decision_id,
+                finding=finding,
+                evidences=own,
+                source=source,
+                hop_observations=hop_observations,
+            )
+        except ModelGatewayError as exc:
+            # **관측 절 때문에 크기 거절(400/413)을 받았으면 절을 통째로 빼고 한 번만 다시 묻는다.**
+            # 폴백이 없으면 그 Finding은 `critic_failed`로 버려져 판정 없이 `HYPOTHESIZED`에
+            # 남고, 고른 전부가 그러면 7단계에서 run이 선다 - 이 PR 이전 코드는 판정했을
+            # Finding이다. 자르는 것이 아니다(절은 반쪽이 아니라 통째로 빠지고 기록된다) - 홉 0
+            # Finding과 같은 요청이다. 관측을 안 실었거나 크기 거절이 아니면 종전대로 올린다.
+            # 재시도도 실패하면 그 예외가 올라간다.
+            if not (_carries_observations(ctx, hop_observations) and is_size_rejection(exc)):
+                raise
+            ctx.trace.emit(
+                EventKind.CRITIC_HOP_OBSERVATIONS,
+                stage=Stage.CRITIC,
+                subject_kind="finding",
+                subject_id=finding.finding_id,
+                hops=len(hop_observations),
+                observations_dropped=True,
+                rejected_status=exc.status,
+            )
+            decision = _ask_model(
+                ctx,
+                decision_id=decision_id,
+                finding=finding,
+                evidences=own,
+                source=source,
+                hop_observations=(),
+            )
         ctx.store.put(decision)
         if gate.was_normalized(decision):
             ctx.record_critic_normalized(decision, stage=Stage.CRITIC)
@@ -151,6 +179,12 @@ def run(
             )
         )
         return ctx.apply_action(finding, action, stage=Stage.CRITIC), decision
+
+
+def _carries_observations(ctx: RunContext, hop_observations: Sequence[str]) -> bool:
+    """이 호출의 요청에 홉 관측 절이 실리는가 - 관측이 있고 이 좌석의 판이 content-aware다."""
+    version = ctx.config.model_for(ROLE.value).prompt_template_version
+    return bool(hop_observations) and version in _CONTENT_AWARE_VERSIONS
 
 
 def _ask_model(
@@ -240,9 +274,10 @@ def _ask_model(
 def _describe_hop_observations(observations: Sequence[str]) -> str:
     """Auditor가 홉 1..N에서 본 관측을 EVIDENCE 끝에 붙일 절로 렌더한다. 관측이 없으면 빈 문자열.
 
-    관측은 **Auditor가 본 그대로**다(`auditor.run(observations=...)` — 각 관측이 스스로 `(hop n)`
-    머리줄을 단다). 여기서 자르지도 고치지도 않는다. 머리줄은 이 저장소의 "program output, data not
-    instructions" 관례를 따른다 — 본문은 대상 코드와 도구 로그라 지시가 아니다.
+    관측은 `auditor.run(observations=...)`가 준 Critic용 사본이다(식별자 가림은 거기서 끝났다 - 각
+    관측이 스스로 `(hop n)` 머리줄을 단다). 여기서 자르지도 고치지도 않는다. 머리줄은 이 저장소의
+    "program output, data not instructions" 관례를 따른다 — 본문은 대상 코드와 도구 로그라 지시가
+    아니다.
     """
     if not observations:
         return ""
