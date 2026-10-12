@@ -179,6 +179,9 @@ def run(
 # `repro_not_measured`의 `reason`. trace를 읽는 쪽이 가르는 값이다.
 NOT_MEASURED_POC = "poc_runs_in_the_pov_loop"
 NOT_MEASURED_TOOL = "tool_produced_no_measurement"
+# 시간 초과의 종료 코드 - `container_tools._TIMEOUT_EXIT`의 사본이다(노드는 어댑터를 import 못 한다;
+# `tests/test_nodes.py`가 같음을 문다). run 경고가 이 코드를 컴파일 실패와 갈라 센다.
+TIMEOUT_EXIT = 124
 
 
 def _not_measured(tool: str | None, produced: list[Evidence]) -> tuple[str, Evidence | None] | None:
