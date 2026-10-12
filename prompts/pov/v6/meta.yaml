@@ -19,7 +19,7 @@
 #    `_POC_ENV_FATAL` · `_POC_DAEMON_UNREACHABLE`). `71`·`139`는 대상이 낸 값일 수 있어 환경 코드가 아니다.
 # 이 판의 첫 커밋(`6ae9513`)은 제외 코드에 77을 넣고 있었고 리뷰가 그것을 잡아 고쳤다 — 첫 커밋 prefix.md sha256은 `786f2c2029ccfab058c210acddc19db4450abe77591a9a664d015732bc8bec1d`다.
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
-#   prefix.md sha256 `573e600112fdc7b89530cacda47e22b083ae38978b6fe9bb31d42d2d93ad8de1`
+#   prefix.md sha256 `d5a53dadad967adff2fe36ec86328aea3431c59bd55daaf3f50660e59229f6b8`
 #   body.md   sha256 `3b6a2a447b52af84eaddf0743795a86918bf3b6453acd8227fdf9ab5a8487eac`
 role: pov
 version: v6

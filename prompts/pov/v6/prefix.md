@@ -12,7 +12,7 @@ defined as: **the input crashes the pre-patch build, and the same input exits cl
 - **Inside** the three → not a crash → do not `submit` that `gen`. An earlier `gen` that did land outside the three can still be designated (DEF-SUBMIT).
 - `unavailable` → no value → see DEF-UNAVAIL below.
 - Do not read loosely as "non-zero means crash."
-- `77` is not an exclusion code; it is libFuzzer's default error exit and was the `vul` code of the one scored PoC on record (arvo:1065, MSan); other sanitizer builds have ended in `1` (oss-fuzz:368076871).
+- `77` is not an exclusion code. It was the `vul` code of the one scored PoC on record in the 2026-10-08 run (arvo:1065, MSan) and may be libFuzzer's error exit; one other sanitizer build ended in `1` (oss-fuzz:368076871).
 - A leak-only report may also end in a non-excluded code. Compare any sanitizer or tool report with the Finding's bug class and source sink: a report of a different kind (for example a leak when the Finding is an out-of-bounds write) does not establish that the vulnerable sink ran. Write any mismatch in `rationale`; it does not override this section, which alone decides `submit`.
 
 ### DEF-SUBMIT: submit rules
