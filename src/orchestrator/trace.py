@@ -435,6 +435,11 @@ class EventKind(StrEnum):
     # 좌석의 최악이고 Critic 좌석의 비는 안 쟀다. `over_input_share=true`는 「최악 비에서 넘을 수
     # 있다」이다. **하네스는 자르지 않는다** — 넘어도 절은 그대로 나가고 서버가 크기로 거절하면
     # `critic_failed`가 남는다. `over_input_share`가 참인 건수는 run 경고(`warnings`)로도 오른다.
+    # ⏵ 2026-10-13 - **크기 거절 폴백.** 관측을 실은 요청이 서버에서 400(컨텍스트 초과)·413으로
+    # 거절되면 `critic.run`이 절을 통째로 빼고 한 번 다시 묻고(홉 0과 같은 요청), 그때 같은
+    # 종류의 이벤트를 하나 더 낸다: `hops`(뺀 관측 수) · `observations_dropped: true` ·
+    # `rejected_status`(거절 상태 코드). 이 이벤트에는 추정·몫 키가 없다. 부재 = 폴백이 안 났다.
+    # 거절은 서버가 잰 사실이다(위 계산값과 다르다). run 경고가 그 건수를 센다.
     CRITIC_HOP_OBSERVATIONS = "critic_hop_observations"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"

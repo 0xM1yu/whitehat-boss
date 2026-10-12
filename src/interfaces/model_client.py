@@ -164,6 +164,23 @@ class ModelSwapError(ModelGatewayError):
         self.report = dict(report or {})
 
 
+# vLLM이 컨텍스트 초과 400에 싣는 문구 - 이 문구가 실린 400과 413만 「이 요청이 크다」다. 그 밖의
+# 400은 요청 모양·서버 설정 거절이라 다음 요청도 같다(이슈 #296, `runner._CONTEXT_OVERFLOW`).
+CONTEXT_OVERFLOW = "maximum context length"
+
+
+def is_size_rejection(exc: BaseException) -> bool:
+    """이 실패가 **이 요청이 크다**인가 - 413(본문 초과)과 `CONTEXT_OVERFLOW`가 실린 400뿐이다.
+
+    게이트웨이 오류가 아니면(스키마 실패 포함) 크기가 아니다. 러너(`runner._is_size_rejection` -
+    연속 폐기 카운터가 안 세는 유일한 실패)와 노드(`critic.run`의 홉 관측 폴백)가 **같은 판정**을
+    쓰도록 여기 둔다 - 노드는 러너를 import할 수 없다.
+    """
+    if not isinstance(exc, ModelGatewayError):
+        return False
+    return exc.status == 413 or (exc.status == 400 and CONTEXT_OVERFLOW in exc.detail)
+
+
 class SchemaParseError(RuntimeError):
     """`retries` 한도 안에 구조화 출력을 얻지 못했다.
 
