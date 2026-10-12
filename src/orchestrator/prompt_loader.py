@@ -143,9 +143,10 @@ FACT_KEYS = (
     # opt-in이라 인자를 안 주는 역할의 프롬프트는 바이트가 그대로다(`docs/evaluation.md:69` —
     # 프롬프트가 바뀌면 이전 결과와 직접 비교하지 않는다).
     "fuzz_entrypoint",
-    # Auditor 도구 루프가 Critic 입력에 건넨 홉 관측의 수(#600 H2ⓐ). **Critic만 싣는다** — 홉이
-    # 1개 이상인 Finding에만 키가 생기고(홉 0이면 키 자체가 없다 — `0`을 적지 않는다, 바이트
-    # 동일), 본문은 이 키가 아니라 EVIDENCE 블록(`critic._describe_hop_observations`)에 있다.
+    # Auditor 도구 루프가 Critic 입력에 건넨 관측 **사본**의 수(#600 H2ⓐ) — 돈 홉 수가 아니다
+    # (가림에 실패한 홉은 빠진다). **Critic만 싣는다** — 사본이 1개 이상인 Finding에만 키가 생기고
+    # (사본 0이면 키 자체가 없다 — `0`을 적지 않는다, 바이트 동일), 본문은 EVIDENCE 블록
+    # (`critic._describe_hop_observations`)에 있다.
     "auditor_hops",
 )
 
