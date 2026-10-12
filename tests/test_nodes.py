@@ -1364,7 +1364,8 @@ def test_an_empty_pov_pool_with_a_pov_seat_lands_in_the_run_warnings_with_its_br
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
     assert "8단계 PoV는 한 건도 시도되지 않았다" in message
@@ -1385,7 +1386,8 @@ def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백 포함) 2 · 판정 실패 1"
+        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
         " · Critic 미경유 4 · pov_attempt_top_n 0."
     ), message
     assert "상한 0" in message
@@ -1432,7 +1434,8 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
 
     assert state.pov_pool_empty is not None
     assert state.pov_pool_empty.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백 포함) 2 · 판정 실패 1"
+        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
         " · Critic 미경유 1 · 업홀드 미승격 1 · pov_attempt_top_n 0."
     ), state.pov_pool_empty
 
@@ -1448,7 +1451,8 @@ def test_an_empty_pov_pool_with_no_findings_at_all_still_warns(ctx: RunContext) 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
 

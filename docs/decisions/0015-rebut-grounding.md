@@ -84,7 +84,9 @@ is_grounded = bool(evidence_refs) or (
   원천은 프롬프트다 - `prompts/critic/v7/prefix.md:193-202`(판정 규칙의 축 목록)과
   `prompts/critic/v6/prefix.md:141-144`(`Use only these prompt-level axis values:`)가 **글자까지 같은 열 개**를
   든다(`test_the_axis_vocabulary_matches_the_critic_prompts`가 두 파일을 읽어 대조한다).
-- `from_text`는 **앞뒤 공백을 뗀 전체가 정확히 한 값일 때만** 읽고 아니면 `None`이다. 대소문자를 접지
+- `from_text`는 **앞뒤 공백을 뗀 전체가 정확히 한 값일 때만** 읽고 아니면 `None`이다. **`strip()`이 허용하는
+  유일한 정규화다** - 앞뒤 공백(`" guard "`, 탭·줄바꿈 포함)은 의미가 아니라 직렬화 잡음이라 어휘 안으로 읽고,
+  그 밖의 모든 변형은 어휘 밖이다. 대소문자를 접지
   않고(`GUARD` -> `None`), 부분 문자열·접두어로 추측하지 않으며(`guard-check` -> `None`), 장식도 안 뗀다.
   `Verdict.from_text`의 규율(추측하지 않는다)을 가져오되 훨씬 좁다 - 축은 판정이 아니라 **근거의 자격**이라
   느슨하게 읽어 얻는 것이 없다.
@@ -93,8 +95,8 @@ is_grounded = bool(evidence_refs) or (
   원문 미커밋** - `src/schemas/decision.py`의 `DecisionDraft` 주석이 그 사실을 적는다). 검증은 **파싱 뒤**에 한다.
 - **`or evidence_refs`를 유지한다.** v6이 서빙 중이고 그 `rebut`은 ID를 인용한다. v7은 rebut에 ID를
   **싣지 않는다**(`:241` - `evidence_refs`는 *only for an uphold confirmed by Evidence*) - 두 판의 규약이 반대이므로 술어가 둘 다 받아야 한다. 이 차이를 여기 적는다.
-  ⚠ 부작용: v6 규약을 어기고 **축만** 든 `rebut`(`evidence_refs=[]`)도 이제 근거 있는 반박이다 - 전에는
-  `uphold`로 승격됐으니 방향은 안전해졌지만, v6 프롬프트가 요구한 ID 인용을 하네스가 강제하지는 않는다.
+  ⚠ 부작용은 아래 「서빙 v6의 라우팅이 뒤집힌다」 표가 든다 - v6 규약을 어기고 **축만** 든 `rebut`
+  (`evidence_refs=[]`)이 다른 길로 간다. v6 프롬프트가 요구한 ID 인용을 하네스가 강제하지는 않는다.
 
 ### 3. 지표 - `critic_normalized`가 사유를 싣는다
 
@@ -117,9 +119,34 @@ is_grounded = bool(evidence_refs) or (
 | PoV 추가 풀 | 든다, 정렬 계단 0(uphold와 동점) | 든다, 정렬 계단 2(보류) |
 | 8단계 `validate` | `validated`면 든다 | 안 든다(`queued`) |
 
+### 서빙 v6의 라우팅이 뒤집힌다 - 요청 바이트는 그대로다
+
+`or evidence_refs`를 유지해도 v6에는 한 갈래가 움직인다. v6 규약은 `rebut`에 비어 있지 않은 축 **과**
+`evidence_refs`를 요구하는데(`prompts/critic/v6/prefix.md:152-158`), 규약을 어기고 **어휘 안의 축만 들고
+`evidence_refs=[]`인** v6 `rebut`은 전과 후에 이렇게 다르다:
+
+| 서빙 v6 `rebut` (유효 축 · `evidence_refs=[]`) | 전 (`bool(evidence_refs)`) | 후 (이 ADR) |
+| --- | --- | --- |
+| 정규화 | `uphold`로 정규화 | 정규화 안 됨 - 근거 있는 `rebut` |
+| 정책 | F-5 `critic_upheld` (E3면 `validated`) | F-6 `critic_rebutted`, `queued` |
+| PoV 추가 풀 | 든다, 정렬 계단 0 | **뺀다**(`_critic_set_aside`가 반박을 민다) |
+| `critic_normalized` | 남는다 | 안 남는다 |
+
+**같은 프롬프트 판·같은 요청 바이트에서 7단계 라우팅이 갈린다**(`docs/evaluation.md`의 단계별 후보 제거율
+행이 이 비교 불가를 적는다 - §2.3 규칙 4가 못 덮는 사유다). 이것이 개선인지는 **미측정**이다: 전 라우팅은
+반박을 못 한 Critic이 승격시키는 쪽이었고 후 라우팅은 풀에서 그 Finding을 빼는 쪽이다 - 어느 쪽이 실제
+참양성을 더 잃는지 아무도 재지 않았다.
+**지금까지 관측된 v6 영향은 0건이다**: 2026-10-11 run은 7단계 5/5가 `need_evidence`
+(`docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md` §3·§5)이고 2026-10-12 run은 6/6이
+`need_evidence`(`docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md` §3)라 둘 다 `rebut`이
+없었다. 그 전 2026-09-24 스모크(`docs/experiments/harness/2026-09-24-roster-smoke-atom.md`)는 7단계 4건이 전부
+반박이었고 그중 1건(`find_0007`)이 `evidence_refs`가 비어 `uphold`로 정규화됐다 - 그 보고서는
+`rebuttal_axis`를 적지 않아 **그 축이 어휘 안이었는지 모르고**, 서빙 판이 v6도 아니었으므로(로스터·프롬프트가
+다르다) v6의 뒤집힘 사례로 세지 않는다.
+
 즉 "Critic이 못 거른" Finding이 uphold와 같은 자리를 더는 차지하지 못하고, PoV 시도 자체는 막히지
 않는다(`pov_attempt_top_n > 0`일 때). 풀이 빈 사유를 세는 `_pov_pool_empty_reason`의 "보류" 칸에는 이제
-정규화된 반박이 섞인다(칸 이름의 "파서 폴백 포함"에 더해). 구분은 `critic_normalized`가 한다.
+정규화된 반박이 섞인다 - 칸 이름이 「보류(파서 폴백·정규화된 반박 포함)」로 바뀌었다. 구분은 `critic_normalized`가 한다.
 
 ## 고르지 않은 것 - 근거째로 남긴다
 
@@ -176,14 +203,15 @@ ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고
 - **v7 run 0건.** 위 지표 전부 미측정이다. v7의 rebut 비율·정밀도·재현율은 CASTLE 수치(저자 인용)뿐이다.
 - **`docs/evaluation.md`가 요구하는 프롬프트 판 재측정**이 이 결정에도 걸린다. auditor v4 -> v6·v6 -> v7에서
   연속으로 안 돌았고, 이 PR도 돌리지 않았다 - 이 PR은 판을 바꾸지 않고 게이트를 바꾸므로 재측정은 v7 flip PR의 몫이다.
-- **서빙 v6에서 이 변경이 결과를 바꾸는지** 미측정이다. v6 `rebut`이 ID 없이 축만 든 경우가 얼마나
-  있었는지 본 적이 없다(v6의 `critic_normalized` 건수는 이 PR 전에 사유 키가 없었다).
+- **서빙 v6에서 이 변경이 결과를 바꾸는지** 미측정이다. 관측된 뒤집힘은 0건이다(위 「서빙 v6의 라우팅이
+  뒤집힌다」 - 10-11 5/5 · 10-12 6/6이 `need_evidence`뿐이었다). v6 `rebut`이 ID 없이 축만 든 경우가 얼마나
+  있을지는 모른다(v6의 `critic_normalized` 건수는 이 PR 전에 사유 키가 없었다). 그 뒤집힘이 정밀도·재현율에
+  주는 방향은 재지 않았다.
 - **`evidence_refs`가 근거인가.** 이 술어의 첫 갈래(`bool(evidence_refs)`)도 모델의 자기 신고다 -
   하네스는 등록된 ID인지·본문이 있는지 보지 않는다(`gate.evidences_for`는 모르는 참조를 조용히 버린다).
   [D106](../open-questions/D/D106.md)이 같은 종류의 문제를 다룬다. 이 ADR은 그 기준을 **낮추지 않고** 같은
   종류의 신호를 SOURCE 경로로 넓힌다. 자기 신고를 관측으로 바꾸는 것은 P0b이고 보류다.
-- **`from_text`의 공백 허용**은 Verdict처럼 `strip()`만 허용한다. 줄바꿈·탭·앞뒤 공백이 섞인 응답의 비율은
-  모른다.
+- **`from_text`의 공백 허용**은 `strip()` 하나다(결정 2). 앞뒤 공백이 섞인 응답의 비율은 모른다.
 
 ## 되돌리기 비용
 
@@ -192,4 +220,5 @@ ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고
 
 ⚠ **되돌릴 수 있다는 것과 되돌려도 된다는 것은 다르다.** `normalize`를 `uphold`로 되돌리면 PR #588의 사슬이
 다시 열린다. 되돌리려면 v7 배선이 **없어야** 한다 - 지금 서빙 중인 v6은 ID를 인용하므로 `uphold` 폴백이 사슬을
-거의 안 연다(v6 `rebut`이 규약을 지키는 한). 그러나 그것은 규약 순응에 기댄 안전이라 이 ADR의 불변식보다 약하다.
+거의 안 연다(v6 `rebut`이 규약을 지키는 한). 그러나 그것은 규약 순응에 기댄 것이라 이 ADR의 불변식보다 약하다.
+되돌리면 위 v6 뒤집힘 표도 함께 원래대로 돌아간다.
