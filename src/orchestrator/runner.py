@@ -2519,6 +2519,12 @@ def _run_pov_hops(
     홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
     몫이다(미정)(이 PR은 프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
 
+    ⏵ **2026-10-12 (#619) — `inspect`도 반복을 거른다**: 이 루프에서 이미 돌린 (도구, 입력)을 `inspect`가
+    또 요청하면 도구를 안 돌리고(`ran`) 옛 결과에 `inspect_repeat …` 줄을 달아 되먹인다. 입력은 `poc`만
+    PoC 바이트(sha256)이고 `asan`·`gdb`·`build`는 PoC를 안 읽어 도구만이 키다. gen의 `poc` 실행도 키를 채운다.
+    루프는 안 서고 모델 홉 하나는 쓴다(`MAX_HOP`이 여전히 끊는다) — 홉 이벤트는 `tool`·
+    `inspect_repeat_of_hop`만 싣고 도구 결과 키가 없다. `ran`에 실패한 실행도 든다(재시도 안 함).
+
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
     `/tmp/poc`)라 그 도구의 관측은 **PoC의 함수**다. ⚠ **나머지는 아니다** — dev_fake는 대상 소스
@@ -2551,6 +2557,8 @@ def _run_pov_hops(
         # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) → 그 바이트. 반복 판정은
         # 키 조회이고, `submit`이 `poc_sha256`으로 지명한 gen을 여기서 찾는다.
         seen: dict[str, bytes] = {}
+        # 이미 돌린 도구 실행 (키 → (홉, 증거)) — `inspect`가 같은 키를 또 요청하면 안 돌린다(#619).
+        ran: dict[tuple[str, str | None], tuple[int, Evidence]] = {}
         # gen마다의 `vul` 종료 코드(없으면 `None`) — **로그 전용**이다. 종단 이벤트의 계측 플래그만
         # 읽고 지정(`_designate_final`)은 읽지 않는다.
         gen_codes: list[int | None] = []
@@ -2691,9 +2699,19 @@ def _run_pov_hops(
                 tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
+            # 결과가 PoC의 함수인 도구는 `poc`뿐이다(`pov.run_tool`) — 나머지는 키가 도구뿐이다.
+            run_key = (
+                tool,
+                sha256_digest(tool_poc) if tool == "poc" and tool_poc is not None else None,
+            )
+            prior = ran.get(run_key) if action.action == "inspect" else None
             try:
-                evidence = pov.run_tool(
-                    ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
+                evidence = (
+                    prior[1]
+                    if prior is not None
+                    else pov.run_tool(
+                        ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
+                    )
                 )
             except BudgetExhausted as exc:
                 # 🔴 **그 홉의 이벤트를 내고 다시 던진다**(#394). `call_tool`도 `ledger.ensure`를
@@ -2717,10 +2735,15 @@ def _run_pov_hops(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
+            if prior is None:
+                ran[run_key] = (hop, evidence)
+            # 반복 홉은 도구를 안 돌렸으니 옛 결과를 이 홉의 것으로 싣지 않는다(#619).
+            fresh = evidence if prior is None else None
+            repeat_of = None if prior is None else (tool, prior[0])
             if hop >= pov_hops:
                 _emit_pov_hop(
-                    ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
-                    stop_reason=PovStopReason.MAX_HOP.value,
+                    ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
+                    stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
                     fuzz=fuzz if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
@@ -2728,8 +2751,8 @@ def _run_pov_hops(
                     terminal=_terminal_fields(pov_wide, gen_codes),
                 )
             _emit_pov_hop(
-                ctx, finding, hop=hop, action=action.action, evidence=evidence, poc=hop_poc,
-                fuzz=fuzz if hop == 0 else None,
+                ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
+                inspect_repeat_of=repeat_of, fuzz=fuzz if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = _pov_observation(
@@ -2739,6 +2762,12 @@ def _run_pov_hops(
                 wide=pov_wide,
                 poc=last_poc,
             )
+            if prior is not None:
+                followup = (
+                    f"inspect_repeat tool={tool} same_as_hop={prior[0]} rerun=false — "
+                    "같은 입력으로 이미 돌린 도구라 다시 돌리지 않았다. 아래는 그때의 결과다"
+                    f"(새 정보 없음).\n{followup}"
+                )
             if action.action == "gen" and pov_wide:
                 # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
                 # 의미를 파생하지 않는다. 모델이 이 관측을 본 뒤 submit할지를 정한다.
@@ -2949,6 +2978,7 @@ def _emit_pov_hop(
     fuzz: Mapping[str, object] | None = None,
     submit_digest: str | None = None,
     parse_truncated: bool = False,
+    inspect_repeat_of: tuple[str, int] | None = None,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
@@ -2967,6 +2997,9 @@ def _emit_pov_hop(
     이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
 
     `submit_digest`는 `submit` 홉에만 준다 — `poc_sha256` 지명의 결과(`absent`·`matched`·`unknown`).
+
+    `inspect_repeat_of`는 `(도구, 옛 홉)`이다 — 같은 (도구, 입력)을 이미 돌려 **이번엔 안 돌린**
+    `inspect` 홉(#619)이라 `tool`·`inspect_repeat_of_hop`만 싣고 도구 결과 키(`tool_ok`…)는 없다.
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
@@ -2980,6 +3013,8 @@ def _emit_pov_hop(
         data["tool_ok"] = evidence.ok
         data["exit_code"] = evidence.exit_code
         data["evidence_kind"] = evidence.kind.value
+    if inspect_repeat_of is not None:
+        data["tool"], data["inspect_repeat_of_hop"] = inspect_repeat_of
     if poc is not None:
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
