@@ -504,6 +504,17 @@ thresholds:
   # 현재 입력 크기를 판단하지 않는다(입력 토큰 0, 미실측). Critic 출력 상한은 아래
   # `output_max_by_role.critic` 32,768이고 타임아웃은 registry 3,600초다(설정값).
   # 이번 교정은 산문뿐이고 예산값을 바꾸지 않는다.
+  # ⏵ 2026-10-13 (#600 H2ⓐ) — Critic 입력에 **Auditor 도구 루프의 홉 관측**이 더해진다(content-aware
+  # 판만 · 홉이 돈 Finding만). 몫을 먼저 센다 - 전부 **계산값**이고 잰 값이 아니다:
+  # 입력 몫 = registry 창 131,072 − `output_max_by_role.critic` 32,768 = 98,304토큰. 관측 하나의
+  # 상한은 `lookup`이 resolver에 거는 글자 15,000(`nodes/auditor._LOOKUP_MAX_CHARS`) 안팎이고
+  # `probe`는 로그 2,000자 안팎(`_PROBE_BODY_CHARS`)이다. 글자/토큰 최악 비 1.22(`auditor_tool_hops`
+  # 주석이 쓰는 같은 수)에서 98,304토큰은 약 119,900자라 **`lookup` 관측 여덟이 상한을 채우면
+  # (8 × 15,000 = 120,000자) 다른 입력(prefix · SOURCE 두 번 · 근거) 없이도 몫을 넘는다.** 낙관 비
+  # 3.28이면 98,304토큰이 약 322,000자라 16홉(최대 240,000자)이 든다. 그 비는 Auditor 좌석의 것이고 이
+  # 좌석(gpt-oss)의 비는 안 쟀다. **자동으로 자르지 않는다** — 넘을 수 있는 요청은 trace
+  # `critic_hop_observations`의 `over_input_share`와 `RunResult.warnings` 한 줄로 남긴다. 홉
+  # 관측을 실은 Critic 요청을 낸 run은 아직 없다 — 실제 입력 토큰은 0(미실측)이다.
   #
   # **입력 여유(24,576 → 28,672)는 근거로 세지 않는다.** 정상 프롬프트는
   # `run_20260828_0002`에서 최대 1,798 토큰이라 어느 쪽에서도 안 걸린다. 8,192가 입력을
