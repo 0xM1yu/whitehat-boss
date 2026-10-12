@@ -532,7 +532,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
 ### 2.5 PoV (PoC 생성) — 모델-주도 툴 루프
 
-러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) — pov는 모델이 매 홉
+러너가 8단계(`Stage.VALIDATE`)에서 pov를 `validate.run`과 나란히 부른다(추가형) - ⏵ 2026-10-13(이슈 #326): `validate.run`은 `build`·`asan`을 우리 clang으로 컴파일하고(ADR 0014가 기각한 대상 빌드), CyberGym 번들은 그것이 컴파일되지 않아(#507) **그 경로는 서빙 점수 경로 밖이다** - 점수 경로는 이 절의 `poc`(과제 이미지)이다. `validate.run`은 `poc` 신호를 돌리지 않고, 도구가 측정을 못 낸 건은 재현 실패가 아니라 미시도(`repro_not_measured`)로 `validated`에 둔다. — pov는 모델이 매 홉
 `PovAction`(gen/inspect/submit)을 내는 **다중 홉 툴 루프**(`_run_pov_hops`)로 돈다. ⏵ **2026-10-09 — 「PoC 바이트를 도구 입력으로 먹인다」가 섰다**(ADR 0014 · 이슈 #513).
 **남은 것은 E4 게이트 전이**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도

@@ -2826,6 +2826,48 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave(
     assert result.record.is_complete
 
 
+def test_a_stage_8_tool_that_cannot_measure_holds_the_finding_through_the_whole_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#326 - 둘째 asan이 `ok=False`(종료 코드 있음)로 떨어지는 run. 그 Finding은 `queued`가 아니라
+    `validated`에 남고, 도구 검증 제거율의 분자(`repro_failed`)에 들지 않으며, PoV는 둘 다 돌고, run
+    경고에 오른다. 위 검사와 같은 심기다 - 거기서는 이 건이 `repro_failed`였다."""
+    real_repro = FakeToolRunner._run_repro
+    asan_calls: list[str] = []
+
+    def second_asan_fails(self, tool, kind, args, workdir):  # noqa: ANN001, ANN202
+        if tool == "asan":
+            asan_calls.append(tool)
+            if len(asan_calls) == 2:
+                return self.make_evidence(
+                    tool,
+                    kind,
+                    args,
+                    ok=False,
+                    exit_code=1,
+                    error="asan: 빌드 단계에서 끊겼다(검사가 심었다)",
+                )
+        return real_repro(self, tool, kind, args, workdir)
+
+    monkeypatch.setattr(FakeToolRunner, "_run_repro", second_asan_fails)
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=FakeOracle())
+
+    events = _events(trace_path)
+    (unmeasured,) = _of(events, "repro_not_measured", stage=Stage.VALIDATE)
+    assert unmeasured["subject_id"] == "find_0002"
+    states = {f.finding_id: f.state.value for f in result.findings}
+    assert states["find_0001"] == "proven" and states["find_0002"] == "validated"
+    reasons = [e["data"]["reason"] for e in _of(events, "transition", stage=Stage.VALIDATE)]
+    assert ReasonCode.REPRO_FAILED.value not in reasons
+    assert sorted(e["subject_id"] for e in _of(events, "pov_generated", stage=Stage.VALIDATE)) == [
+        "find_0001",
+        "find_0002",
+    ]
+    (warning,) = [w for w in result.warnings if "재현을 시도하지 못한" in w]
+    assert "1건" in warning
+
+
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
     tmp_path: Path,
 ) -> None:
