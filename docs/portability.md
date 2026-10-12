@@ -42,7 +42,7 @@
   모두 오라클에 닿지 못했다(`vul_submitted: 0`). 저장소 안 보고서가 적는 WSL run `0002`의 실제 실패는
   Docker 소켓이 없는 것이었다(§4).
 - ⚠ **미실측**: WSL2 mirrored 네트워킹과 네이티브 Linux에서 위 namespace 문제가 안 생기는지는 **0회 관측**이다(win11·WSL 기본 네트워킹만 했다).
-- **이 목록의 접속 가능한 부분은 `cli preflight`(#534)가 한 번에 본다** — 원격 교대 환경변수·bash 해소·터널 포트·원격 커밋·(교대 없는 프로필의) 서빙 포트·채점기 TCP·API 키 모양·카나리 보고서와 현재 Docker VM·과제 번들·도구 이미지의 인덱서. ⚠ 통과가 run의 거부를 전부 되풀이한 것은 아니다(`doctor`도 돌린다). 자동화는 `--strict`로 돌린다 — 건너뛴 점검(WARN)이 있으면 exit 4다. 이 PC에서 실제 원격으로 끝까지 돌려 본 적은 없다(미실측). ⏵ 2026-10-07 — 실 vast 박스에 붙여 셸 셋으로 돌렸다(이슈 #538 본문). 저장소에 남은 결과는 교대 환경변수·bash 해소 두 점검뿐이다(아래).
+- **이 목록의 접속 가능한 부분은 `cli preflight`(#534)가 한 번에 본다** — 원격 교대 환경변수·bash 해소·터널 포트·원격 커밋·원격 가중치 캐시(WARN만, #571)·(교대 없는 프로필의) 서빙 포트·채점기 TCP·API 키 모양·카나리 보고서와 현재 Docker VM·과제 번들·도구 이미지의 인덱서. ⚠ 통과가 run의 거부를 전부 되풀이한 것은 아니다(`doctor`도 돌린다). 자동화는 `--strict`로 돌린다 — 건너뛴 점검(WARN)이 있으면 exit 4다. 이 PC에서 실제 원격으로 끝까지 돌려 본 적은 없다(미실측). ⏵ 2026-10-07 — 실 vast 박스에 붙여 셸 셋으로 돌렸다(이슈 #538 본문). 저장소에 남은 결과는 교대 환경변수·bash 해소 두 점검뿐이다(아래).
 
 #### Windows에서 원격 교대 run 절차 (이슈 #538)
 
@@ -87,6 +87,7 @@ $env:SWAP_REMOTE_ROOT = '/root/harness'
 $env:SWAP_REMOTE_PYTHON = '/usr/bin/python3'
 # CYBERGYM_API_KEY도 이 창에서 $env:로 세운다. 값은 문서·명령문·run 기록에 적지 않는다
 # 5) preflight — ERROR가 있으면 exit 2. 0이어야 6으로
+#    「가중치 캐시」 WARN이면 선취(tools/serve/prefetch-weights.sh, 아래 「더하는 것 넷」 2번) 뒤 다시 돌린다
 python -m src.cli preflight --profile harness_pool --device vastai-remote `
   --task-dir <번들> --oracle-server http://127.0.0.1:8666 --oracle-canary <카나리.json>
 # 6) run
@@ -98,13 +99,14 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
 **run 전에 더하는 것 넷** — 2026-10-11 실서빙 run이 겪은 것이다(그날의 기록은 #605 보고서 §6·§9 — `docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md`, 정본은 여기다).
 
 1. **직결 ssh를 쓴다** — `vastai ssh-url <id>`가 주는 `root@<public_ipaddr>:<direct_port_start>`를 위 `SWAP_SSH_HOST`·`SWAP_SSH_PORT`에 준다. `sshN.vast.ai` 프록시 경유에서는 터널이 두 번 끊겼다. 직결로 바꾼 뒤 3시간 54분 run에서 하네스가 본 전송 오류는 0이었고(`trace.jsonl`) 터널 ssh는 그 사이 한 번 재시작됐다(세션 기록). 같은 run에 `~/.ssh/config`의 `ServerAliveCountMax 12`가 겹쳐 직결 단독 효과는 n=1이고, 프록시가 원인이라는 분리 실험도 없다. ⚠ 직결도 로컬 인터넷 전환은 못 막는다 — `run_20261010_0004`의 내림 ssh가 직결 주소에서 `Connection timed out`이었다(#605 보고서 §6). 그래서 터널은 `--loop`로 띄운다. `vast-tunnel.sh`·`swap-remote.sh`는 `ServerAliveCountMax=12`를 준다(기본 3은 30초 무응답에 터널·교대 ssh가 스스로 끊는다 — 그 예방이다. 위에서 관측된 끊김은 로컬 인터넷 전환 때였고 그 처방은 `--loop`다).
-2. **가중치를 선취한다** — 박스를 띄운 뒤 run 전에 `SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/prefetch-weights.sh`(`--dry-run`은 명령만 찍는다). 기본 `--roles`는 좌석 역할 여섯(`scout_memory`·`scout_boundary`·`scout_injection`·`auditor`·`critic`·`pov`)이다 — `vastai-remote`는 `embedding`·`reranker`를 서빙하지 않고, 서빙 좌석은 `seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`gpt-oss-20b`·`feyospace-v1-small` 다섯이다. 그 둘까지 받으려면 `--roles all`이다. ⏵ 2026-10-12 — 기본값이 `all`이었던 판을 바꿨다(sumin 리뷰 #610): `all`은 `original/`·`metal/` 포함 207.69 GB, 좌석 root safetensors는 170.81 GB다 `[계산값 — HF API 파일 크기 합]`. 저장소의 `original/`·`metal/`은 받지 않고(`--exclude`, gpt-oss-20b 41.3 GB 중 27.5 GB `[계산값 — 고정 rev의 HF API 파일 크기 합 · PR #610 검증]`), 받기 전에 원격 `df` 여유가 받을 크기 합보다 작으면 exit 2다(이어받기라 이미 받은 몫 때문에 거부되면 `--skip-df-check`). PoV 좌석(`feyospace-v1-small`)은 약 51 GiB다(10-06 프로브 vLLM 로그 `Model loading took 51.1 GiB` — GPU 로드 크기 · HF 모델 카드 약 55 GB `[출처주장]`), 그 프로브에서 첫(콜드) 기동이 600 s 상한에 걸렸다(n=1). 첫 실패에서 멈춘다(`set -e`) — 다시 돌리면 `hf download`가 이어받는다`[추론 · 미확인]`. 장비 파일의 `ready_timeout_s`는 이 선취를 전제한다 — 이 run에서 선취 없이 `gpt-oss-20b`(상한 300 s)가 콜드 2회 TIMEOUT이었고 따뜻하게는 35 s에 떴다. ⚠ 그 차이가 선취 때문인지는 미검증이다(35 s는 앞 run이 이미 받아 둔 캐시 뒤의 값이라 선취의 효과와 분리되지 않는다 `[추론 — 로그에 다운로드 줄이 없다]`).
+2. **가중치를 선취한다** — (`cli preflight`가 원격 HF 캐시에 좌석 가중치가 없거나 미완이면 WARN을 낸다 — 5)에서 보이면 아래 선취 뒤 다시 돌린다. ERROR가 아니고 ssh가 안 되면 「확인 불가」 WARN 하나다. 디렉터리와 미완 blob 부재까지만 보고 크기·무결성은 안 본다 #571) 박스를 띄운 뒤 run 전에 `SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/prefetch-weights.sh`(`--dry-run`은 명령만 찍는다). 기본 `--roles`는 좌석 역할 여섯(`scout_memory`·`scout_boundary`·`scout_injection`·`auditor`·`critic`·`pov`)이다 — `vastai-remote`는 `embedding`·`reranker`를 서빙하지 않고, 서빙 좌석은 `seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`gpt-oss-20b`·`feyospace-v1-small` 다섯이다. 그 둘까지 받으려면 `--roles all`이다. ⏵ 2026-10-12 — 기본값이 `all`이었던 판을 바꿨다(sumin 리뷰 #610): `all`은 `original/`·`metal/` 포함 207.69 GB, 좌석 root safetensors는 170.81 GB다 `[계산값 — HF API 파일 크기 합]`. 저장소의 `original/`·`metal/`은 받지 않고(`--exclude`, gpt-oss-20b 41.3 GB 중 27.5 GB `[계산값 — 고정 rev의 HF API 파일 크기 합 · PR #610 검증]`), 받기 전에 원격 `df` 여유가 받을 크기 합보다 작으면 exit 2다(이어받기라 이미 받은 몫 때문에 거부되면 `--skip-df-check`). PoV 좌석(`feyospace-v1-small`)은 약 51 GiB다(10-06 프로브 vLLM 로그 `Model loading took 51.1 GiB` — GPU 로드 크기 · HF 모델 카드 약 55 GB `[출처주장]`), 그 프로브에서 첫(콜드) 기동이 600 s 상한에 걸렸다(n=1). 첫 실패에서 멈춘다(`set -e`) — 다시 돌리면 `hf download`가 이어받는다`[추론 · 미확인]`. 장비 파일의 `ready_timeout_s`는 이 선취를 전제한다 — 이 run에서 선취 없이 `gpt-oss-20b`(상한 300 s)가 콜드 2회 TIMEOUT이었고 따뜻하게는 35 s에 떴다. ⚠ 그 차이가 선취 때문인지는 미검증이다(35 s는 앞 run이 이미 받아 둔 캐시 뒤의 값이라 선취의 효과와 분리되지 않는다 `[추론 — 로그에 다운로드 줄이 없다]`).
 3. **오라클 카나리를 이 부팅에서 다시 잰다** — 지금 Docker VM의 `boot_id`가 카나리 JSON의 `host_boot_id`와 다르면 preflight가 ERROR다. 로컬 Docker VM이 다시 부팅됐거나 의심스러울 때 다시 잰다(재기동이 `boot_id`를 바꾸는지는 미실측 · `tools/oracle_canary.py`). `python tools/oracle_canary.py <과제> --out <카나리.json>`(컨테이너 40회, 몇 분)을 이 부팅에서 돌려 그 파일을 `--oracle-canary`에 준다.
 4. **`--task-work-dir`는 run마다 빈 디렉터리다** — 앞 run의 해제 트리가 남아 있으면 비어 있지 않다며 exit 2로 거부된다.
 
 `vast-tunnel.sh --loop`의 `STOP_GUARD`는 **로컬 파일**이다 — 이 PC의 `$HOME/harness-serve/STOP_GUARD`(`SERVE_DIR`이 있으면 그 아래)이고 원격 `guard.sh`의 표지와 이름만 같다. 그 표지는 **다음 재연결을 막는다** — 시작 전과 재연결 직전마다 본다. 살아 있는 ssh(터널)는 Ctrl-C로 끝낸다. 옛 표지가 남아 있으면 시작 직후 멈춘다. 재시도 횟수 제한은 일부러 없다(5초 간격).
 
 - 원격 커밋 점검은 `ssh -o BatchMode=yes`다 -> 암호를 묻는 키면 ERROR. 키를 에이전트에 올려 둔다.
+- 가중치 캐시 점검(#571)도 같은 `BatchMode` ssh다 -> 같은 키를 쓰고, 안 닿으면 ERROR가 아니라 WARN이다.
 - `<slices.json>`의 경로에는 `src-vul/` 접두어가 있어야 한다 -> [slicer-README.md](slicer-README.md) 「`--task-dir`로 쓸 슬라이스」.
 - ⚠ 이 절차로 6까지 끝까지 돈 run은 아직 없다 — 미실측. 5의 두 점검까지만 위 표가 근거다. ⏵ 2026-10-11 — 낡았다: 이 절차로 6까지 돌았다. 2026-10-11 실서빙 run 다섯 번 중 하나(`run_20261011_0001`)가 0~9단계를 완주했고 제출은 0건이었다(#605 보고서 §1·§3 — `docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md`).
 
