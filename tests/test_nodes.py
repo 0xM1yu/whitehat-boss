@@ -2655,6 +2655,8 @@ def test_validate_evaluates_the_gate_before_deciding(ctx: RunContext) -> None:
     assert len(graded) == 1
     assert graded[0].data["p4"] is True
     assert graded[0].data["grade"] == "E4"
+    # 8단계 목록에는 6단계 하네스 부착분이 섞이므로 「모델 인용 수」를 싣지 않는다(이슈 #554).
+    assert "cited_by_model" not in graded[0].data
 
 
 def test_gate_refuses_stages_where_its_predicates_cannot_hold(ctx: RunContext) -> None:

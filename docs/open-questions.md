@@ -122,7 +122,7 @@
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | ~~게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다~~ (#167 · 172200f `p3 ⟹ p2` · blocking은 모델 선언분의 정직한 0 · Critic 선별 잔여는 상한 미충돌) | 닫힘 | [본문](open-questions/D/D65.md) |
 | D66 | ~~실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다~~ (선택지 (a)로 해소) | 닫힘 | [본문](open-questions/D/D66.md) |
-| D67 | ~~Auditor가 `path`·`evidence_refs`를 안 채운다~~ (닫힘 · 6단계 부착이 게이트 막힘을 풀었다 · v13·v14는 path를 채운다 · 모델 인용 수는 미실측 #554) | 닫힘 | [본문](open-questions/D/D67.md) |
+| D67 | ~~Auditor가 `path`·`evidence_refs`를 안 채운다~~ (닫힘 · 부착이 게이트 막힘을 풀었다 · v13·v14는 path를 채운다 · 모델 인용 수 미실측: 자리는 `gate_eval.cited_by_model` #554, 키 단 run 0건) | 닫힘 | [본문](open-questions/D/D67.md) |
 | D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
