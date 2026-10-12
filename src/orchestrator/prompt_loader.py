@@ -123,9 +123,9 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
-# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14)이 뺀다.
-# 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
-# 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
+# **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14·v15)이
+# 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다**
+# — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
     "ids",
@@ -689,8 +689,9 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
-        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14)은 `source`를 여기 안 싣고 body가
-        # 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도 싣는다.
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15)은 `source`를 여기 안 싣고
+        # body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도
+        # 싣는다.
         "capsule_sections": [
             {
                 "kind": section.kind,

@@ -707,12 +707,16 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     # `test_v5_evidence_completeness_wording`과 같고, 그쪽은 경로에 v5를 하드코딩한다.
     assert "factual summary" not in flat
     # ⏵ 2026-10-13 — v15가 「유계 발췌이고 생성 요약이 아니다」 문장을 **일부러 뺐다**(접힌
-    # semgrep 로그는 발췌가 아니다). 대신 같은 자리가 「is bounded: …」로 시작한다 — 둘 중
-    # 하나가 있어야 한다.
-    assert (
-        "not a generated summary" in flat
-        or "is bounded: some execution-header lines are removed" in flat
-    )
+    # semgrep 로그는 발췌가 아니다). 대신 같은 자리가 「is bounded: …」로 시작한다.
+    # 철자는 **서빙 판의 것**이다 - 판별이 OR이면 v15에서 v14의 옛 문장이 되살아나도 통과한다.
+    excerpt_sentence = {
+        "v14": "not a generated summary",
+        "v15": "is bounded: some execution-header lines are removed",
+    }
+    assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
+    assert excerpt_sentence[version] in flat
+    has_old = "not a generated summary" in flat
+    assert has_old == (version == "v14"), "v15가 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
         "`truncated` is false",
         "line containing only `...`",
