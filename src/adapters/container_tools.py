@@ -858,16 +858,21 @@ _COMPILE_ERROR_LINE = re.compile(
 _COMPILE_REASON_CHARS = 160
 
 
-def compile_failure_reason(text: str) -> str:
+def compile_failure_reason(text: str, *, tagged_only: bool = False) -> str:
     """컴파일러 출력의 첫 `error:` 메시지와 건수를 한 줄로 — 없으면 빈 문자열 (#507).
 
     `Evidence.error`는 PoV·Auditor 관측의 **머리줄**에 실리므로(`runner._pov_observation`·
     `auditor`의 probe 관측) 로그 꼬리가 잘려도 모델에 닿는다. 경로는 떼고 메시지만 싣는다.
+    `tagged_only`는 clang-tidy용이다 — `--warnings-as-errors=*`가 린트 소견도 `error:`로
+    찍으므로 `_COMPILE_ERROR_MARKER`가 붙은 줄만 컴파일 오류로 센다.
     """
+    if tagged_only:
+        text = "\n".join(line for line in text.splitlines() if _COMPILE_ERROR_MARKER in line)
     found = _COMPILE_ERROR_LINE.findall(text)
     if not found:
         return ""
-    return f" — 컴파일 오류 {len(found)}건, 첫 오류: {found[0][:_COMPILE_REASON_CHARS]}"
+    first = re.sub(r"[\x00-\x1f\x7f]", " ", found[0])[:_COMPILE_REASON_CHARS]
+    return f" — 컴파일 오류 {len(found)}건, 첫 오류: {first}"
 
 
 def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | None]:
@@ -952,7 +957,8 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
         if _COMPILE_ERROR_MARKER in last.stdout:
             # exit code로는 "경고 발견"과 구분되지 않는다(모듈 docstring, #61).
             return False, code, (
-                "clang-tidy: 대상이 컴파일되지 않는다" + compile_failure_reason(last.stdout)
+                "clang-tidy: 대상이 컴파일되지 않는다"
+                + compile_failure_reason(last.stdout, tagged_only=True)
             )
         # **non-zero인데 진단이 한 줄도 없으면 돌지 않은 것이다.** `--warnings-as-errors=*`가
         # non-zero를 만드는 경로는 경고 발견뿐이고, 그 경고는 stdout에 찍힌다(`--quiet`는
