@@ -51,7 +51,7 @@ override다. 생략 시 설치본 기본값을 읽어 `joern_engine_config`에 �
 - **비활성 분기는 파싱하지 않는다.** c2cpg는 `-D` 미지정 시 `__linux__`·`__x86_64__` 같은
   타깃 매크로를 정의하지 않으므로, 그 매크로에 걸린 분기가 비활성이 되어 빠질 수 있다. 이
   매크로 동작의 실증은 Joern 실행이 필요하고 풀 슬라이싱에서 확인한다.
-- ⏵ 2026-10-13 — #271의 잔여는 이 절의 위 둘(빌드 설정 하나만 · 비활성 분기)과 `tools/slicer/slicer_compile.py:13-17`(compile-aware 경로로 잰 것은 sample_08 한 표본뿐이고 더 센 수치는 이 경로의 측정이 아니다)에 있다. 아래 「측정하지 않은 것」(`:810`)은 Joern 버전 비교 절이라 그 자리가 **아니다**(앞 설명이 거기라 적은 것은 틀렸다 — #634 사후 리뷰). 서빙 슬라이스가 compile-aware 경로로 만들어졌다는 기록은 저장소에 없다(이 정정이 가르지 않았다) — 아니라면 원 결함(raw `#ifdef` 파싱 갭)은 서빙 입력에 그대로 있고, 그 줄기를 열린 [#467](https://github.com/0xM1yu/whitehat-boss/issues/467)(후보 생성)이 든다.
+- ⏵ 2026-10-13 — #271의 잔여는 이 절의 위 둘(빌드 설정 하나만 · 비활성 분기)과 `tools/slicer/slicer_compile.py:13-17`(compile-aware 경로로 잰 것은 sample_08 한 표본뿐이고 더 센 수치는 이 경로의 측정이 아니다)에 있다. 아래 「측정하지 않은 것」(`:811`)은 Joern 버전 비교 절이라 그 자리가 **아니다**(앞 설명이 거기라 적은 것은 틀렸다 — #634 사후 리뷰). 서빙 슬라이스가 compile-aware 경로로 만들어졌다는 기록은 저장소에 없다(이 정정이 가르지 않았다) — 아니라면 원 결함(raw `#ifdef` 파싱 갭)은 서빙 입력에 그대로 있고, 그 줄기를 열린 [#467](https://github.com/0xM1yu/whitehat-boss/issues/467)(후보 생성)이 든다.
 
 `--import-include-root`는 `--repo` 자체를 c2cpg의 헤더 include 경로로 준다 —
 `importCode.c(..., args=List("--include", <repo>))`. 근거는 Joern v4.0.605 소스다: `c2cpg/Main.scala`의
