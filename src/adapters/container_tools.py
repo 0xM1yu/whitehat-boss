@@ -288,6 +288,36 @@ _SEMGREP_OK = (0, 1)
 # `static_ok`가 꺼져 E1이 **줄어든다**(방향이 거꾸로다 · PR #553 council 2026-10-10의
 # (B) 기각 사유와 같다). 참인 것은 **「찾은 수가 하한이다」**까지다.
 _SEMGREP_PARTIAL_PARSE = "PartialParsing"
+#
+# ⏵ 2026-10-13 (이슈 #563 선택지 3) - **그 `errors` 1건이 무엇인지 쟀다.**
+# `harness-tools:v3`(id `fbd453eddf5d`) · semgrep 1.86.0 · 위 `plan()`과 같은 argv · 실 번들
+# `arvo:1065`의 `apprentice.c` 1개(**n=1**). 10-12 run의 히트와 **같은 10건**이 나왔다(시작 줄
+# 1086·1091·1116·1264·1296·1829·1841·3002·3090·3093).
+#
+# - 오류: `PartialParsing` 1건 · `warn` · `apprentice.c:118: 'int' was unexpected`. 118줄은
+#   `private int getvalue(...)`이고 `private`는 `file.h:88`의 `#define private static`이다.
+# - 건너뛴 구간: **148개 · 155줄**(3,344줄 중) - 머리 매크로 93(`private` 84 · `protected` 9) ·
+#   `CAST(type, ..)` 문장 44 · 그 밖 11(`#define`·`SIZE_T_FORMAT` 문자열 이음 등). 🔴 **파일
+#   전체가 아니다** - 거의 한 줄씩이고 함수 **본문은 분석된다**.
+# - `--lang c`: **쓸 수 없다.** `--config`와 같이 주면 exit 2(`-e/--pattern and -l/--lang must
+#   both be specified`). 룰이 `languages: [c]`를 들고 확장자로 추론되니 하네스가 고를 언어
+#   플래그가 없다.
+# - 머리 94줄(`private`/`protected`)을 sed로 풀어 쓴 사본: 구간 148 -> **55**(`CAST` 44 + 그 밖
+#   11) · 히트 **10 -> 10, 줄도 룰도 같다**.
+# - 합성 최소 재현(`private int f`·`protected void g`·`int h`, 본문에 `memset`): 풀기 전 구간
+#   2 · 히트 **3/3**, 푼 뒤 구간 0 · 히트 **3/3** - 머리 줄을 건너뛰어도 본문 히트는 안 잃는다.
+#
+# 후보 줄과의 관계: 429·486·743은 전부 **건너뛴 구간 자체**다(함수 머리 한 줄 - `private int`·
+# `protected void`·`private size_t`). 그러나 486·743 함수는 본문에 건너뛴 줄이 0이고 히트도 0이라
+# 겹침이 없는 것은 **파싱 실패가 아니라 룰이 안 걸린 것**이다. 429 함수(429~484)는 본문에 건너뛴
+# 줄이 473 하나(`printf(...)`)다.
+#
+# ⚠ **측정 한계:** 건너뛴 구간 안의 히트는 원리상 못 본다 - 위 사본 비교는 머리 94줄만 푼
+# 것이라 남은 55구간(`CAST`)에 숨은 히트는 열려 있다. 과제 1개 · 도구 판 1개의 값이고 다른
+# 번들은 안 쟀다. 10-12 보고서 §6은 건너뛴 구간을 「160여 개」라 적었으나 이 재현은 148이다
+# (같은 파일인지 · 같은 판인지 대조 안 함).
+# 이 측정으로 **하네스를 안 바꿨다** - 고칠 플래그가 없다(`--lang` 거부). 매크로 전개는
+# 전처리라 별 결정이다.
 
 
 def semgrep_partial_parse(stdout: str) -> tuple[str, ...]:

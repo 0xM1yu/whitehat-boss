@@ -1823,7 +1823,10 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
     위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를
     싣는 판으로 돌았다) **인용은 0/5**였다. 단 그 run의 semgrep 히트
     (`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를 보여 주면
-    인용이 느는가」는 여전히 0회다 — 그 축이 #563이다.
+    인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. ⏵ 2026-10-13(#563) - 겹침 횟수는 이제 run마다
+    `RunRecord.location_overlap`이 싣는다. 커밋된 보고서에서 읽히는 #248 뒤 값은
+    `run_20260924_0003` 36/36 참(스모크) · `run_20261007_0001` 5/5 거짓 · 2026-10-12 보고서의
+    첫 `gate_eval` 1건 거짓이고 과제가 다르다(통제 대조 0건).
 
     **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
     (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
