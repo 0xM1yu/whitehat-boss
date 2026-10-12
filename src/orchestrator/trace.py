@@ -13,7 +13,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
-| 모델 인용 수 | `gate_eval`(stage=6) | `cited_by_model` = 부착 전 인용 수 (#554) |
+| 모델 인용 수 | `gate_eval`(stage=6) | `cited_by_model` = 부착 전 ID 수, 중복 포함 (#554) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
@@ -60,7 +60,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 **부착 뒤 `state.db`로는 모델이 몇 건 인용했는지 셀 수 없다**
 (결함 본문이 `state.db`를 세어 낸 옛 「`evidence_refs` 0개」 수가 그 방법이었다). 대체가
 `gate_eval.cited_by_model`이다 - **6단계 행의 값만이 모델 자신의 인용 수**다(5단계가 옮긴 목록의
-길이, 부착 전에 읽는다). 세는 것은 **ID 개수**이고 FACTS 안 ID인지·`Evidence`로 풀리는지는 안 본다.
+길이, 부착 전에 읽는다). 세는 것은 **ID 개수**다 - 맨 `len()`이라
+**중복도 센다**(중복 제거 없음). FACTS 안 ID인지·지어낸 ID인지·`Evidence`로 풀리는지는
+**가리지 못한다**: 지어낸 ID도 1건으로 센다.
 `0`은 「쟀더니 0건」이다. 7·8단계 `gate_eval`에는 이 키가 **없다** - 그 시점의 목록에는 6단계
 부착분이 섞여 있어 「모델이」라는 이름이 거짓이 되기 때문이다. 같은 Finding의 모델 인용 수는
 `subject_id`로 6단계 행에서 읽는다. 이 키가 생기기 전 run에는 6단계 행에도 없다.

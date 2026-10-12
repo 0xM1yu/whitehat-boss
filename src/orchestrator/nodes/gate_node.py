@@ -32,6 +32,8 @@ def attach_observed(ctx: RunContext, finding: Finding, evidences: Sequence[Evide
     **⚠ 같은 `(kind, obj_id)`로 upsert하므로 5단계가 저장한 `evidence_refs`가 여기서 덮인다**
     (이슈 #554). 부착 뒤 `state.db`에서는 모델이 몇 건 인용했는지 셀 수 없다. 그 수는 **부착 전에**
     `run()`이 세어 `gate_eval.cited_by_model`로 남긴다 - `state.db`를 세던 옛 방법은 쓰지 않는다.
+    모델의 ID 자체를 Finding에 따로 보존하는 안(이슈 #554 선택지 c)은 **일부러 안 골랐다**:
+    결함 본문이 잰 것이 수라서 수로 충분하고, #552가 「Finding에 새 필드 안 만든다」로 정했다.
     """
     new_refs = [ev.evidence_id for ev in evidences if ev.evidence_id not in finding.evidence_refs]
     if not new_refs:
