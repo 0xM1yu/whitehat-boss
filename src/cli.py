@@ -145,9 +145,12 @@ RUN_DIR_PREFIX = "run_"
 # 실측 전 초기값인 임계값 (이슈 #91·#92 — 둘 다 닫혔다, 값은 여전히 안 잰 초기값).
 # 조건 간 비교 전에 확정해야 한다. `pov_tool_hops`(#511, 2026-10-12 닫음)는 값이
 # 16(사용자 결정 2026-10-06)이나 효과 미실측이라 같은 자리다.
+# ⏵ 2026-10-13 - `capsule_expansion_max`를 이 목록에서 뺐다(#78). 그 값을 읽는 정책 결정점은 코드에
+# 남아 있으나 러너가 부르는 곳이 없다(ADR 0012 결정 6이 확장 경로를 `max_hops` 루프로 대체) -
+# 어느 run도 그 값에 좌우되지 않는데 doctor가 「확정하라」고 말하는 것은 거짓 경고다. 코드 삭제는
+# 별 작업이다.
 PROVISIONAL_THRESHOLDS = (
     "scout_threshold",
-    "capsule_expansion_max",
     "requeue_max",
     "max_hops",
     "pov_tool_hops",

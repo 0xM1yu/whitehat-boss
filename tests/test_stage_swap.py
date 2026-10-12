@@ -108,6 +108,7 @@ def _run(
     rig: _Rig | None = None,
     target: Path = TARGET,
     wire: bool = True,
+    deps_fields: dict[str, object] | None = None,
     **spec_fields: object,
 ) -> tuple[runner.RunResult, list[dict], _Rig]:
     """`run_pipeline`을 한 번 돌리고 (결과, trace 이벤트, 기록기)를 돌려준다."""
@@ -118,7 +119,9 @@ def _run(
         artifacts_root=tmp_path / "artifacts",
     )
     rig = rig or _Rig(config, deps.models)
-    deps = dataclasses.replace(deps, models=rig, swap_to=rig.swap_to if wire else None)
+    deps = dataclasses.replace(
+        deps, models=rig, swap_to=rig.swap_to if wire else None, **(deps_fields or {})
+    )
     run_dir = tmp_path / "artifacts" / RUN_ID
     trace = TraceWriter(RUN_ID)
     result = run_pipeline(
@@ -166,6 +169,21 @@ def test_swaps_follow_the_stages_that_call_models_and_end_with_a_teardown(
         (None, "", True),
     ]
     assert swaps[0]["report.models"] == SCOUT, "교대 명령의 보고가 report.* 로 실리지 않는다"
+
+
+def test_the_run_record_keeps_the_intended_launch_args_of_a_swap_run(tmp_path: Path) -> None:
+    """교대 run의 manifest에 장비 파일이 의도한 기동 인자가 역할별로 남는다(#99). 교대 없는 run은
+    `None`이다 - `{}`(「장비 행이 있는 역할이 없었다」)와 다른 말이다."""
+    intended = {"auditor": ["--gpu-memory-utilization", "0.3", "--max-num-seqs", "8"]}
+
+    swapped, _, _ = _run(
+        tmp_path / "a", _config(), deps_fields={"serving_launch_intended": intended}
+    )
+    plain, _, _ = _run(tmp_path / "b", _config())
+
+    assert swapped.record.serving_launch_intended == intended
+    assert json.loads(swapped.record.model_dump_json())["serving_launch_intended"] == intended
+    assert plain.record.serving_launch_intended is None
 
 
 def test_pov_swaps_in_at_the_validate_stage_when_declared_swappable(tmp_path: Path) -> None:

@@ -204,6 +204,12 @@ Finding만 빠지고 run은 정상 종료하므로 `RunRecord.is_complete`가 �
 바닥이 없다 — 자리당 시도가 한 건이면 그 한 건의 실패로 빠진다. 일부만 실패한 run은 위 문단
 그대로다.
 
+**샘플링은 보낸 값·선언값·의도한 기동 인자까지 기록되고 서버의 실효값은 안 기록된다 (D29).** 보낸 값은
+`sampling`·`model_request_params`, 모델 파일이 선언한 값은 `model_sampling`, 장비 파일이 의도한 기동 인자는
+`serving_launch_intended`(교대 run만 — **의도지 실제 argv의 증거가 아니다**; 교대 명령이 보고한 실제 argv는
+trace `model_swap`의 `report.server.<key>.args`)다. 서버가 실제로 적용한 기본 샘플링은 서버에 묻지 않아 **미측정**이다
+— `--generation-config vllm` 여부는 인자에 적혔을 때만 위 두 곳에서 읽힌다.
+
 ## 7. MVP 성공 기준
 
 완전 자동 Zero-day 탐지가 아니다. **취약점 후보 수집·우선순위화·RCA 초안·근거 정리·오탐 검토를 자동화해 분석 시간을 단축하는지**가 기준이다.

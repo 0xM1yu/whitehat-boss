@@ -977,3 +977,115 @@ def test_the_fake_can_script_a_truncated_multi_attempt_call_through_routing() ->
     outcome, data = _run(routed, schema=Candidate, prompt=_fake_prompt())  # call_model 경로
     assert outcome.attempt_log == script
     assert _breakdown(data) == ([8192, 12], ["length", "stop"])
+
+
+# --- 15. 응답 꼬리가 공백뿐인 `length` 시도 (D46 / #79) -----------------------------------------
+#
+# `attempt_tail_whitespace_only`: `finish_reason == "length"`이고 원문이 있는 시도만 판정한다.
+# 해당 없음(length 아님)과 미측정(length인데 원문 없음)은 둘 다 `null`이고
+# `attempt_finish_reasons`로 가른다.
+
+# 꼬리가 공백·탭·개행의 연속이다(64자를 넘는다).
+RUNAWAY = '{\n "finding_id": "find' + "\n \t\t\t\t\n \t" * 40
+
+
+def _tails(data: dict) -> list:
+    return json.loads(data["attempt_tail_whitespace_only"])
+
+
+def test_a_length_attempt_with_a_whitespace_tail_is_flagged_on_both_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """소진(실패 경로)과 재시도로 살아난 성공(성공 경로)이 같은 칸 규칙이다 - 칸은 시도 번호와
+    정렬된다."""
+    runaway = _completion(RUNAWAY, 4096, "length")
+    _serve(monkeypatch, [runaway, runaway])
+    outcome, data = _run(_client(retries=1))
+    assert isinstance(outcome, SchemaParseError)
+    assert _tails(data) == [True, True]
+
+    _serve(monkeypatch, [_completion(RUNAWAY, 4096, "length"), _completion(GOOD, 12, "stop")])
+    outcome, data = _run(_client(retries=1))
+    assert outcome.value == Tiny(ok=True)
+    # 마지막(성공) 시도는 `stop`이라 판정 대상이 아니다 -> `null`이다. `false`가 아니다.
+    assert _tails(data) == [True, None]
+
+
+def test_a_length_attempt_that_ends_in_json_is_not_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """음성: 상한에서 잘렸어도 꼬리가 JSON이면 공백 폭주가 아니다(`false`)."""
+    _serve(monkeypatch, [_completion(TRUNCATED, 4096, "length"), _completion(GOOD, 12, "stop")])
+
+    _, data = _run(_client(retries=1))
+
+    assert _tails(data) == [False, None]
+
+
+def test_non_length_attempts_are_not_evaluated_even_with_a_whitespace_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`stop`으로 끝난 응답의 공백 꼬리는 절단이 아니다 - 판정하지 않는다(`null`)."""
+    _serve(monkeypatch, [_completion(BAD + " " * 200, 30, "stop"), _completion(GOOD, 12, "stop")])
+
+    _, data = _run(_client(retries=1))
+
+    assert json.loads(data["attempt_finish_reasons"]) == ["stop", "stop"]
+    assert _tails(data) == [None, None]
+
+
+def test_a_length_attempt_without_text_is_null_not_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """미측정: `length`인데 받은 문자열이 없다(`content: null`) -> `null`. 그리고 뒤 시도가
+    게이트웨이 거절이어도 앞 시도의 판정은 제 칸에 남는다(원문은 앞에서부터 정렬된다)."""
+    _serve(monkeypatch, [_completion(None, 4096, "length"), _completion(GOOD, 12, "stop")])
+    _, data = _run(_client(retries=1))
+    assert json.loads(data["attempt_finish_reasons"]) == ["length", "stop"]
+    assert _tails(data) == [None, None]
+
+    _serve(monkeypatch, [_completion(RUNAWAY, 4096, "length"), _http_400()])
+    outcome, data = _run(_client(retries=1))
+    assert isinstance(outcome, ModelGatewayError)
+    assert _tails(data) == [True, None]
+
+
+def test_the_tail_window_is_the_last_64_characters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """경계 핀: 끝 64자가 전부 공백이면 참, 그 안에 공백 아닌 글자가 하나 있으면(63자 공백 + 앞
+    글자) 거짓이다. 64는 정한 값이다(`TAIL_WHITESPACE_CHARS`) - 바꾸면 이 핀이 같이 움직인다."""
+    from src.orchestrator.context import TAIL_WHITESPACE_CHARS
+
+    assert TAIL_WHITESPACE_CHARS == 64
+    cases = ['{"a":"x"' + " " * 64, '{"a":"x"' + " " * 63, "\n" * 64]
+    _serve(monkeypatch, [_completion(text, 4096, "length") for text in cases])
+    _, data = _run(_client(retries=len(cases) - 1))
+    assert _tails(data) == [True, False, True]
+
+
+def test_the_run_warning_fires_once_per_run_and_only_for_whitespace_tails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.orchestrator.runner import _whitespace_tail_warning
+
+    def warning_for(replies: list[object]) -> str | None:
+        _serve(monkeypatch, replies)
+        ctx = _ctx(_client(retries=1))
+        try:
+            ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, stage=Stage.SCOUT)
+        except SchemaParseError:
+            pass
+        return _whitespace_tail_warning(ctx.trace)
+
+    hit = warning_for([_completion(RUNAWAY, 4096, "length"), _completion(RUNAWAY, 4096, "length")])
+    assert hit is not None and "scout 2시도" in hit
+    json_tail = [_completion(TRUNCATED, 4096, "length"), _completion(GOOD, 12, "stop")]
+    not_length = [_completion(BAD + " " * 200, 30, "stop"), _completion(GOOD, 12, "stop")]
+    assert warning_for(json_tail) is None
+    assert warning_for(not_length) is None
+
+
+def test_a_call_without_a_breakdown_has_a_null_tail_key() -> None:
+    """어댑터가 시도별 내역을 안 실은 호출(Fake)은 세 키가 모두 `None`이다 - 키 집합이 균질하다."""
+    result = FakeModelClient().complete(role=Role.SCOUT, prompt=_fake_prompt(), schema=Candidate)
+    assert result.attempt_log == ()
+
+    routed = RoutingModelClient({"scout": FakeModelClient()})
+    _, data = _run(routed, schema=Candidate, prompt=_fake_prompt())
+
+    assert data["attempt_tail_whitespace_only"] is None
