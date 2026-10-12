@@ -1,4 +1,4 @@
-# 2026-10-12 — v5를 잇는 새 판. 영어로 다시 썼다(PR #636). 2026-10-13 리뷰 수정(1·2라운드)을 같은 PR에서 반영했다.
+# 2026-10-12 — v5를 잇는 새 판. 영어로 다시 썼다(PR #636). 2026-10-13 리뷰 수정(1~3라운드)을 같은 PR에서 반영했다.
 # 🔴 **배선 상태: `config/models.yaml`에 아직 배선되지 않았다 · 이 판으로 돈 run 0건.** 효과는 전부 미실측이다.
 #    서빙 판 배선은 별 PR이다.
 # `hop_header: true`·`output_schema: PovActionNamed`는 v5와 같다 — 하네스 쪽 짝(`runner._pov_hop_line`·
@@ -15,11 +15,13 @@
 # `submit` 지명(`poc_sha256`)의 규칙은 DEF-SUBMIT 한 곳에만 둔다. 지명이 틀리면(8자 미만·16진 밖·불일치·모호) 하네스가 조용히
 #    마지막 gen으로 폴백한다(`runner._resolve_submit_digest`) — prefix가 그것을 적는다.
 # `unavailable` submit은 v5처럼 어느 홉에서나 요건(Hop budget)을 채우면 허용한다 — 마지막 홉으로 좁히지 않았다.
+# 3라운드 리뷰 반영: 마지막 gen이 `unavailable`이고 앞선 gen이 제외 코드 밖이면 DEF-UNAVAIL이 `poc_sha256` 지명으로 보낸다(요건 셋은 마지막 gen 자체 바이트의
+#    bare `submit`에만 적용). 「제외 코드 밖이면 다음 턴 submit」·「안이면 금지」·「0바이트」·「반복 금지」는 각각 DEF-SUBMIT·DEF-REPEAT 한 곳이 본문이고 나머지는 참조다.
 # 환경 실패 코드는 124~127·음수 외에 137·255·255 초과·데몬 미도달 exit=1이다(`container_tools._poc_is_harness_failure` ·
 #    `_POC_ENV_FATAL` · `_POC_DAEMON_UNREACHABLE`). `71`·`139`는 대상이 낸 값일 수 있어 환경 코드가 아니다.
 # 이 판의 첫 커밋(`6ae9513`)은 제외 코드에 77을 넣고 있었고 리뷰가 그것을 잡아 고쳤다 — 첫 커밋 prefix.md sha256은 `786f2c2029ccfab058c210acddc19db4450abe77591a9a664d015732bc8bec1d`다.
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
-#   prefix.md sha256 `d5a53dadad967adff2fe36ec86328aea3431c59bd55daaf3f50660e59229f6b8`
+#   prefix.md sha256 `7df25b5c667fda203e211d26beb543503ac87c029dd43627f64d6c1eff972c31`
 #   body.md   sha256 `3b6a2a447b52af84eaddf0743795a86918bf3b6453acd8227fdf9ab5a8487eac`
 role: pov
 version: v6
@@ -40,7 +42,7 @@ description: >-
   첫 gen 전의 inspect poc가 돌릴 바이트가 없다는 것(0바이트 gen은 `poc`에 빈 입력으로 실제 들어가므로 이 서술의 대상이 아니다 ·
   `test_pov_loop_hands_an_empty_poc_to_the_tool_as_an_input`), 스키마 파싱 실패 뒤 재질문 노트(홉 줄 + `[스키마 오류] <사유>` · runner._pov_parse_retry_note ·
   이슈 #550 — v5 prefix는 이것을 서술하지 않는다).
-  ④ 출력 규칙: JSON 하나만 내고 rationale은 한 문장으로 한다(unavailable 사슬·cached 메모·리포트 종류 불일치 메모·진입점 추정 메모·스펙 한계 메모는 예외). 긴 추론 응답을 줄이려는 의도다.
+  ④ 출력 규칙: JSON 하나만 내고(gen·submit 모양 예시 한 줄씩 · 필드 이름은 `PovActionNamed`·`PovSpec`·`PovSegment`에서 읽었다) rationale은 한 문장으로 한다(unavailable 사슬·cached 메모·리포트 종류 불일치 메모·진입점 추정 메모·스펙 한계 메모는 예외). 긴 추론 응답을 줄이려는 의도다.
   🔴 제외 코드는 v5와 같은 셋(0·71·300)이다. 그래서 77을 받은 PoC는 vul 다리를 채운 것으로 읽고 다음 턴에 submit한다.
   ⚠ 이 판은 같은 문장 반복·실패 원인을 분석하지 않고 비슷한 PoC를 되내는 되먹임을 겨냥해 다시 썼다 — 그 관측은 저자의 것이다
   (10-11·10-12 run · 보고서에 수치 없음 · 미실측).
