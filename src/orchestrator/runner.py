@@ -1587,9 +1587,8 @@ def _whitespace_tail_warning(trace: TraceWriter) -> str | None:
         return None
     detail = ", ".join(f"{role} {count}시도" for role, count in sorted(by_role.items()))
     return (
-        f"출력 상한(length)에 닿은 시도 중 응답 꼬리가 공백뿐인 것이 있다: {detail} - "
-        "공백 폭주(#79)가 현재 로스터에서 다시 나타났다. trace model_call의 "
-        "attempt_tail_whitespace_only가 어느 호출인지 가리킨다"
+        f"length 절단 시도의 꼬리 64자가 전부 공백인 시도: {detail} - 이슈 #79 재개봉 조건. "
+        "trace model_call의 attempt_tail_whitespace_only가 어느 호출인지 가리킨다"
     )
 
 

@@ -628,6 +628,9 @@ def test_intended_args_follow_the_swap_script_order_and_leave_env_out() -> None:
     [
         (["--api-key", "s3cret", "--enforce-eager"], ["--api-key", "***", "--enforce-eager"]),
         (["--api-key=s3cret"], ["--api-key=***"]),
+        # 밑줄 철자도 같은 플래그다.
+        (["--api_key", "s3cret", "--port", "1"], ["--api_key", "***", "--port", "1"]),
+        (["--hf_token=abc"], ["--hf_token=***"]),
         (["--hf-token", "abc", "--port", "1"], ["--hf-token", "***", "--port", "1"]),
         (["--some-flag", "hf_abcdef123"], ["--some-flag", "***"]),
         # 음성: 이름에 token/key가 *부분 문자열*로만 든 플래그는 가리지 않는다 - 샘플링 설정을

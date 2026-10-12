@@ -1058,6 +1058,17 @@ def test_the_tail_window_is_the_last_64_characters(monkeypatch: pytest.MonkeyPat
     assert _tails(data) == [True, False, True]
 
 
+def test_a_response_shorter_than_the_window_is_never_flagged() -> None:
+    """경계 핀: 창(64자)을 못 채우는 짧은 응답은 전부 공백이어도 거짓이다 - 63자 공백뿐은 거짓,
+    64자는 참. 개행 둘 같은 짧은 응답이 공백 폭주 재개봉을 켜지 않는다."""
+    from src.orchestrator.context import _tail_whitespace_only
+
+    assert _tail_whitespace_only("\n\n") is False
+    assert _tail_whitespace_only(" " * 63) is False
+    assert _tail_whitespace_only(" " * 64) is True
+    assert _tail_whitespace_only("") is False
+
+
 def test_the_run_warning_fires_once_per_run_and_only_for_whitespace_tails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
