@@ -192,6 +192,8 @@ class EventKind(StrEnum):
     # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # ⏵ 2026-10-13 (#573) `harness_note`(하네스가 만든 관측 머리줄 — 지금은 `poc` `exit=1` 모호성)도
+    # `Evidence.harness_note`가 있을 때만 실린다. **키 부재 = 노트 없음.**
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"

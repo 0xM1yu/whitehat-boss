@@ -564,6 +564,11 @@ def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:
 
     최종 토큰 예산 절단은 `prompt_loader.evidence_summaries`가 한다. 여기서는 파일이
     폭주해도 프로세스가 죽지 않게 바이트 상한까지만 읽는다.
+
+    ⚠ **한계: 로그의 끝은 읽히지 않을 수 있다.** 읽는 것은 앞 `PAYLOAD_READ_CAP`자뿐이라, 출력이
+    그보다 길면 끝에 있는 ASan `SUMMARY: AddressSanitizer: …` 줄은 관측에 없다 — 도구가 낸
+    줄이라 하네스가 대신 달 수 없다(#573 잔여). 하네스가 만든 `poc`의 `exit=1` 모호성 줄은
+    `Evidence.harness_note`로 로그를 거치지 않는다.
     """
     root = Path(artifacts_root)
 
@@ -935,7 +940,7 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                 # 테스트가 전체 철자를 문다.
                 return False, code, POC_UNREADABLE_EXIT_REASON.format(code=code)
             # 여기까지 오면 대상이 실제로 떴다. 비-0은 실패가 아니라 신호다.
-            # `1`의 애매함은 숨기지 않고 `summary_line`이 관측에 적는다.
+            # `1`의 애매함은 숨기지 않고 `summary_line`이 `Evidence.harness_note`로 관측에 적는다.
             return True, code, None
         # asan: 마지막 명령이 우리가 빌드한 대상 바이너리다.
         if code in _EXEC_FAILED:
@@ -1078,8 +1083,10 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     """로그 머리에 붙일 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
     semgrep이 대상을 반쪽만 파싱했으면 **두 줄**이다(개행으로 이어 한 반환값).
 
-    ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** 이 줄은 `_execute`가
-    `sections[2]`에 넣고 그 로그 꼬리가 모델 관측으로 간다. 🔴 **`1`은 ASan의 기본 종료
+    ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** ⏵ 2026-10-13 (#573) 이 줄은
+    `poc`에서는 로그가 아니라 `Evidence.harness_note`로 가고 두 관측(`runner._pov_observation` ·
+    `nodes/auditor._probe_observation`)이 머리줄 뒤에 붙인다 — 로그의 머리·꼬리에 두면 읽기 상한과
+    꼬리 상한에 잘렸다. 🔴 **`1`은 ASan의 기본 종료
     코드일 수도, docker·셸의 일반 실패일 수도 있어 갈리지 않는다** — 재 본 둘 중 하나가 정확히
     이 값이다(`oss-fuzz:368076871`(ASan) **1** · `arvo:1065`(MSan) **77**, 2026-10-04 실측).
     **가를 수 없으면 가른 척하지 않는다**(§0): 등급은 `judge`가 「떴다」로 두고, 모델이
@@ -1099,7 +1106,8 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
         return "# semgrep: 결과 문서 없음 — 아래 stderr 참조"
     head = f"# semgrep: {len(results)} findings"
     # ⏵ 2026-10-10 (이슈 #563 선행) — 반쪽 파싱을 **같은 반환값의 둘째 줄에** 적는다. 떨어뜨려 두면
-    # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573).
+    # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573, 그 줄은
+    # 이제 로그 밖 `Evidence.harness_note`다. 이 semgrep 줄은 여전히 로그 머리에 산다).
     # ⚠ 모델 사본에서는 이 노트를 `prompt_loader`가 빼고 영어 표지를 `errors:` 줄에 싣는다 — 접기가
     # 로그 머리를 80자에서 자르기 때문이다(적대적 리뷰 2026-10-10).
     partial = semgrep_partial_parse(steps[-1].stdout)
@@ -1416,17 +1424,20 @@ class ContainerToolRunner:
             sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
         summary = summary_line(tool, steps)
-        if summary is not None:
+        harness_note = None
+        if summary is not None and tool == "poc":
+            # 🔴 **`poc`의 줄은 로그에 넣지 않고 `Evidence.harness_note`로 싣는다**(이슈 #573).
+            # 하네스가 만든 줄이라 로그를 거칠 이유가 없고, 거치면 두 상한에 잘린다: 모델 관측은
+            # 로그의 읽기 상한(`PAYLOAD_READ_CAP` 200,000자) 안에서 **마지막 2,000자**만 싣는데
+            # (`runner._POV_OBSERVATION_TAIL_CHARS`), 꼬리에 붙인 줄은 출력이 200,000자를 넘으면
+            # 읽히지도 않았다(독립 재현: 150,000자까지 있고 250,000자에서 없다). 로그에 머리·꼬리로
+            # 남겨 두면 짧은 로그에서는 관측에 같은 줄이 둘 이상 나온다. v5 prefix가 *"관측에 그
+            # 사실이 한 줄로 붙는다"*고 약속하는 자리다 — 두 소비자(`runner._pov_observation` ·
+            # `nodes/auditor._probe_observation`)가 이 필드를 머리줄 뒤에 붙인다.
+            harness_note = summary
+        elif summary is not None:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
             sections.insert(2, summary)
-            if tool == "poc":
-                # 🔴 **꼬리에도 넣는다.** 모델 관측은 로그의 **마지막 2,000자**만 싣는다
-                # (`runner._POV_OBSERVATION_TAIL_CHARS`) — 머리에만 두면 긴 출력(ASan 보고서는
-                # 쉽게 3 KB를 넘는다)에서 **모델에게 안 닿는다**. v5 prefix가 *"관측에 그 사실이
-                # 한 줄로 붙는다"*고 약속하는 자리이고, 적대적 리뷰 2026-10-09이 3.3 KB stderr로
-                # 그 약속이 깨지는 것을 재현했다. `exit=1`에서만 붙으므로 다른 홉의 바이트는
-                # 안 바뀐다.
-                sections.append(summary)
         return self._write(
             evidence_id,
             tool,
@@ -1437,6 +1448,7 @@ class ContainerToolRunner:
             exit_code=exit_code,
             error=error,
             location=first_hit_location(tool, steps),
+            harness_note=harness_note,
         )
 
     def _kill(self, name: str) -> None:
@@ -1515,6 +1527,7 @@ class ContainerToolRunner:
         exit_code: int,
         error: str | None,
         location: Location | None = None,
+        harness_note: str | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -1544,6 +1557,7 @@ class ContainerToolRunner:
             ok=ok,
             exit_code=exit_code,
             error=error,
+            harness_note=harness_note,
         )
 
 

@@ -740,9 +740,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "observed_at": "2026-09-01T10:22:31Z",
   "ok": true,
   "exit_code": 1,
-  "error": null
+  "error": null,
+  "harness_note": null
 }
 ```
+
+`harness_note`는 하네스가 만든 관측 머리줄이다 — 지금은 `poc` `exit=1` 모호성 줄만이고 없으면 `null`이다. 도구 출력이 아니라 로그를 거치지 않으며 `ok`를 바꾸지 않는다.
 
 `kind` 열거형: `static` | `sanitizer` | `crash` | `fuzz_coverage` | `build` | `poc_run` | `diff` | `graph`
 
