@@ -927,7 +927,7 @@ def test_a_stop_before_any_candidate_says_none_no_poc_not_not_reached(
 ) -> None:
     """후보가 0건인 채 추가 대상에서 끊기면 `not_reached`가 아니라 `none`/`no_poc`다 - 의도한 것이
     아니라 `_finalize_oracle` 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로
-    싣는다). 「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 오라클
+    싣는다). 「PoV가 끝까지 돌아 submit을 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 오라클
     요약은 못 가르고 후자는 run 수준의 `stopped_after`·경고가 말한다 - 그 사실의 핀이다.
     **예산은 #532 앞에도 이랬고(종전대로) 게이트웨이는 #532에서 새로 이렇게 됐다** - 앞 판은 후보
     0건의 게이트웨이를 `not_reached`로 남겼다. 게이트웨이 행이 없으면 그 쪽 조건(`validated` 밖이면
