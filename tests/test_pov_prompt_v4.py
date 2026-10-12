@@ -105,7 +105,7 @@ from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade, PovStopReason, Role
 from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
-from tests.conftest import REPO_ROOT
+from tests.conftest import REPO_ROOT, tracked_files
 from tests.oracle_fakes import TASK_ID
 from tests.test_nodes import _pov_state, ctx  # noqa: F401
 from tests.test_pov_loop import (
@@ -2059,22 +2059,23 @@ def test_the_v3_detector_does_not_flag_what_is_true(posix: str, lines: list[str]
 
 def test_no_live_source_names_v3_alone_as_the_pov_prompt() -> None:
     """명제 핀(CLAUDE.md 2.5) - 위 블록 주석의 명제를 **살아 있는 소스 전체**에서 센다. 면제는
-    `_REVIEWED_V3_LINES`뿐이다. 저장소 루트는 `REPO_ROOT`다(`Path(".")`는 다른 디렉터리에서
-    pytest를 돌리면 **아무것도 안 훑고 초록**이다 - 훑은 파일 수도 단언한다)."""
+    `_REVIEWED_V3_LINES`뿐이다. 대상은 **git이 추적하는** 파일이다(`tracked_files` - 저장소
+    루트도 거기서 고정한다. `Path(".")`는 다른 디렉터리에서 pytest를 돌리면 **아무것도 안 훑고
+    초록**이고, `rglob`는 반대로 `.claude/worktrees/<이름>/`의 **남의 낡은 문서**까지 읽는다 -
+    2026-10-12 사고. 훑은 파일 수도 단언한다)."""
     offenders = []
     scanned = 0
-    for suffix in _LIVE_SUFFIXES:
-        for path in sorted(REPO_ROOT.rglob(suffix)):
-            posix = path.relative_to(REPO_ROOT).as_posix()
-            if posix.startswith(_SKIPPED):
-                continue
-            scanned += 1
-            lines = path.read_text(encoding="utf-8").splitlines()
-            offenders += [
-                f"{posix}:{number}"
-                for number in _bare_v3_lines(posix, lines)
-                if not _reviewed(posix, lines[number - 1])
-            ]
+    for path in sorted(tracked_files(*_LIVE_SUFFIXES)):
+        posix = path.relative_to(REPO_ROOT).as_posix()
+        if posix.startswith(_SKIPPED):
+            continue
+        scanned += 1
+        lines = path.read_text(encoding="utf-8").splitlines()
+        offenders += [
+            f"{posix}:{number}"
+            for number in _bare_v3_lines(posix, lines)
+            if not _reviewed(posix, lines[number - 1])
+        ]
     assert scanned > 100, "훑은 파일이 너무 적다 - 저장소 루트가 틀렸다"
     assert not offenders, offenders
 
@@ -2115,15 +2116,19 @@ def test_the_first_line_claim_detector_reads_the_real_stale_lines() -> None:
 
 def test_no_live_source_puts_last_gen_on_the_first_line_of_the_observation() -> None:
     """위 명제를 살아 있는 소스 전체에서 센다. 불변 판 `prompts/pov/v3/`는 뺀다 - v3 관측은
-    실제로 첫 줄이 요약이다. 날짜 붙은 트리는 `_SKIPPED`(프롬프트 트리는 이 명제에서는 읽는다)."""
+    실제로 첫 줄이 요약이다. 날짜 붙은 트리는 `_SKIPPED`(프롬프트 트리는 이 명제에서는 읽는다).
+    대상은 **git이 추적하는** 파일이다(`tracked_files`의 2026-10-12 사고) - 훑은 파일 수도
+    단언한다. 안 그러면 수집이 비어도 **초록**이다."""
     skipped = tuple(name for name in _SKIPPED if name != "prompts")
     offenders = []
-    for suffix in _LIVE_SUFFIXES:
-        for path in sorted(REPO_ROOT.rglob(suffix)):
-            posix = path.relative_to(REPO_ROOT).as_posix()
-            if posix.startswith(skipped) or posix.startswith("prompts/pov/v3/"):
-                continue
-            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-                if _FIRST_LINE_CLAIM.search(line):
-                    offenders.append(f"{posix}:{number}")
+    scanned = 0
+    for path in sorted(tracked_files(*_LIVE_SUFFIXES)):
+        posix = path.relative_to(REPO_ROOT).as_posix()
+        if posix.startswith(skipped) or posix.startswith("prompts/pov/v3/"):
+            continue
+        scanned += 1
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _FIRST_LINE_CLAIM.search(line):
+                offenders.append(f"{posix}:{number}")
+    assert scanned > 100, "훑은 파일이 너무 적다 - 저장소 루트가 틀렸다"
     assert not offenders, offenders
