@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -496,7 +496,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -785,7 +785,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v14"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v15"}
 }
 ```
 
@@ -847,6 +847,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 위 Finding 예시의 `prompt_version`도 v13으로 고쳤다.
 > ⏵ 2026-10-11 — **지금 고르는 것은 v14**다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578). 출력 계약은 v12와 같다(`no_signal`에도 `audit`).
 > 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
+> ⏵ 2026-10-13 — **지금 고르는 것은 v15**다(v14 + 계약 문장 여섯 — 아래 「v14 → v15」). 출력 계약은 v12와 같다. 위 Finding 예시의
+> `prompt_version`도 v15로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -1013,7 +1015,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v14", "critic": "v6"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v15", "critic": "v6"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1149,6 +1151,23 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > ⏵ **2026-10-11 — v13 → v14.** v13은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT 정답은
 > v12 계약(#580 머지)이라 **v14 = v12 + FACTS `source` 제거**를 새 판으로 세웠다 — v13의 요청 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 규칙 1).
 > v14 body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`tests/test_auditor_v14_facts.py`). v14로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-11).
+>
+> ⏵ **2026-10-13 — v14 → v15 (S19 · council 2026-10-13).** v15 = v14 + 계약 문장 여섯. body는 v14와 바이트 동일이고 prefix는 아래 여섯 군데만
+> 다르다(`tests/test_auditor_v15.py`가 차이를 묶는다). 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이다 — 최종 답·필드 순서는
+> v12 그대로이고 `spec` 설명과 클래스 설명만 다시 썼다(v8~v14 봉투는 그 판들의 요청 payload라 한 글자도 안 바꿨다 · 규칙 1).
+>
+> | # | v15가 쓴 문장 | 근거(코드) | 의존 |
+> | --- | --- | --- | --- |
+> | 1 | `probe`는 `spec`을 받는다 — 하네스가 조립한 바이트가 도구에 가고 응답 머리줄에 `input_bytes=N input_sha256=…`가 붙는다. **읽는 도구는 `poc`뿐**(`asan`·`gdb`·`build`는 안 읽고 머리줄이 그렇게 적는다). v14의 「`spec`을 보내지 마라 · 도구에 안 간다」와 노드의 `note: the spec you sent was recorded but NOT given to the tool` 관측 줄이 낡았다 | PR #644의 `nodes/auditor._probe`·`_probe_observation` | **PR #644 머지** |
+> | 1b | 반복 판정(`REPEAT_REQUEST`)의 키가 `poc`에 한해 조립된 입력 바이트의 sha256을 더한다(`spec`만 바꾼 `probe poc`는 다른 질문). `spec`이 같은 바이트로 조립되면 같고, `poc`가 아닌 도구는 도구 이름만 본다 | `nodes/auditor._input_aware_key`(v15 봉투 한정 — v8~v14는 종전 키) | #644가 이 변경을 v15에 넘겼다 |
+> | 2 | `lookup`·`probe` 응답은 Critic에도 간다(모델이 고른 `kind`·`target`은 가린 사본, `got '…'` 상세는 버림). 모델의 응답 턴은 안 간다 | PR #600의 `auditor.critic_safe_observation`·`critic.run(hop_observations=…)` | **PR #600 머지** |
+> | 3 | `triggerable`은 `probe` 뒤에 답한다. **지시일 뿐 하네스는 검사하지 않는다** — `probe` 0회의 `triggerable` `answer`는 그대로 받는다(`_answer_observed`는 `cited_probe_evidence`를 셀 뿐 거절 조건이 아니다) | `nodes/auditor._run_hops`·`_answer_observed` | 없음 |
+> | 4 | 「유계 발췌이고 생성 요약이 아니다」 문장을 뺐다(이슈 #562 ③ — 접힌 semgrep 로그는 발췌가 아니라 하네스가 히트당 한 줄로 다시 쓴 것이다) + `K of N shown` 줄이 접힘 표지임을 적는다. ⚠ 「그 줄이 없으면 절단이 없다」고는 **쓰지 않았다** — 접히지 않은 로그도 `...` 줄로 잘린다 | `prompt_loader._fold_semgrep_results`(`K of N shown`은 접기 성공 경로가 항상 단다) · `_bound_text` | 없음 |
+> | 5 | `answer`의 `procedure`가 없거나 null이면 스키마가 거절한다 — 거절 문구(`answer 액션은 비지 않은 procedure가 필요하다`)를 그대로 적는다(이슈 #602) | `schemas/auditor._AuditorEnvelope._check_action` | 없음 |
+> | 6 | hop-0 끝에 `## Harness note (stage 2) …` 컴파일 실패 노트가 붙을 수 있다 — 도구를 거절하지 않는다(이슈 #507) | PR #648의 `signals.compile_note`·`auditor._ask_model` | **PR #648 머지** |
+>
+> ⚠ **의존 PR 셋(#644 · #600 · #648)이 main에 들어오기 전에 v15를 서빙하면 1·2·6의 문장은 코드와 어긋난다**(CLAUDE.md §2.1) — v15는 이 PR이 머지될 때 이미 `config/models.yaml`에 배선돼 있다.
+> v15로 돈 run은 0건이다. 모델이 `spec`을 보내는지·`probe`를 `triggerable` 앞에 두는지는 미실측이다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
