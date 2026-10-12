@@ -558,10 +558,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
-  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로). ⏵ 2026-10-13 — v6도 요청한다(서빙 판).
+  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로).
   `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
   최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
   `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
+
+  ⏵ 2026-10-13 — v6도 형제 봉투 `PovActionNamed`를 요청한다(서빙 판 — meta `output_schema`).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고(⏵ 2026-10-11 — **스키마 파싱 실패는 홉 하나를 쓰고
@@ -574,7 +576,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
   `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
   없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
-  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정; ⏵ 2026-10-13 v6 prefix는 서술하고 서빙 판이 v6이다), 서버 쪽 사건(상태 없음·5xx·버릴 수
+  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
@@ -614,6 +616,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
   접었다(2026-10-02 결정, 아래 한계로 남긴다).
+
+  ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
+  서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1070,7 +1075,9 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
-   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다. ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
+
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
 >

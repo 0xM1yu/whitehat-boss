@@ -30,7 +30,8 @@ ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 �
   (`docs/evaluation.md` §6).
 - **2에는 프롬프트 배선 어긋남이 든다**(⏵ 2026-10-13, #600 H3). `run`은 `doctor`와 같은 검사
   (`_check_prompts`)의 ERROR — 프롬프트 로드 실패 · 내용 인식 집합 밖의 판 — 에 모델을 부르기 전에
-  2로 선다. 그 run이 닿는 단계의 역할만 본다. WARN은 막지 않는다.
+  2로 선다. 그 run이 닿는 단계의 역할만 본다. WARN은 막지 않고, `--dry-run`(3단계에서 섬)은 일부러
+  가드 밖이다.
 - ① 트레이스백: `run`의 예상 밖 예외(`UNFORESEEN_FAILURE` — 러너가 매니페스트를 남기고 다시
   던진다) · `_claim_run_dir`의 하루 상한 초과(설계된 `SystemExit`) ·
   `estimate`·`bench`의 `ConfigError`.
@@ -1702,7 +1703,8 @@ def run(args: argparse.Namespace) -> int:
     # **`doctor`와 같은 프롬프트 검사를 run도 시작 전에 건다**(#600 H3). 내용 인식 집합에 없는 판
     # (반쯤 배선된 Critic·PoV 판)은 1~6단계의 GPU 시간을 쓰고 7·8단계에서 `PromptError`로 죽는다.
     # ERROR만 막는다 — 디스크에 새 판이 있다는 WARN은 `doctor`가 알린다. 모델에 안 닿는 run은 막지
-    # 않고, 닿더라도 그 run이 부를 역할만 본다(`_check_prompts`).
+    # 않고, 닿더라도 그 run이 부를 역할만 본다(`_check_prompts`). **`--dry-run`(3단계에서 선다)이
+    # 가드 밖인 것은 의도다** — 모델을 안 부르므로 어긋난 프롬프트가 해를 끼칠 일이 없다.
     if reaches_model:
         prompt_errors = [
             check
