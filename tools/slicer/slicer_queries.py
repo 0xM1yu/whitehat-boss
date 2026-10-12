@@ -302,6 +302,7 @@ def import_query(
     project: str,
     compilation_database: str | None = None,
     include_root: bool = False,
+    defines: list[str] | None = None,
 ) -> str:
     # With a compilation database, c2cpg processes only the compiled translation units with
     # their real flags (compile-aware import): dead #ifdef branches and uncompiled files drop
@@ -315,11 +316,16 @@ def import_query(
     # E3 probe (2026-10-03, Joern 4.0.605; notes outside the repo): one dummy `--define` alone cut
     # the internal methods by 37.7% (curl), 62.8% (libxml2) and 21.5% (vim) -- read as c2cpg
     # no longer parsing inactive branches; the effect is measured, that cause is the reading of it.
+    # `defines` (slicer_target only, never the candidate-discovery run) is that same `--define`: the
+    # macros that make a named source/sink line active, so that line gets nodes at all. It changes
+    # the graph on purpose -- which is why the discovery run above does not pass it.
     arguments = []
     if compilation_database is not None:
         arguments += ["--compilation-database", compilation_database]
     if include_root:
         arguments += ["--include", repo]
+    for name in defines or []:
+        arguments += ["--define", name]
     extra = ", args=List(" + ", ".join(literal(a) for a in arguments) + ")" if arguments else ""
     return envelope(
         "import",
@@ -729,8 +735,74 @@ def flows_query(
     )
 
 
-def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
+def context_query(
+    points: list[tuple[str, int]],
+    repo: str = "",
+    *,
+    guard_returns_only: bool = False,
+    guard_points: list[tuple[str, int]] | None = None,
+    follow_assignments: bool = True,
+    case_labels: bool = True,
+) -> str:
+    """Context fixed point around `points`. The defaults are the slice-v2 text, byte for byte.
+
+    The options exist for the targeted slice (slicer_target); a candidate run passes none.
+    `guard_returns_only` keeps only the returns that sit BEFORE the last point of their method (an
+    early exit can stop the flow from reaching that point; a return after it cannot), instead of
+    every return of every relevant method -- each of those drags its enclosing conditions and
+    their declarations in, which on a targeted slice grew 2 data lines into a whole function. The
+    "last point" is taken from `guard_points` when given (the slice's own data/anchor lines): the
+    caller re-runs this query on the grown set, and lexical recovery puts the function's closing
+    brace into it, which would move the bound to the end and let every return in.
+    `follow_assignments=False` drops the repo-wide pass that adds every assignment to a declaration
+    an added identifier refers to; the data dependency itself already came from the DDG traversal.
+    `case_labels=False` keeps the method-wide jump pass to goto labels: the C frontend makes every
+    `case`/`default:` a JumpTarget too, so that pass pulled every switch of the method in.
+    """
     encoded = joined_literal(json.dumps(points, ensure_ascii=True))
+    # Each option picks which Scala text is emitted; the defaults emit the slice-v2 text unchanged
+    # (no boolean literal is spliced into a predicate -- test_slicer's tautology detector).
+    limit = ""
+    returns = "methods.flatMap(_.ast.isReturn.l)"
+    if guard_returns_only:
+        # Without guard_points the bound comes from `points` itself -- referenced by name, not
+        # written out again: slicer_library swaps the points literal and needs it exactly once.
+        guards = (
+            "points.toList"
+            if guard_points is None
+            else "ujson.read("
+            + joined_literal(json.dumps([list(p) for p in guard_points], ensure_ascii=True))
+            + ").arr.map(p => (p(0).str, p(1).num.toInt)).toList"
+        )
+        limit = f"""
+      // Last guard point line per relevant method -- the bound for guard_returns_only.
+      val guardLines: Map[String, Array[Int]] = {guards}.groupBy(_._1)
+        .map {{ case (f, ps) => f -> ps.map(_._2).toArray }}
+      val pointLimit: Map[Long, Int] = relevantMethods.map(m => m.id -> guardLines
+        .getOrElse(filename(m), Array.empty[Int])
+        .filter(l => m.lineNumber.exists(_ <= l) && m.lineNumberEnd.forall(_ >= l))
+        .foldLeft(Int.MinValue)(math.max)).toMap"""
+        returns = (
+            "methods.flatMap(m => m.ast.isReturn.l.filter(r =>\n"
+            "          r.lineNumber.exists(_ < pointLimit.getOrElse(m.id, Int.MaxValue))))"
+        )
+    jump = (
+        "n.isInstanceOf[nodes.JumpTarget]"
+        if case_labels
+        else "(n match { case j: nodes.JumpTarget =>\n"
+        '            !(j.code.trim.startsWith("case") || j.code.trim.startsWith("default"))\n'
+        "            case _ => false })"
+    )
+    assignment_pass = (
+        """
+        // 퍼지 파싱(특히 C++)이 인자 없는 assignment 노드를 남기면 `a.target`(= argument(1))이
+        // 빈 iterator에서 next로 죽는다(#219 후속, sample_40 context 단계 NoSuchElement).
+        // target이 실재하는 assignment만 본다 — 인자 없는 노드는 선언을 참조할 수도 없다.
+        selected ++= cpg.assignment.filter(a => a.argument.argumentIndex(1).nonEmpty &&
+          a.target.ast.isIdentifier.refsTo.exists(d => declarationIds.contains(d.id))).l"""
+        if follow_assignments
+        else ""
+    )
     return envelope(
         "context",
         LOCATION
@@ -752,7 +824,7 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
           first < lines.length && m.lineNumberEnd.forall(_ >= lines(first))
         }}
       }}).l
-      mark("relevant_methods")
+      mark("relevant_methods"){limit}
       val all = relevantMethods.flatMap(_.ast.l).filter(sourceNode).distinct
       mark("method_ast")
       val selected = scala.collection.mutable.Set.empty[nodes.AstNode]
@@ -783,12 +855,12 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
           }}))
         mark("control_jumps")
         selected ++= methods.flatMap(_.ast.l).filter(n =>
-          n.isInstanceOf[nodes.JumpTarget] || (n match {{
+          {jump} || (n match {{
             case c: nodes.ControlStructure => c.controlStructureType == "GOTO"
             case _ => false
           }}))
         mark("method_jumps")
-        selected ++= methods.flatMap(_.ast.isReturn.l)
+        selected ++= {returns}
         mark("returns")
         val ids = selected.toList.flatMap {{
           case i: nodes.Identifier => List(i)
@@ -804,12 +876,7 @@ def context_query(points: list[tuple[str, int]], repo: str = "") -> str:
         }}
         selected ++= declarations
         val declarationIds = declarations.map(_.id).toSet
-        mark("declarations")
-        // 퍼지 파싱(특히 C++)이 인자 없는 assignment 노드를 남기면 `a.target`(= argument(1))이
-        // 빈 iterator에서 next로 죽는다(#219 후속, sample_40 context 단계 NoSuchElement).
-        // target이 실재하는 assignment만 본다 — 인자 없는 노드는 선언을 참조할 수도 없다.
-        selected ++= cpg.assignment.filter(a => a.argument.argumentIndex(1).nonEmpty &&
-          a.target.ast.isIdentifier.refsTo.exists(d => declarationIds.contains(d.id))).l
+        mark("declarations"){assignment_pass}
         mark("assignments")
         changed = selected.size != before
       }}
