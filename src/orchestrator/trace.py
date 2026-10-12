@@ -43,7 +43,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 (`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
 | 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
 | 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
-| PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#613) |
+| PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
@@ -65,15 +65,18 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다(#83).
 
-「run 끝 집계 셋」(#613·#618): `RunRecord`의 `schema_failure_max_run_by_role`·
+「run 끝 집계 셋」(#613·#618·#619 (d)): `RunRecord`의 `schema_failure_max_run_by_role`·
 `schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`과 report.md의 같은 줄이 위 세 행의
 출처다(함수는 이 모듈의 같은 이름). **분모만 세운다 — 하네스는 이 값으로 동작을 바꾸지 않고
 임계값(연속 실패 상한 등)은 이 집계를 본 실험팀이 정한다.** 첫째는 `error="SchemaParseError"`인
 실패 `model_call`이 같은 (역할, `subject_id`)에서 이어진 길이이고 성공이나 다른 사유의 실패가
 끊는다. 둘째는 소진되지 않고 재시도로 살아난 호출 수이며 그 응답 원문은 위 「실패 응답 원문」 행이
-싣는다. 셋째는 행동을 실은 `pov_hop`만 열로 보고(호출이 실패한 홉은 세지도 끊지도 않는다) `gen`·
-`submit`이 연속을 끊는다. **해당 종류의 행이 하나도 없으면 값은 `None`이다 — 안 쟀다이지 0이
-아니다.** 행이 있으면 그 역할·Finding은 잰 `0`으로도 든다.
+싣는다. 셋째는 이슈 #619 선택지 (d) 「계측만 한다」의 것이다 - `action`을 실은 `pov_hop`만 열로
+보고 `gen`·`submit`이 연속을 끊는다. **`action`이 없는 홉**(모델 호출 자체가 실패한 홉)만 세지도
+끊지도 않고, 도구 호출이 예산에서 끊긴 홉(#394)은 응답이 있어 `action`을 실으므로 **센다**.
+**해당 종류의 행이 하나도 없으면 값은 `None`이다 — 안 쟀다이지 0이 아니다.** 행이 있으면 그
+역할·Finding은 잰 `0`으로도 들고, 행동을 실은 홉이 없는 Finding(PoV 루프가 첫 홉 전에 던졌다 등)은
+dict에 **없다**.
 
 「시도별 출력 토큰·종료 사유」(#550): `model_call.output_tokens`는 **재시도를 합친 값**이다. 합이
 **이미** 주는 것이 있다 — 상한이 32,768일 때 두 시도의 합 65,536은 산술로 둘 다 정확히 32,768이고,
@@ -722,13 +725,15 @@ def schema_recovered_calls_by_role(events: Sequence[TraceEvent]) -> dict[str, in
 
 
 def pov_inspect_max_run_by_finding(events: Sequence[TraceEvent]) -> dict[str, int] | None:
-    """Finding별 **연속 `inspect` 홉의 최장 길이** — 분모 전용 계측이다(#613 · PoV 루프).
+    """Finding별 **연속 `inspect` 홉의 최장 길이** — 분모 전용 계측이다(#619 선택지 (d)).
 
     `pov_hop` 중 `action`을 실은 행만 홉 열이다 — 호출 자체가 실패한 홉(`action` 없음)은 모델이
-    행동을 고르지 않았으므로 세지도 끊지도 않는다. `gen`·`submit`이 연속을 끊는다. 이미 돌린 도구를
-    다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라 센다.
-    반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도 `0`으로
-    든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
+    행동을 고르지 않았으므로 세지도 끊지도 않는다. 도구 호출이 예산에서 끊긴 홉(#394)은 응답이
+    있어 `action`을 싣고 `error`도 실리므로 **센다**. `gen`·`submit`이 연속을 끊는다. 이미 돌린
+    도구를 다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라
+    센다. 반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
+    `0`으로 든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
+    행동을 실은 홉이 없는 Finding(루프가 첫 홉 전에 던졌다 등)은 dict에 **없다**.
     """
     rows = [e for e in events if e.kind is EventKind.POV_HOP and "action" in e.data]
     if not rows:

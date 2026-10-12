@@ -359,16 +359,17 @@ class RunRecord(UtcModel):
     # `model_call.response_refs` 키를 바꾸므로 박제한다. `None` = 안 켰다(이 필드 이전의 manifest도
     # 같다 - `slicer`와 같은 관용구라 하위호환이 안 깨진다).
     keep_responses: list[str] | None = None
-    # trace에서 run 끝에 센 **분모 전용** 집계 셋(#613·#618) — 하네스는 동작을 안 바꾸고 값(상한
-    # 등)은 실험팀이 정한다. `None`은 **그 종류의 trace 행이 하나도 없었다**(안 쟀다 - 0이 아니다,
-    # CLAUDE.md §0)이고 이 필드 이전의 manifest도 같다(`slicer`와 같은 관용구 - 하위호환 유지).
+    # trace에서 run 끝에 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 선택지 (d)) — 하네스는
+    # 동작을 안 바꾸고 값(상한 등)은 실험팀이 정한다. `None`은 **그 종류의 trace 행이 하나도
+    # 없었다**(안 쟀다 - 0이 아니다, CLAUDE.md §0)이고 이 필드 이전의 manifest도 같다(`slicer`와
+    # 같은 관용구 - 하위호환 유지).
     # `{}`는 나오지 않는다 - 행이 있으면 그 역할·Finding은 잰 `0`으로라도 든다. 산식은 `trace.py`.
     #
     # 역할 → 연속 `SchemaParseError` `model_call`의 최장 길이((역할, 대상)별 연속, 역할별 최댓값).
     schema_failure_max_run_by_role: dict[str, int] | None = None
     # 역할 → 스키마 재시도로 살아난(`ok`·`attempts>1`) `model_call` 수.
     schema_recovered_calls_by_role: dict[str, int] | None = None
-    # Finding → 연속 `inspect` PoV 홉의 최장 길이(행동을 실은 `pov_hop`만).
+    # Finding → 연속 `inspect` PoV 홉의 최장 길이(`action`을 실은 `pov_hop`만 - #619 (d)).
     pov_inspect_max_run_by_finding: dict[str, int] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
