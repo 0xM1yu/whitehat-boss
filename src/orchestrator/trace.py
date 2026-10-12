@@ -80,7 +80,8 @@ count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패
 - `attempt_tail_whitespace_only` — (위 둘과 사유가 다르다 - 합이 못 주는 것을 메우는 키가 아니다)
   시도별 「응답 꼬리가 공백뿐인가」(#79). `finish_reason`이 `length`이고 응답 원문이 있는
   시도만 판정한다 - 원문의 끝 `TAIL_WHITESPACE_CHARS`(64)자가 전부 공백·탭·개행이면 `true`, 아니면
-  `false`(빈 응답도 `false`다). 예: `"[null,true]"`.
+  `false`(원문이 64자보다 짧으면 창을 못 채우므로 전부 공백이어도 `false`다 - 빈 응답 포함).
+  예: `"[null,true]"`.
   **`null`은 두 가지이고 같은 이벤트의 `attempt_finish_reasons`로 가른다** - 그 칸이 `length`가
   아니면 안 본 것(해당 없음)이고, `length`인데 `null`이면 원문을 못 구해 못 본 것(미측정 -
   게이트웨이 거절·`content: null`·원문 없는 구현체)이다. **64는 정한 값이고 잰 값이 아니다.**

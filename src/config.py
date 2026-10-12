@@ -1420,7 +1420,7 @@ REDACTED = "***"
 
 def _is_secret_flag(arg: str) -> bool:
     name = arg.split("=", 1)[0]
-    parts = set(name.lstrip("-").lower().split("-"))
+    parts = set(name.lstrip("-").lower().replace("_", "-").split("-"))
     return name.startswith("-") and bool(_SECRET_FLAG_PARTS & parts)
 
 
@@ -1428,6 +1428,7 @@ def redact_launch_args(args: list[str]) -> list[str]:
     """기동 인자에서 비밀로 보이는 값을 `***`로 가린다. 새 리스트를 돌려준다.
 
     세 모양을 본다: `--api-key VALUE`(다음 인자) · `--api-key=VALUE` · 플래그 없는 토큰 접두 값.
+    플래그 이름의 `_`는 `-`로 보고 맞춘다(`--api_key`도 가린다).
     **휴리스틱이다** - 이름이 다른 비밀 플래그는 못 거른다. 그래서 장비 파일 `extra_args`에 비밀을
     직접 적지 않는다(환경변수로 넘긴다).
     """
