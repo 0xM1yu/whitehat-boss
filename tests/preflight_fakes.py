@@ -169,6 +169,8 @@ class World:
         self.listening = {("127.0.0.1", port) for port in _script_ports()}
         self.listening |= {("127.0.0.1", 8004), ("127.0.0.1", 8005), ("127.0.0.1", 8666)}
         self.ssh_exit = 0
+        self.uncached: set[str] = set()  # 원격 HF 캐시에 없는 `repo@rev` (#571)
+        self.weights_ssh_exit = 0
         self.docker_exit = 0
         self.docker_missing = False
         self.calls: list[tuple[list[str], float]] = []
@@ -197,6 +199,11 @@ class World:
             raise FileNotFoundError(2, "No such file or directory", tool)
         if tool == "git":
             out, code, err = self.commit, 0, ""
+        elif tool == "ssh" and "snapshots" in argv[-1]:  # 가중치 캐시 점검(#571) — 읽기뿐이다
+            code = self.weights_ssh_exit
+            have = re.findall(r'echo "have ([^"]+)"', argv[-1])
+            out = "\n".join(f"have {p}" for p in have if p not in self.uncached)
+            err = "" if code == 0 else _SSH_STDERR
         elif tool == "ssh":
             code = self.ssh_exit
             out = self.remote_commit if code == 0 else ""
