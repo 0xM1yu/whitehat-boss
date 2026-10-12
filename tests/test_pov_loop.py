@@ -3231,3 +3231,93 @@ def test_a_model_that_only_repeats_inspect_still_stops_at_the_hop_limit(ctx: Run
 
 def _stop_reasons_of(scripted: RunContext) -> list[object]:  # noqa: F811
     return [h.data.get("stop_reason") for h in _hops(scripted)]
+
+
+def _flaky_first_call(ctx: RunContext, exit_code: int, nth: int = 0):  # noqa: ANN202, F811
+    """`nth`번째(0부터) 도구 호출만 `exit_code`로 실패시키는 ctx(+ 기록) — 나머지는 fake 그대로."""
+    scripted, recorded = _recording_tools(ctx)
+    inner = scripted.tools
+
+    class Flaky:
+        def run(self, tool, args, sandbox):  # noqa: ANN001, ANN202
+            evidence = inner.run(tool, args, sandbox)
+            if len(recorded) - 1 != nth:
+                return evidence
+            return evidence.model_copy(
+                update={"ok": False, "exit_code": exit_code, "error": f"exit {exit_code}"}
+            )
+
+        def __getattr__(self, name):  # noqa: ANN001, ANN202
+            return getattr(inner, name)
+
+    return dataclasses.replace(scripted, tools=Flaky()), recorded
+
+
+def _drive_flaky(ctx: RunContext, actions: list[object], exit_code: int, nth: int = 0):  # noqa: ANN202, F811
+    base = _scripted(_with_pov_version(ctx, "v3"), actions)
+    scripted, recorded = _flaky_first_call(base, exit_code, nth)
+    state, finding = _pov_state(ctx)
+    runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+    return scripted, recorded
+
+
+@pytest.mark.parametrize("code", sorted(pov_node.INFRA_FAILURE_EXITS))
+def test_an_infrastructure_failure_is_not_remembered_so_the_retry_runs(
+    ctx: RunContext, code: int  # noqa: F811
+) -> None:
+    """타임아웃·실행 실패(124~127)는 대상에 대해 말하지 않는다 — 같은 도구 재요청이 다시 돈다."""
+    scripted, recorded = _drive_flaky(ctx, [_inspect("gdb"), _inspect("gdb"), _SUBMIT], code)
+
+    assert [tool for tool, _ in recorded] == ["gdb", "gdb"]
+    assert _repeat_hops(scripted) == []
+
+
+def test_a_deterministic_failure_is_remembered(ctx: RunContext) -> None:  # noqa: F811
+    """음성 핀 — exit 1(예: 번들 컴파일 실패)은 결정적이라 기억한다. 둘째 요청은 거절된다."""
+    scripted, recorded = _drive_flaky(ctx, [_inspect("gdb"), _inspect("gdb"), _SUBMIT], 1)
+
+    assert [tool for tool, _ in recorded] == ["gdb"]
+    [rep] = _repeat_hops(scripted)
+    assert rep.data["inspect_repeat_of_hop"] == 0
+
+
+def test_a_failed_gen_run_forgets_the_pre_gen_inspect(ctx: RunContext) -> None:  # noqa: F811
+    """hop0 `inspect poc`(입력 없음)를 기억한 채 gen의 `poc`가 인프라 실패하면 그 낡은 기억을 지워,
+    gen 뒤 `inspect poc`가 돈다(입력 없던 옛 결과를 반복이라 부르지 않는다)."""
+    scripted, recorded = _drive_flaky(
+        ctx, [_inspect("poc"), _gen(), _inspect("poc"), _SUBMIT], 125, nth=1
+    )
+
+    assert [(t, a.input_bytes) for t, a in recorded] == [
+        ("poc", None), ("poc", b"A" * 8), ("poc", b"A" * 8),
+    ]
+    assert _repeat_hops(scripted) == []
+
+
+def test_repeat_points_at_the_gen_hop_not_the_pre_gen_inspect(ctx: RunContext) -> None:  # noqa: F811
+    """`[inspect poc, gen, inspect poc]` — 반복은 hop 0(입력 없음)이 아니라 gen 홉(1)을 가리킨다."""
+    scripted, recorded, _ = _drive(
+        ctx, [_inspect("poc"), _gen(), _inspect("poc"), _SUBMIT], version="v3"
+    )
+
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", None), ("poc", b"A" * 8)]
+    [rep] = _repeat_hops(scripted)
+    assert (rep.data["hop"], rep.data["inspect_repeat_of_hop"]) == (2, 1)
+
+
+def test_repeat_wording_is_true_for_a_tool_that_does_not_read_the_poc(ctx: RunContext) -> None:  # noqa: F811
+    """gen 뒤 `inspect asan` 거절은 이유를 대고, 「새 정보 없음」도 없다."""
+    _, _, bodies = _drive(
+        ctx, [_inspect("asan"), _gen(), _inspect("asan"), _SUBMIT], version="v3"
+    )
+
+    assert "asan는 gen의 바이트와 상관없이 홉 0의 결과와 같다 — 재실행하지 않았다" in bodies[3]
+    assert "새 정보 없음" not in bodies[3]
+
+
+def test_infra_failure_exits_match_the_container_adapter() -> None:
+    """노드는 어댑터를 import 못 해 상수를 복제했다 — 어긋나면 여기서 죽는다."""
+    from src.adapters import container_tools
+
+    adapter = {container_tools._TIMEOUT_EXIT, *container_tools._EXEC_FAILED}
+    assert pov_node.INFRA_FAILURE_EXITS == adapter

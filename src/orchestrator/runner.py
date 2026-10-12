@@ -2519,11 +2519,10 @@ def _run_pov_hops(
     홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
     몫이다(미정)(이 PR은 프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
 
-    ⏵ **2026-10-12 (#619) — `inspect`도 반복을 거른다**: 이 루프에서 이미 돌린 (도구, 입력)을 `inspect`가
-    또 요청하면 도구를 안 돌리고(`ran`) 옛 결과에 `inspect_repeat …` 줄을 달아 되먹인다. 입력은 `poc`만
-    PoC 바이트(sha256)이고 `asan`·`gdb`·`build`는 PoC를 안 읽어 도구만이 키다. gen의 `poc` 실행도 키를 채운다.
-    루프는 안 서고 모델 홉 하나는 쓴다(`MAX_HOP`이 여전히 끊는다) — 홉 이벤트는 `tool`·
-    `inspect_repeat_of_hop`만 싣고 도구 결과 키가 없다. `ran`에 실패한 실행도 든다(재시도 안 함).
+    ⏵ **2026-10-12 (#619) — `inspect`는 이미 돌린 도구를 다시 안 돌린다**(`ran` — 키는 도구뿐:
+    `inspect`는 늘 직전 gen의 바이트를 싣고 gen이 `poc` 키를 덮는다). 옛 결과에
+    `inspect_repeat …` 줄을 달아 되먹이고 루프는 안 선다 — 모델 홉은 쓴다(`MAX_HOP` 유효). 인프라
+    실패(`pov.INFRA_FAILURE_EXITS`)는 기억하지 않아 재시도를 막지 않는다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2557,8 +2556,8 @@ def _run_pov_hops(
         # 지금까지 조립한 PoC의 digest(`poc_log`와 같은 `sha256:` 형식) → 그 바이트. 반복 판정은
         # 키 조회이고, `submit`이 `poc_sha256`으로 지명한 gen을 여기서 찾는다.
         seen: dict[str, bytes] = {}
-        # 이미 돌린 도구 실행 (키 → (홉, 증거)) — `inspect`가 같은 키를 또 요청하면 안 돌린다(#619).
-        ran: dict[tuple[str, str | None], tuple[int, Evidence]] = {}
+        # 도구 → (마지막으로 돌린 홉, 증거) — `inspect`가 같은 도구를 또 요청하면 안 돌린다(#619).
+        ran: dict[str, tuple[int, Evidence]] = {}
         # gen마다의 `vul` 종료 코드(없으면 `None`) — **로그 전용**이다. 종단 이벤트의 계측 플래그만
         # 읽고 지정(`_designate_final`)은 읽지 않는다.
         gen_codes: list[int | None] = []
@@ -2699,12 +2698,8 @@ def _run_pov_hops(
                 tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
-            # 결과가 PoC의 함수인 도구는 `poc`뿐이다(`pov.run_tool`) — 나머지는 키가 도구뿐이다.
-            run_key = (
-                tool,
-                sha256_digest(tool_poc) if tool == "poc" and tool_poc is not None else None,
-            )
-            prior = ran.get(run_key) if action.action == "inspect" else None
+            # ⚠ `asan`·`gdb`·`build`가 PoC를 받게 바뀌면 키에 바이트를 넣어라(container_tools 핀).
+            prior = ran.get(tool) if action.action == "inspect" else None
             try:
                 evidence = (
                     prior[1]
@@ -2736,7 +2731,10 @@ def _run_pov_hops(
                     )
                 raise
             if prior is None:
-                ran[run_key] = (hop, evidence)
+                if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
+                    ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
+                else:
+                    ran[tool] = (hop, evidence)
             # 반복 홉은 도구를 안 돌렸으니 옛 결과를 이 홉의 것으로 싣지 않는다(#619).
             fresh = evidence if prior is None else None
             repeat_of = None if prior is None else (tool, prior[0])
@@ -2763,10 +2761,14 @@ def _run_pov_hops(
                 poc=last_poc,
             )
             if prior is not None:
+                why = (
+                    f"같은 바이트로 홉 {prior[0]}에서 돌렸다"
+                    if tool == "poc"
+                    else f"{tool}는 gen의 바이트와 상관없이 홉 {prior[0]}의 결과와 같다"
+                )
                 followup = (
-                    f"inspect_repeat tool={tool} same_as_hop={prior[0]} rerun=false — "
-                    "같은 입력으로 이미 돌린 도구라 다시 돌리지 않았다. 아래는 그때의 결과다"
-                    f"(새 정보 없음).\n{followup}"
+                    f"inspect_repeat tool={tool} same_as_hop={prior[0]} rerun=false — {why} — "
+                    f"재실행하지 않았다(아래는 그 결과).\n{followup}"
                 )
             if action.action == "gen" and pov_wide:
                 # 판정 줄은 값이 없거나 조회가 실패해도 생략하지 않는다. 원시 종료 코드만 싣고
