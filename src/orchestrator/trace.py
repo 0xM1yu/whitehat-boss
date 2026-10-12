@@ -251,9 +251,11 @@ class EventKind(StrEnum):
     # 먼저 가른다. 미해결로 등재돼 있다(인덱스 참조).
     #
     # **`stage`는 7이다.** 절단이 실행되는 자리는 6단계 뒤이지만 6으로 적으면 "게이트에서
-    # 잘렸다"로 읽히는데 게이트는 이 건을 **승격시켰다**. 7로 적으면
-    # `count(critic_skipped, stage=7) + count(gate_eval, stage=7) = count(promoted_to_critic)`
-    # 으로 7단계가 분할로 닫힌다. "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
+    # 잘렸다"로 읽히는데 게이트는 이 건을 **Critic에 보냈다**. 7로 적으면
+    # `count(critic_skipped, stage=7) + count(gate_eval, stage=7)`
+    # `= count(promoted_to_critic) + count(evidence_weak)`로 7단계가 분할로 닫힌다 —
+    # Critic은 HYPOTHESIZED 전부를 받고 E1 HOLD도 HYPOTHESIZED를 유지하므로 우변은 E2
+    # 승격분만이 아니다(#614). "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
     # 이 행은 정의상 **안 들어간** 건이다.
     #
     # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. #98 (a)가
@@ -285,7 +287,7 @@ class EventKind(StrEnum):
     #
     # **7단계 분할은 셋으로 늘어난다**:
     #   `count(critic_skipped) + count(critic_failed) + count(gate_eval, stage=7)`
-    #   `= count(promoted_to_critic)`
+    #   `= count(promoted_to_critic) + count(evidence_weak)`
     # 이 이벤트가 없던 동안에는 좌변이 우변보다 **작았고**, 그 차이가 어디로 갔는지 기록이
     # 지시하지 못했다 — 애초에 run이 통째로 죽어 trace 말고는 아무것도 안 남았기 때문이다.
     #
