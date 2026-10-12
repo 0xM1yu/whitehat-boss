@@ -558,7 +558,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `src/schemas/pov.py` docstring · CLAUDE.md §0). 순수·결정론 함수
   `orchestrator.poc_assembly.assemble_poc(PovSpec) -> bytes`가 바이트로 조립한다 — 모델 밖이라 같은
   스펙=같은 바이트(`gate.evaluate`가 판정을 순수 함수로 둔 것과 같은 규율).
-  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로).
+  ⏵ 2026-10-11 — **v5만 형제 봉투 `PovActionNamed`를 요청한다**(meta `output_schema`; v2~v4는 `PovAction` 그대로). ⏵ 2026-10-13 — v6도 요청한다(서빙 판).
   `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
   최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
   `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
@@ -574,7 +574,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
   `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
   없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
-  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
+  `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정; ⏵ 2026-10-13 v6 prefix는 서술하고 서빙 판이 v6이다), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
@@ -1070,7 +1070,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 ## 4. 프롬프트 관리 규약
 
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
-   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
+   ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다. ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
 >

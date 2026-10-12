@@ -37,7 +37,7 @@ OUTPUT_SCHEMA = PovAction
 # `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
-# 값(`PovAction`)으로 남는다.
+# 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6(서빙 판)도 `PovActionNamed`를 선언한다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
@@ -54,8 +54,9 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가 `config/models.yaml`의 실 PoV 좌석이라 이
-# 넓은 입력을 받는다. v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
+# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가, 2026-10-09부터 v5가,
+# 2026-10-13부터 v6이 `config/models.yaml`의 실 PoV 좌석이라 이 넓은 입력을 받는다.
+# v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
 # 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
 # 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
 # 관측이 함께 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
