@@ -39,6 +39,11 @@ class Evidence(UtcModel):
     ok: bool = True
     exit_code: int | None = None
     error: str | None = None
+    # 하네스가 **로그 밖에서** 모델 관측의 머리에 붙이는 한 줄(지금은 `poc`의 `exit=1` 모호성뿐 —
+    # `container_tools.POC_AMBIGUOUS_NOTE`). 도구 출력이 아니라 하네스가 만든 줄이라 로그에 두면
+    # 읽기 상한(`PAYLOAD_READ_CAP`)·꼬리 상한에 잘려 관측에 안 닿는다(이슈 #573). `error`와 달리
+    # `ok=True`에도 붙는다 — 판정(`ok`)은 안 바꾸는 주석이다.
+    harness_note: str | None = None
 
     @model_validator(mode="after")
     def _error_matches_ok(self) -> "Evidence":

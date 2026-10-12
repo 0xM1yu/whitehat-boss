@@ -39,7 +39,7 @@ from src.orchestrator.nodes.gate_node import attach_observed
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind
+from src.orchestrator.trace import EventKind, TraceValue
 from src.schemas.decision import Decision
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
@@ -180,6 +180,9 @@ def _refuse(
         error=error,
     )
     ctx.store.put(evidence)
+    extra: dict[str, TraceValue] = {}
+    if evidence.harness_note is not None:  # `context.call_tool`과 같은 조건부 모양(#573)
+        extra["harness_note"] = evidence.harness_note
     ctx.trace.emit(
         EventKind.TOOL_CALL,
         stage=Stage.VALIDATE,
@@ -192,5 +195,6 @@ def _refuse(
         exit_code=None,
         error=error,
         finding_id=finding.finding_id,
+        **extra,
     )
     return evidence

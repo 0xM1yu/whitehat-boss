@@ -693,6 +693,8 @@ class RunContext:
                 "input_bytes": len(args.input_bytes),
                 "input_sha256": hashlib.sha256(args.input_bytes).hexdigest(),
             }
+        if evidence.harness_note is not None:  # `error`처럼 있을 때만 — 키 부재 = 노트 없음(#573)
+            sent["harness_note"] = evidence.harness_note
         self.trace.emit(
             EventKind.TOOL_CALL,
             stage=stage,
