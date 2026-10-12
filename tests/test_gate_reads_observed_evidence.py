@@ -240,7 +240,8 @@ def test_an_uncited_finding_does_not_jump_past_e1(ctx: RunContext) -> None:
 
     🔴 **그래서 이 핀은 「현재 동작이 정답」이라는 뜻이 아니다** — 손으로 넘긴 풀에서의 거동을
     고정할 뿐이다. 러너 풀 기준은 아래 `test_the_runner_pool_always_carries_the_run_wide_graph`가
-    문다. 이슈 #576이 그 결함을 들고 D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다.
+    문다. 이슈 #576이 그 결함을 들고 D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다
+    (D106 2026-10-12 닫음 — 발동 조건은 #576 본문에도 있다).
     """
     full_path = [
         PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
@@ -381,7 +382,8 @@ def test_a_target_with_no_observed_evidence_is_still_e0(ctx: RunContext) -> None
 # 아래 둘은 러너 쪽에서 끌어와 **그 산문이 다시 들어오면 빨개진다.**
 #
 # 🔴 **이 둘은 「현재 동작이 정답」이라는 뜻이 아니다.** 결함을 고정(characterize)할 뿐이고,
-#    그 결함은 이슈 #576이 든다. D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다.
+#    그 결함은 이슈 #576이 든다. D106의 「재검토 발동 조건」이 다시 보는 시점을 적는다
+#    (D106 2026-10-12 닫음 — 발동 조건은 #576 본문에도 있다).
 
 
 def test_the_runner_pool_always_carries_the_run_wide_graph() -> None:

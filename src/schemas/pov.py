@@ -159,7 +159,8 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 #
 # gdb 이력: `TOOL_KINDS`에 `"gdb"`가 들어온 것은 PR #327(`5cf5c20`, 2026-10-01) ·
 # `PovAction.tool`에 넣은 근거는 이슈 #360(사용자 결정) · gdb 사용 **규칙**을 프롬프트에 안 두는
-# 이유는 이슈 #325(gdb ToolRunner 결정) — ASAN 실행 경로 수리·검증(#326)이 선행 조건.
+# 이유는 이슈 #325(gdb ToolRunner 결정, 2026-10-12 닫음) — ASAN 실행 경로 수리·검증(#326, 열림)이
+# 선행 조건.
 class PovAction(HarnessModel):
     """PoV 툴 루프가 매 홉 내는 제어 액션.
 

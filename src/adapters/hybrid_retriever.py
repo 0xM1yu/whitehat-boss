@@ -29,7 +29,9 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 프로필이었다(2026-09-24에 지웠고 지금 그 자리는 `harness_pool_hybrid`다 — `config/profiles.yaml`).
 **그 프로필은 `budget: default`를 그대로 쓴다** — 대조군 `harness_pool`과 축을 하나로 유지하려는
 선택이지 그 예산이 이 2배 계상을 감안했다는 판정이 아니다. 여기서 예산을 재잡으려면 실제로
-실린 토큰을 먼저 재야 하고, 그 측정은 아직 없다. 근본 해법은 위 문단이 이미 가리킨 #67이다.
+실린 토큰을 먼저 재야 하고, 그 측정은 아직 없다. 근본 해법은 위 문단이 이미 가리킨 #67이다 (⏵
+2026-10-12 — #67은 닫혔고 v13·v14는
+Auditor FACTS의 `source` 사본만 걷었다. `related`의 2N은 hybrid에서 그대로다).
 
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에는 타입
 데이터가 없었고, index-v2의 `types` 표는 캡슐로 싣지 않는다 — NE resolver 몫이다
