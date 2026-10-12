@@ -220,7 +220,7 @@ LIMITATIONS = [
 COMPILE_AWARE_LIMITATIONS = [
     "compile-aware import analyzes ONE build configuration (the given compile_commands); code "
     "compiled only under a different configuration is not in the graph (multi-config union is "
-    "not attempted; no tracking issue -- #271 was closed 2026-10-12)",
+    "not attempted -- Refs #271)",
     "c2cpg --compilation-database does not define target/platform macros (e.g. __linux__, "
     "__x86_64__) unless the command passes -D, so branches guarded by them are inactive and "
     "this path does not parse inactive branches; such code can be dropped (verified by full "
