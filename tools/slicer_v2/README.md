@@ -15,3 +15,8 @@ python tools/slicer_v2/slicer_target.py --repo /path/to/repo --spec spec.json \
 ```
 
 `pov-input.c`·`auditor-input.c` 렌더는 없다(하네스 `runner._auditor_source`의 사본이었다). 선택 결과는 JSON 키로만 나간다.
+
+`run_gt.py` · `subset.py` · `name_outputs.py`(정답 파일로 표본을 고르고 돌리는 데이터셋 벤치마크 도구)는 PR #638의 첫 판에 있었으나 **지웠다** —
+이 저장소는 하네스 개발 전용이고 실험·벤치마크 도구는 실험팀 몫이다(ADR 0012 결정 5). 되살리려면
+`git checkout origin/feat/slicer_v2 -- tools/slicer_v2/run_gt.py tools/slicer_v2/subset.py tools/slicer_v2/name_outputs.py`
+(`attach/`에 기대므로 그대로는 안 돈다).

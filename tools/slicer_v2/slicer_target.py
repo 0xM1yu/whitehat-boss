@@ -1114,6 +1114,32 @@ class TargetSlicer(base.Slicer):
             "target_reached": payload["target_reached"],
         }
 
+    def scopes(self, role: str, rows: list[dict]) -> list[dict]:
+        """The enclosing function of the start node, in the shape of a discovery-mode candidate's
+        `scopes` (`{file, line, symbol, full_name}`). With no located node the spec's function
+        name is used when it gave one (the method's own line is then unknown: the spec line)."""
+        if rows:
+            method = rows[0]["method"]
+            return [
+                {
+                    "file": method["file"],
+                    "line": method["line"],
+                    "symbol": method["symbol"],
+                    "full_name": method["full_name"],
+                }
+            ]
+        spec = self.spec[role]
+        if spec.get("function"):
+            return [
+                {
+                    "file": spec["file"],
+                    "line": spec["line"],
+                    "symbol": spec["function"],
+                    "full_name": spec["function"],
+                }
+            ]
+        return []
+
     def run(self) -> dict:
         started = time.perf_counter()
         try:
@@ -1137,11 +1163,24 @@ class TargetSlicer(base.Slicer):
                 sources, source_note = self.locate("source")
             self.result["target"]["located"] = {"sink": sink_note, "source": source_note}
             # The start/stop nodes go where the manifest of candidates would be, so a reader finds
-            # them under the same key.
+            # them under the same key -- with the `scopes` the discovery mode writes, which is
+            # where the harness loader takes the enclosing function's name from.
             self.result["candidate_manifest"] = {
-                "backward": {"start": "sink", "stop": "source", "nodes": sink_note},
+                "backward": {
+                    "start": "sink",
+                    "stop": "source",
+                    "nodes": sink_note,
+                    "scopes": self.scopes("sink", sinks),
+                },
                 **(
-                    {"forward": {"start": "source", "stop": "sink", "nodes": source_note}}
+                    {
+                        "forward": {
+                            "start": "source",
+                            "stop": "sink",
+                            "nodes": source_note,
+                            "scopes": self.scopes("source", sources),
+                        }
+                    }
                     if source_note
                     else {}
                 ),

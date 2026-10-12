@@ -372,3 +372,28 @@ def test_a_cut_slice_makes_the_run_partial(monkeypatch, tree, tmp_path):
     assert code == 2 and result["status"] == "partial"
     assert "truncated" in result["error"]
     assert load_slices(out).slices[0].truncation_reasons == ("backward_depth",)
+
+
+def test_the_loaded_location_symbol_is_the_enclosing_function(monkeypatch, tree, tmp_path):
+    """The loader takes the function name from `candidate_manifest[key].scopes[0].symbol`; without
+    it a B/F slice reaches the Auditor as a nameless window and the guard scan skips it."""
+    from src.adapters.slices import slice_refs
+
+    code, result, out, _ = run_target(monkeypatch, tree, tmp_path, mock_data())
+    assert code == 0
+    assert result["candidate_manifest"]["backward"]["scopes"] == [
+        {"file": "main.c", "line": 1, "symbol": "entry", "full_name": "entry"}
+    ]
+    refs = slice_refs(load_slices(out))
+    assert [(r.slice_id, r.location.symbol) for r in refs] == [
+        ("backward", "entry"),
+        ("forward", "entry"),
+    ]
+
+
+def test_a_degraded_slice_takes_the_function_name_from_the_spec(monkeypatch, tree, tmp_path):
+    from src.adapters.slices import slice_refs
+
+    data = mock_data(locate=response("locate", []))
+    _, _, out, _ = run_target(monkeypatch, tree, tmp_path, data)
+    assert [r.location.symbol for r in slice_refs(load_slices(out))] == ["entry", "entry"]
