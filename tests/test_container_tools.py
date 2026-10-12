@@ -1891,3 +1891,88 @@ def test_long_or_multiline_paths_do_not_eat_the_hits(tmp_path: Path, spy: _Spy) 
     assert len(shown) == 3 and all(len(path) <= 80 for path in shown), shown
     assert shown[1].startswith("…") and shown[1].endswith("/file_0.c"), "앞이 아니라 뒤를 남긴다"
     assert not any(line.strip() == "b.c" for line in body.splitlines()), "개행 파일명 잔해 줄"
+
+
+# --- #507: 컴파일 실패 사유가 error 필드(= 모델 관측 머리줄)에 실린다 -----------------------------
+
+_CLANG_STDERR = (
+    "/src/file/src/apprentice.c:12:5: error: unknown type name 'uint8_t'\n"
+    "/src/file/src/apprentice.c:13:5: error: unknown type name 'size_t'\n"
+    "2 errors generated.\n"
+)
+
+
+def test_build_failure_error_names_the_first_compile_error_and_the_count() -> None:
+    ok, code, error = judge("build", [Step(1, "", _CLANG_STDERR)], 1)
+
+    assert (ok, code) == (False, 1)
+    assert "build 실패 (exit=1)" in error
+    assert "2건" in error and "unknown type name 'uint8_t'" in error
+    assert "/src/" not in error, "경로는 관측으로 새면 안 된다"
+
+
+def test_build_failure_without_compiler_errors_keeps_the_bare_message() -> None:
+    assert judge("build", [Step(1, "", "killed")], 1) == (False, 1, "build 실패 (exit=1)")
+
+
+def test_clang_tidy_compile_failure_error_carries_the_reason() -> None:
+    stdout = (
+        "/src/a.c:3:1: error: unknown type name 'u8' [clang-diagnostic-error]\n"
+        "/src/a.c:4:1: error: unknown type name 'u16' [clang-diagnostic-error]\n"
+    )
+    _, _, error = judge("clang-tidy", [Step(1, stdout, "")], 1)
+
+    assert error.startswith("clang-tidy: 대상이 컴파일되지 않는다")
+    assert "2건" in error and "unknown type name 'u8'" in error
+    assert "clang-diagnostic-error" not in error.split("—", 1)[1]
+
+
+def test_gdb_and_asan_build_cut_carry_the_compile_reason() -> None:
+    for tool in ("gdb", "asan"):
+        _, _, error = judge(tool, [Step(1, "", _CLANG_STDERR)], 2)
+
+        assert "빌드 단계에서 끊겨" in error or "실행되지 않았다" in error
+        assert "unknown type name 'uint8_t'" in error, tool
+
+
+def test_compile_reason_reaches_the_pov_observation_head_before_the_log_tail() -> None:
+    from src.orchestrator import runner
+    from src.schemas.enums import EvidenceKind
+    from src.schemas.evidence import Evidence
+
+    _, code, error = judge("build", [Step(1, "", _CLANG_STDERR)], 1)
+    evidence = Evidence(
+        evidence_id="ev_0006", run_id="run_20261011_0001", artifact_id="art_0001",
+        kind=EvidenceKind.BUILD, source="build", ok=False, exit_code=code, error=error,
+        payload_ref="log/build.txt", digest="sha256:" + "0" * 64,
+        observed_at=datetime(2026, 10, 12, tzinfo=UTC),
+    )
+    log = "n" * 5000 + "\n" + _CLANG_STDERR
+
+    text = runner._pov_observation("inspect", evidence, read_payload=lambda _ref: log)
+
+    head = text.splitlines()[0]
+    assert "unknown type name 'uint8_t'" in head, "사유가 머리줄에 없다 (꼬리 절단에 기댐)"
+
+
+def test_clang_tidy_reason_counts_only_compile_errors_not_promoted_lint_findings() -> None:
+    """`--warnings-as-errors=*`가 린트 소견도 `error:`로 찍는다 — 태그된 줄만 컴파일 오류다."""
+    stdout = (
+        "/src/a.c:2:3: error: Value stored to 'x' is never read "
+        "[clang-analyzer-deadcode.DeadStores,-warnings-as-errors]\n"
+        "/src/a.c:4:1: error: unknown type name 'u8' [clang-diagnostic-error]\n"
+    )
+    _, _, error = judge("clang-tidy", [Step(1, stdout, "")], 1)
+
+    assert "1건, 첫 오류: unknown type name 'u8'" in error
+    assert "Value stored" not in error
+
+
+def test_compile_reason_is_capped_and_one_line() -> None:
+    cr = chr(13)
+    stderr = f"a.c:1:1: error: {'x' * 500}{cr}\na.c:2:1: error: bad{cr}tab{chr(9)}\n"
+    reason = container_tools.compile_failure_reason(stderr)
+
+    assert len(reason.split("첫 오류: ", 1)[1]) == container_tools._COMPILE_REASON_CHARS
+    assert cr not in reason and "\n" not in reason
+    assert cr not in container_tools.compile_failure_reason(f"a.c:1:1: error: bad{cr}tab\n")
