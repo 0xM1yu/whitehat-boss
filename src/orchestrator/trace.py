@@ -38,9 +38,20 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 시도.**
 (회복된 실패를 세려면 키 유무가 아니라 `attempts>1`을 쓴다 - 스위치가 깨끗한 성공에도 키를
 붙인다.) **키 부재 = 깨끗한 성공(스위치 밖) · PromptLog 없음 · 원문을 못 실은 호출 —
-키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
-`ModelGatewayError`가 된 시도의 원문은 안 남는다
-(`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
+키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 `choices[0].message`조차 못 읽어
+`ModelGatewayError`가 된 시도는 원문이 없다. `message`를 읽을 수 있던 200(`usage`만 깨진 경우 등)은
+`ModelGatewayError`가 돼도 그 시도의 원문을 마지막 칸으로 싣는다(`_post`의 「응답 모양이
+계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
+| 추론 채널 (#280) | `model_call`의 `reasoning_refs`·`reasoning_sha256`·`reasoning_field` | 위
+`response_refs`와 **같은 칸·같은 조건**(실패·버려진 시도는 항상, 성공 최종은
+`--keep-responses` 역할만). 파일은 `prompts/…_reasoning[_retryK].txt`. 칸이 `null`이면 그
+시도는 서버가 추론 키를 안 줬다(`message.reasoning`·`message.reasoning_content` 둘 다
+없거나 문자열이 아님) — **빈 문자열이 아니고 파일도 없다.** 칸이 있는데 파일이 0바이트면
+서버가 키는 줬고 비었다. `reasoning_field`는 칸마다 서버가 쓴 키 이름(`"reasoning"` 또는
+`"reasoning_content"`)이라 vast 서빙에서 어느 이름인지가 이 값에서 처음
+측정된다. **세 키는 어느 칸에도 추론이 없으면 통째로 안 실린다** — Fake·추론 파서 없는 서버 ·
+`--keep-responses` 밖의 깨끗한 성공은 같은 모양이다. 응답 원문이 `null`인 칸(`content: null`)에도
+추론은 있을 수 있다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
