@@ -44,8 +44,12 @@ class Evidence(UtcModel):
     # `None` = **안 쟀다**(런타임 도구가 아니거나, 대상이 안 떴거나, 로그가 없다 — CLAUDE.md §0).
     # ⚠ **기록뿐이다 — 게이트·정책·최종 지정 어느 것도 읽지 않는다.** E4의 `p4`는 여전히
     # `exit_code`만 본다. 이 필드를 `p4`가 읽게 하는 일은 실제 크래시 녹음이 쌓인 뒤로 미뤘다(#232).
-    # `UndefinedBehaviorSanitizer`의 `runtime error:`는 프로그램을 끝내지 않을 수 있어 `True`가
-    # 「죽었다」가 아니라 「배너가 찍혔다」다.
+    # ⚠ **`True`는 「배너가 찍혔다」이지 「죽었다」·「오라클이 크래시라 할 것」이 아니다.**
+    # LeakSanitizer(종료 시점 보고)와 UBSan `runtime error:`는 `exit_code=0`과 함께 올 수 있다 —
+    # oss-fuzz 재생 5/5가 그랬다. 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `banner`를 같이
+    # 싣는다: 읽는 쪽이 배너로 가른다. 반대로 **배너 없이 신호로 죽은 대상**(exit 139, 셸의
+    # `Segmentation fault` 한 줄뿐)은 철자 목록(`container_tools._CRASH_BANNER`)의 셸 신호
+    # 묶음이 맞춘다.
     crashed: bool | None = None
     # `crashed`가 `True`일 때 처음 맞은 배너 줄. 제어 문자는 공백으로 바꾸고 200자로 묶는다 —
     # 대상이 찍은 날것이 trace·DB로 가므로 무한정 싣지 않는다(`compile_failure_reason`과 같은 관례).

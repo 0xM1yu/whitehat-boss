@@ -88,8 +88,8 @@ SIGKILL(`--memory`)과 대상 자신의 OOM이 갈리지 않고, `255`는 gdb �
 
 ⏵ **2026-10-13 (#232) — 크래시 관측을 기록한다 (읽지 않는다).** `observe_crash()`가 대상 로그의
 sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **어느 소비자도 이 값을 읽지 않는다** —
-배너 철자가 sanitizer 문서에서 왔고 이 저장소에 실제 크래시 녹음이 0건이라
-미검증이다(`_CRASH_BANNER` 주석). 실제 `poc_run` 크래시 녹음이 쌓이면 그것으로 철자를 대조한 뒤
+배너 철자가 sanitizer 문서에서 왔고 실제 로그로 대조한 것은 재생 14건뿐이라 대부분 미검증이다
+(`_CRASH_BANNER` 주석). 실제 `poc_run` 크래시 녹음이 쌓이면 그것으로 철자를 대조한 뒤
 `p4`를 읽게 할지 정한다.
 
 ## 입력 바이트 — `poc`는 먹인다, 나머지 셋은 안 받는다 (ADR 0014)
@@ -508,22 +508,44 @@ _GDB_TARGET_LIFECYCLE = re.compile(
 
 # ⏵ 2026-10-13(#232) — **크래시 흔적을 로그에서 찾는 배너.** 대상의 stdout·stderr
 # **전체**에서 찾는다 (로그 머리줄은 `# node argv: …`라 거기만 보면 안 맞는다).
-# 🔴 **이 철자들은 sanitizer 문서에서 왔고 이 저장소에는 실제 크래시 녹음이 0건이다** —
-# 이 하네스의 로그에 대해 **미검증**이다
-# (CLAUDE.md §0). 그래서 `Evidence.crashed`는 **기록뿐**이고 `gate.py`·`policy.py`·최종 지정은
-# 읽지 않는다. 철자가 틀렸으면 `crashed=False`가 거짓으로 쌓이므로, 이 값으로 `p4`를 가르려면
-# 먼저 실제 `poc_run` 녹음으로 이 목록을 대조한다.
-#   `==N==ERROR: <Address|Memory|UndefinedBehavior|Leak>Sanitizer` — 치명 보고의 머리줄
-#   `MemorySanitizer: use-of-uninitialized-value` — MSan은 `==N==WARNING:`으로 시작한다
+# 🔴 **철자는 sanitizer 문서에서 왔고, 이 하네스의 실제 로그로 대조한 것은 아주 적다** — 2026-10-13
+# 리뷰어가 과제 이미지에서 PoC를 재생한 **arvo-1065 4건 · oss-fuzz 10건**이 전부다(상자의
+# `mmap_rnd_bits=32`라 ASLR 잡음이 낀다. 녹음 파일은 이 저장소에 없다 — 요약만 받았다). 맞은 것:
+# libFuzzer(`==N== ERROR: libFuzzer: deadly signal`, exit 77 x2) · LeakSanitizer(exit 0 x5).
+# 못 맞은 것: **exit 139인데 셸의 `Segmentation fault (core dumped)` 한 줄뿐인 로그 x2**
+# (아래 묶음 둘이 그 구멍이다). MSan 배너는 **아직 한 건도 못 봤다**. CLAUDE.md §0: 그래서
+# `Evidence.crashed`는 **기록뿐**이고 `gate.py`·`policy.py`·최종 지정은 읽지 않는다.
+# 철자가 틀렸으면 `crashed=False`가 거짓으로 쌓인다.
+#
+# 묶음 하나 — sanitizer 보고:
+#   `==N== ERROR: <Address|Memory|UndefinedBehavior|Leak>Sanitizer` — 머리줄.
+#       `==N==` 뒤와 `ERROR:` 뒤의 공백은 있을 수도 없을 수도 있다
+#   `MemorySanitizer: use-of-uninitialized-value` — MSan은 `==N==WARNING:`으로 시작한다(미관측)
 #   `runtime error:` — UBSan. ⚠ 대상이 같은 글을 직접 찍어도 맞는다(오탐 가능)
 #   `libFuzzer: deadly signal` — libFuzzer 하네스의 치사 신호
 #   `AddressSanitizer: SEGV` — ASan의 SEGV 보고
+# 묶음 둘 — **셸이 찍는 신호 보고** (역시 기록뿐): `Segmentation fault`·`Aborted`·`Bus error`, 뒤에
+#   `(core dumped)`가 붙을 수도 있다. sanitizer 없이 신호로 죽은 대상(exit 139 등)은 이 줄만 남는다.
+#   ⚠ 일반 영어 낱말이라 대상이 직접 찍어도 맞는다(오탐 가능) — 그래서 단어 경계를 건다.
+#
+# ⚠ **`crashed=True`는 exit 0과 함께 올 수 있다.** LeakSanitizer
+#   (`==N==ERROR: LeakSanitizer: detected memory leaks`)는 종료 시점 보고이고
+#   oss-fuzz 재생 5/5가 exit 0이었다 — UBSan `runtime error:`도
+#   프로그램을 계속 돌린다. 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `Leak`을 빼지 않고
+#   **`banner`를 같이 기록한다** — 읽는 쪽이 배너를 보고 가른다.
+#   `crashed=True`를 「오라클이 크래시라 할 것」으로 읽지 않는다.
+#
+# 🕳 **알려진 구멍 — 배너가 없는 크래시.** libFuzzer의 `timeout after N seconds`·`out-of-memory`는
+#   sanitizer 배너를 안 찍는다. 오늘은 의미가 없다 — `poc`·asan 명령은 `-timeout`·`-rss_limit_mb`를
+#   안 넘기고, 샌드박스 타임아웃은 `ok=False`라 `None`이다.
+#   libFuzzer 플래그를 넘기게 되는 날 철자를 더한다.
 _CRASH_BANNER = re.compile(
-    r"==\d+==\s*ERROR: (?:Address|Memory|Undefined ?Behavior|Leak)Sanitizer"
+    r"==\d+==\s*ERROR:\s*(?:Address|Memory|Undefined ?Behavior|Leak)Sanitizer"
     r"|MemorySanitizer: use-of-uninitialized-value"
     r"|runtime error:"
     r"|libFuzzer: deadly signal"
     r"|AddressSanitizer: SEGV"
+    r"|\b(?:Segmentation fault|Aborted|Bus error)\b(?: \(core dumped\))?"
 )
 # `Evidence.banner`의 글자 상한. `Evidence.banner`의 `max_length`와 같아야 한다.
 _BANNER_CHARS = 200

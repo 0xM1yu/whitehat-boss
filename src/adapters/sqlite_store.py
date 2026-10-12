@@ -56,6 +56,13 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
 STATE_DB_SCHEMA_VERSION = 2
 
+# 판을 올린 변경 — 오류 문구가 이 표를 읽어, 옛 파일을 만난 사람이 **어느 체크아웃이 그 판을
+# 읽는지** 안다. 판을 올리는 PR은 여기에 한 줄을 더한다. 커밋 해시는 squash로 바뀔 수 있어
+# 이슈 번호가 기준이다.
+_VERSION_INTRODUCED_BY = {
+    2: "이슈 #232 — `Evidence.crashed`·`banner` 추가(커밋 19c2bad)",
+}
+
 
 class StateDbVersionError(RuntimeError):
     """`state.db`의 저장 형태 판이 이 코드가 읽는 판과 달라 열기를 거부했다."""
@@ -96,6 +103,14 @@ class SqliteStateStore:
             self._conn.commit()
             return
         newer = version > STATE_DB_SCHEMA_VERSION
+        # 옛 파일이면 「이 코드의 다음 판」을 올린 변경을 댄다 — 그 앞 체크아웃이 이 파일을 읽는다.
+        introduced = _VERSION_INTRODUCED_BY.get(version + 1)
+        hint = (
+            f" (판 {version + 1}을 올린 변경: {introduced} — 판 {version} 파일은 그 변경"
+            " 이전 체크아웃이 읽는다.)"
+            if not newer and introduced is not None
+            else ""
+        )
         raise StateDbVersionError(
             f"{self.path}: state.db 저장 형태 판 {version}은 이 코드가 읽는 판 "
             f"{STATE_DB_SCHEMA_VERSION}과 다르다 — "
@@ -104,6 +119,7 @@ class SqliteStateStore:
                 if newer
                 else "더 옛 코드가 쓴 파일이고 옮기는 변환이 없다. 그 판의 체크아웃으로 연다."
             )
+            + hint
             + " 행은 하나도 읽지 않았다(이슈 #281)."
         )
 

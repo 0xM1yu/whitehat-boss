@@ -12,6 +12,7 @@
 
 import ast
 import dataclasses
+import sqlite3
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -58,8 +59,16 @@ UBSAN = "parser.c:12:5: runtime error: signed integer overflow: 2147483647 + 1 c
 LIBFUZZER = "==7==ERROR: libFuzzer: deadly signal"
 ASAN_SEGV = "==3==ERROR: AddressSanitizer: SEGV on unknown address 0x000000000000 (pc 0x0)"
 
-BANNERS = [ASAN, MSAN, UBSAN, LIBFUZZER, ASAN_SEGV]
-BANNER_IDS = ["asan", "msan", "ubsan", "libfuzzer", "asan-segv"]
+# 2026-10-13 첫 재생(리뷰어, arvo-1065 4건 · oss-fuzz 10건 — D80 「첫 재생」)에서 온 꼴이다. 이 셋은
+# 실제 로그의 모양이고 위 다섯은 문서의 모양이다.
+LIBFUZZER_SPACED = "==7== ERROR: libFuzzer: deadly signal"  # `==N==` 뒤 공백
+SHELL_SEGV = "Segmentation fault (core dumped)"  # exit 139인데 이 한 줄뿐인 로그
+LEAK = "==9==ERROR: LeakSanitizer: detected memory leaks"  # exit 0과 함께 왔다
+
+BANNERS = [ASAN, MSAN, UBSAN, LIBFUZZER, ASAN_SEGV, LIBFUZZER_SPACED, SHELL_SEGV, LEAK]
+BANNER_IDS = [
+    "asan", "msan", "ubsan", "libfuzzer", "asan-segv", "libfuzzer-spaced", "shell-segv", "leak"
+]
 
 
 class _Seq:
@@ -116,6 +125,38 @@ def test_a_sanitizer_banner_in_the_target_log_is_recorded(tool: str, banner: str
     steps = [Step(0, "", ""), Step(1, "", log)] if tool == "asan" else [Step(1, "", log)]
 
     assert observe_crash(tool, steps, len(steps)) == (True, banner)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Segmentation fault",
+        "Segmentation fault (core dumped)",
+        "bash: line 1:    42 Segmentation fault      (core dumped) /bin/arvo",
+        "Aborted (core dumped)",
+        "Bus error (core dumped)",
+    ],
+)
+def test_a_shell_signal_report_alone_is_a_crash_observation(line: str) -> None:
+    """🔴 거짓 음성이던 모드: exit 139인데 sanitizer 배너 없이 셸의 신호 보고 한 줄뿐인 로그
+    (arvo-1065 재생 2건). `(core dumped)`는 선택이다."""
+    assert observe_crash("poc", [Step(139, "", f"{line}\n")], 1) == (True, line.strip())
+
+
+def test_a_shell_signal_word_inside_another_word_is_not_a_report() -> None:
+    """단어 경계 — 기록뿐이라 오탐은 싸지만 낱말 안쪽까지 맞추지는 않는다."""
+    assert observe_crash("poc", [Step(1, "", "Segmentation faults are scary\n")], 1)[0] is False
+
+
+def test_a_leak_report_is_true_with_the_banner_even_at_exit_zero() -> None:
+    """🔴 `crashed=True`는 exit 0과 같이 올 수 있다(oss-fuzz 재생 5/5). 오라클은 exit 0을
+    크래시 없음으로 읽는다 — 그래서 `banner`를 같이 싣고 읽는 쪽이 가른다.
+    둘을 한 Evidence에서 같이 본다."""
+    crashed, banner = observe_crash("poc", [Step(0, "", f"{LEAK}\n")], 1)
+
+    assert (crashed, banner) == (True, LEAK)
+    evidence = _stub_evidence(exit_code=0, crashed=crashed, banner=banner)
+    assert (evidence.exit_code, evidence.crashed, evidence.banner) == (0, True, LEAK)
 
 
 def test_the_banner_is_searched_in_the_whole_log_not_the_head_line() -> None:
@@ -205,6 +246,14 @@ def test_the_runner_records_a_crash_on_the_evidence(run_with) -> None:  # noqa: 
 
     assert (evidence.ok, evidence.exit_code) == (True, 1)
     assert (evidence.crashed, evidence.banner) == (True, ASAN)
+
+
+def test_the_runner_records_an_exit_139_with_only_the_shell_line(run_with) -> None:  # noqa: ANN001
+    """종단: 첫 재생의 거짓 음성 모드가 러너 경로에서도 `True`로 기록된다."""
+    evidence = _poc(run_with((139, "", f"{SHELL_SEGV}\n")))
+
+    assert (evidence.ok, evidence.exit_code) == (True, 139)
+    assert (evidence.crashed, evidence.banner) == (True, SHELL_SEGV)
 
 
 def test_the_runner_records_a_poc_crash_on_the_evidence(run_with) -> None:  # noqa: ANN001
@@ -430,6 +479,20 @@ def test_the_fake_pipeline_tool_call_has_no_observation_keys(ctx: RunContext) ->
 def test_a_failed_evidence_cannot_carry_an_observation() -> None:
     with pytest.raises(ValidationError, match="crashed"):
         _stub_evidence(ok=False, error="실패", crashed=False)
+
+
+def test_the_version_error_names_the_change_that_raised_the_version(tmp_path: Path) -> None:
+    """판 1 파일을 연 사람이 **어느 체크아웃이 읽는지** 안다 — 판 2를 올린 변경을 댄다."""
+    path = tmp_path / "state.db"
+    sqlite_store.SqliteStateStore(path).close()
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA user_version = 1")
+    conn.close()
+
+    with pytest.raises(sqlite_store.StateDbVersionError, match="#232") as raised:
+        sqlite_store.SqliteStateStore(path)
+
+    assert "이전 체크아웃" in str(raised.value)
 
 
 def test_a_banner_needs_crashed_true() -> None:
