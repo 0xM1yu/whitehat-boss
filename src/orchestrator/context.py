@@ -224,6 +224,9 @@ class RunContext:
     # 호출 경로(단위 테스트, `--dry-run`)에서 빈 참조를 남기면 "안 썼다"와 "쓸 곳이
     # 없었다"가 구별되지 않는다.
     prompts: PromptLog | None = None
+    # **성공한** 호출의 최종 응답 원문도 `prompts`에 남길 역할(#612) — 기본은 빈 집합이라 안 남긴다.
+    # Auditor 응답은 수십만 자일 수 있어 켜는 역할을 골라야 한다(`run --keep-responses`).
+    keep_responses: frozenset[str] = frozenset()
     # PoV 루프의 **최종 후보 PoC(보통 마지막 `gen`)**를 run 산출물에 파일로 남기는 곳 (#355) —
     # 루프당 최대 한 파일이다(`poc_log` 모듈 docstring). **`prompts`와 같은 자리이고 같은 이유다** —
     # run_dir을 러너만 알게 두려고 쓰기 객체를 받는다. `None`이면 아무것도 쓰지 않고 trace 이벤트도
@@ -360,7 +363,7 @@ class RunContext:
                     "retry_record_error": f"{type(record_exc).__name__}(errno={record_exc.errno})"
                 }
             # 실패한 시도의 응답 원문도 남긴다(#603) — 별도 `try`의 `except Exception` 가드다
-            # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출은 안 쓴다.
+            # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출의 버려진 시도는 아래에서 쓴다(#618).
             try:
                 response_fields = self._record_failed_responses(
                     role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
@@ -408,6 +411,19 @@ class RunContext:
             hop=hop,
             history=history,
         )
+        # 재시도로 살아난 호출의 버려진 시도 원문(#618) + `keep_responses`가 고른 역할의 최종 응답
+        # (#612). 칸은 시도 번호와 정렬된다(마지막 칸 = 성공 시도). 실패 경로와 같은 가드다 — 이미
+        # 끝난 호출(수십 분)의 진단 기록 쓰기가 결과를 죽이면 안 되고, 쓰기 실패는 사유로 남는다.
+        kept = result.failed_raw_texts
+        if role.value in self.keep_responses:
+            kept = (*kept, result.raw_text)
+        try:
+            response_fields = self._record_failed_responses(
+                role=role, stage=stage, raw_texts=kept, hop=hop
+            )
+        except Exception as record_exc:
+            errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
+            response_fields = {"response_record_error": f"{type(record_exc).__name__}{errno}"}
         self.trace.emit(
             EventKind.MODEL_CALL,
             stage=stage,
@@ -420,6 +436,7 @@ class RunContext:
             hop=hop,
             **prompt_fields,
             **retry_fields,
+            **response_fields,
             schema=schema.__name__,
             ok=True,
             input_tokens=result.usage.input_tokens,
@@ -619,9 +636,11 @@ class RunContext:
     def _record_failed_responses(
         self, *, role: Role, stage: Stage, raw_texts: tuple[str | None, ...], hop: int = 0
     ) -> dict[str, TraceValue]:
-        """스키마 실패한 시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
+        """시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
 
-        **실패 경로만 부른다** — 성공 응답은 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
+        부르는 곳은 둘이다 — 종단 실패(#603)와, 재시도로 살아난 성공의 버려진 시도 +
+        `keep_responses`가 고른 역할의 최종 응답(#618·#612). 칸 K는 K번째 시도다.
+        성공 응답은 그 둘 밖에선 안 남긴다. 원문이 없으면(게이트웨이 거절 등) 빈 dict라
         이벤트 키가 늘지 않는다. 쓰다가 중간에 실패하면 앞서 쓴 파일은 참조가 안 남은 고아로 남는다.
 
         **`None` 칸은 파일을 안 쓰고 refs·sha의 그 자리가 JSON `null`이다** — `content: null`은 받은

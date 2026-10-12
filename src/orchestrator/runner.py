@@ -564,6 +564,8 @@ class RunSpec:
     # CyberGym 과제 설명(description.txt). 주면 캡슐에 `vuln_description` 섹션으로 실린다
     # (PoV 배선). config가 아니라 과제에서 오므로 여기 있다 — `slices_path`와 같은 성격이다.
     vuln_description: str | None = None
+    # 성공한 호출의 최종 응답 원문도 남길 역할(#612) — `RunContext.keep_responses`. 기본은 꺼짐.
+    keep_responses: tuple[str, ...] = ()
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -922,6 +924,7 @@ def run_pipeline(
         # 때만 프롬프트를 남긴다(해소). 조건을 따로 만들면 매니페스트는 있는데 프롬프트는
         # 없는 run이 생기고, 그 차이의 이유가 어디에도 안 남는다.
         prompts=PromptLog(run_dir) if run_dir is not None and not spec.dry_run else None,
+        keep_responses=frozenset(spec.keep_responses),
         # PoC 사이드카(#355) — **위 `prompts`와 같은 가드다.** 조건을 따로 만들면 프롬프트는
         # 있는데 PoC는 없는 run이 생기고 그 차이의 이유가 어디에도 안 남는다.
         pocs=PocLog(run_dir) if run_dir is not None and not spec.dry_run else None,
@@ -5485,6 +5488,7 @@ def _new_record(
         compile_flags=compile_flags,
         # `--slices`로 돈 run의 슬라이서 산출(ADR 0012 결정 1). 어댑터가 만든 값을 받는다.
         slicer=slicer,
+        keep_responses=list(spec.keep_responses) or None,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
