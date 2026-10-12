@@ -1,4 +1,4 @@
-"""`preflight` — 서버 쪽 점검: 원격 교대 · 터널 · 원격 커밋 · 교대 없는 프로필의 포트 (이슈 #534).
+"""`preflight` — 서버 쪽 점검: 원격 교대 · 터널 · 원격 커밋 · 가중치 캐시 · 교대 없는 포트 (#534).
 
 두 갈래다. 교대를 선언한 프로필은 장비 파일의 교대 명령이 서버를 띄우므로 그 명령이 닿는
 선결조건(환경변수·bash·터널·원격 커밋)을 본다. **교대를 선언하지 않은 실서빙 프로필은 run이 서버를
@@ -41,6 +41,8 @@ SWAP_ENV_HARNESS = ("HARNESS_RUN_ID",)
 _MSYS_DRIVE = re.compile(r"[A-Za-z]:[\\/]")
 # 원격 `.harness-commit`·로컬 `git rev-parse HEAD`가 가져야 할 모양 — 이 모양일 때만 그대로 찍는다.
 _COMMIT = re.compile(r"[0-9a-f]{40}")
+# registry `source`의 모양 — `tools/serve/prefetch_weights.py`의 `_HF`와 같다(셸 전에 거른다).
+_HF_SOURCE = re.compile(r"hf://(?P<repo>[\w.-]+/[\w.-]+)@(?P<rev>[0-9a-f]{40})")
 
 
 def _clean_absolute(root: str) -> bool:
@@ -273,6 +275,14 @@ def _like_command_substitution(text: str) -> str:
     return text.rstrip("\n")
 
 
+def _ssh_options(env: Mapping[str, str]) -> list[str]:
+    # `swap-remote.sh`와 같은 옵션이다 — 암호를 안 묻고(BatchMode) 호스트는 `--` 뒤라 옵션이 아니다.
+    options = ["-n", "-T", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT_S}"]
+    if env.get("SWAP_SSH_PORT"):
+        options += ["-p", env["SWAP_SSH_PORT"]]
+    return options
+
+
 def check_remote_commit(env: Mapping[str, str], repo_root: Path, probes: Probes) -> Check:
     label = "원격 커밋:"
     host, root = env.get("SWAP_SSH_HOST", ""), env.get("SWAP_REMOTE_ROOT", "")
@@ -290,10 +300,7 @@ def check_remote_commit(env: Mapping[str, str], repo_root: Path, probes: Probes)
             Severity.ERROR,
             f"{label} 로컬 커밋이 40자 hex가 아니다({shown(want)}) — 비교하지 않는다",
         )
-    # `swap-remote.sh`와 같은 옵션이다 — 암호를 안 묻고(BatchMode) 호스트는 `--` 뒤라 옵션이 아니다.
-    options = ["-n", "-T", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={SSH_CONNECT_TIMEOUT_S}"]
-    if env.get("SWAP_SSH_PORT"):
-        options += ["-p", env["SWAP_SSH_PORT"]]
+    options = _ssh_options(env)
     remote = f"cd {shlex.quote(root)} && cat .harness-commit"
     done, why = execute(probes, ["ssh", *options, "--", host, remote], SSH_TIMEOUT_S)
     if done is None or done.returncode != 0:
@@ -313,6 +320,69 @@ def check_remote_commit(env: Mapping[str, str], repo_root: Path, probes: Probes)
         )
     return Check(
         Severity.OK, f"{label} 원격 사본이 로컬 HEAD({want[:12]})와 같다 — 미커밋 변경은 못 가른다"
+    )
+
+
+# --- 원격 가중치 캐시 -------------------------------------------------------------------------
+
+
+def _hf_pairs(config: HarnessConfig, serving: ServingConfig) -> dict[tuple[str, str], list[str]]:
+    """장비 파일이 서빙하는 모델의 `(repo, rev)` → 그 쌍을 쓰는 model key들. `hf://` 소스만이다."""
+    pairs: dict[tuple[str, str], list[str]] = {}
+    for key in serving.servers:
+        found = _HF_SOURCE.fullmatch(config.models[key].source or "")
+        if found:
+            pairs.setdefault((found["repo"], found["rev"]), []).append(key)
+    return pairs
+
+
+def check_weights_cached(
+    config: HarnessConfig, serving: ServingConfig, env: Mapping[str, str], probes: Probes
+) -> Check:
+    """각 좌석의 고정 revision이 원격 HF 캐시에 있나 — **WARN만**, 원격에는 읽기뿐이다 (이슈 #571).
+
+    `ready_timeout_s`는 가중치가 캐시돼 있다는 전제다(장비 파일 주석). 선취(`prefetch-weights.sh`)를
+    사람이 빠뜨리면 콜드 기동이 상한에 걸려 run이 7단계에서 죽은 적이 있다. 경로는 `swap.sh`의
+    `HF_HUB`와 같다. ⚠ `snapshots/<rev>` 디렉터리가 있고 `blobs/*.incomplete`가 없다는 것까지다 —
+    파일 개수·크기는 안 본다.
+    """
+    label, prefetch = "가중치 캐시:", "bash tools/serve/prefetch-weights.sh"
+    pairs = _hf_pairs(config, serving)
+    if not pairs:
+        return Check(Severity.OK, f"{label} 해당 없음 — 서빙 모델 중 hf:// 소스가 없다")
+    host = env.get("SWAP_SSH_HOST", "")
+    if not host or not _clean_absolute(env.get("SWAP_REMOTE_ROOT", "")):
+        return Check(
+            Severity.WARN, f"{label} 확인 불가 — ssh로 갈 곳을 모른다(위 환경변수 점검이 실패했다)"
+        )
+    hub = "${HF_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}"
+    tests = [
+        f'[ -d "$h/models--{repo.replace("/", "--")}/snapshots/{rev}" ] && '
+        f'! ls "$h/models--{repo.replace("/", "--")}/blobs"/*.incomplete >/dev/null 2>&1 && '
+        f'echo "have {repo}@{rev}"'
+        for repo, rev in pairs  # repo·rev는 `_HF_SOURCE`가 거른 값이라 인용 없이 셸에 넣어도 된다
+    ]
+    remote = f"h={hub}; {'; '.join(tests)}; true"
+    done, why = execute(probes, ["ssh", *_ssh_options(env), "--", host, remote], SSH_TIMEOUT_S)
+    if done is None or done.returncode != 0:
+        return Check(Severity.WARN, f"{label} 확인 불가 — ssh가 안 됐다({failure(done, why)})")
+    have = set(done.stdout.splitlines())
+    missing = [
+        f"{'·'.join(keys)}({rev[:12]})"
+        for (repo, rev), keys in pairs.items()
+        if f"have {repo}@{rev}" not in have
+    ]
+    if missing:
+        return Check(
+            Severity.WARN,
+            f"{label} 원격 HF 캐시에 없다: {', '.join(missing)} — 콜드 기동은 장비 파일의 "
+            f"ready_timeout_s를 넘길 수 있다(run이 교대에서 죽는다). 먼저 선취한다: "
+            f"SWAP_SSH_HOST·SWAP_SSH_PORT를 같게 두고 `{prefetch}`",
+        )
+    return Check(
+        Severity.OK,
+        f"{label} 서빙 모델 {len(pairs)}개의 revision이 원격 HF 캐시에 있다 — 디렉터리가 있고 "
+        "미완 blob이 없다는 것까지다(크기·무결성은 안 봤다)",
     )
 
 
@@ -371,4 +441,5 @@ def swap_checks(
         *bash,
         *guard("터널 포트:", lambda: check_tunnel(config, serving, probes)),
         *guard("원격 커밋:", lambda: check_remote_commit(env, repo_root, probes)),
+        *guard("가중치 캐시:", lambda: check_weights_cached(config, serving, env, probes)),
     ]
