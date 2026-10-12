@@ -1,9 +1,9 @@
-"""`preflight` — 서버 쪽 점검: 원격 교대 · 터널 · 원격 커밋 · 가중치 캐시 · 교대 없는 포트 (#534).
+"""`preflight` — 서버 쪽 점검: 교대 · 터널 · 원격 커밋 · 가중치 캐시 · 교대 없는 포트 (#534).
 
 두 갈래다. 교대를 선언한 프로필은 장비 파일의 교대 명령이 서버를 띄우므로 그 명령이 닿는
-선결조건(환경변수·bash·터널·원격 커밋)을 본다. **교대를 선언하지 않은 실서빙 프로필은 run이 서버를
-안 띄운다 — 사람이 미리 띄워 둔다.** 그 포트를 TCP로 안 두드리면 서버가 전부 죽어 있어도 점검이
-통과한다(리뷰가 `harness_pool_hybrid`로 재현했다).
+선결조건(환경변수·bash·터널·원격 커밋·가중치 캐시)을 본다. **교대를 선언하지 않은 실서빙 프로필은
+run이 서버를 안 띄운다 — 사람이 미리 띄워 둔다.** 그 포트를 TCP로 안 두드리면 서버가 전부 죽어
+있어도 점검이 통과한다(리뷰가 `harness_pool_hybrid`로 재현했다).
 
 ⚠ 포트·터널 OK는 TCP 연결뿐이다 — ssh 포워드는 원격 서버가 없어도 로컬 포트를 먼저 연다. 어느
 모델이 떠 있는지는 모른다(`/v1/models`는 `cli bench`·교대가 본다). 경로로 적힌 교대 실행 파일은
@@ -31,7 +31,7 @@ from src.preflight_probes import (
     shown,
 )
 
-# 장비 파일의 `command`가 이 래퍼를 부를 때만 환경변수·터널·원격 커밋이 걸린다.
+# 장비 파일의 `command`가 이 래퍼를 부를 때만 환경변수·터널·원격 커밋·가중치 캐시가 걸린다.
 REMOTE_WRAPPER = "tools/serve/swap-remote.sh"
 # 그 스크립트의 `need` 호출이 요구하는 변수 — 사람이 세우는 셋과 하네스가 run마다 주는 하나
 # (`model_swap.swap_runner`가 env에 넣는다). 스크립트의 `need` 줄과 같은지 테스트가 잠근다.
@@ -326,18 +326,44 @@ def check_remote_commit(env: Mapping[str, str], repo_root: Path, probes: Probes)
 # --- 원격 가중치 캐시 -------------------------------------------------------------------------
 
 
-def _hf_pairs(config: HarnessConfig, serving: ServingConfig) -> dict[tuple[str, str], list[str]]:
-    """장비 파일이 서빙하는 모델의 `(repo, rev)` → 그 쌍을 쓰는 model key들. `hf://` 소스만이다."""
+def _hf_pairs(
+    config: HarnessConfig, serving: ServingConfig
+) -> tuple[dict[tuple[str, str], list[str]], list[str]]:
+    """장비 파일이 서빙하는 모델의 `(repo, rev)` → model key들, 그리고 rev를 못 읽은 `hf://` 좌석.
+
+    `hf://`인데 `@<40hex>`가 아닌 좌석을 버리면 그 좌석이 점검에서 조용히 사라진다.
+    """
     pairs: dict[tuple[str, str], list[str]] = {}
+    unpinned: list[str] = []
     for key in serving.servers:
-        found = _HF_SOURCE.fullmatch(config.models[key].source or "")
+        source = config.models[key].source or ""
+        found = _HF_SOURCE.fullmatch(source)
         if found:
             pairs.setdefault((found["repo"], found["rev"]), []).append(key)
-    return pairs
+        elif source.startswith("hf://"):
+            unpinned.append(key)
+    return pairs, unpinned
 
 
 def check_weights_cached(
     config: HarnessConfig, serving: ServingConfig, env: Mapping[str, str], probes: Probes
+) -> Check:
+    label = "가중치 캐시:"
+    pairs, unpinned = _hf_pairs(config, serving)
+    check = _check_pinned(pairs, env, probes) if pairs else None
+    if not unpinned:
+        return check or Check(Severity.OK, f"{label} 해당 없음 — 서빙 모델 중 hf:// 소스가 없다")
+    note = (
+        f"rev가 없어 캐시를 확인할 수 없다: {', '.join(unpinned)} — swap.sh가 기동 때 죽는 자리다"
+        "(registry source를 hf://<repo>@<40자 rev>로 고친다)"
+    )
+    if check is None:
+        return Check(Severity.WARN, f"{label} {note}")
+    return Check(Severity.WARN, f"{check.message} / {note}")
+
+
+def _check_pinned(
+    pairs: dict[tuple[str, str], list[str]], env: Mapping[str, str], probes: Probes
 ) -> Check:
     """각 좌석의 고정 revision이 원격 HF 캐시에 있나 — **WARN만**, 원격에는 읽기뿐이다 (이슈 #571).
 
@@ -347,9 +373,6 @@ def check_weights_cached(
     파일 개수·크기는 안 본다.
     """
     label, prefetch = "가중치 캐시:", "bash tools/serve/prefetch-weights.sh"
-    pairs = _hf_pairs(config, serving)
-    if not pairs:
-        return Check(Severity.OK, f"{label} 해당 없음 — 서빙 모델 중 hf:// 소스가 없다")
     host = env.get("SWAP_SSH_HOST", "")
     if not host or not _clean_absolute(env.get("SWAP_REMOTE_ROOT", "")):
         return Check(
@@ -375,8 +398,8 @@ def check_weights_cached(
     if missing:
         return Check(
             Severity.WARN,
-            f"{label} 원격 HF 캐시에 없다: {', '.join(missing)} — 콜드 기동은 장비 파일의 "
-            f"ready_timeout_s를 넘길 수 있다(run이 교대에서 죽는다). 먼저 선취한다: "
+            f"{label} 원격 HF 캐시에 없거나 미완이다: {', '.join(missing)} — 콜드 기동은 장비 "
+            f"파일의 ready_timeout_s를 넘길 수 있다(run이 교대에서 죽는다). 먼저 선취한다: "
             f"SWAP_SSH_HOST·SWAP_SSH_PORT를 같게 두고 `{prefetch}`",
         )
     return Check(
