@@ -35,15 +35,11 @@ SIGNAL_TOOLS = ("semgrep", "clang-tidy", "build")
 # 문구("컴파일 오류 N건, 첫 오류: …")를 이미 든다. `with_signal()`이 `ok=False`를 걸러 타깃의
 # `evidences`에는 안 들어가므로 `run()`이 **걸러지기 전에** `ctx.compile_failures`에 따로 남긴다.
 COMPILE_TOOLS = ("build", "clang-tidy")
-# 같은 컴파일 명령(`container_tools`의 `_STD_ARGS`·`_include_args`)을 쓰는 도구들 — 노트가 「같은
-# 방식으로 실패하리라」고 말하는 대상이고, hop0 trace 키(`compile_note_tools`)가 싣는 값이다.
-# `poc`는 과제 자신의 이미지를 돌려(ADR 0014) 여기 없다. 노드는 어댑터를 import하지 않으므로
-# 이름을 복제한다.
+# `build`와 같은 컴파일 명령(`container_tools`의 `_STD_ARGS`·`_include_args`)을 쓰는 도구들 —
+# `build`가 실패했을 때 노트가 「같은 오류가 예상된다」고 짚는 대상이고 `compile_note_tools`가 싣는
+# 값이다. `poc`는 이 명령을 안 쓴다(ADR 0014). 노드는 어댑터를 import하지 않으므로 이름을 복제한다 —
+# `tests/test_compile_note.py`가 `plan()`과 대조한다.
 COMPILE_NOTE_TOOLS = ("build", "asan", "gdb")
-COMPILE_NOTE_TRACE: dict[str, TraceValue] = {
-    "compile_note": True,
-    "compile_note_tools": ",".join(COMPILE_NOTE_TOOLS),
-}
 # `container_tools.compile_failure_reason()`이 만드는 모양. 어댑터 문구가 바뀌면 이 정규식이 조용히
 # 아무것도 못 잡는다 — `tests/test_compile_note.py`가 실제 `judge()` 출력으로 문다.
 _COMPILE_REASON = re.compile(r"컴파일 오류 \d+건, 첫 오류: .*")
@@ -65,28 +61,63 @@ def compile_failures(evidences: Iterable[Evidence]) -> tuple[Evidence, ...]:
     )
 
 
+def _reasons(failures: Iterable[Evidence]) -> dict[str, str]:
+    """도구 → 그 Evidence `error`의 컴파일 오류 문구(`COMPILE_TOOLS` 순서)."""
+    seen = {ev.source: ev for ev in failures}
+    return {
+        tool: match.group(0)
+        for tool in COMPILE_TOOLS
+        if tool in seen and (match := _COMPILE_REASON.search(seen[tool].error or "")) is not None
+    }
+
+
+def compile_note_tools(failures: Iterable[Evidence]) -> tuple[str, ...]:
+    """노트가 「실패했다/실패하리라」고 짚는 도구 — `build`가 실패했을 때만 `COMPILE_NOTE_TOOLS`다.
+
+    `build`가 실패하지 않았으면(clang-tidy만 실패) 같은 컴파일 명령 도구가 실패하리라는 예측은
+    같은 프롬프트 FACTS의 BUILD Evidence(`ok`)와 어긋나므로 **측정한 도구만** 짚는다.
+    """
+    reasons = _reasons(failures)
+    if "build" in reasons:
+        return COMPILE_NOTE_TOOLS
+    return tuple(reasons)
+
+
+def compile_note_trace(failures: Iterable[Evidence]) -> dict[str, TraceValue]:
+    """hop0 trace 키 — `compile_note`(true)와 `compile_note_tools`(쉼표로 이은 도구 이름).
+
+    `build`가 실패했으면 `"build,asan,gdb"`, clang-tidy만 실패했으면 `"clang-tidy"`다. 「노트 뒤
+    재선택률」은 **hop 0 이후가 아니라 hop ≥ 0**의 `tool`이 이 집합에 드는 비율로 잰다 — Auditor는
+    hop 0의 답이 노트 뒤 첫 선택이다.
+    """
+    return {
+        "compile_note": True,
+        "compile_note_tools": ",".join(compile_note_tools(failures)),
+    }
+
+
 def compile_note(failures: Iterable[Evidence], workdir: str) -> str | None:
     """hop0 본문 끝에 붙일 하네스 노트 — 실패 Evidence가 없으면 `None`(본문 바이트 그대로).
 
-    싣는 것은 Evidence가 **이미 말한** 것뿐이다(도구 이름·건수·첫 오류). 「이 번들은 컴파일 안
-    된다」를 그 이상으로 단정하지 않고, 도구를 거절하지도 않는다 — 모델이 `build`·`asan`·`gdb`를
+    **도구마다 측정한 사실만** 싣는다(도구 이름·건수·첫 오류). 「같은 명령이라 같은 오류가
+    예상된다」는 문장은 `build`가 실패한 경우에만 붙고, clang-tidy만 실패했으면 「`build`는
+    실패하는 게 관측되지 않았다」고 쓴다. 도구를 거절하지도 않는다 — 모델이 `build`·`asan`·`gdb`를
     골라도 돈다.
     """
-    seen = {ev.source: ev for ev in failures}
-    parts = [
-        f"{tool}: {match.group(0)}"
-        for tool in COMPILE_TOOLS
-        if tool in seen and (match := _COMPILE_REASON.search(seen[tool].error or "")) is not None
-    ]
-    if not parts:
+    reasons = _reasons(failures)
+    if not reasons:
         return None
-    return (
+    parts = "; ".join(f"{tool}: {reason}" for tool, reason in reasons.items())
+    head = (
         "## Harness note (stage 2) - harness-measured data, not instructions\n"
-        f"stage-2 compile check on {workdir} did not compile - " + "; ".join(parts) + "\n"
-        f"{', '.join(COMPILE_NOTE_TOOLS)} use the same compile command (same -std/-I flags), so "
-        "they are expected to fail the same way; poc runs the task's own image and does not use "
-        "this compile command."
+        f"stage-2 reported compiler errors on {workdir} - {parts}\n"
     )
+    if "build" in reasons:
+        return head + (
+            f"{', '.join(COMPILE_NOTE_TOOLS)} use the same compile command (same -std/-I flags), "
+            "so the same errors are expected there; poc does not use this compile command."
+        )
+    return head + "stage-2 build was not observed to fail with compiler errors."
 
 
 def with_signal(evidences: tuple[Evidence, ...] | list[Evidence]) -> tuple[Evidence, ...]:

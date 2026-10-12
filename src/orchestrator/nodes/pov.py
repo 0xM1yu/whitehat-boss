@@ -264,10 +264,10 @@ def run_tool(
     관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
     안 간다 — `call_tool`이 크기와 digest만 싣는다.
     ⏵ **2026-10-13 (#507) — 대신 모델에게 알린다, 거절하지 않는다**: 2단계 `build`·`clang-tidy`가
-    컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)과 「`build`·`asan`·`gdb`는 같은
-    컴파일 명령이라 같은 방식으로 실패하리라」를 하네스 노트로 싣는다(`open_hop(compile_note=)`).
-    이 함수는 그 뒤에도 요청받은 도구를 종전 그대로(argv 불변) 돌린다 — 실패 관측이
-    `compile_failure_reason`을 머리줄에 단다.
+    컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)과, `build`가 실패했을 때만
+    「`build`·`asan`·`gdb`는 같은 컴파일 명령이라 같은 오류가 예상된다」를 하네스 노트로
+    싣는다(`open_hop(compile_note=)`). 이 함수는 그 뒤에도 요청받은 도구를 종전 그대로(argv 불변)
+    돌린다 — 실패 관측이 `compile_failure_reason`을 머리줄에 단다.
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서

@@ -371,12 +371,15 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    ⏵ **2026-10-13 (이슈 #507) — 컴파일 기반 도구는 hop0가 미리 알린다, 거절하지 않는다.** 2단계
    `build`·`clang-tidy`가 컴파일러 오류로 실패했으면(Evidence `error`가 이미 든 「컴파일 오류 N건, 첫 오류: …」)
    **루프 판**의 hop0 본문 끝에 하네스 노트(`## Harness note (stage 2) - harness-measured data, not
-   instructions`)가 붙는다: 도구 이름·건수·첫 오류, 그리고 `build`·`asan`·`gdb`가 **같은 컴파일 명령**(같은
-   `-std`·`-I`)을 써서 같은 방식으로 실패하리라는 것. 실패한 컴파일 Evidence가 없으면 아무것도 안 붙는다
+   instructions`)가 붙는다: 도구마다 **측정한** 건수·첫 오류. **`build`가 실패했을 때만** 「`build`·`asan`·
+   `gdb`가 같은 컴파일 명령(같은 `-std`·`-I`)이라 같은 오류가 예상된다」를 더하고, clang-tidy만 실패했으면
+   「stage-2 `build`는 컴파일 오류로 실패하는 게 관측되지 않았다」로 쓴다. 실패한 컴파일 Evidence가 없으면 아무것도 안 붙는다
    (요청 바이트가 종전과 같다). 한 방 판에는 안 붙는다. `with_signal()`이 `ok=False`를 거르므로 타깃의
    `evidences`가 아니라 `ctx.compile_failures`에서 읽는다(`signals.run`이 남긴다). 모델이 그 뒤에도
    `probe build`를 고르면 종전대로 돈다. hop 0의 `auditor_hop`이 `compile_note`·`compile_note_tools`를 싣는다
-   (노트가 없으면 키도 없다). 🔴 **미실측:** 노트가 모델의 도구 선택을 바꾸는지는 이 변경 뒤 run이 0건이다.
+   (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` · 노트가 없으면 키도 없다) —
+   「노트 뒤 재선택률」은 **hop ≥ 0**의 `tool`(`probe`)이 그 집합에 드는 비율이다(hop 0의 답이 노트 뒤 첫
+   선택이다). 🔴 **미실측:** 노트가 모델의 도구 선택을 바꾸는지는 이 변경 뒤 run이 0건이다.
 
 4. **관측 형식.** 도구·조회 결과는 **다음 홉의 user 턴 본문**으로 온다. prefix(역할 지시·스키마 서술)와 hop0의
    `SOURCE`·`FACTS`는 hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청을
@@ -622,11 +625,13 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   고치지 않고 **v5**가 바뀐 사실을 적는다.
   ⏵ **2026-10-13 (이슈 #507) — 셋은 거절하지 않고 hop0가 알린다.** 2단계 `build`·`clang-tidy`가 컴파일
   오류로 실패했으면 코드를 읽는 판(`_WIDE_INPUT_VERSIONS`)의 hop0 본문 끝에 하네스 노트가 붙는다(건수·
-  첫 오류, 그리고 `build`·`asan`·`gdb`가 같은 컴파일 명령을 쓴다는 것 · `poc`는 과제 자신의 이미지라 그
-  명령을 안 쓴다). 실패 Evidence가 없으면 바이트가 종전과 같고 v2도 같다. `inspect build`를 골라도 도구는
+  첫 오류 · `build`가 실패했을 때만 「`build`·`asan`·`gdb`가 같은 컴파일 명령이라 같은 오류가 예상된다 ·
+  `poc`는 이 명령을 안 쓴다」를 더하고, clang-tidy만 실패했으면 「`build`는 실패하는 게 관측되지 않았다」).
+  실패 Evidence가 없으면 바이트가 종전과 같고 v2도 같다. `inspect build`를 골라도 도구는
   종전대로 돈다(argv 불변 · 실패 관측이 머리줄에 `compile_failure_reason`을 단다). hop 0의 `pov_hop`이
-  `compile_note`·`compile_note_tools`를 싣는다(노트가 없으면 키도 없다) — 「노트 뒤 재선택률」은 이후 `inspect`
-  홉의 `tool`이 `compile_note_tools`에 드는 비율이다. 🔴 **미실측:** 이 변경 뒤 run이 0건이다.
+  `compile_note`·`compile_note_tools`를 싣는다(`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면
+  `"clang-tidy"` · 노트가 없으면 키도 없다) — 「노트 뒤 재선택률」은 **hop ≥ 0**의 `inspect` 홉 `tool`이
+  `compile_note_tools`에 드는 비율이다. 🔴 **미실측:** 이 변경 뒤 run이 0건이다.
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해

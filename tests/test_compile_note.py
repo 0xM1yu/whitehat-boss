@@ -12,10 +12,13 @@ from pathlib import Path
 
 import pytest
 
+from src.adapters import container_tools
 from src.adapters.container_tools import Step, judge
+from src.adapters.fake_tools import TOOL_KINDS
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
-from src.orchestrator.nodes import auditor, signals
+from src.orchestrator.nodes import auditor, index, preprocess, signals
+from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceKind
 from src.schemas.evidence import Evidence
@@ -102,6 +105,28 @@ def test_a_failure_without_compiler_text_or_from_another_tool_makes_no_note(
     assert signals.compile_note([evidence], "parser.c") is None
 
 
+class _FailingTools:
+    """도구 러너를 감싸 지정한 도구의 결과를 **실패 Evidence로 바꾼다**(나머지는 위임)."""
+
+    def __init__(self, inner: object, errors: dict[str, str]) -> None:
+        self._inner = inner
+        self._errors = errors
+
+    def run(self, tool, args, sandbox):  # noqa: ANN001, ANN201
+        real = self._inner.run(tool, args, sandbox)
+        if tool not in self._errors:
+            return real
+        return real.model_copy(update={"ok": False, "error": self._errors[tool]})
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+
+def _failing_tools(ctx: RunContext, *, build: str | None = None, tidy: str | None = None):  # noqa: ANN202, F811
+    errors = {tool: e for tool, e in (("build", build), ("clang-tidy", tidy)) if e is not None}
+    return dataclasses.replace(ctx, tools=_FailingTools(ctx.tools, errors))
+
+
 def test_signals_run_keeps_the_failed_compile_evidence_that_with_signal_drops(
     ctx: RunContext,  # noqa: F811
 ) -> None:
@@ -110,20 +135,7 @@ def test_signals_run_keeps_the_failed_compile_evidence_that_with_signal_drops(
     signals.run(ctx, workdir="parser.c")
     assert ctx.compile_failures == {}, "컴파일이 성공했는데 실패가 기록됐다"
 
-    class _FailingBuild:
-        def __init__(self, inner: object) -> None:
-            self._inner = inner
-
-        def run(self, tool, args, sandbox):  # noqa: ANN001, ANN201
-            real = self._inner.run(tool, args, sandbox)
-            if tool != "build":
-                return real
-            return real.model_copy(update={"ok": False, "error": _build_failure().error})
-
-        def __getattr__(self, name: str) -> object:
-            return getattr(self._inner, name)
-
-    failing = dataclasses.replace(ctx, tools=_FailingBuild(ctx.tools))
+    failing = _failing_tools(ctx, build=_build_failure().error)
     results = signals.run(failing, workdir="parser.c")
 
     assert [e.source for e in failing.compile_failures["parser.c"]] == ["build"]
@@ -324,3 +336,145 @@ def test_auditor_one_shot_version_gets_no_note_even_when_a_failure_was_measured(
     bodies = [p.body for role, p in auditor_ctx.models.prompts if role.value == "auditor"]
     assert bodies and all(NOTE_HEADER not in body for body in bodies)
     assert not [e for e in auditor_ctx.trace.events if e.kind is EventKind.AUDITOR_HOP]
+
+
+
+# --- 측정한 도구만 짚는다 (리뷰 2026-10-13 · CLAUDE.md §0) ------------------------------
+
+
+def test_a_clang_tidy_only_failure_does_not_predict_build_asan_gdb_failures() -> None:
+    """clang-tidy만 컴파일 오류로 실패했고 `build`는 성공했을 수 있다 — 같은 프롬프트 FACTS의
+    BUILD Evidence(`ok`)와 어긋나는 예측을 쓰지 않는다. 측정한 도구만 짚는다."""
+    tidy = [_tidy_failure()]
+
+    note = signals.compile_note(tidy, "parser.c")
+
+    assert note is not None
+    assert "clang-tidy: 컴파일 오류 3건" in note
+    assert "same compile command" not in note and "asan" not in note and "gdb" not in note
+    assert "build was not observed to fail" in note
+    assert signals.compile_note_trace(tidy) == {
+        "compile_note": True,
+        "compile_note_tools": "clang-tidy",
+    }
+
+
+def test_a_build_failure_adds_the_same_compile_command_sentence_and_the_three_tools() -> None:
+    both = [_build_failure(), _tidy_failure()]
+    build_only = [_build_failure()]
+
+    for failures in (both, build_only):
+        note = signals.compile_note(failures, "parser.c")
+        assert note is not None
+        assert "build, asan, gdb use the same compile command" in note
+        assert "poc does not use this compile command." in note
+        assert "task's own image" not in note, "poc_target가 배선된 run에서만 참인 주장이다"
+        assert signals.compile_note_trace(failures)["compile_note_tools"] == "build,asan,gdb"
+    assert "clang-tidy:" not in signals.compile_note(build_only, "parser.c")
+
+
+def test_the_pov_hop0_trace_names_only_clang_tidy_when_only_clang_tidy_failed(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """러너 경로에서도 같다 — 본문과 trace 키가 같은 실패 집합에서 나온다."""
+    scripted = _scripted(
+        _with_pov_version(ctx, "v3"), [PovAction(action="submit", rationale="done")]
+    )
+    scripted.compile_failures["."] = (_tidy_failure(),)
+    state, finding = _pov_state(ctx)
+    runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+
+    hop0 = next(e.data for e in scripted.trace.events if e.kind is EventKind.POV_HOP)
+    assert hop0["compile_note_tools"] == "clang-tidy"
+    assert "build was not observed to fail" in scripted.models.prompts[0][1].body
+
+
+# --- 순서: 컴파일 노트 다음이 hop0 재질문 노트 -----------------------------------------
+
+
+def test_the_compile_note_comes_before_the_hop0_retry_note(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop0 파싱 실패 뒤 다시 열 때 본문 끝은 `<원 본문>\n\n<컴파일 노트>\n\n<재질문 노트>`다."""
+    state, finding = _pov_state(ctx)
+    capsule = state.finding_capsules[finding.finding_id]
+    kwargs = {"finding": finding, "capsule": capsule, "source": None}
+    base = pov_node._render_prompt(ctx, **kwargs).body
+    note = signals.compile_note([_build_failure()], ".")
+
+    both = pov_node._render_prompt(ctx, **kwargs, compile_note=note, retry_note="[스키마 오류] x")
+    only_retry = pov_node._render_prompt(ctx, **kwargs, retry_note="[스키마 오류] x")
+
+    assert both.body == f"{base}\n\n{note}\n\n[스키마 오류] x"
+    assert only_retry.body == f"{base}\n\n[스키마 오류] x", "재질문 노트만일 때 바이트가 바뀌었다"
+
+
+# --- 2단계 → 8단계·5단계: artifact 경로가 "."이 아니어도 닿는다 -------------------------
+
+
+def test_a_stage2_failure_reaches_the_pov_hop0_body_through_artifact_signals(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """`runner._artifact_signals`(= 러너가 2단계를 부르는 자리)가 남긴 실패가 artifact 경로
+    `util.c`를 키로 8단계 hop0 본문에 닿는다 — 키가 `"."`이면 우연히 맞는 배선을 거른다."""
+    failing = _failing_tools(ctx, build=_build_failure().error)
+    artifact = next(
+        a
+        for a in preprocess.run(failing, source_root=Path(ctx.read_source.args[0]))
+        if a.path == "util.c"
+    )
+    graph = index.run(failing, workdir=artifact.path)
+    runner._artifact_signals(failing, artifact, graph)
+    assert list(failing.compile_failures) == ["util.c"]
+
+    scripted = _scripted(
+        _with_pov_version(failing, "v3"), [PovAction(action="submit", rationale="done")]
+    )
+    state, finding = _pov_state(ctx)
+    state.workdirs[finding.finding_id] = artifact.path  # 러너가 5단계 뒤 넣는 값(`_step_auditor`)
+    runner._run_pov_hops(scripted, state, finding, state.finding_capsules[finding.finding_id])
+
+    body = scripted.models.prompts[0][1].body
+    assert "stage-2 reported compiler errors on util.c" in body
+    assert "컴파일 오류 2건, 첫 오류: unknown type name 'uint8_t'" in body
+
+
+def test_a_stage2_failure_reaches_the_auditor_hop0_body_with_the_artifact_path(
+    auditor_ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """`_triage`가 `signals.run(workdir="parser.c")`을 부르므로 시드 없이 실패가 흐른다."""
+    base = auditor_ctx.models
+    failing = _failing_tools(auditor_ctx, build=_build_failure().error)
+    bodies = _auditor_run(failing, monkeypatch, tmp_path, base, seeded=False)
+
+    assert "stage-2 reported compiler errors on parser.c" in bodies[0]
+    assert all(NOTE_HEADER not in body for body in bodies[1:])
+
+
+# --- 노트가 믿는 도구 집합 ↔ 컨테이너 plan() -------------------------------------------
+
+
+def test_the_note_tool_set_matches_the_tools_that_share_the_compile_command() -> None:
+    """`COMPILE_NOTE_TOOLS`는 `build`와 같은 컴파일 명령(`-std=` 방언)을 쓰는 도구 집합이다. #507
+    (e)처럼 `build`·`asan`·`gdb`가 과제 이미지로 옮겨 가거나 `poc`가 컴파일을 하게 바뀌면 이 검사가
+    빨개지고 노트의 문장을 다시 본다. `poc`는 과제 이미지를 돌려 이 명령을 안 쓴다."""
+    source = "/src/a.c"
+    std = container_tools._STD_ARGS["c"]
+    sharing = set()
+    for tool in sorted(set(TOOL_KINDS) - {"semgrep", "index", "poc"}):
+        commands = container_tools.plan(
+            tool, target="/src", compile_sources=[source], cwd="/src"
+        )
+        if any(std in command.argv for command in commands):
+            sharing.add(tool)
+    poc = container_tools.plan(
+        "poc", target="/src", compile_sources=[source], cwd="/src",
+        poc_target=container_tools.PocTarget(image="n132/arvo:1065-vul", argv=("/bin/arvo",)),
+    )
+
+    # clang-tidy는 같은 방언을 쓰지만 노트가 「같은 오류가 예상된다」고 짚는 대상이 아니다 —
+    # 그 도구의 실패는 stage-2 사실로 따로 적힌다.
+    assert sharing == set(signals.COMPILE_NOTE_TOOLS) | {"clang-tidy"}
+    assert all(std not in command.argv and command.image for command in poc)
