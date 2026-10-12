@@ -19,6 +19,12 @@ Evidence이고, 이것이 Evidence Gate E2의 조건 중 하나(`any(e.kind == G
 - Auditor 탐침 관측 줄(`auditor._probe_observation`)의 `ok=False exit=0 error=…` 모양이 이
   Evidence에 쓰인다. ⚠ 다만 **`index`는 Auditor 탐침 도구가 아니다**(`AUDITOR_TOOLS`는 `index`를
   뺀다) — 그 줄에 실제로 나타나는 일은 지금 없고, 도구 목록이 바뀔 때 생길 모양이다.
+
+**기록만 느는 부수 효과가 하나 더 있다.** `graph_ok`가 거짓이 되므로 `p1 ∧ path_ok`인 Finding은
+`gate.evaluate`의 `ambiguous`가 참이 되고(`p1 and not p2 and path_ok and not (graph_ok and
+unblocked)`), `RunContext.evaluate_gate`가 `gate_ambiguous`를 기록한다. 그 이벤트는 기록뿐이다 —
+모델을 부르지 않고 등급은 그대로 E1이다. 그래서 빈 그래프 run에서는 `gate_ambiguous` 수가 오를 수
+있다(인덱서 실패 run에서도 같다).
 """
 
 from src.interfaces.tool_runner import ToolArgs
