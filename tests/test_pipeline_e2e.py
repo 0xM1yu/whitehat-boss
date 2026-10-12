@@ -2864,8 +2864,8 @@ def test_a_stage_8_tool_that_cannot_measure_holds_the_finding_through_the_whole_
         "find_0001",
         "find_0002",
     ]
-    (warning,) = [w for w in result.warnings if "재현을 시도하지 못한" in w]
-    assert "1건" in warning
+    (warning,) = [w for w in result.warnings if "재현 결과를 내지 않은" in w]
+    assert "1건" in warning and "종료 코드별 1 1건" in warning
 
 
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
