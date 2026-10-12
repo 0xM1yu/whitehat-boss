@@ -4047,6 +4047,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-11 — 서빙 판은 v14다(이슈 #67 — v12 + FACTS에서 `source` 사본을 뺀다). hop0 user 턴은
 # v13과
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
+# 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
