@@ -2286,7 +2286,8 @@ def _designate_final(
     **넷으로 갈린다:**
 
     - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed`·`rate_limited` —
-      낼 PoC가 없던 것, 낸 것이 다 실패한 것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
+      모델 `submit`이 없던 것(중간 gen이 `vul`에 나갔어도 후보가 아니다 · #620), 낸 것이 다 실패한
+      것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
       사건이다**, §0. 사유를 가르는 것은 `oracle_log.OracleLedger.none_reason`이고 이 함수는
       그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
@@ -2440,7 +2441,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     올리고, `run_pipeline`의 예산·게이트웨이 갈래가 그 노트를 `warnings`에 싣는다.
     ⚠ **추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`로 남는다** —
     의도한 것이 아니라 이 호출의 부수 효과다(후보 없음은 `_designate_final`이 `no_poc`로 싣는다).
-    「PoV가 끝까지 돌아 PoC를 못 냈다」와 「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
+    「PoV가 끝까지 돌아 submit을 못 냈다(후보 없음 - 중간 gen은 `vul_intermediate`가 센다)」와
+    「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
     후자는 run 수준의 `stopped_after`·`BUDGET_EXHAUSTED`·`MODEL_GATEWAY_UNAVAILABLE`·경고가 말한다.
     후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이
     없던 run은 `vul_submitted` - 와 `stopped_after`로 재구성한다).
