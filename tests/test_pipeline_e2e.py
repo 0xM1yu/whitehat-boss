@@ -6044,14 +6044,26 @@ def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> N
         assert manifest[key] == value, key
         assert getattr(result.record, key) == value, key
     rendered = result.report.render()
-    assert "연속 스키마 파싱 실패 최장(역할별, 분모만)" in rendered
-    assert "스키마 재시도로 살아난 호출(역할별, 분모만)" in rendered
-    assert "PoV 연속 inspect 최장(Finding별, 분모만)" in rendered
+    assert "### 분모 전용 집계 (임계값 아님)" in rendered
+    assert "미측정" not in rendered, "잰 값이 있는데 미측정으로 찍혔다"
+    schema_line = "연속 스키마 파싱 실패 최장(역할별, 분모만): " + " · ".join(
+        f"{r} 0" for r in sorted(roles)
+    )
+    assert schema_line in rendered
+    assert "스키마 재시도로 살아난 호출(역할별, 분모만): " in rendered
+    inspect_line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    # 규칙이 줄에 적혀 있다 - 최장 2 이상만 나열하고 나머지는 건수다. 그 건수가 분모를 맞춘다.
+    values = expected["pov_inspect_max_run_by_finding"]
+    listed = [f for f, n in values.items() if n >= 2]
+    assert "최장 2 이상인 Finding만 나열" in inspect_line
+    assert all(f in inspect_line for f in listed)
+    assert not any(f in inspect_line for f in values if f not in listed)
+    assert f"나열하지 않은 Finding {len(values) - len(listed)}건" in inspect_line
 
 
 def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Path) -> None:
     """모델을 한 번도 안 부른 run의 집계는 `None`이다 - `{}`도 `0`도 아니다 (CLAUDE.md §0).
-    report.md는 그 줄을 내지 않는다."""
+    report.md는 그 줄을 **빼지 않고** 「미측정」으로 찍는다 - 안 쟀다와 안 그렸다가 갈려야 한다."""
     result, trace_path = _run(tmp_path, stop_after=int(Stage.RETRIEVAL))
 
     manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
@@ -6061,4 +6073,6 @@ def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Pa
         "pov_inspect_max_run_by_finding",
     ):
         assert key in manifest and manifest[key] is None, key
-    assert "분모만" not in result.report.render()
+    lines = [ln for ln in result.report.render().splitlines() if "분모만" in ln]
+    assert len(lines) == 3 and all("미측정" in ln for ln in lines), lines
+    assert not any(re.search(r"0", ln) for ln in lines), "미측정 줄에 0이 찍혔다"

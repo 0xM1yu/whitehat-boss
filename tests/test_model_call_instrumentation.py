@@ -1021,8 +1021,8 @@ def _drive_calls(*calls: tuple[Role, str, object]) -> list:
     return ctx.trace.events
 
 
-def _bad() -> SchemaParseError:
-    return SchemaParseError("스키마 소진", usage=_SPENT)
+def _bad(attempts: int = 1) -> SchemaParseError:
+    return SchemaParseError("스키마 소진", usage=_SPENT, attempts=attempts)
 
 
 def _refused() -> ModelGatewayError:
@@ -1074,3 +1074,25 @@ def test_recovered_calls_count_only_successes_that_needed_a_retry() -> None:
 
     # 소진으로 끝난 실패 행은 회복이 아니다. 회복이 없던 역할은 잰 0이다.
     assert schema_recovered_calls_by_role(events) == {"auditor": 2, "critic": 0}
+
+
+def test_an_exhausted_call_that_used_several_attempts_is_not_recovered() -> None:
+    """실제 소진은 `attempts`가 2 이상이다(`SchemaParseError`의 기본 1이 아니다). `ok`를 안 보고
+    `attempts>1`만 세면 소진된 실패 행이 「재시도로 살아난 호출」로 들어간다."""
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad(attempts=2)), (a, "f2", 2))
+
+    failed = [e for e in events if e.kind is EventKind.MODEL_CALL and e.data["ok"] is False]
+    assert [e.data["attempts"] for e in failed] == [2], "소진 행이 attempts=2를 싣지 않았다"
+    assert schema_recovered_calls_by_role(events) == {"auditor": 1}
+
+
+def test_two_roles_on_the_same_subject_are_counted_apart() -> None:
+    """Auditor와 Critic은 같은 `finding_id`를 `subject_id`로 쓴다. 연속은 (역할, 대상)별이라 한
+    역할의 실패가 다른 역할의 연속에 섞이거나 그것을 끊지 않는다 - 대상만 키로 쓰면 critic이 2,
+    auditor가 3으로 읽힌다."""
+    a, c = Role.AUDITOR, Role.CRITIC
+    events = _drive_calls((a, "f1", _bad()), (c, "f1", _bad()), (a, "f1", _bad()))
+
+    assert schema_failure_max_run_by_role(events) == {"auditor": 2, "critic": 1}
+

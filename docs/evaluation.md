@@ -165,11 +165,14 @@
 역할 이름과 함께 경고해 **비교표에서 제외**한다(2026-08-17까지 모델 호출이 GPU 시간을 아예
 청구하지 못했으므로 그 이전 run은 전부 이 상태다).
 
-**스키마 실패·PoV `inspect` 반복은 분모만 세운다 (#613·#618).** run 끝에 trace에서 센 집계 셋이
+**스키마 실패·PoV `inspect` 반복은 분모만 세운다 (#613·#618·#619 (d)).** (2026-10-13) 이슈 #613이 첫째를,
+#618이 둘째를, #619 선택지 (d) 「계측만 한다」가 셋째를 요구했다. run 끝에 trace에서 센 집계 셋이
 `run_manifest.json`과 `report.md`에 남는다 - `schema_failure_max_run_by_role`(역할별 연속
 `SchemaParseError` `model_call`의 최장 길이 - (역할, 대상)별 연속의 역할별 최댓값),
 `schema_recovered_calls_by_role`(역할별 `ok`이고 `attempts>1`인 호출 수 - 재시도로 살아난 호출),
-`pov_inspect_max_run_by_finding`(Finding별 연속 `inspect` 홉의 최장 길이). 산식은
+`pov_inspect_max_run_by_finding`(Finding별 연속 `inspect` 홉의 최장 길이 - `action`을 실은 홉만
+세므로 도구 호출이 예산에서 끊긴 홉도 든다. 행동을 실은 홉이 하나도 없는 Finding - PoV 루프가
+첫 홉 전에 던졌거나 모든 홉의 호출이 실패한 Finding - 은 dict에 **없다**(`0`이 아니다)). 산식은
 `src/orchestrator/trace.py`의 같은 이름 함수다. **하네스는 이 값으로 동작하지 않는다** - 연속 실패
 상한 같은 임계값은 이 집계를 본 **실험팀이** 정한다(ADR 0012 결정 5). 해당 종류의 trace 행이 하나도
 없으면 값은 `None`이다(안 쟀다 - `0`이 아니다).

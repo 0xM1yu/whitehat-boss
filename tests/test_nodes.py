@@ -2872,6 +2872,26 @@ def test_render_marks_ungraded_finding_as_unknown_not_e0(ctx: RunContext) -> Non
     assert "등급 분포" not in rendered  # 아는 등급이 0건이면 분포 줄 자체가 없다
 
 
+def test_render_lists_only_long_inspect_runs_and_counts_the_rest(ctx: RunContext) -> None:
+    """분모 전용 집계 줄(#619 (d)): inspect 연속 최장이 2 이상인 Finding만 나열하고 나머지는
+    건수다 - 줄이 Finding 수에 비례해 자라지 않는다. 값이 없는(`None`) 집계는 줄을 빼지 않고
+    「미측정」으로 찍는다."""
+    rendered = report.run(
+        ctx,
+        findings=[],
+        schema_failure_max_run={"auditor": 3},
+        pov_inspect_max_run={"find_0001": 3, "find_0002": 2, "find_0003": 1, "find_0004": 0},
+    ).render()
+
+    line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    assert "find_0001 3 · find_0002 2" in line
+    assert "find_0003" not in line and "find_0004" not in line
+    assert "나열하지 않은 Finding 2건" in line
+    assert "연속 스키마 파싱 실패 최장(역할별, 분모만): auditor 3" in rendered
+    recovered = next(ln for ln in rendered.splitlines() if ln.startswith("스키마 재시도로"))
+    assert "미측정" in recovered
+
+
 def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> None:
     """리포트가 PoV 정지 사유를 **사유별 수**로 싣는다 (#357·#358) — 한 수로 묶으면 "상한에서
     헛돌았다"와 "스키마를 못 맞췄다"가 안 갈린다(`ne_absorbed`와 같은 판단).
