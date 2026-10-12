@@ -294,6 +294,12 @@ _SEMGREP_PARTIAL_PARSE = "PartialParsing"
 # `arvo:1065`의 `apprentice.c` 1개(**n=1**). 10-12 run의 히트와 **같은 10건**이 나왔다(시작 줄
 # 1086·1091·1116·1264·1296·1829·1841·3002·3090·3093).
 #
+# ⚠ **출처:** 아래 수치는 전부 2026-10-13 구현자의 scratch 실행이다 - 번들·스크립트를 커밋하지
+# 않았고 저장소에서 재현할 수 없다. 원천은 `harness-tools:v3`에서 하네스 argv를 직접 돌려 얻은
+# JSON(`errors[0].type[1]`의 구간 목록 · `results`)이고, 구간 분류(머리 93·`CAST` 44·그 밖 11) ·
+# sed 사본 · 합성 최소 재현 · `--lang c` 시도 · 후보 함수 본문의 구간 대조는 그 위에서
+# 손으로 낸 값이다.
+#
 # - 오류: `PartialParsing` 1건 · `warn` · `apprentice.c:118: 'int' was unexpected`. 118줄은
 #   `private int getvalue(...)`이고 `private`는 `file.h:88`의 `#define private static`이다.
 # - 건너뛴 구간: **148개 · 134줄**(구간 길이 합은 155 - 21줄은 구간 둘이 겹친다 · 3,343줄 중) -
