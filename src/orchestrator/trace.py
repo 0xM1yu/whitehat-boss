@@ -49,6 +49,12 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 
+⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
+`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
+`count(reason=invalid_axis) / count(rebut)`. 정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —
+그래서 이 사건은 F-5가 아니라 F-7로 이어진다.
+
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
 타깃에서 관측한 Evidence를 직접 붙이므로(`gate_node.attach_observed`) E0는 「관측이 0건인
@@ -417,6 +423,8 @@ class EventKind(StrEnum):
     # 경로는 `Path.home()`을 지난다. 대신 `{role}_source`(리비전이 박힌 `models.yaml` 값)를
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
+    # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.

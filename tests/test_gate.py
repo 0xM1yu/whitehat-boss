@@ -11,7 +11,10 @@ from itertools import product
 import pytest
 
 from src.adapters.container_tools import Step, judge
+from src.config import load_config
 from src.orchestrator import gate
+from src.orchestrator.policy import DecisionPoint, FixedThresholdPolicy, RoutingRequest
+from src.orchestrator.stages import Stage
 from src.schemas import (
     Decision,
     Evidence,
@@ -24,6 +27,7 @@ from src.schemas import (
     PathStep,
     PathStepKind,
     ProducedBy,
+    ReasonCode,
     ReproOrigin,
     ReproSpec,
     Role,
@@ -106,12 +110,15 @@ def _finding(
     )
 
 
-def _decision(verdict: Verdict, *, grounded: bool) -> Decision:
+def _decision(verdict: Verdict, *, grounded: bool, axes: tuple[str, ...] = ()) -> Decision:
+    """`grounded`는 **인용 ID**의 유무다. 반박 축은 `axes`로 따로 준다 - 둘이 근거의 두 갈래다
+    (ADR 0015). 기본은 축 없음이라 `grounded=False`면 사유가 `empty_axis`다."""
     return Decision(
         decision_id="dec_0001",
         run_id=RUN_ID,
         finding_id="find_0001",
         verdict=verdict,
+        rebuttal_axis=list(axes),
         rationale="근거 서술",
         evidence_refs=["ev_graph"] if grounded else [],
         produced_by=CRITIC,
@@ -314,41 +321,257 @@ def test_upheld_with_repro_but_blocking_missing_is_not_e3() -> None:
     assert result.ambiguous
 
 
-def test_e3_requires_every_e2_condition_over_all_combinations() -> None:
-    """E3 ⇔ E2의 세 조건 + 반박 실패 + 재현 명세 — 다섯 축의 32개 조합 전부 (#154).
+# E3의 `upheld` 축이 가질 수 있는 판정 모양 여섯. **근거 없는 `rebut`을 넣는 것이 요점이다** -
+# 전에는 이
+# 모양이 `uphold`로 정규화돼 `upheld`가 참이 됐고, 그래서 E3의 다섯째 조건(반박 실패)을 **반박을
+# 못 한
+# Critic**이 채웠다(ADR 0015). 열거는 손으로 적는다 - `gate.normalize`를 되부르면 같이 틀린다.
+_VERDICT_SHAPES = (
+    ("uphold", Verdict.UPHOLD, {"grounded": True}),
+    ("need_evidence", Verdict.NEED_EVIDENCE, {"grounded": True}),
+    ("rebut_with_a_cited_id", Verdict.REBUT, {"grounded": True}),
+    ("rebut_with_vocabulary_axes", Verdict.REBUT, {"grounded": False, "axes": ("guard",)}),
+    ("rebut_without_id_or_axis", Verdict.REBUT, {"grounded": False}),
+    (
+        "rebut_with_an_axis_outside_the_vocabulary",
+        Verdict.REBUT,
+        {"grounded": False, "axes": ("guard-check",)},
+    ),
+)
 
-    위 두 테스트는 축을 하나씩 핀으로 박는다. 이것은 성질 자체를 단언한다 — 어느 조합에서도
+
+def test_e3_requires_every_e2_condition_over_all_combinations() -> None:
+    """E3 <=> E2의 세 조건 + 반박 실패 + 재현 명세 - 다섯 축의 조합 전부 (#154).
+
+    위 두 테스트는 축을 하나씩 핀으로 박는다. 이것은 성질 자체를 단언한다 - 어느 조합에서도
     E2의 조건 하나라도 빠진 채 E3가 나오지 않고, 다섯이 다 서면 E3다(좁히기만 한 것도 아니다).
-    정적 근거는 늘 둬서 `p1`이 서고 런타임 근거는 안 둬서 `p4`는 안 선다 — E4는 이 성질 밖이다.
+    정적 근거는 늘 둬서 `p1`이 서고 런타임 근거는 안 둬서 `p4`는 안 선다 - E4는 이 성질 밖이다.
+
+    ⏵ 2026-10-13 (ADR 0015) - 판정 축이 둘에서 **여섯 모양**이 됐다. 전에는
+    `uphold`/`need_evidence`뿐이라
+    근거 없는 `rebut`이 `upheld`를 세우는 길이 이 성질 검사에 **안 보였다.** 이제 반박 모양 넷이
+    들어와
+    「`upheld` 축은 판정이 `uphold`일 때만 참」을 같이 문다 - 근거 없는 `rebut`이 E3를 채우면
+    여기서 빨개진다.
     """
     static = _evidence("ev_static", EvidenceKind.STATIC)
     graph = _evidence("ev_graph", EvidenceKind.GRAPH)
-    for has_path, has_graph, unblocked, upheld, repro in product((False, True), repeat=5):
-        evidences = [static, graph] if has_graph else [static]
-        finding = _finding(
-            refs=[ev.evidence_id for ev in evidences],
-            path=FULL_PATH if has_path else None,
-            repro=repro,
-        )
-        verdict = Verdict.UPHOLD if upheld else Verdict.NEED_EVIDENCE
+    for has_path, has_graph, unblocked, repro in product((False, True), repeat=4):
+        for shape, verdict, kwargs in _VERDICT_SHAPES:
+            evidences = [static, graph] if has_graph else [static]
+            finding = _finding(
+                refs=[ev.evidence_id for ev in evidences],
+                path=FULL_PATH if has_path else None,
+                repro=repro,
+            )
 
-        result = gate.evaluate(
-            finding,
-            evidences,
-            [_decision(verdict, grounded=True)],
-            [] if unblocked else [BLOCKING],
-        )
+            result = gate.evaluate(
+                finding,
+                evidences,
+                [_decision(verdict, **kwargs)],
+                [] if unblocked else [BLOCKING],
+            )
 
-        axes = (has_path, has_graph, unblocked, upheld, repro)
-        assert (result.grade is EvidenceGrade.E3) == all(axes), axes
+            axes = (has_path, has_graph, unblocked, shape == "uphold", repro)
+            assert (result.grade is EvidenceGrade.E3) == all(axes), (shape, axes)
 
 
-def test_ungrounded_rebut_normalizes_to_uphold() -> None:
-    """근거 없는 반박은 반박이 아니다 (agent-contracts.md §2.3)."""
+# `prompts/critic/v7/prefix.md:193-202`가 적는 열 값. **손으로 다시 적었다** - `RebuttalAxis`를
+# 순회하면 enum이
+# 줄어들 때 검사도 같이 줄어 변이가 산다. 프롬프트와의 대조는 `test_schemas.py`가 파일을 읽어 한다.
+VOCABULARY = (
+    "guard",
+    "reachability",
+    "aliasing",
+    "lifetime",
+    "arithmetic",
+    "compile_flag",
+    "input_reachability",
+    "source",
+    "propagate",
+    "sink",
+)
+
+
+@pytest.mark.parametrize("axis", VOCABULARY)
+def test_a_rebut_with_a_vocabulary_axis_is_grounded_without_any_id(axis: str) -> None:
+    """v7은 rebut의 `evidence_refs`를 비운다 - 어휘 안의 축이 근거다 (ADR 0015)."""
+    decision = _decision(Verdict.REBUT, grounded=False, axes=(axis,))
+
+    assert decision.is_grounded
+    assert gate.normalize(decision) is Verdict.REBUT
+    assert not gate.was_normalized(decision)
+
+
+def test_a_rebut_with_several_vocabulary_axes_is_grounded() -> None:
+    decision = _decision(Verdict.REBUT, grounded=False, axes=("guard", "sink", "guard"))
+
+    assert gate.normalize(decision) is Verdict.REBUT
+
+
+def test_a_rebut_with_neither_an_id_nor_an_axis_becomes_need_evidence() -> None:
+    """근거 없는 반박은 반박이 아니다 (agent-contracts.md §2.3). **`uphold`가 아니다** - 반박을 못
+    한
+    Critic이 Finding을 승격시키면 안 된다 (ADR 0015)."""
     decision = _decision(Verdict.REBUT, grounded=False)
 
-    assert gate.normalize(decision) is Verdict.UPHOLD
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
     assert gate.was_normalized(decision)
+    assert decision.ungrounded_reason == "empty_axis"
+    assert decision.invalid_axes == []
+
+
+# 어휘 밖 모양. 앞 넷은 Critic 목소리가 예측한 변형이고(대소문자 · 접미 · 합침 · 장식) 나머지는
+# 어휘가
+# 아닌 것이다. **실제로 나타날 수 있는 형태로 골랐다** - 모델이 영어 어휘를
+# 변형하거나(`guard-check`) 한국어로
+# 쓰거나(`무근거`) 한 필드에 둘을 합치는(`guard,reachability`) 것은 자유 문자열 필드의 정상 실패다.
+@pytest.mark.parametrize(
+    "axis",
+    ["GUARD", "Guard", "guard-check", "guard,reachability", "`guard`", "무근거", "guards"],
+)
+def test_a_rebut_with_an_axis_outside_the_vocabulary_becomes_need_evidence(axis: str) -> None:
+    decision = _decision(Verdict.REBUT, grounded=False, axes=(axis,))
+
+    assert not decision.is_grounded
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+    assert gate.was_normalized(decision)
+    assert decision.ungrounded_reason == "invalid_axis"
+    assert decision.invalid_axes == [axis]
+
+
+def test_one_bad_axis_among_good_ones_spoils_the_rebut() -> None:
+    """`every`다 - 하나라도 어휘 밖이면 그 반박은 근거가 아니다. 어느 축이 무효인지는 값이
+    싣는다."""
+    decision = _decision(Verdict.REBUT, grounded=False, axes=("guard", "무근거", "sink"))
+
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+    assert decision.invalid_axes == ["무근거"]
+
+
+def test_surrounding_whitespace_on_an_axis_is_tolerated() -> None:
+    """`from_text`는 `strip()`만 한다 (`Verdict.from_text`처럼). `"guard "`는 어휘 안이다.
+
+    ⚠ 이 PR의 위임 지시는 `"guard "`를 어휘 밖 음성 핀 목록에 적었으나 **같은 지시가 `from_text`를
+    「`strip()` 뒤
+    정확 일치」로 정했다** - 둘은 양립하지 않는다. 앞쪽 명세(공백 허용)를 따랐다. 공백은 의미가
+    아니라
+    직렬화 잡음이고, 이를 막으면 「어휘 변형으로 대량 need_evidence」를 공백이 만든다.
+    """
+    decision = _decision(Verdict.REBUT, grounded=False, axes=(" guard ", "sink\t"))
+
+    assert decision.is_grounded
+    assert gate.normalize(decision) is Verdict.REBUT
+
+
+@pytest.mark.parametrize("axes", [(), ("무근거",), ("guard",)])
+def test_a_cited_id_grounds_a_rebut_whatever_the_axes_say(axes: tuple[str, ...]) -> None:
+    """v6의 길 - 서빙 중인 v6의 rebut은 등록된 ID를 인용한다. `or evidence_refs`를 유지했다."""
+    decision = _decision(Verdict.REBUT, grounded=True, axes=axes)
+
+    assert decision.is_grounded
+    assert decision.ungrounded_reason is None
+    assert gate.normalize(decision) is Verdict.REBUT
+
+
+@pytest.mark.parametrize("verdict", [Verdict.UPHOLD, Verdict.NEED_EVIDENCE])
+@pytest.mark.parametrize("grounded", [True, False])
+@pytest.mark.parametrize("axes", [(), ("guard",), ("무근거",)])
+def test_uphold_and_need_evidence_are_never_touched(
+    verdict: Verdict, grounded: bool, axes: tuple[str, ...]
+) -> None:
+    """정규화는 `rebut`만 건드린다. 근거가 있든 없든, 축이 어떻든 두 판정은 그대로다."""
+    decision = _decision(verdict, grounded=grounded, axes=axes)
+
+    assert gate.normalize(decision) is verdict
+    assert not gate.was_normalized(decision)
+
+
+def test_a_normalized_rebut_is_not_upheld_for_the_gate() -> None:
+    """근거 없는 `rebut`이 `upheld`를 세우지 않는다 - 게이트가 보는 것은 정규화 뒤 값이다."""
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+
+    result = gate.evaluate(finding, evidences, [_decision(Verdict.REBUT, grounded=False)])
+
+    assert not result.predicates["upheld"]
+    assert result.grade is EvidenceGrade.E2
+
+
+def _critic_route(
+    policy: FixedThresholdPolicy, verdict: Verdict, grade: EvidenceGrade, *, has_spec: bool = True
+):  # noqa: ANN202
+    """`nodes/critic.run`이 정책에 넘기는 신호 그대로 - 정규화된 `verdict`와 그 판정으로 매긴
+    등급."""
+    return policy.decide(
+        RoutingRequest(
+            point=DecisionPoint.CRITIC_VERDICT,
+            stage=Stage.CRITIC,
+            subject_kind="finding",
+            subject_id="find_0001",
+            signals={
+                "verdict": verdict.value,
+                "grade": grade.value,
+                "has_repro_spec": has_spec,
+            },
+        )
+    )
+
+
+def test_a_v7_shaped_rebut_no_longer_reaches_validated() -> None:
+    """2026-10-10 PR #588 적대적 리뷰의 사슬을 되만든다 (ADR 0015).
+
+    사슬: v7 모양의 `rebut`(`evidence_refs=[]`) -> `gate.normalize` -> `upheld` -> `p3` -> E3 ->
+    정책 `validated`(사유 `critic_upheld`). **실제 노드 순서 그대로** 돈다: 게이트가 판정으로 등급을
+    매기고, 정책이 정규화된 `verdict`와 그 등급을 읽는다 (`nodes/critic.run`).
+
+    **이 사슬이 `validated`를 낼 수 있다는 것도 같이 문다** - 같은 Finding·Evidence에 `uphold`를
+    주면
+    `validated`다. 그 기준선이 없으면 아래 단언은 입력이 `validated`에 못 닿아서 통과한 것일 수
+    있다.
+    """
+    finding = _finding(refs=["ev_static", "ev_graph"], path=FULL_PATH, repro=True)
+    evidences = [
+        _evidence("ev_static", EvidenceKind.STATIC),
+        _evidence("ev_graph", EvidenceKind.GRAPH),
+    ]
+    policy = FixedThresholdPolicy(load_config("dev_fake").thresholds)
+
+    def route(decision: Decision):  # noqa: ANN202
+        grade = gate.evaluate(finding, evidences, [decision]).grade
+        return _critic_route(policy, gate.normalize(decision), grade)
+
+    baseline = route(_decision(Verdict.UPHOLD, grounded=True))
+    assert baseline.to_state is FindingState.VALIDATED
+    assert baseline.reason_code is ReasonCode.CRITIC_UPHELD
+
+    v7_rebut_without_axis = route(_decision(Verdict.REBUT, grounded=False))
+    assert v7_rebut_without_axis.to_state is FindingState.QUEUED
+    assert v7_rebut_without_axis.reason_code is ReasonCode.CRITIC_NEED_EVIDENCE
+
+    v7_rebut_with_a_bad_axis = route(_decision(Verdict.REBUT, grounded=False, axes=("무근거",)))
+    assert v7_rebut_with_a_bad_axis.to_state is FindingState.QUEUED
+    assert v7_rebut_with_a_bad_axis.reason_code is ReasonCode.CRITIC_NEED_EVIDENCE
+
+    # 어휘 안의 축을 든 v7 모양 rebut은 진짜 반박이다 - 역시 `validated`가 아니고 사유가 다르다.
+    v7_rebut = route(_decision(Verdict.REBUT, grounded=False, axes=("guard",)))
+    assert v7_rebut.to_state is FindingState.QUEUED
+    assert v7_rebut.reason_code is ReasonCode.CRITIC_REBUTTED
+
+
+def test_a_normalized_need_evidence_is_routed_like_one_the_model_emitted() -> None:
+    """정규화된 `need_evidence`는 모델이 낸 것과 **같은 값**이라 정책이 둘을 가르지 못한다 (ADR
+    0015)."""
+    policy = FixedThresholdPolicy(load_config("dev_fake").thresholds)
+
+    normalized = gate.normalize(_decision(Verdict.REBUT, grounded=False))
+
+    assert _critic_route(policy, normalized, EvidenceGrade.E3) == _critic_route(
+        policy, Verdict.NEED_EVIDENCE, EvidenceGrade.E3
+    )
 
 
 def test_grounded_rebut_is_not_normalized() -> None:
