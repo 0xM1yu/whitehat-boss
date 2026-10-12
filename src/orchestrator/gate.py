@@ -42,10 +42,14 @@
   술어 사이의 포함은 **`p3 ⟹ p2` 하나다** — `p2`는 `p1`을 요구하지 않고, `p4`는 경로도
   E2도 안 본다(E4는 이 포함 밖 — 도달 불가의 잠재다. F-10이 `validated`에서만 `proven`을
   허용하고 `validated`는 `path`를 강제한다. 이슈 #154는 2026-10-12 닫았다).
-- `normalize()`: `verdict == REBUT and not is_grounded` → `UPHOLD`.
-  이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
-  (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
-- `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다.
+- `normalize()`: `verdict == REBUT and not is_grounded` → `NEED_EVIDENCE`.
+  이 정규화가 일어난 사건은 호출자가 사유와 함께 `critic_normalized` trace로 남긴다
+  (agent-contracts.md §2.3 "근거 없는 반박은 need_evidence로 처리하되 지표에 기록한다").
+  ⏵ 2026-10-13 (ADR 0015) — 목적지가 `UPHOLD`였다. 근거 없는 반박이 `upheld`를 세우면 `p3`이 서서
+  Finding이 `validated`까지 올라갔다(PR #588 적대적 리뷰 2026-10-10, 사유 `critic_upheld`):
+  Critic이 **반박을 못 해서** 승격되는 길이다.
+- `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다. 정규화된 `need_evidence`는
+  모델이 낸 `need_evidence`와 **같은 값**이라 정책·풀·게이트가 둘을 구별하지 않는다.
 - 게이트가 Evidence에서 읽는 것은 `ok`·`kind`·`location`, 그리고 **런타임 종류의 `exit_code`**
   (E4 — 0도 `None`도 아니어야 한다)다. ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** —
   8단계 노드가 그 문자열로 하는 일은 `tool_for()`가 **도구 이름**을 고르는 것뿐이고, `Evidence.ok`는
@@ -124,12 +128,16 @@ def at_least(grade: EvidenceGrade, floor: EvidenceGrade) -> bool:
 
 
 def normalize(decision: Decision) -> Verdict:
-    """근거 없는 `rebut`을 `uphold`로 정규화한다 (agent-contracts.md §2.3).
+    """근거 없는 `rebut`을 `need_evidence`로 정규화한다 (agent-contracts.md §2.3 · ADR 0015).
 
-    `need_evidence`는 반박이 아니므로 건드리지 않는다.
+    `uphold`·`need_evidence`는 반박이 아니므로 건드리지 않는다.
+
+    ⏵ 2026-10-13 — 목적지가 `uphold`였다. `uphold`는 「Critic이 반박을 시도해 실패했다」는 판정이라
+    `p3`을 세우지만, 근거 없는 `rebut`은 그런 판정이 아니다. 「확인 못 했다」가 맞고 그것은
+    `need_evidence`다.
     """
     if decision.verdict is Verdict.REBUT and not decision.is_grounded:
-        return Verdict.UPHOLD
+        return Verdict.NEED_EVIDENCE
     return decision.verdict
 
 

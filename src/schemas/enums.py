@@ -236,6 +236,46 @@ class Verdict(StrEnum):
         return None
 
 
+class RebuttalAxis(StrEnum):
+    """Critic `rebut`이 내세울 수 있는 반박 축 열 가지 (ADR 0015, 2026-10-13).
+
+    **열 값의 원천은 프롬프트다.** `prompts/critic/v7/prefix.md:193-202`(판정 규칙의 축 목록)과
+    `prompts/critic/v6/prefix.md:141-144`(`Use only these prompt-level axis values:`)가
+    글자까지 같은 열 개를 든다 - 여기서 새로 짓지 않았다. 값이 프롬프트와 어긋나면 모든
+    `rebut`이 어휘 밖으로 읽혀 `need_evidence`로 간다(ADR 0015 「결과」).
+
+    **스키마에서 `enum`으로 강제하지 않는다.** `DecisionDraft.rebuttal_axis`는 자유 문자열
+    목록이다 - grammar 마스크가 모델의 맞는 추론을 덮는다(`Verdict`와 같은 사유,
+    `Verdict.from_text` 참조). 검증은 파싱 **뒤** `Decision.is_grounded`가 `from_text`로 한다.
+    """
+
+    GUARD = "guard"
+    REACHABILITY = "reachability"
+    ALIASING = "aliasing"
+    LIFETIME = "lifetime"
+    ARITHMETIC = "arithmetic"
+    COMPILE_FLAG = "compile_flag"
+    INPUT_REACHABILITY = "input_reachability"
+    SOURCE = "source"
+    PROPAGATE = "propagate"
+    SINK = "sink"
+
+    @classmethod
+    def from_text(cls, text: str) -> "RebuttalAxis | None":
+        """축 읽기. **앞뒤 공백을 뗀 전체가 정확히 한 값일 때만** 읽고, 아니면 `None`이다.
+
+        `Verdict.from_text`의 규율을 가져오되 훨씬 좁다 - 대소문자를 접지 않고(`GUARD`는 `None`),
+        부분 문자열·접두어로 추측하지 않으며(`guard-check`·`guard, reachability`는 `None`),
+        장식도 안 뗀다(`` `guard` ``는 `None`). 축은 **판정이 아니라 근거의 자격**이라 느슨하게
+        읽어서 얻는 것이 없고, 어휘 변형이 얼마나 나는지가 첫 v7 run의 지표다(ADR 0015) -
+        추측해 읽으면 그 비율이 가려진다.
+        """
+        try:
+            return cls(text.strip())
+        except ValueError:
+            return None
+
+
 class CapsuleLevel(StrEnum):
     """ContextCapsule.level 열거형 (knowledge-base.md §4)."""
 
