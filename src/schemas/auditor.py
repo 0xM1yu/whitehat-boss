@@ -18,13 +18,15 @@
 - **바이트는 코드가 아니라 조립 명세로 낸다** — `PovSpec`을 재쓴다. 모델이 쓴 스크립트를
   샌드박스에서 돌리는 길은 열지 않는다(결정론 + 임의 코드 실행 회피).
   ⚠ 다만 **Auditor 경로는 그 바이트를
-  도구에 안 실었다** — `spec`은 기록으로만 남았고(아래 `spec` 주석), 모델에게도 그렇게 적었다.
+  도구에 안 싣는다** — `spec`은 기록으로만 남고(아래 `spec` 주석), 모델에게도 그렇게 적는다.
   ⏵ 2026-10-09 (ADR 0014) — **이유가 바뀌었다.** 컨테이너 `poc`는 이제 입력을 **먹일 수
   있지만**(과제 `-vul` 이미지의 `/tmp/poc`) `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를
-  **안 실었다**. 그래서 `probe(poc)`는 입력 없는 호출이라 실패 Evidence였다.
-  ⏵ **2026-10-13(#419) — 이제 싣는다.** `_probe`가 `spec`을 `assemble_poc`으로 조립해
-  `ToolArgs.input_bytes`로 보낸다(`pov.run_tool`과 같은 계약). 컨테이너에서 읽는 도구는 `poc`
-  하나다.
+  **안 싣는다**. 그래서 `probe(poc)`는 입력 없는 호출이라 실패 Evidence다 — 싣게 하는 것은
+  이슈 #419이고 이 ADR의 범위가 아니다.
+  ⏵ **2026-10-13(#419) — 위 두 문장(⚠ 다만 …·⏵ 2026-10-09)은 이제 그 이전의 기록이다. 이제 싣는다.**
+  `_probe`가 `spec`을 `assemble_poc`으로 조립해 `ToolArgs.input_bytes`로 보낸다(`pov.run_tool`과
+  같은 계약). `probe(poc)`가 입력 없는 호출이라 실패 Evidence라는 말도 그 이전의 서술이다.
+  컨테이너에서 읽는 도구는 `poc` 하나다.
   ⚠ **동결된 문구가 낡았다** — 아래 `spec`의 필드 설명과 `AuditorAction`·`AuditorProcedureAction`
   (·형제)의 `probe` 줄(*「이 경로는 입력 바이트를 안 싣는다」*)은 v8~v14의 요청 payload라 고칠 수
   없다. 고침은 다음 프롬프트 판(auditor v15)과 같이 새 필드·새 봉투로 간다.
