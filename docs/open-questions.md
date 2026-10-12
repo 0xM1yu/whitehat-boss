@@ -139,7 +139,7 @@
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
 | D82 | ~~Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다~~ (①~⑤ 고쳐졌고 서빙은 v4 · v4 SOURCE 어긋남은 #529 · ⑥ location.symbol 탈락은 #633) | 닫힘 | [본문](open-questions/D/D82.md) |
 | D83 | ~~모델이 쓴 `state`·ID를 하네스가 대조하지 않는다~~ (하네스가 발급값을 도장 찍어 해소 — `location`은 D82 ⑥으로) | 닫힘 | [본문](open-questions/D/D83.md) |
-| D84 | **모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)과 `reasoning_content`를 보존하지 않는다**(⏵ `finish_reason`은 #550으로 시도별 trace에 남고 소진·거절 호출 원문은 #603으로 남는다) — 증류 데이터·D46 진단 불가 | 열림 | [본문](open-questions/D/D84.md) |
+| D84 | ~~모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)을 보존하지 않는다~~ (닫힘 · (요청, 원 응답, `finish_reason`) 보존으로 좁혀 닫음 · 성공 최종 원문은 `--keep-responses` 옵트인 · 추론 몫은 D109) | 닫힘 | [본문](open-questions/D/D84.md) |
 | D85 | ~~슬라이서가 UTF-8 아닌 소스 파일 하나에 run 전체를 실패시킨다~~ (무효 바이트만 latin-1로 해소) | 닫힘 | [본문](open-questions/D/D85.md) |
 | D86 | ~~resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다~~ ((b) 판 게이트 PR #585 · 서빙에 resume 경로 없음 — 지원하는 날 새 이슈 · 판 올림 누락은 열린 #594) | 닫힘 | [본문](open-questions/D/D86.md) |
 | D87 | ~~run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다~~ (서빙 프로필은 시작 전·교대마다 창을 대조 · hybrid 프로필과 호출 전 토큰 계수는 미구현) | 닫힘 | [본문](open-questions/D/D87.md) |
@@ -163,6 +163,7 @@
 | D105 | **Auditor 입력에 함수 포인터 간접 호출 대상(C6)과 버퍼·길이 쓰기 지점(C5(a))이 없다** | 열림 | [본문](open-questions/D/D105.md) |
 | D106 | ~~심사 대상의 자기 신고가 심사 여부를 정한다~~ ((b) #553 · Critic 도달 6/6 서빙 확인 · ②③④ 미충족 — ②는 #612·#600, E2 결함은 #576) | 닫힘 | [본문](open-questions/D/D106.md) |
 | D107 | ~~`Finding.cwe`가 non-null이라 `no_signal`에도 CWE를 요구한다~~ (v11: `no_signal`에서만 null) | 닫힘 | [본문](open-questions/D/D107.md) |
+| D109 | **추론 채널을 FT 레코드로 내보내는 길이 없고, 서버가 추론을 어느 키로 싣는지 실서빙에서 안 쟀다** (기록은 D84 좁힘 PR에서 생겼다) | 열림 | [본문](open-questions/D/D109.md) |
 
 ## 3. 팀·운영 미정
 

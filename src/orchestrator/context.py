@@ -366,7 +366,11 @@ class RunContext:
             # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출의 버려진 시도는 아래에서 쓴다(#618).
             try:
                 response_fields = self._record_failed_responses(
-                    role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
+                    role=role,
+                    stage=stage,
+                    raw_texts=getattr(exc, "raw_texts", ()),
+                    hop=hop,
+                    attempts=getattr(exc, "attempt_log", ()),
                 )
             except Exception as record_exc:  # 원 예외·청구를 가리면 안 된다
                 errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
@@ -419,7 +423,7 @@ class RunContext:
             kept = (*kept, result.raw_text)
         try:
             response_fields = self._record_failed_responses(
-                role=role, stage=stage, raw_texts=kept, hop=hop
+                role=role, stage=stage, raw_texts=kept, hop=hop, attempts=result.attempt_log
             )
         except Exception as record_exc:
             errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
@@ -634,7 +638,13 @@ class RunContext:
         return {"sent_sha256": last_digest}
 
     def _record_failed_responses(
-        self, *, role: Role, stage: Stage, raw_texts: tuple[str | None, ...], hop: int = 0
+        self,
+        *,
+        role: Role,
+        stage: Stage,
+        raw_texts: tuple[str | None, ...],
+        hop: int = 0,
+        attempts: tuple[AttemptRecord, ...] = (),
     ) -> dict[str, TraceValue]:
         """시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
 
@@ -648,6 +658,14 @@ class RunContext:
         (`_attempt_fields`와 같은 관례, CLAUDE.md §0). `index`는 칸 위치 그대로라 `_retryK`
         번호는 시도 번호와 정렬된다. 칸이 전부 `None`이어도 비어 있지 않으므로 `[null]`이 나가
         시도 칸과 맞는다.
+
+        **추론 채널은 같은 칸·같은 조건으로 `…_reasoning[_retryK].txt`에 남는다**(#280) —
+        칸 K의 추론은 `attempts[K]`(`attempt_log`의 K번째)다. `AttemptRecord.reasoning`이
+        `None`인 칸은 파일이 없고 `reasoning_refs`·`reasoning_sha256`·`reasoning_field`의
+        그 자리가 `null`이다. `""`는 파일이 있다(0바이트). **어느 칸에도 추론이 없으면 세 키를
+        아예 싣지 않는다**(Fake·추론 파서가 꺼진 서버 — 키 부재 = 추론 채널을 못 받았다).
+        응답 원문이 `None`인 칸(`content: null`)에도
+        추론은 있을 수 있다 — 추론이 예산을 다 먹은 호출이 정확히 그 모양이다.
         """
         if not raw_texts or self.prompts is None:
             return {}
@@ -659,12 +677,36 @@ class RunContext:
             )
             for index, text in enumerate(raw_texts)
         ]
-        return {
+        fields: dict[str, TraceValue] = {
             "response_refs": json.dumps(
                 [w[0] if w else None for w in written], separators=(",", ":")
             ),
             "response_sha256": json.dumps(
                 [w[1] if w else None for w in written], separators=(",", ":")
+            ),
+        }
+        slots = [attempts[i] if i < len(attempts) else None for i in range(len(raw_texts))]
+        if all(a is None or a.reasoning is None for a in slots):
+            return fields
+        reasoned = [
+            None
+            if a is None or a.reasoning is None
+            else self.prompts.write_reasoning(
+                role=role.value, stage=int(stage), index=index, hop=hop, text=a.reasoning
+            )
+            for index, a in enumerate(slots)
+        ]
+        return {
+            **fields,
+            "reasoning_refs": json.dumps(
+                [w[0] if w else None for w in reasoned], separators=(",", ":")
+            ),
+            "reasoning_sha256": json.dumps(
+                [w[1] if w else None for w in reasoned], separators=(",", ":")
+            ),
+            "reasoning_field": json.dumps(
+                [a.reasoning_field if a is not None else None for a in slots],
+                separators=(",", ":"),
             ),
         }
 
