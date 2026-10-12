@@ -1,6 +1,6 @@
 # 실서빙 run — arvo:1065 · vast RTX PRO 6000 Blackwell Server Edition(Virginia, US)
 
-> **무엇이 처음인가.** **8단계 PoV가 실모델로 돌아 PoC 넷을 만들고 넷 다 실채점기에 닿았다.**
+> **무엇이 처음인가.** **Critic을 지난(7단계 `need_evidence` 보류) Finding에서 8단계 PoV가 실모델로 돌아 PoC 넷을 만들고 넷 다 실채점기에 닿았다.** ⚠ 「PoV가 채점기에 닿은 것」 자체는 처음이 아니다 — [10-08 run](2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) §1·§5의 PoV는 Critic을 거치지 않은 E0 Finding 풀에서 돌아 7건을 제출했다. 처음인 것은 **7단계를 지난 Finding에서** 8단계가 돌아 닿은 것이다.
 > 2026-10-11 run은 같은 과제에서 Critic이 Finding 전부를 `need_evidence`로 내 PoV 풀이 비었고
 > 8단계가 `stage_end 0초`로 끝났다([그 보고서](2026-10-11-serving-run-arvo1065-vastai-remote.md) §3).
 > 이번 run은 **Critic이 또 6/6 `need_evidence`인데도** 8단계가 3시간 44분 돌았다 — PR #608이
@@ -124,7 +124,7 @@
 입력 구조인지)의 「입력 구조」 쪽 가설에 자료가 하나 늘었다. ⚠ **분리 실험은 없다** — 이것은
 두 run의 상관이고 n=2다.
 
-## 4. 🔴 8단계 PoV — 사슬이 처음 채점기까지 닿았다
+## 4. 🔴 8단계 PoV — Critic을 지난 Finding에서 사슬이 처음 채점기까지 닿았다
 
 홉 8개 전부 `find_0003`에 붙었다(`pov` 호출 9 — 홉 8은 게이트웨이 실패).
 
