@@ -57,7 +57,7 @@
 | D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
 | D3 | ~~Capsule 확장 횟수 상한~~ (need_evidence 루프의 `max_hops`로 대체 — ADR 0012 결정 6) | 닫힘 | [본문](open-questions/D/D3.md) |
 | D4 | ~~Critic 양자화 검증 표본 크기와 허용 하락폭~~ (전제 소멸 · 표본·합격선은 실험팀 범위) | 닫힘 | [본문](open-questions/D/D4.md) |
-| D5 | GPU-hour → 금액 환산식 | 열림 | [본문](open-questions/D/D5.md) |
+| D5 | ~~GPU-hour → 금액 환산식~~ (전제 소멸 — 대여라 가동시간 × 시급 · 비교표 칸은 실험팀) | 닫힘 | [본문](open-questions/D/D5.md) |
 | D6 | 상태 저장소 SQLite vs DuckDB | 결정 | [본문](open-questions/D/D6.md) |
 | D7 | 오케스트레이터 LangGraph v1 확정 여부 | 결정 | [본문](open-questions/D/D7.md) |
 | D8 | **Evidence Gate와 Critic의 순서** | 닫힘 | [본문](open-questions/D/D8.md) |
@@ -80,7 +80,7 @@
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | **장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다** | 열림 | [본문](open-questions/D/D27.md) |
-| D28 | **Scout 점수에 해상도가 없다 — 원인 미확정** | 열림 | [본문](open-questions/D/D28.md) |
+| D28 | ~~Scout 점수에 해상도가 없다 — 원인 미확정~~ (v4가 점수를 세 값 라벨로 계약 · 판정은 신호 · v4 고유값 미실측) | 닫힘 | [본문](open-questions/D/D28.md) |
 | D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
 | D30 | ~~`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다~~ (선택지 (c) — 자리마다 한 줄) | 닫힘 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 닫힘 | [본문](open-questions/D/D31.md) |
@@ -130,7 +130,7 @@
 | D76 | ~~하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다~~ | 닫힘 | [본문](open-questions/D/D76.md) |
 | D77 | ~~슬라이서 sink-first 의미·제어문 보존·단계별 재개~~ | 닫힘 | [본문](open-questions/D/D77.md) |
 | D78 | ~~슬라이스를 Scout 입력으로 올리기 전에 풀어야 할 것 셋 — `Location` 표현력·캐시 키·E1 STATIC~~ (Phase 3에서 셋 다 풀림) | 닫힘 | [본문](open-questions/D/D78.md) |
-| D79 | 조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다 | 열림 | [본문](open-questions/D/D79.md) |
+| D79 | ~~조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다~~ (선택지 (b) — evaluation.md §2.2에 명시) | 닫힘 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** (⏵ 2026-10-02 절반만 — exit 0·미측정은 E4가 아니다) | 열림 | [본문](open-questions/D/D80.md) |
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
 | D82 | **Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다 — 풀 프로필에서 라이브** (`slice_criterion`·슬라이스 SOURCE·`requested_context` 객체) | 열림 | [본문](open-questions/D/D82.md) |
@@ -141,8 +141,8 @@
 | D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
-| D90 | **Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다** (줄 기준 재검증 +2 · (a) 정렬 PR #324) | 열림 | [본문](open-questions/D/D90.md) |
-| D91 | **앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다** | 열림 | [본문](open-questions/D/D91.md) |
+| D90 | ~~Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다~~ ((a) 정렬 PR #324 · cap-off 재측정은 실험팀 · 남은 두 원소는 D94) | 닫힘 | [본문](open-questions/D/D90.md) |
+| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (앵커 확장 ROI는 실험팀 · level-3에서 다섯 중 넷 포착 · 잔여 main_38은 D96) | 닫힘 | [본문](open-questions/D/D91.md) |
 | D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 | D94 | **Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다 — 남은 미포착 7개의 원인** ((a) 보류 · hot 우위 held-out 미재현 · level-3 확인 대기) | 열림 | [본문](open-questions/D/D94.md) |
