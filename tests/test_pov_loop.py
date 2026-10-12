@@ -2064,8 +2064,14 @@ def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
     )
     for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
         assert tool in prefix, f"서빙 prefix가 {tool}을 안 든다"
-    assert "`poc`는 받는다" in prefix
-    assert "셋은 안 받는다" in prefix
+    # ⏵ 2026-10-13 — 서빙 판이 v6(영어로 다시 쓴 판)이라 갈림 문장의 철자가 판마다 다르다. 판이 또
+    # 올라가면 `KeyError`가 이 검사를 빨갛게 한다(새 판의 문장을 읽고 표에 더한다).
+    split_sentences = {
+        "v5": ("`poc`는 받는다", "셋은 안 받는다"),
+        "v6": ("**`poc` receives your PoC.**", "do not receive your bytes"),
+    }[_POV_SERVED_VERSION]
+    for sentence in split_sentences:
+        assert sentence in prefix, sentence
 
 
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
