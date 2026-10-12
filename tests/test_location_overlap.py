@@ -84,9 +84,8 @@ def test_report_prints_no_overlap_line_when_nothing_was_counted() -> None:
     assert "5건 중 후보 줄과 겹침 0건 · 정적 신호 있음 5건" in shown.render()
 
 
-def test_the_metric_is_defined_where_the_next_reader_looks() -> None:
-    root = Path(__file__).resolve().parent.parent
-    evaluation = (root / "docs" / "evaluation.md").read_text(encoding="utf-8")
-    assert "location_overlap" in evaluation and "gate_eval" in evaluation
-    table = (root / "src" / "orchestrator" / "trace.py").read_text(encoding="utf-8")
-    assert "RunRecord.location_overlap" in table
+def test_a_manifest_written_before_the_field_loads_with_no_block() -> None:
+    """옛 manifest는 그대로 로드되고 `None`(안 쟀다)이다 - 0이 아니다."""
+    fixture = Path(__file__).resolve().parent / "fixtures" / "manifests" / "run_20260817_0004.json"
+    record = RunRecord.model_validate_json(fixture.read_text(encoding="utf-8"))
+    assert record.location_overlap is None
