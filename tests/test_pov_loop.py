@@ -45,8 +45,10 @@ from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
+from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
+from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location, ProducedBy
@@ -2022,6 +2024,31 @@ def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
     forms = (canary.decode(), canary.hex(), canary.hex().upper(), base64.b64encode(canary).decode())
     for form in forms:
         assert form not in blob, f"원바이트가 trace에 실렸다: {form[:10]}…"
+
+
+def test_tool_call_event_carries_the_harness_note_only_when_the_evidence_has_one(
+    ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """이슈 #573 — `Evidence.harness_note`는 `tool_call` 이벤트에도 실린다(보고서가 모호성 건수를
+    `state.db`가 아니라 로그에서 센다). `error`처럼 있을 때만 — 없으면 **키 자체가 없다**."""
+    note = "note: exit=1 is ambiguous"
+    real_run = ctx.tools.run
+    monkeypatch.setattr(
+        ctx.tools,
+        "run",
+        lambda tool, args, sandbox: real_run(tool, args, sandbox).model_copy(
+            update={"harness_note": note if tool == "poc" else None}
+        ),
+    )
+    args = lambda tool: tool_runner.ToolArgs(argv=[tool], workdir=".")  # noqa: E731
+    sandbox = DEFAULT_SANDBOX
+    for tool in ("poc", "build"):
+        ctx.call_tool(tool=tool, args=args(tool), sandbox=sandbox, stage=Stage.VALIDATE)
+
+    calls = {e.data["tool"]: e.data for e in ctx.trace.events if e.kind is EventKind.TOOL_CALL}
+    assert calls["poc"]["harness_note"] == note
+    assert "harness_note" not in calls["build"]
 
 
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)

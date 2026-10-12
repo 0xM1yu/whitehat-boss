@@ -1181,6 +1181,11 @@ def _probe_observation(ctx: RunContext, hop: int, evidence: Evidence, *, spec_ig
         f"kind={evidence.kind.value} "
         f"evidence_id={evidence.evidence_id}{detail}",
     ]
+    if evidence.harness_note:
+        # 하네스가 만든 줄(`poc` `exit=1` 모호성 — #573)은 로그를 거치지 않는다.
+        # `_pov_observation`과 같은 자리다 — 로그에 두면 읽기 상한·절단에 잘리거나 짧은 로그에서
+        # 두 번 나온다.
+        lines.append(evidence.harness_note)
     if spec_ignored:
         lines.append(
             "note: the spec you sent was recorded but NOT given to the tool - "
