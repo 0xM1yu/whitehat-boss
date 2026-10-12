@@ -431,8 +431,8 @@ class AuditorProcedureProbeInputAction(AuditorProcedureAuditAlwaysAction):
     - `probe`: `tool`로 진단을 한 번 돌린다. `spec`을 실으면 하네스가 그것을 입력 바이트로 조립해
       도구에 싣는다 — 그 바이트를 읽는 도구는 `poc` 하나이고 `asan`·`gdb`·`build`는 읽지 않는다.
       같은 도구를 다시 부르는 것(`poc`는 같은 입력 바이트로 다시 부르는 것)은 같은 질문을 다시 하는
-      것이고, 직전 홉과 같으면 반복으로 감사가 선다. 나중에 다시 돌린 로그가 같을지는 안 쟀고
-      `evidence_id`는 호출마다 새로 난다.
+      것이고, 이 감사의 앞선 어느 호출과든 같으면(바로 앞 호출만이 아니다) 반복으로 감사가 선다.
+      나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다.
     - `answer`: `procedure`에 최종 감사 결과를 실어 감사를 끝낸다. `procedure`가 없거나 null이면
       거절한다.
 
