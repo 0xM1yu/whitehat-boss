@@ -1583,7 +1583,7 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
     parts: list[str] = []
     if poc:
         where = (
-            "PoV 루프 몫이다"
+            "PoV 풀에 들었는지는 PoV 단계 이벤트가 든다"
             if has_pov_seat
             else "이 프로필엔 pov 좌석이 없어 어디서도 실행되지 않았다"
         )
