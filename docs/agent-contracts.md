@@ -588,7 +588,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-12 — 정정: `no_poc`는 「PoC 0건」이 아니라 「후보(모델 `submit`) 0건」이다 — 중간 gen은
   `vul`에 나가도 후보가 아니며 `vul_intermediate`가 센다(#620). 도구는
   `asan`·`build`·`poc`·`gdb`
-  (`inspect`/`gen`을 통해 `pov.run_tool`) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
+  (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 도구를 `inspect`가 또
+  요청하면 도구를 안 돌리고(`tool_call` 없음) 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 인프라
+  실패(124~127)는 기억하지 않는다 · `v5` prefix는 이 거절을 아직 서술하지 않는다) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
