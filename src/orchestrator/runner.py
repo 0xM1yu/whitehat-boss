@@ -1562,8 +1562,10 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
     왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
-    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는
-    K>0에서 풀에 들므로(PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
+    모델이 낸 `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된
+    반박**(ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. 보류는 K>0에서 풀에 들므로
+    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
     정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
 
     ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
@@ -1598,7 +1600,8 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
     )
     return (
         f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
-        f" · 보류(파서 폴백 포함) {hold} · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest}"
+        f" · 보류(파서 폴백·정규화된 반박 포함) {hold} · 판정 실패 {failed}"
+        f" · Critic 미경유 {unjudged}{rest}"
         f" · pov_attempt_top_n {limit}. "
         f"8단계 PoV는 한 건도 시도되지 않았다({why})"
     )
