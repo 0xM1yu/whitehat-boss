@@ -262,6 +262,10 @@ class AuditProcedure(HarnessModel):
 # 한 글자만 바꿔도 그 판들의 payload가 달라진다(evaluation §2.3). 그래서 「같은 도구를 다시
 # 부르면 같은 관측이 온다」는 과장이 v8·v9에는 남는다 — 그 판의 기록이고, 고치려면 그 판을
 # 올려야 한다.
+# ⏵ 2026-10-13(#514) 아래 docstring의 「직전 홉과 같으면 반복으로 감사가 선다」는 이제 **코드보다
+# 좁다** - 반복 판정은 직전 홉이 아니라 앞선 **어느 홉과든** 같은 요청이면 선다(`nodes/auditor`의
+# `seen`). 이 문장은 v10~v14의 요청 payload라 한 글자도 못 고친다(요청 바이트가 바뀐다) -
+# 고치려면 다음 프롬프트 판과 함께 올린다. 그 전에는 모델이 알린 것보다 넓게 선다.
 class AuditorProcedureAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 
