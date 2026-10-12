@@ -78,7 +78,8 @@ def tracked_files(*patterns: str, root: Path | None = None) -> list[Path]:
     **디스크에 없는 추적 파일은 뺀다.** `git ls-files`는 인덱스를 읽으므로 `git rm` 없이 지운
     파일도 낸다 — 그대로 열면 전수 검사 셋이 `FileNotFoundError`로 죽고, 위와 같이 **문서의
     결함처럼 보이는 실패**가 된다(`rglob` 판은 없는 파일을 못 봐서 통과했다). 지움 자체는
-    `git status`가 보이는 일이지 이 수집기의 몫이 아니다. 서브모듈(gitlink)도 디렉터리라 같이 빠진다.
+    `git status`가 보이는 일이지 이 수집기의 몫이 아니다. 서브모듈(gitlink)도 디렉터리라
+    같이 빠진다.
     """
     base = REPO_ROOT if root is None else root
     try:
