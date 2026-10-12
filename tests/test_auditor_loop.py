@@ -1564,7 +1564,7 @@ def _probe_less(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _zero_probe_warnings(result) -> list[str]:  # noqa: ANN001
-    return [w for w in result.warnings if "probe를 한 번도 고르지 않았다" in w]
+    return [w for w in result.warnings if "probe가 한 번도 실행되지 않았다" in w]
 
 
 def test_a_loop_run_that_never_probes_says_so_in_the_run_warnings(
@@ -1587,10 +1587,31 @@ def test_a_loop_run_that_never_probes_says_so_in_the_run_warnings(
     assert f"{len(actions)}홉" in warning and f"lookup {actions.count('lookup')}" in warning
 
 
+def test_a_probe_cut_by_the_hop_limit_does_not_count_as_a_probe_that_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """상한 1 - 홉이 [lookup, probe(max_hop)]이고 그 probe는 조사가 안 돌아 `tool_call`이 0건이다.
+    `action`만 세면 경고가 꺼진다(리뷰 M2)."""
+    _patch_prompts(monkeypatch, tmp_path)
+
+    result, trace_path = _run(tmp_path, configure=lambda c: _loop_config(c, hops=1))
+
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    hops = [
+        (e["data"]["action"], e["data"].get("stop_reason"))
+        for e in events
+        if e["kind"] == "auditor_hop"
+    ]
+    assert hops == [("lookup", None), ("probe", "max_hop")], "전제"
+    assert not [e for e in events if e["kind"] == "tool_call" and e["stage"] == 5], "전제"
+    assert len(_zero_probe_warnings(result)) == 1
+
+
 def test_a_loop_run_that_probes_or_never_looped_says_nothing_about_probes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """음성 쌍 - probe가 한 번이라도 있으면 없고, 루프가 꺼졌으면(홉 이벤트 0건) 없다."""
+    """음성 쌍 - probe가 한 번이라도 있으면 없고, 홉 이벤트가 0건이어도 없다.
+    ⚠ 0건은 「꺼짐」과 「켠 run의 첫 호출 전부 실패」 둘 다다 - 이 검사는 꺼짐 쪽만 문다."""
     _patch_prompts(monkeypatch, tmp_path)
     probed, probed_trace = _run(tmp_path, "probed", configure=lambda c: _loop_config(c, hops=4))
     assert '"action":"probe"' in probed_trace.read_text(encoding="utf-8").replace(" ", ""), "전제"
