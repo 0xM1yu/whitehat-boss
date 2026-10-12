@@ -159,7 +159,14 @@ from src.orchestrator.source_definitions import (
 )
 from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceValue,
+    TraceWriter,
+    pov_inspect_max_run_by_finding,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -1089,6 +1096,18 @@ def run_pipeline(
         # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
         record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
 
+    # trace에서 센 분모 전용 집계 셋(#613·#618) — 행이 없으면 `None`이다(안 쟀다 - 0이 아니다).
+    # `unforeseen` 경로의 매니페스트도 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 리포트도 읽는다.
+    events = trace.events
+    schema_failure_runs = schema_failure_max_run_by_role(events)
+    schema_recovered = schema_recovered_calls_by_role(events)
+    pov_inspect_runs = pov_inspect_max_run_by_finding(events)
+    record = record.transition(
+        schema_failure_max_run_by_role=schema_failure_runs,
+        schema_recovered_calls_by_role=schema_recovered,
+        pov_inspect_max_run_by_finding=pov_inspect_runs,
+    )
+
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
         # HIGH 1).
@@ -1230,6 +1249,9 @@ def run_pipeline(
         grades=grades,
         ne_absorbed=state.ne_absorbed,
         pov_results=state.pov_results,
+        schema_failure_max_run=schema_failure_runs,
+        schema_recovered_calls=schema_recovered,
+        pov_inspect_max_run=pov_inspect_runs,
     )
     finished = state_machine.finish_run(
         record,

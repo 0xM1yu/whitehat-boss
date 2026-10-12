@@ -62,6 +62,7 @@ from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
     AttemptRecord,
     ModelGatewayError,
+    ModelResult,
     Prompt,
     SchemaParseError,
     Usage,
@@ -70,7 +71,12 @@ from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceWriter,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas import Candidate, Location, Role
 from src.schemas.run import Budget
 
@@ -977,3 +983,94 @@ def test_the_fake_can_script_a_truncated_multi_attempt_call_through_routing() ->
     outcome, data = _run(routed, schema=Candidate, prompt=_fake_prompt())  # call_model 경로
     assert outcome.attempt_log == script
     assert _breakdown(data) == ([8192, 12], ["length", "stop"])
+
+
+# --- 15. run 끝 집계 둘 (#613·#618) — 분모만, 행이 없으면 `None` -------------------------
+#
+# 아래는 `call_model`이 **실제로 남기는** `model_call` 행에서 센다(필드 이름을 손으로 짓지 않는다).
+# 빈 경우의 `None`을 `0`·`{}`로 바꾸면 `is None` 단언들이 빨개진다.
+
+
+class _Script:
+    """호출마다 대본 한 칸 — 예외면 던지고, 정수면 그 시도 수로 성공한다."""
+
+    def __init__(self, *steps: object) -> None:
+        self._steps = list(steps)
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        step = self._steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return ModelResult(
+            value=Tiny(ok=True), usage=_SPENT, model="m", attempts=step, gpu_ms=1,
+            gpu_ms_source="request_wall_clock",
+        )
+
+
+def _drive_calls(*calls: tuple[Role, str, object]) -> list:
+    """(역할, 대상, 대본 칸)을 차례로 `call_model`에 태우고 trace 이벤트를 돌려준다."""
+    ctx = _ctx(_Script(*(step for _, _, step in calls)))
+    for role, subject, _ in calls:
+        try:
+            ctx.call_model(
+                role=role, prompt=PROMPT, schema=Tiny, stage=Stage.SCOUT,
+                subject_kind="finding", subject_id=subject,
+            )
+        except Exception:  # noqa: BLE001 - 실패 행이 이 테스트의 입력이다
+            pass
+    return ctx.trace.events
+
+
+def _bad() -> SchemaParseError:
+    return SchemaParseError("스키마 소진", usage=_SPENT)
+
+
+def _refused() -> ModelGatewayError:
+    return ModelGatewayError("거절", status=400, usage=_SPENT)
+
+
+def test_no_model_call_rows_means_unmeasured_not_zero() -> None:
+    assert schema_failure_max_run_by_role([]) is None
+    assert schema_recovered_calls_by_role([]) is None
+    other = TraceWriter(RUN_ID, clock=lambda: NOW)
+    other.emit(EventKind.STAGE_START, stage=Stage.SCOUT)  # model_call이 아닌 행만 있다
+    assert schema_failure_max_run_by_role(other.events) is None
+    assert schema_recovered_calls_by_role(other.events) is None
+
+
+def test_the_longest_run_of_schema_failures_is_counted_per_role_and_subject() -> None:
+    a, s = Role.AUDITOR, Role.SCOUT
+    events = _drive_calls(
+        (a, "f1", _bad()), (a, "f1", _bad()), (a, "f1", _bad()), (a, "f1", 1), (a, "f1", _bad()),
+        (s, "c1", 1),
+    )
+
+    # 3연속이 성공에 끊기고 1이 뒤따른다 -> 최장 3. 실패가 없던 역할은 잰 0이다.
+    assert schema_failure_max_run_by_role(events) == {"auditor": 3, "scout": 0}
+
+
+def test_a_gateway_refusal_or_a_success_breaks_the_run() -> None:
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad()), (a, "f1", _refused()), (a, "f1", _bad()))
+
+    assert schema_failure_max_run_by_role(events) == {"auditor": 1}
+
+
+def test_failures_of_different_subjects_are_not_chained() -> None:
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad()), (a, "f2", _bad()), (a, "f1", _bad()))
+
+    # f1 두 번(사이에 f2) -> 2, f2는 1. 대상 둘의 실패를 이어 3으로 세지 않는다.
+    assert schema_failure_max_run_by_role(events) == {"auditor": 2}
+    separate = _drive_calls((a, "f1", _bad()), (a, "f2", _bad()))
+    assert schema_failure_max_run_by_role(separate) == {"auditor": 1}
+
+
+def test_recovered_calls_count_only_successes_that_needed_a_retry() -> None:
+    a, c = Role.AUDITOR, Role.CRITIC
+    events = _drive_calls(
+        (a, "f1", 2), (a, "f2", 1), (a, "f3", 3), (a, "f4", _bad()), (c, "f1", 1)
+    )
+
+    # 소진으로 끝난 실패 행은 회복이 아니다. 회복이 없던 역할은 잰 0이다.
+    assert schema_recovered_calls_by_role(events) == {"auditor": 2, "critic": 0}

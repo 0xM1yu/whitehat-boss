@@ -110,6 +110,12 @@ class Report:
     # `finding_deduped`가 건당 1행으로 싣는다. `render()`는 목록을 안 찍는다 — `deferred`의
     # 목록을 `target_skipped`에 둔 것과 같은 이유다(리포트는 요약이라 수백 줄이 Finding을 묻는다).
     merged_into: dict[str, str] = field(default_factory=dict)
+    # trace에서 센 **분모 전용** 집계 셋(#613·#618) — 러너가 `RunRecord`에 싣는 값을 그대로
+    # 받는다(산식은 `trace.py`). `None`은 그 종류의 trace 행이 없었다(안 쟀다)이고 그 줄은 안
+    # 낸다 - `0`을 지어 찍지 않는다(CLAUDE.md §0). 임계값이 아니다: 값은 실험팀 몫이다.
+    schema_failure_max_run: dict[str, int] | None = None
+    schema_recovered_calls: dict[str, int] | None = None
+    pov_inspect_max_run: dict[str, int] | None = None
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
@@ -172,6 +178,15 @@ class Report:
                 f"PoV 정지 사유 (시도 {len(self.pov_results)}건): {parts}",
                 "",
             ]
+        if self.schema_failure_max_run is not None:
+            parts = " · ".join(f"{role} {n}" for role, n in self.schema_failure_max_run.items())
+            lines += [f"연속 스키마 파싱 실패 최장(역할별, 분모만): {parts}", ""]
+        if self.schema_recovered_calls is not None:
+            parts = " · ".join(f"{role} {n}" for role, n in self.schema_recovered_calls.items())
+            lines += [f"스키마 재시도로 살아난 호출(역할별, 분모만): {parts}", ""]
+        if self.pov_inspect_max_run is not None:
+            parts = " · ".join(f"{fid} {n}" for fid, n in self.pov_inspect_max_run.items())
+            lines += [f"PoV 연속 inspect 최장(Finding별, 분모만): {parts}", ""]
         if self.critic_deferred:
             # **앞머리 명사구에 잘린 사유를 넣는다.** "반박받지 못한 Finding"으로 적으면
             # `insufficient_evidence`로 6단계에서 떨어진 건(실측 11건)도 같은 이름에 들어가
@@ -265,6 +280,9 @@ def run(
     files: dict[str, str | None] | None = None,
     ne_absorbed: dict[str, int] | None = None,
     pov_results: dict[str, str] | None = None,
+    schema_failure_max_run: dict[str, int] | None = None,
+    schema_recovered_calls: dict[str, int] | None = None,
+    pov_inspect_max_run: dict[str, int] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
@@ -317,6 +335,9 @@ def run(
         grades=dict(grades),
         ne_absorbed=dict(ne_absorbed) if ne_absorbed else {},
         pov_results=dict(pov_results) if pov_results else {},
+        schema_failure_max_run=schema_failure_max_run,
+        schema_recovered_calls=schema_recovered_calls,
+        pov_inspect_max_run=pov_inspect_max_run,
     )
 
 
