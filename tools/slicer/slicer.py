@@ -1050,8 +1050,9 @@ def parser() -> argparse.ArgumentParser:
     )
     # Which cases are discovered at all (--case-order only orders them): the skipped case's
     # discovery query never runs, so it has no candidates, no slices and a null counter. Bound into
-    # the run contract (settings) -- only when it is not the default, so a default run's settings,
-    # and so its output, are what they were before the flag.
+    # the run contract (settings) -- only when it is not the default, so a default run's settings
+    # and output bytes are what they were before the flag. Its run_signature is not: code_hashes
+    # covers slicer*.py, so a checkpoint made by older code is refused by --resume/--export-only.
     result.add_argument(
         "--cases", choices=("A", "B", "AB"), default="AB",
         help="A: only Case A (parameter flows), B: only Case B (sink backward), AB: both "
@@ -1332,7 +1333,8 @@ def main(argv: list[str] | None = None) -> int:
         # contract: a shard or a resume built from a differently imported graph is refused.
         "import_include_root": args.import_include_root,
         # Absent for the default (selected_cases() reads absent as both), so a default run's
-        # settings are byte-identical to a run before the flag.
+        # settings are the same as before the flag. (Its run_signature is not: code_hashes covers
+        # slicer*.py, and this file changed.)
         **({"cases": args.cases} if args.cases != "AB" else {}),
     }
     job.priority_files = priority
