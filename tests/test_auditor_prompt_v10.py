@@ -124,9 +124,24 @@ V10 = PROMPTS_DIR / "auditor" / "v10"
 _VERSION = "v10"
 
 
+# ⏵ 2026-10-13 — 서빙 판이 v15가 되며 아래 셋은 **v10과 v14**로 편다. v15가 그 셋이 묻는 문장을
+# 일부러 고쳤다: 반복 규칙(`poc`에 한해 입력 바이트도 본다 — 키가 `_input_aware_key`)과 `probe`
+# 봉투 예시(`spec`이 이제 예시에 든다). v15 쪽 대응 핀은 `tests/test_auditor_v15.py`가 든다.
+_PRE_V15_PINS = frozenset(
+    {
+        "test_the_v10_repeat_rule_lists_exactly_the_fields_the_request_key_ignores",
+        "test_the_v10_repeat_rule_states_both_what_the_request_key_uses_and_what_it_ignores",
+        "test_the_v10_prose_envelope_examples_use_the_fields_each_action_uses",
+    }
+)
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
-    """`_V10_ONLY` 밖의 검사를 `_VERSIONS`(v10 + 서빙 판)로 편다."""
-    if metafunc.function.__name__ not in _V10_ONLY:
+    """`_V10_ONLY` 밖의 검사를 `_VERSIONS`(v10 + 서빙 판)로 편다 — `_PRE_V15_PINS`는 v10과 v14로."""
+    name = metafunc.function.__name__
+    if name in _PRE_V15_PINS:
+        metafunc.parametrize("_prompt_under_test", ("v10", "v14"), indirect=True)
+    elif name not in _V10_ONLY:
         metafunc.parametrize("_prompt_under_test", _VERSIONS, indirect=True)
 
 
@@ -1407,7 +1422,9 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # (`tests/test_auditor_v13_facts.py`가 차이를 그 두 줄로 묶는다).
 # ⏵ 2026-10-11 v14(이슈 #67 · #578)도 같다 — v12에서 FACTS `source` 서술 두 줄만 바꿨다
 # (`tests/test_auditor_v14_facts.py`).
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14"})
+# ⏵ 2026-10-13 v15도 같다 — 그 약속 문장(§5 CWE and reproduction)을 안 건드렸다
+# (`tests/test_auditor_v15.py`가 v14와의 차이에 그 줄이 없음을 문다).
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14", "v15"})
 
 
 def _profiles_serving_v10() -> list[str]:
