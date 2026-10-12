@@ -26,6 +26,7 @@ from src.config import (
     check_serving,
     load_config,
     load_serving,
+    redact_launch_args,
 )
 from src.orchestrator.runner import DEFAULT_CONDITION, Dependencies, RunSpec
 
@@ -592,3 +593,115 @@ def test_execute_hands_the_run_device_to_build_deps(
         cli.execute(_swap_fake(), spec, run_id=RUN_ID, run_dir=tmp_path / RUN_ID)
 
     assert seen["device"] == "rig"
+
+
+# --- 의도한 기동 인자 (#99 - RunRecord.serving_launch_intended) ------------------------------
+
+
+def test_intended_args_follow_the_swap_script_order_and_leave_env_out() -> None:
+    """`tools/serve/swap.sh`가 `vllm serve`에 붙이는 순서 그대로이고 `env`는 안 싣는다."""
+    row = ServingConfig.model_validate(
+        {
+            "command": ["bash", "x.sh"],
+            "servers": {
+                "m": {
+                    **_ROW,
+                    "max_model_len": 40960,
+                    "extra_args": ["--enforce-eager", "--generation-config", "vllm"],
+                    "env": {"HF_TOKEN": "hf_abcdef"},
+                }
+            },
+        }
+    ).servers["m"]
+
+    args = row.intended_args()
+
+    assert args == [
+        "--gpu-memory-utilization", "0.3", "--max-model-len", "40960", "--max-num-seqs", "8",
+        "--enforce-eager", "--generation-config", "vllm",
+    ]  # fmt: skip
+    assert "hf_abcdef" not in " ".join(args), "env 값이 기동 인자 기록으로 샜다"
+
+
+@pytest.mark.parametrize(
+    ("args", "expected"),
+    [
+        (["--api-key", "s3cret", "--enforce-eager"], ["--api-key", "***", "--enforce-eager"]),
+        (["--api-key=s3cret"], ["--api-key=***"]),
+        (["--hf-token", "abc", "--port", "1"], ["--hf-token", "***", "--port", "1"]),
+        (["--some-flag", "hf_abcdef123"], ["--some-flag", "***"]),
+        # 음성: 이름에 token/key가 *부분 문자열*로만 든 플래그는 가리지 않는다 - 샘플링 설정을
+        # 읽는 사람이 값을 봐야 하는 자리(`--generation-config`)와 `--tokenizer`가 그 예다.
+        (
+            ["--tokenizer", "Qwen/Qwen3", "--max-num-batched-tokens", "8192"],
+            ["--tokenizer", "Qwen/Qwen3", "--max-num-batched-tokens", "8192"],
+        ),
+        (["--generation-config", "vllm"], ["--generation-config", "vllm"]),
+        # 비밀 플래그 뒤가 곧 다른 플래그면(값 없는 불리언) 그 다음 플래그를 가리지 않는다.
+        (["--enable-auth", "--enforce-eager"], ["--enable-auth", "--enforce-eager"]),
+    ],
+)
+def test_redact_launch_args_masks_secret_looking_values_only(
+    args: list[str], expected: list[str]
+) -> None:
+    assert redact_launch_args(args) == expected
+
+
+def test_a_secret_in_extra_args_never_reaches_the_intended_launch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """장비 파일 `extra_args`에 비밀이 들어도 factory가 내는 맵에는 가려진 채 간다."""
+    config = _swap_pool()
+    rows = _rows(config)
+    key = config.served_models()["auditor"]
+    rows[key]["extra_args"] = ["--api-key", "s3cret-value"]
+    _write(tmp_path, "rig", {"command": ["x"], "servers": rows})
+    real = load_serving
+    monkeypatch.setattr(factory, "load_serving", lambda device, **_k: real(device, tmp_path))
+
+    intended = factory._serving_launch_intended(config, device="rig")  # noqa: SLF001
+
+    assert intended is not None
+    assert "s3cret-value" not in json.dumps(intended)
+    assert intended["auditor"][-2:] == ["--api-key", "***"]
+
+
+def test_the_intended_launch_covers_the_swap_roles_that_have_a_device_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """교대 프로필 + 장비면 상주 ∪ 교대 역할마다 그 모델의 인자가 든다. 교대 선언이 없거나 장비가
+    없으면 `None`이다 - 빈 dict(「장비 행이 있는 역할이 없었다」)와 다른 말이다."""
+    config = _swap_pool()
+    _write(tmp_path, "rig", {"command": ["x"], "servers": _rows(config)})
+    real = load_serving
+    monkeypatch.setattr(factory, "load_serving", lambda device, **_k: real(device, tmp_path))
+
+    intended = factory._serving_launch_intended(config, device="rig")  # noqa: SLF001
+
+    assert intended is not None
+    assert set(intended) == set(SWAPPED) & set(config.served_models())
+    assert all(args[:2] == ["--gpu-memory-utilization", "0.3"] for args in intended.values())
+    assert factory._serving_launch_intended(config, device=None) is None  # noqa: SLF001
+    assert factory._serving_launch_intended(load_config("dev_fake"), device="rig") is None  # noqa: SLF001
+    # Fake뿐인 교대 프로필은 읽을 장비 행이 없다 -> `None`이 아니라 빈 dict.
+    _write(tmp_path, "rig", {"command": ["x"], "servers": {}})
+    assert factory._serving_launch_intended(_swap_fake(), device="rig") == {}  # noqa: SLF001
+
+
+def test_build_deps_carries_the_intended_launch_onto_deps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _device_with_recorder(monkeypatch, tmp_path)
+
+    def intended(config: HarnessConfig, device: str | None) -> object:
+        return build_deps(
+            config,
+            run_id=RUN_ID,
+            source_root=TARGET,
+            artifacts_root=tmp_path / "artifacts",
+            device=device,
+        ).serving_launch_intended
+
+    assert intended(_swap_fake(), "rig") == {}
+    assert intended(_swap_fake(), None) is None
+    assert intended(load_config("dev_fake"), "rig") is None

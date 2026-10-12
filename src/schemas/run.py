@@ -310,6 +310,21 @@ class RunRecord(UtcModel):
     # `chat_template_kwargs`·`thinking_token_budget`). 규칙은 바로 위와 같다: 선언한 역할만,
     # `None`은 이 필드 이전의 manifest. `sampling`(프로필 공통)을 덮은 값도 여기 남는다.
     model_request_params: dict[str, dict[str, JsonValue]] | None = None
+    # 역할 → 장비 파일(`config/serving/<device>.yaml`)이 그 역할 모델에 **의도한** `vllm serve`
+    # 기동 인자(#99) - `--gpu-memory-utilization`·`--max-model-len`·`--max-num-seqs`·`extra_args`.
+    # 비밀로 보이는 값은 `***`로 가려 싣는다(`config.redact_launch_args`).
+    #
+    # **이것은 config의 의도지 서버가 실제로 받은 argv의 증거가 아니다.** 누가 장비 파일과 다른
+    # 인자로 띄워도 이 필드는 모른다. 교대 명령이 보고한 실제 argv는 trace `model_swap`의
+    # `report.server.<key>.args`에 있다(명령이 보고했을 때만 - 러너가 안 보고한 키를 run 경고로
+    # 부른다). 그리고 어느 쪽도 서버의 **실효** 샘플링 기본값(`--generation-config vllm`을 받았는가
+    # 포함)은 아니다 - 이 하네스는 서버에 그것을 묻지 않는다. 그 축은 미측정으로 남는다.
+    # 환경변수(`ServerLaunch.env`)는 싣지 않는다.
+    #
+    # **`None`은 이 run이 교대하지도 장비 파일을 읽지도 않았다는 뜻이다**(교대 선언 없음 ·
+    # `--device` 없음 · 이 필드 이전의 manifest). 빈 dict는 장비 파일을 읽었으나 상주·교대 역할 중
+    # 장비 행이 있는 실서빙 역할이 없었다는 뜻이다. 기본값 `None`이라 옛 manifest는 그대로 로드된다.
+    serving_launch_intended: dict[str, list[str]] | None = None
     # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). 사유와 한계는 `CompileFlags`에
     # 있다 — 요점은 **사후 감사로는 잡히고 비교표로는 안 잡히던** 축을 여는 것이다.
     #

@@ -515,6 +515,10 @@ class Dependencies(Protocol):
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
     slicer: dict[str, str | int | None] | None
+    # `RunRecord.serving_launch_intended`가 될 장비 파일의 의도한 기동 인자(#99). 교대 프로필 +
+    # 장비가 아니면 `None`. 러너는 장비 파일을 읽지 않고 받는다 - 이 값은 의도지 실제 argv의 증거가
+    # 아니다.
+    serving_launch_intended: dict[str, list[str]] | None
     # 슬라이스 id → 렌더(gutter·배너). 슬라이스 타깃의 Scout `SOURCE`다. 어댑터가 run 전에 전부
     # 렌더해 둔 것을 콜러블로 받는다 — `read_source`와 같이 러너는 렌더러를 import 하지 않는다.
     read_slice: Callable[[str], str]
@@ -958,6 +962,7 @@ def run_pipeline(
         deps.model_sampling,
         deps.compile_flags,
         slicer=deps.slicer,
+        serving_launch_intended=deps.serving_launch_intended,
     )
     ctx.record = record
     ctx.store.put(record)
@@ -1183,6 +1188,11 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **공백 폭주 꼬리도 같은 자리다 (#79).** 이 키가 `true`인 것은 닫힌 #79의 재개 조건이라
+    # trace를 열지 않고도 run 결과에서 보여야 한다.
+    tail_warning = _whitespace_tail_warning(trace)
+    if tail_warning is not None:
+        warnings.append(tail_warning)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1554,6 +1564,32 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     return (
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
+    )
+
+
+def _whitespace_tail_warning(trace: TraceWriter) -> str | None:
+    """공백뿐인 꼬리의 `length` 시도가 1건 이상이면 run 경고, 아니면 `None`(#79).
+
+    `model_call.attempt_tail_whitespace_only`의 `true` 칸을 센다(역할별). `false`·`null`(해당
+    없음·원문 없음)은 세지 않는다 - 경고가 없다는 것은 「공백 꼬리가 없었다」가 아니라 「판정할 수
+    있었던 시도에 없었다」다. 칸의 `null` 두 뜻은 `trace.py`에 있다.
+    """
+    by_role: dict[str, int] = {}
+    for event in trace.events:
+        if event.kind is not EventKind.MODEL_CALL:
+            continue
+        raw = event.data.get("attempt_tail_whitespace_only")
+        hits = sum(1 for cell in json.loads(raw) if cell is True) if isinstance(raw, str) else 0
+        if hits:
+            role = str(event.data.get("role"))
+            by_role[role] = by_role.get(role, 0) + hits
+    if not by_role:
+        return None
+    detail = ", ".join(f"{role} {count}시도" for role, count in sorted(by_role.items()))
+    return (
+        f"출력 상한(length)에 닿은 시도 중 응답 꼬리가 공백뿐인 것이 있다: {detail} - "
+        "공백 폭주(#79)가 현재 로스터에서 다시 나타났다. trace model_call의 "
+        "attempt_tail_whitespace_only가 어느 호출인지 가리킨다"
     )
 
 
@@ -4928,8 +4964,9 @@ def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> Non
     ctx.record_model_swap(
         keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
     )
-    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로
-    # 본다(그대로 둔 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
+    # 실제로 띄운 기동 조건은 명령의 보고로만 기록에 남는다(의도한 인자는
+    # `serving_launch_intended`) — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로 본다(그대로 둔
+    # 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
     ctx.swap_unreported.update(
         key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
     )
@@ -5475,6 +5512,7 @@ def _new_record(
     model_sampling: dict[str, ModelSampling],
     compile_flags: CompileFlags | None,
     slicer: dict[str, str | int | None] | None = None,
+    serving_launch_intended: dict[str, list[str]] | None = None,
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -5521,6 +5559,8 @@ def _new_record(
         # 달리 어댑터를 안 거친다 — config에서 바로 유도되므로 `deps`를 탈 이유가 없다.
         model_reasoning_effort=config.reasoning_efforts(),
         model_request_params=config.request_params(),
+        # 장비 파일이 의도한 기동 인자(#99) - 어댑터가 읽어 `deps`로 나른다. 의도지 증거가 아니다.
+        serving_launch_intended=serving_launch_intended,
         # 어댑터가 낸 컴파일 조건 (#74). `tool_images`와 같은 경로로 받는다 — 러너는
         # `src/adapters/`를 import 하지 않으므로 `_STD_ARGS`를 여기서 읽을 수 없고, 읽을 수
         # 있더라도 읽으면 안 된다: 값을 두 곳에 두면 갈라진다.
