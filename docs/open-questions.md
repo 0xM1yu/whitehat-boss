@@ -155,7 +155,7 @@
 | D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
 | D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
-| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97·D96) | 닫힘 | [본문](open-questions/D/D100.md) |
+| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97, D96은 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
 | D101 | **로더가 슬라이스의 `analysis`를 버리고 `degraded`는 Scout에만 실어, 절단·역추적 경계 신호가 Auditor 입력에 안 닿는다** | 열림 | [본문](open-questions/D/D101.md) |
 | D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 후속 D103) | 닫힘 | [본문](open-questions/D/D102.md) |
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |
