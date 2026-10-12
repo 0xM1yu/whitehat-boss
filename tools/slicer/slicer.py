@@ -20,6 +20,7 @@ import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 from http.client import HTTPException
 from pathlib import Path
@@ -277,6 +278,11 @@ def valid_candidate(value: object) -> bool:
     return candidate_row_problem("case_a", value) is None
 
 
+# Shape checks for stages that only an extension runs (slicer_target registers `locate` and
+# `input_evidence`), so this module does not import the extension that is built on it.
+STAGE_VALIDATORS: dict[str, Callable[[object], bool]] = {}
+
+
 def validate_payload(stage: str, data: object, logs: str) -> None:
     """Validate before counters or Scala selectors consume untrusted HTTP fields.
 
@@ -294,7 +300,9 @@ def validate_payload(stage: str, data: object, logs: str) -> None:
         valid = isinstance(data, dict) and data.get("saved") is True
     elif stage in ("overlay", "library"):
         valid = data is True
-    elif stage == "backward" and isinstance(data, dict):
+    elif stage in STAGE_VALIDATORS:
+        valid = STAGE_VALIDATORS[stage](data)
+    elif stage in ("backward", "forward") and isinstance(data, dict):  # forward: slicer_v2 walk
         valid = (
             data.get("flow_count") is None
             and type(data.get("truncated")) is bool
@@ -563,6 +571,8 @@ class Slicer(SlicingStages):
         self.priority_case_a = False
         # --import-include-root: build_cpg gives c2cpg the repo root as a header include path.
         self.import_include_root = False
+        # Macro names c2cpg gets as `--define` (slicer_target only; empty = the plain import).
+        self.defines: list[str] = []
         # Compile-aware import (set from the CLI). compile_commands is the input database;
         # compile_db_dir is where the normalized copy is written (a shared location a remote
         # Joern can read); compiled_files is the set the database compiles, filled in by
@@ -878,7 +888,11 @@ class Slicer(SlicingStages):
                 queries.import_cpg_query(self.cpg_file.as_posix(), project)
                 if self.cpg_file is not None
                 else queries.import_query(
-                    self.repo.as_posix(), project, compilation_database, self.import_include_root
+                    self.repo.as_posix(),
+                    project,
+                    compilation_database,
+                    self.import_include_root,
+                    self.defines,
                 ),
             )
             if not isinstance(payload, dict) or payload.get("imported") is not True:
@@ -1032,6 +1046,16 @@ def parser() -> argparse.ArgumentParser:
         "cut short (tools/slice_sharded.py --wall-seconds, a kill) or stopped by a poison streak "
         "leaves the candidates it did not reach degraded, so this decides which case that is. "
         "Ids are numbered after the sort, so they differ per order. Shards and --resume must "
+        "pass the same value",
+    )
+    # Which cases are discovered at all (--case-order only orders them): the skipped case's
+    # discovery query never runs, so it has no candidates, no slices and a null counter. Bound into
+    # the run contract (settings) -- only when it is not the default, so a default run's settings,
+    # and so its output, are what they were before the flag.
+    result.add_argument(
+        "--cases", choices=("A", "B", "AB"), default="AB",
+        help="A: only Case A (parameter flows), B: only Case B (sink backward), AB: both "
+        "(default). The skipped case's candidate query is not run. Shards and --resume must "
         "pass the same value",
     )
     result.add_argument("--export-dir", type=Path)
@@ -1307,6 +1331,9 @@ def main(argv: list[str] | None = None) -> int:
         # Steers the CPG itself (c2cpg's include paths), like compile_commands above, so it is
         # contract: a shard or a resume built from a differently imported graph is refused.
         "import_include_root": args.import_include_root,
+        # Absent for the default (selected_cases() reads absent as both), so a default run's
+        # settings are byte-identical to a run before the flag.
+        **({"cases": args.cases} if args.cases != "AB" else {}),
     }
     job.priority_files = priority
     job.skip_keys = skip
