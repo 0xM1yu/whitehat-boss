@@ -69,6 +69,11 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
 _WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5"})
 
+# 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
+# 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다
+# (노드는 어댑터를 import 못 한다 — `tests/test_pov_loop.py`가 같음을 문다).
+INFRA_FAILURE_EXITS = frozenset({124, 125, 126, 127})
+
 
 def _render_prompt(
     ctx: RunContext,
