@@ -152,6 +152,9 @@ thresholds:
 
   # Progressive Context Expansion 상한 (knowledge-base.md §5, 초기값 3) — 이슈 #92.
   # 초과하면 후보를 폐기하지 않고 queued로 둔다.
+  # ⏵ 2026-10-13 - 이 값을 읽는 정책 결정점(`policy._capsule_expansion`)은 있으나 러너가 부르는 곳이
+  # 없다(ADR 0012 결정 6이 확장을 `max_hops` 루프로 대체) - 어느 run도 이 값에 좌우되지 않는다.
+  # 그래서 doctor의 「실측 전 초기값」 목록에서 뺐다(이슈 #78). 키와 결정점의 삭제는 별 작업이다.
   capsule_expansion_max: 3
 
   # need_evidence 루프 상한 — Scout가 NE 신호를 낸 뒤 같은 세션에서 되물을 수 있는 최대
