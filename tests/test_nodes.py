@@ -2735,15 +2735,16 @@ def test_the_run_warning_is_absent_without_events_and_counts_by_cause(ctx: RunCo
 
 
 def test_the_poc_sentence_depends_on_whether_the_profile_has_a_pov_seat(ctx: RunContext) -> None:
-    """8단계는 `poc`를 실행하지 않는다. 그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 루프 몫이고
-    **없으면 어디서도 안 돈다.** 경고가 좌석이 없을 때 「PoV 루프」를 말하면 거짓이다."""
+    """8단계는 `poc`를 실행하지 않는다. 그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 풀 여부는
+    PoV 단계 이벤트가 들고 **없으면 어디서도 안 돈다.** 경고가 좌석이 없을 때 「PoV 루프」를 말하면
+    거짓이다."""
     _hold_with(ctx, ctx.tools, 1, "poc가 종료 코드 139로 죽는다")
 
     seated = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True)
     seatless = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=False)
 
     assert seated is not None and seatless is not None
-    assert "PoV 루프" in seated and "pov 좌석이 없어" not in seated
+    assert "PoV 단계 이벤트" in seated and "pov 좌석이 없어" not in seated
     assert "pov 좌석이 없어 어디서도 실행되지 않았다" in seatless
     assert "PoV 루프" not in seatless
 
