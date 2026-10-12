@@ -452,11 +452,9 @@ def test_one_bad_axis_among_good_ones_spoils_the_rebut() -> None:
 def test_surrounding_whitespace_on_an_axis_is_tolerated() -> None:
     """`from_text`는 `strip()`만 한다 (`Verdict.from_text`처럼). `"guard "`는 어휘 안이다.
 
-    ⚠ 이 PR의 위임 지시는 `"guard "`를 어휘 밖 음성 핀 목록에 적었으나 **같은 지시가 `from_text`를
-    「`strip()` 뒤
-    정확 일치」로 정했다** - 둘은 양립하지 않는다. 앞쪽 명세(공백 허용)를 따랐다. 공백은 의미가
-    아니라
-    직렬화 잡음이고, 이를 막으면 「어휘 변형으로 대량 need_evidence」를 공백이 만든다.
+    앞뒤 공백은 의미가 아니라 직렬화 잡음이다(ADR 0015 「허용 정규화는 strip() 하나」).
+    공백을 어휘 밖으로 치면 「어휘 변형으로 대량 need_evidence」를 공백이 만든다.
+    대소문자·장식·구분자는 어휘 밖이다 - 아래 음성 핀이 그것을 든다.
     """
     decision = _decision(Verdict.REBUT, grounded=False, axes=(" guard ", "sink\t"))
 
