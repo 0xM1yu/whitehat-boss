@@ -193,7 +193,7 @@ STATUS.md가 이미 셋을 든다: **A**(정답 PoC 재생) · **B**(`Role.POV`+
 - ToolRunner 도구가 일곱이 됐다(gdb 포함). 실행류 `_RUNTIME_TOOLS = {asan, gdb, poc}`.
 - gdb 배치: `clang -g -O0` 링크 → `gdb --nx -batch -x /opt/gdb.batch`(비대화형 고정 스크립트). **pwndbg 같은 UI 확장 미탑재** — EnIGMA가 raw gdb를 막고 래퍼만 노출한 것과 같은 축([leaderboard §5](2026-09-29-cybergym-leaderboard-harnesses.md)).
 - ⚠ **`validate.tool_for()`가 gdb를 안 고른다** — 8단계가 gdb를 부르는 경로가 없다. PoV 루프가 gdb를 부르는 **첫 소비자**가 된다. ⏵ 낡음 — 위 시점 노트 ⑤(`d85ea62`에서 PoV 루프도 gdb를 못 부른다 — `PovAction.tool`에 gdb가 없다)
-- ptrace 실측(D92): Docker·rootless Podman 둘 다 `--cap-add=SYS_PTRACE` **불필요**. Singularity는 [D92](../open-questions/D/D92.md) ~~열림~~(미실측). ⏵ 2026-10-12 — D92 닫음.
+- ptrace 실측(D92): Docker·rootless Podman 둘 다 `--cap-add=SYS_PTRACE` **불필요**. Singularity는 [D92](../open-questions/D/D92.md) 열림(미실측).
 
 ---
 
