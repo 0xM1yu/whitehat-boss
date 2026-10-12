@@ -45,8 +45,11 @@ from src.schemas.common import Location
 SUPPORTED_SLICE_VERSION = "slice-v2"
 
 # 슬라이서 `case` → v3 `slice_criterion.given_end`
-# (`prompts/scout_*/v3/prefix.md` 「Slice criterion」).
-_GIVEN_END = {"A": "source", "B": "sink"}
+# (`prompts/scout_*/v3/prefix.md` 「Slice criterion」: `source`면 앞으로, `sink`면 뒤로 자른 것).
+# `F`는 `tools/slicer_v2/slicer_target.py`의 정방향 슬라이스다 — source에서 시작해 앞으로 자르므로
+# 쥐여 준 끝은 `source`다(Case A와 같은 끝). 하네스가 `case`에서 읽는 것은 이 `given_end`뿐이다
+# (`SliceRef.given_end` → Scout `slice_criterion`·가드 스캔·`NO_CALLER_IN_CPG` 판정).
+_GIVEN_END = {"A": "source", "B": "sink", "F": "source"}
 
 
 class SliceInputError(ValueError):

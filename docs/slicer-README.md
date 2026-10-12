@@ -820,3 +820,48 @@ HTTP 전송 방식은 [Joern 서버 문서](https://docs.joern.io/server/), 파�
   `fbbcfa5`의 케이스 먼저 `ba`는 안 돌렸다).
 - Joern 버전은 실행 계약에 들어 있어(`slicer_pipeline.py`의 `prepare_checkpoint`) 4.0.605로 만든 체크포인트·샤드는 4.0.646 서버로 `--resume`·병합이 안 된다 —
   코드를 읽었을 뿐이다.
+
+## 대상 지정 모드와 입력 문맥 — `tools/slicer_v2` (PR #638)
+
+⏵ 2026-10-13 — **정본은 `tools/slicer`다.** `tools/slicer_v2/`는 그 사본이 아니라 정본 **위에 얹힌 확장**이고
+정본 모듈을 이름으로 import한다(`slicer_target.py`가 실행 파일 옆 `../slicer`를 import 경로에 더한다). 배포는 `tools/slicer/`와
+`tools/slicer_v2/` **둘 다**다. 포크가 들고 있던 `tools/slicer` 사본·하네스 코드 사본(`attach/`·`indexer.py`)·정답 주도 도구는
+들이지 않았다.
+
+**정본에 들어간 것 둘 — 둘 다 켜지 않으면 기존 출력이 바이트 단위로 그대로다.**
+
+| 옵션 | 뜻 | 계약 |
+| --- | --- | --- |
+| `--cases {A,B,AB}` | 후보를 **발견**할 케이스. 건너뛴 케이스의 질의는 안 돌고 그 카운터는 `null`(0이 아니다)이다. `--case-order`는 순서만 정한다 | 기본값 `AB`가 아니면 `settings.cases`에 든다 — 샤드·`--resume`은 같은 값을 줘야 한다 |
+| c2cpg `--define` | `slicer_target.py`만 쓴다. start/stop 줄을 살리는 매크로(`#ifdef X`의 참 분기 등, `_`로 시작하는 이름 제외)를 `target.defines`로 남기고 c2cpg에 넘긴다 | 후보 발견 실행은 넘기지 않는다 |
+
+**대상 지정 모드** (`tools/slicer_v2/slicer_target.py`) — 후보 발견 없이 spec 파일이 가리킨 위치에서 자른다.
+spec은 `{"sink": {...}, "source": {...} | null}`이고 각 끝은 `file`·`line`(필수) · `line_end` · `function` · `symbol` ·
+`function_span`이다. **정답·CWE 경로를 읽지 않는다.** 하나는 sink에서 **역방향**(`case: "B"`), 둘째는 source에서 **정방향**
+(`case: "F"`, source가 있을 때만)이다. 하네스 로더는 `F`를 「쥐여 준 끝이 `source`인 슬라이스」로 읽는다
+(`src/adapters/slices.py` — `given_end`만 `case`에서 나온다). start/stop 노드를 spec의 심볼 문자열에서 고르는 규칙과 한계는
+모듈 docstring이 든다. ⚠ **Auditor Finding의 위치·심볼이 손으로 쓴 spec과 같은 노드를 고르는지는 미실측이다.**
+
+**`slices[].analysis.input_evidence`** — 슬라이스 줄을 가진 메서드와 그 호출 하위 메서드의 CPG 사실(읽는 포인터 ·
+그것을 검사하는 조건 · 해소된 호출 간선). 상한(`MAX_METHODS` 400 · `MAX_DEPTH` 6 · 읽기 120 · 조건 80)은 PR 저자가 정한 값이고
+**잰 값이 아니다.** 상한에 닿으면 `truncated` + `truncation_reasons`(`methods`·`depth`·`reads`·`guards`), 메서드별
+`reads_truncated`·`guards_truncated`가 선다.
+
+**`slices[].analysis.input_context`** — `--index`(하네스 인덱서 `tools/harness-tools/indexer.py`의 index-v2 이상)를 줄 때만 든다.
+**어떤 함수가 입력 디코더로 보이는지를 이름으로 말할 뿐 소스를 싣지 않는다** — 무엇을 어디에 보일지는 소비하는 쪽 몫이다.
+
+| 키 | 뜻 |
+| --- | --- |
+| `version` · `status` | `1` · `selected` / `none_selected` |
+| `basis` · `evidence_status` | `cpg`(근거 `ok`, 호출 경로 증명 있음) / `syntax`(근거 없음·질의 실패 — 인덱스만으로 고른 약한 선택) |
+| `cap_hit` · `cap_reasons` | 상한이 탐색을 멈췄는가. 이유는 `evidence` · `path_depth` · `grammar_budget` · `max_functions` · `max_chars` · `match_depth` · `dispatch_rows` 중 정렬된 목록. **빈 선택에 `cap_hit`이 서 있으면 잘린 탐색일 수 있다** |
+| `identical_to_auditor_input` | 선택이 슬라이스 자신의 함수에 **아무것도 더하지 않는다**(`functions`·`carried_decoders`·`dispatches`가 다 빔). 소비자가 그 함수들을 이미 보이면 여기서 찾은 것도 다 보인 것이다. `cap_hit`과 같이 읽는다 |
+| `functions[]` | 더할 함수 — `kind`(`grammar`/`decoder`) · `file` · `symbol` · `line_start/end` · `chars` · `score` · 호출 지점(`call_file/line`, `callee`, `macro`) · `depth` · `input_cursors` · `joern_flow` · `reason` · `cpg`(증명 또는 `null`) |
+| `carried_decoders[]` | 슬라이스를 든 함수 중 입력 커서를 스스로 읽는 것 — 줄만이 아니라 통째로 보일 후보 |
+| `dispatches[]` | 문자열 키 함수 표에서 핸들러로 이어지는 행 — `file`·`line`·`handler`·`directive`·`table`·`conditional`·`registration_line` |
+| `carried` · `input_states` · `linked_methods` · `unreadable_files` · `contract` | 슬라이스 자신의 함수 · 입력 커서 이름 · 증명이 선 메서드 수(`syntax`면 `null`) · 읽지 못한 파일(빈 문자열로 둔갑시키지 않는다) · 문법 검사 경로 진단 |
+| `caps` · `caps_measured` | 쓴 상한과 `false` — 아래 임계값은 PR 저자의 선택이고 코퍼스로 잰 값이 아니다 |
+
+한계: 함수 포인터 호출·구조체 필드를 거친 입력 경로는 이어지지 않을 수 있다(그러면 디코더가 안 붙는다). 이 모드의 산출물에는
+`pov-input.c`·`.c` 렌더가 **없다** — 포크의 `attach/`는 하네스 `runner._auditor_source`의 사본이라 들이지 않았다. 로더는 `analysis`의
+읽는 키 밖은 무시하므로 새 키가 로드를 막지 않는다(`tests/test_slices.py`). 하네스가 이 키를 소비하는 배선은 별도 PR이다.

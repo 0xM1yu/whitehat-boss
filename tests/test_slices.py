@@ -592,3 +592,36 @@ def test_render_slices_never_reads_outside_the_target_root(tmp_path: Path, entry
 
     with pytest.raises(SliceInputError, match="outside.c"):
         render_slices(loaded, root)
+
+
+def test_a_forward_slice_f_loads_with_the_source_end_given(tmp_path: Path) -> None:
+    """`tools/slicer_v2/slicer_target.py`의 정방향 슬라이스(`case: "F"`)는 source에서 시작해 앞으로
+    자른 것이라 쥐여 준 끝이 `source`다. 하네스가 `case`에서 읽는 것은 이 `given_end`뿐이다 —
+    그 밖의 case는 여전히 거부한다."""
+    forward = _slice("forward", "F", {("main.c", 1), ("main.c", 5)}, _SOURCES, direction="forward")
+    loaded = load_slices(_write(tmp_path, _document([forward])))
+    assert [s.given_end for s in loaded.slices] == ["source"]
+    refs = slice_refs(loaded)
+    assert refs[0].given_end == "source"
+    # Like Case B, an F slice does not take its entry's symbol for the enclosing function.
+    assert refs[0].location.symbol is None
+
+    with pytest.raises(SliceInputError):
+        load_slices(_write(tmp_path, _document([_slice("x", "G", {("main.c", 1)}, _SOURCES)])))
+
+
+def test_the_input_evidence_and_input_context_keys_do_not_stop_the_load(tmp_path: Path) -> None:
+    """`analysis`는 읽는 키(절단 사유·경계·싱크 cap)만 쓰고 나머지는 둔다 — 슬라이서 v2가 더하는
+    `input_evidence`·`input_context`(와 앞으로 더할 키)가 로드를 막지 않아야 한다. 하네스는 아직
+    이 키를 읽지 않는다(Phase 6-1 배선 몫)."""
+    extra = {
+        "input_evidence": {"version": 1, "status": "ok", "methods": [], "calls": []},
+        "input_context": {"version": 1, "cap_hit": False, "identical_to_auditor_input": True},
+        "some_future_key": {"anything": [1, 2, 3]},
+    }
+    item = _slice(
+        "slice_0001", "B", {("main.c", 5)}, _SOURCES,
+        analysis=_backward(truncation_reasons=["backward_depth"], **extra),
+    )
+    loaded = load_slices(_write(tmp_path, _document([item])))
+    assert loaded.slices[0].truncation_reasons == ("backward_depth",)
