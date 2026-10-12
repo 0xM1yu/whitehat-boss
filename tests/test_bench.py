@@ -1084,7 +1084,7 @@ def test_memory_reports_how_many_samples_the_peak_came_from(
 
     `*_reason`은 "한 번도 못 쟀다"만 가르므로 그 사이가 통째로 비어 있었다. 폴링 간격이
     생기면서 표본이 줄어 구멍이 커지므로 개수를 함께 낸다 — 캡슐의 `items=k`가 잘린
-    값인지 캡슐만 봐서는 모르는 것(D13 잔여 (b))과 같은 모양이다.
+    값인지 캡슐만 봐서는 모르는 것(D13 잔여 (b) — #78)과 같은 모양이다.
     """
     counts: dict[str, int] = {}
     _stub_polling(monkeypatch, [], counts=counts)

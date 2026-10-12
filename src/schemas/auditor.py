@@ -309,7 +309,7 @@ class AuditorProcedureAction(_AuditorEnvelope):
 #
 # 반대 방향(`no_signal`이면 null이어야 한다)은 **스키마가 안 건다** — 산문이 null을 시키고, 어기면
 # 최종 답을 통째로 재생성하는 비용을 안 치른다(`AuditProcedure` 위 주석의 「일부러 싣지 않는다」와
-# 같은 근거). 그 위반이 얼마나 나는지는 안 쟀다.
+# 같은 근거). 그 위반은 v13·v14 서빙 run에서 0/4였다(n=4 · 이슈 #579).
 #
 # ⚠ docstring은 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다(`AuditProcedure`와 같다).
 class AuditProcedureNullableCwe(AuditProcedure):

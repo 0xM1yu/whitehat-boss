@@ -142,8 +142,9 @@ DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
 # run 디렉터리 접두사. `gc`는 이 접두사를 가진 디렉터리만 지운다.
 RUN_DIR_PREFIX = "run_"
 
-# 실측 전 초기값인 임계값 (이슈 #91·#92). 조건 간 비교 전에 확정해야 한다.
-# `pov_tool_hops`(#511)는 값이 사용자 결정 대기라 같은 자리다.
+# 실측 전 초기값인 임계값 (이슈 #91·#92 — 둘 다 닫혔다, 값은 여전히 안 잰 초기값).
+# 조건 간 비교 전에 확정해야 한다. `pov_tool_hops`(#511, 2026-10-12 닫음)는 값이
+# 16(사용자 결정 2026-10-06)이나 효과 미실측이라 같은 자리다.
 PROVISIONAL_THRESHOLDS = (
     "scout_threshold",
     "capsule_expansion_max",
@@ -740,7 +741,8 @@ def _check_thresholds() -> Check:
     return Check(
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
-        "— 조건 간 비교 전에 확정한다 (이슈 #91·#92·#511)",
+        "— 조건 간 비교 전에 확정한다 (근거: config/budgets.yaml 각 키 주석 — "
+        "이슈 #91·#92·#511은 닫혔고 값은 안 잰 초기값 그대로다)",
     )
 
 

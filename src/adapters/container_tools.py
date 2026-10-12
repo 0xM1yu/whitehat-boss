@@ -17,7 +17,8 @@
 **clang-tidy는 exit code만으로 "경고를 찾음"과 "대상이 컴파일되지 않음"을 구분하지 못한다.**
 둘 다 non-zero다. 그대로 두면 컴파일 실패가 정적 신호로 집계된다. 그래서 출력에
 `clang-diagnostic-error`가 있으면 도구 실패(`ok=False`)로 내린다 — 남은 구분 수단이 출력
-문자열뿐이라는 사실 자체가 #61 항목이다.
+문자열뿐이라는 사실 자체가 #61 항목이다(⏵ 2026-10-12 닫음 — 서빙 2 run에서 마커가
+성립했고 `Evidence.findings`는 안 넣었다).
 
 ## 로그 규약 (engineering-guide.md §6)
 
@@ -1116,7 +1117,8 @@ def first_hit_location(tool: str, steps: list[Step]) -> Location | None:
     옮긴다. semgrep은 명령행에 컨테이너 마운트 경로(`{MOUNT}/<rel>`)를 받으므로 `path`가
     `/src/parser.c`로 나온다(실측). 그 접두를 벗겨 `Candidate.location.file`(저장소 상대
     경로)과 같은 좌표계로 맞춘다 — 안 벗기면 `overlaps`의 파일 비교가 어긋나 `location_ok`가
-    계속 거짓이다. clang-tidy는 출력이 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속).
+    계속 거짓이다. clang-tidy는 출력이 텍스트라 정규화 위험이 커 **여기서 다루지 않는다**(#70 후속 —
+    미착수, #507이 선행).
 
     **채워도 게이트 등급은 안 바뀐다**(#70): `p1 = static_ok or location_ok`이고
     STATIC Evidence에만 location이 붙어 `static_ok`가 이미 참이다. 이 값의 쓰임은 등급이
