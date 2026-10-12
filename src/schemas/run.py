@@ -371,6 +371,11 @@ class RunRecord(UtcModel):
     schema_recovered_calls_by_role: dict[str, int] | None = None
     # Finding → 연속 `inspect` PoV 홉의 최장 길이(`action`을 실은 `pov_hop`만 - #619 (d)).
     pov_inspect_max_run_by_finding: dict[str, int] | None = None
+    # 위 셋 중 **센 집계가 던져서** `None`이 된 키 → 사유(`ExcType: 메시지`). 「그 종류의 행이
+    # 없다」와 「집계가 죽었다」가 같은 `None`이라 갈라 읽는 자리다(CLAUDE.md §0 - 안 쟀다와 못
+    # 쟀다). 안 던졌으면 `None`이고 이 필드 이전의 manifest도 같다(위와 같은 관용구). 같은 사유는
+    # run 경고(stderr)에도 간다.
+    trace_aggregate_failures: dict[str, str] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

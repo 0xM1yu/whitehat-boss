@@ -6006,7 +6006,7 @@ def test_doctor_errors_on_an_undescribed_auditor_source_option(
     assert lines and all(line.startswith("[ERROR") for line in lines)
 
 
-# --- 분모 전용 집계 셋 (#613·#618) — 매니페스트와 report.md까지 가는 배선 -------------
+# --- 분모 전용 집계 셋 (#613·#618·#619 (d)) — 매니페스트와 report.md까지 가는 배선 -------------
 
 
 def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> None:
@@ -6059,6 +6059,35 @@ def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> N
     assert all(f in inspect_line for f in listed)
     assert not any(f in inspect_line for f in values if f not in listed)
     assert f"나열하지 않은 Finding {len(values) - len(listed)}건" in inspect_line
+
+
+def test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정상 경로에서 집계 하나가 던지면: run은 끝나고, 그 키만 `None`이며, 사유가 매니페스트
+    (`trace_aggregate_failures`)와 report.md(「집계 실패」)에 남는다. 「미측정(행이 없다)」으로
+    찍히면 안 된다 - 같은 `None`이라도 원인이 다르다(CLAUDE.md §0). 나머지 둘은 평소처럼 센다."""
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("집계 결함")
+
+    monkeypatch.setattr(runner, "pov_inspect_max_run_by_finding", broken)
+    result, trace_path = _run(tmp_path)
+
+    key = "pov_inspect_max_run_by_finding"
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest[key] is None and getattr(result.record, key) is None
+    assert manifest["trace_aggregate_failures"] == {key: "ValueError: 집계 결함"}
+    assert result.record.trace_aggregate_failures == {key: "ValueError: 집계 결함"}
+    assert manifest["schema_failure_max_run_by_role"], "다른 집계까지 잃었다"
+    assert manifest["schema_recovered_calls_by_role"], "다른 집계까지 잃었다"
+    assert any(key in w and "집계 결함" in w for w in result.warnings), result.warnings
+    inspect_line = next(
+        ln for ln in result.report.render().splitlines() if ln.startswith("PoV 연속 inspect")
+    )
+    assert "집계 실패: ValueError: 집계 결함" in inspect_line
+    assert "미측정" not in inspect_line
+    assert "미측정" not in result.report.render(), "잰 두 줄까지 미측정으로 찍혔다"
 
 
 def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Path) -> None:

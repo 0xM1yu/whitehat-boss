@@ -3323,7 +3323,7 @@ def test_infra_failure_exits_match_the_container_adapter() -> None:
     assert pov_node.INFRA_FAILURE_EXITS == adapter
 
 
-# --- 연속 `inspect` 최장 길이 (#613) — 분모만, 행동 행이 없으면 `None` --------------------
+# --- 연속 `inspect` 최장 길이 (#619 (d)) — 분모만, 행동 행이 없으면 `None` --------------------
 
 
 def _inspect_runs(scripted: RunContext) -> dict[str, int] | None:  # noqa: F811
