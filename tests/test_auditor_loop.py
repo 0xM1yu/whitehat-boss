@@ -8,6 +8,7 @@
 단언도 여기 둔다.
 """
 
+import hashlib
 import json
 import re
 from collections.abc import Iterator
@@ -29,10 +30,12 @@ from src.adapters.symbol_render import render_followup
 from src.bench import ROLE_SPEC
 from src.config import CONFIG_DIR, load_config
 from src.interfaces.model_client import ModelResult, SchemaParseError, Usage
+from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import gate
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor, index, preprocess, retrieval, scout, signals
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.prompt_loader import (
     PROMPT_TOOL_NAMES,
@@ -296,7 +299,12 @@ def test_the_request_schema_tells_the_model_the_truth_about_spec() -> None:
     ⏵ **2026-10-09 (ADR 0014) — 무는 철자를 옮겼다.** 전에는 「받지 않는다」를 물었는데 컨테이너
     `poc`는 이제 입력을 **받을 수 있다**(과제 `-vul` 이미지의 `/tmp/poc`). 참인 문장은 **「이
     경로가 안 싣는다」**이고 그 선을 넘지 않는다 — 「도구가 못 받는다」로 쓰면 다시 거짓이다.
-    싣게 하는 것은 이슈 #419다."""
+    싣게 하는 것은 이슈 #419다.
+
+    ⏵ **2026-10-13(#419) — 노드는 이제 싣는다. 이 검사는 그대로 선다 — 동결된 판(v8·v9)의
+    요청 바이트를 문다.** 그 설명은 이제 **낡았고**(모델이 `spec`을 안 보내게 만든다 — 이슈 #617)
+    고침은 다음 프롬프트 판(auditor v15)이 새 설명으로 간다. 여기서 「안 싣는다」를 지우면 v8·v9
+    요청 payload가 바뀐다."""
     schema = AuditorAction.model_json_schema()
 
     assert "안 싣는다" in schema["description"]
@@ -1468,9 +1476,15 @@ def test_asking_the_same_thing_twice_in_a_row_stops_as_repeat_request(
     """직전 홉과 같은 요청이면 `REPEAT_REQUEST`로 서고, 그 반복 홉의 조사는 돌리지 않는다.
 
     `lookup`의 키는 `(kind, target)` 집합이다 — `rationale`·`purpose`가 달라도 같은 질문이다.
-    `probe`의 키는 **도구 이름**이다: 도구가 `spec`을 입력으로 안 받으므로 `spec`만 바꿔 또
-    부르면 같은 관측이 돌아오고, 모델은 매번 다른 답을 받은 줄 안다. 도구 호출 수가 1(첫 probe만)인
-    것이 「반복 홉은 안 돌렸다」의 증거다. 상한은 5라 `MAX_HOP`이 가로채지 못한다."""
+    `probe`의 키는 **도구 이름**이다: `spec`만 바꿔 또 부르면 같은 요청이다. 도구 호출 수가 1(첫
+    probe만)인 것이 「반복 홉은 안 돌렸다」의 증거다. 상한은 5라 `MAX_HOP`이 가로채지 못한다.
+
+    ⏵ **2026-10-13(#419) — 근거가 바뀌었다.** 전에는 *「도구가 `spec`을 안 받으므로 같은 관측이
+    돌아온다」*가 이유였고 그것은 이제 **거짓이다**(노드가 `spec`을 싣는다). 이 검사는 **키가 아직
+    도구 이름만 본다**는 현재 동작을 문다 — 그대로 둔 이유는 동결된 프롬프트(v8~v14)의 반복 규칙이
+    *「`spec`만 바꿔도 다른 요청이 아니다」*라 적고 `tests/test_auditor_prompt_v10.py`가 그 산문과
+    키를 묶는다는 것이다(`auditor._request_key`). 키에 PoC digest를 더하는 것은 다음
+    판(auditor v15)과 같이 움직이고, 그때 이 사례는 반대로 뒤집힌다."""
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
     _arm(ctx, monkeypatch, tmp_path, hops=5)
     ctx.models = _ScriptedModel(actions)
@@ -1814,38 +1828,109 @@ def test_estimate_counts_the_tool_loop_calls_in_the_auditor_ceiling() -> None:
 # --- B8: 모델 문자열이 도구 argv에 안 들어간다 -------------------------------------
 
 
-@pytest.mark.parametrize("tool", ["semgrep", "asan"])
-def test_a_probe_hop_puts_only_the_tool_name_in_argv(
-    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
-) -> None:
-    """`probe`가 도구 러너에 넘기는 `argv`는 `[도구 이름]` 하나다 — 모델이 쓴 어떤 글자도 안 실린다.
-
-    모델의 `rationale`과 `spec.rationale`에 셸 메타문자가 든 표식을 싣고, 러너가 실제로 받은
-    `ToolArgs`(스파이)와 `tool_call` 이벤트를 본다. 도구 이름은 스키마가 닫은 Literal이라 argv가
-    고정된 여섯 중 하나다 — 이 검사가 무는 것은 누군가 `spec`이나 `rationale`을 인자로 이어
-    붙이는 변경이다(임의 입력이 도구 인자·Evidence 로그에 실린다). `argv`가 선택한 도구의 이름인
-    것은 도구를 고정값으로 박은 변경도 막는다."""
-    marker = "MODEL_TEXT; echo pwned #"
+def _run_one_probe(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    action: AuditorAction,
+) -> tuple[_SpyTools, list, str]:
+    """`probe` 한 번을 돌려 (러너 스파이, 그 홉의 `tool_call` 이벤트, 다음 홉의 관측)을 낸다."""
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
-    _arm(ctx, monkeypatch, tmp_path, hops=1)
-    ctx.models = _ScriptedModel(
-        [_probe_action(tool, spec=_spec(marker), rationale=marker), _lookup_action("x")]
-    )
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    ctx.models = _ScriptedModel([action, _answer_action()])
     spy = _SpyTools(ctx.tools)
     ctx.tools = spy
     before = len(_events(ctx, EventKind.TOOL_CALL))
 
-    with pytest.raises(auditor.AuditorHopLimit):  # 조사 한 번 뒤 둘째 조사 홉에서 MAX_HOP
-        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+    auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    return spy, _events(ctx, EventKind.TOOL_CALL)[before:], ctx.models.prompts[1][1].body
+
+
+@pytest.mark.parametrize("tool", ["semgrep", "asan", "poc"])
+def test_a_probe_hop_feeds_the_assembled_spec_bytes_like_the_pov_loop(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+) -> None:
+    """`probe`에 `spec`이 있으면 러너가 받는 `ToolArgs`는 `pov.run_tool`과 **같은 계약**이다 —
+    `argv == [도구, INPUT_PLACEHOLDER]` · `input_bytes == assemble_poc(spec)`.
+
+    ⏵ **2026-10-13(#419) — 이 검사가 뒤집혔다.** 전에는 `..._puts_only_the_tool_name_in_argv`가
+    같은 입력(`spec`에 셸 메타문자 표식)에서 `argv == [도구]`와 입력 없음을 물었다 — 노드가
+    `spec`을 도구에 안 줬기 때문이다. 이제 싣는다. **전 판이 지키던 성질은 그대로 문다**: 모델이 쓴
+    **문자열**(`rationale`·`spec.rationale`)은 argv에도 입력 바이트에도 안 실린다 — 실리는 것은
+    `assemble_poc`이 `spec`의 세그먼트에서 조립한 바이트뿐이다. 도구 셋을 도는 것은 노드가 어느
+    도구든 같은 계약으로 싣기 때문이다(컨테이너에서 **읽는** 도구는 `poc` 하나다 — 이 검사는 읽힘이
+    아니라 **실림**을 문다). `tool_call` 이벤트는 크기와 digest만 싣는다(원바이트는 안 간다)."""
+    marker = "MODEL_TEXT; echo pwned #"
+    spec = _spec(marker)
+    poc = assemble_poc(spec)
+
+    spy, calls, _ = _run_one_probe(
+        ctx, monkeypatch, tmp_path, _probe_action(tool, spec=spec, rationale=marker)
+    )
 
     assert len(spy.calls) == 1
-    ran, args, _ = spy.calls[0]
+    ran, args, _sandbox = spy.calls[0]
     assert ran == tool
-    assert list(args.argv) == [tool]
-    assert marker not in repr(args)
-    calls = _events(ctx, EventKind.TOOL_CALL)[before:]
-    assert [(c.data["tool"], c.data["argv"]) for c in calls] == [(tool, tool)]
+    assert list(args.argv) == [tool, INPUT_PLACEHOLDER]
+    assert args.input_bytes == poc
+    assert marker not in repr(args) and marker.encode() not in args.input_bytes
+    assert [(c.data["tool"], c.data["argv"]) for c in calls] == [
+        (tool, f"{tool} {INPUT_PLACEHOLDER}")
+    ]
+    assert calls[0].data["input_bytes"] == len(poc)
+    assert calls[0].data["input_sha256"] == hashlib.sha256(poc).hexdigest()
     assert marker not in repr(calls)
+
+
+@pytest.mark.parametrize("tool", ["semgrep", "poc"])
+def test_a_probe_hop_without_a_spec_runs_the_tool_with_no_input(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, tool: str
+) -> None:
+    """`spec`이 없으면 `argv == [도구]` · 입력 없음이고 `tool_call`에 `input_*` 키가 **없다**(키
+    부재 = 입력 없음 — `RunContext.call_tool`). 홉 이벤트에도 `poc_*`가 없다. `spec` 없는 호출이
+    자리표나 빈 입력(`b""`)으로 바뀌면 여기서 빨개진다 — `b""`는 **입력이다**(`ToolArgs`)."""
+    spy, calls, _ = _run_one_probe(ctx, monkeypatch, tmp_path, _probe_action(tool))
+
+    _ran, args, _sandbox = spy.calls[0]
+    assert list(args.argv) == [tool]
+    assert args.input_bytes is None
+    assert [(c.data["tool"], c.data["argv"]) for c in calls] == [(tool, tool)]
+    assert "input_bytes" not in calls[0].data and "input_sha256" not in calls[0].data
+    hop = next(h for h in _hops(ctx) if h.data["action"] == "probe")
+    assert "poc_sha256" not in hop.data and "poc_bytes" not in hop.data
+
+
+def test_the_probe_observation_reports_the_input_it_fed_and_no_longer_says_it_was_not_given(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """관측 머리줄이 실은 입력의 크기와 digest를 든다 — `input_bytes=<n> input_sha256=<hex>`
+    (`runner._pov_observation`의 `last_gen_bytes`·`last_gen_sha256`과 같은 모양 · 맨 hex라 홉
+    이벤트의 `poc_sha256`과 바로 대조된다). 전 판의 *"recorded but NOT given to the tool"* 줄은
+    **없다** — 이제 거짓이다(⏵ 2026-10-13 #419). `spec`이 없으면 입력 줄도 없다(말할 것이 없다)."""
+    poc = assemble_poc(_spec())
+
+    _spy, _calls, fed = _run_one_probe(
+        ctx, monkeypatch, tmp_path, _probe_action("poc", spec=_spec())
+    )
+
+    head = fed.splitlines()[1]
+    assert f"input_bytes={len(poc)} input_sha256={hashlib.sha256(poc).hexdigest()}" in head
+    assert "evidence_id=" in head and head.index("evidence_id=") < head.index("input_bytes=")
+    assert "NOT given" not in fed and "does not depend" not in fed
+    hop = next(h for h in _hops(ctx) if h.data["action"] == "probe")
+    assert hop.data["poc_sha256"] == hashlib.sha256(poc).hexdigest()
+    assert hop.data["poc_bytes"] == len(poc)
+
+
+def test_the_probe_observation_has_no_input_line_without_a_spec(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """`spec` 없는 `probe`의 관측에는 입력 줄도 옛 "NOT given" 줄도 없다."""
+    _spy, _calls, plain = _run_one_probe(ctx, monkeypatch, tmp_path, _probe_action("poc"))
+
+    assert "input_bytes" not in plain and "input_sha256" not in plain
+    assert "NOT given" not in plain
 
 
 # --- probe 관측 — 로그가 없는 것과 로그가 빈 것 · 인용 ----------------------------------

@@ -1085,7 +1085,7 @@ def _evidence(source: str = "asan") -> Evidence:
 def _probe_lines(payload: str | None, source: str = "asan") -> list[str]:
     """`probe` 관측(`_probe_observation`)을 실제로 만들어 줄로 돌려준다."""
     ctx = SimpleNamespace(read_payload=lambda _ref: payload)
-    return auditor._probe_observation(ctx, 1, _evidence(source), spec_ignored=False).splitlines()
+    return auditor._probe_observation(ctx, 1, _evidence(source)).splitlines()
 
 
 def _backticked(flat: str) -> set[str]:
