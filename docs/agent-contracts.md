@@ -87,7 +87,7 @@ agent:
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
 > 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의
-> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로(슬라이스 타깃의 Scout는 `ctx.read_slice()`로) 따로 실려 예산 밖에서 프롬프트를 키운다
+> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로(`input: slice` 프롬프트의 슬라이스 타깃 Scout는 `ctx.read_slice()`로) 따로 실려 예산 밖에서 프롬프트를 키운다
 > (`config/budgets.yaml`의 주석, [open-questions.md](open-questions.md) D21·D17). 그래서 이
 > 숫자를 "프롬프트가 이 안에 들어온다"로 읽으면 안 된다.
 
@@ -118,6 +118,8 @@ agent:
   ⏵ **2026-10-07 — 서빙 판이 v4다**(PR #524 배선). v4 meta가 `input: source`라 위 슬라이스 서술은
   서빙 경로가 아니고, `--slices` 없는 run을 막던 가드는 **더 이상 차지 않는다**(`cli._slice_input_prompts`).
   ⚠ 어긋남이 뒤집혔다 — `--slices` run에서는 노드가 렌더를 싣는데 v4는 함수 본문이라 적는다.
+  ⏵ 2026-10-13 — 고쳤다(#529): 노드가 `SOURCE`의 모양을 meta `input`으로 고른다. `source`면 슬라이스 타깃도
+  entry를 품는 함수 본문(Auditor와 같은 `entry_scope` 규칙·창 폭)이고 FACTS에 `slice_criterion`이 없다.
   아래 NE 루프도 v4에서는 신호가 둘이라 서빙 경로에서 돌지 않는다.
 - 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
   (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012 결정 2 —
