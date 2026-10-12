@@ -2084,7 +2084,8 @@ def test_pov_prefix_does_not_say_the_tools_run_the_candidate(version: str) -> No
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
 def test_pov_prefix_has_no_gdb_usage_rule(version: str) -> None:
     """🔴 D92(`docs/open-questions/D/D92.md`): *"프롬프트에 gdb 사용 규칙을 넣는 일에는 ASAN
-    수리·실행 검증이 선행한다"*(#326 열림). pov prefix(v3·v4)는 gdb를 **도구 목록의 사실**로만 쓰고
+    수리·실행 검증이 선행한다"*(#326 열림 - ⏵ 2026-10-13 #326은 (c) 선언으로 닫혔고 E4 도달성은
+    D92 / #507(e)가 든다). pov prefix(v3·v4)는 gdb를 **도구 목록의 사실**로만 쓰고
     언제 쓰라는 지시를 안 둔다. ⚠ 코드 배선(`PovAction.tool` enum)은 이 선행 조건이 아니다
     (D92 본문).
 
