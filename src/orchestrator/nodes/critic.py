@@ -9,9 +9,10 @@ F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 모델의 설명을 보여 주면
 반박이 아니라 재진술이 돌아온다.
 
-**정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
+**정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `need_evidence`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
-`gate.was_normalized()`면 `critic_normalized`를 남긴 뒤 **정규화된 값**을 정책에 넘긴다.
+`gate.was_normalized()`면 사유(`empty_axis` · `invalid_axis`)와 함께 `critic_normalized`를 남긴 뒤
+**정규화된 값**을 정책에 넘긴다. ⏵ 2026-10-13 (ADR 0015) — 목적지가 `uphold`였다.
 """
 
 from collections.abc import Callable, Mapping

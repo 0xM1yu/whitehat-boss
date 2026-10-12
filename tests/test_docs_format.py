@@ -879,6 +879,35 @@ def test_every_adr_has_a_row_in_the_decisions_readme() -> None:
     assert not orphan, f"README 목록에 행은 있는데 그 번호의 ADR 파일이 없다: {orphan}"
 
 
+def test_the_rebut_rule_is_stated_the_same_way_by_adr_0015_and_the_contract() -> None:
+    """근거 없는 `rebut`의 처리 규칙(ADR 0015)이 ADR과 계약 문서에서 같은 말이다.
+
+    **살아 있는 규칙은 `need_evidence`다.** 옛 규칙(`uphold`로 처리)은 취소선이나 §3 제안의
+    인용으로만 남아야 한다 - 현재형으로 남으면 읽는 쪽이 「Critic이 반박을 못 하면 승격된다」를
+    규칙으로 읽는다 (CLAUDE.md §2.4 - 정본이 낡는 방식). 열 축 어휘도 계약 문서가 든다.
+    """
+    adr = DECISIONS / "0015-rebut-grounding.md"
+    assert adr.is_file(), "ADR 0015가 없다"
+    adr_text = _read(adr)
+    needles = ("need_evidence", "RebuttalAxis", "empty_axis", "invalid_axis")
+    for needle in needles:
+        assert needle in adr_text, f"ADR 0015에 {needle!r}이 없다"
+
+    contract = _read(REPO_ROOT / "docs" / "agent-contracts.md")
+    assert "근거 없는 반박은 `need_evidence`로 처리" in contract
+    old_rule = "근거 없는 반박은 `uphold`로 처리"
+    for line in contract.splitlines():
+        if old_rule in line:
+            proposal_quote = line.startswith("1. **근거 없는 반박의 처리 위치.**")
+            quoted_or_struck = "~~" in line or proposal_quote
+            assert quoted_or_struck, f"옛 규칙이 현재형으로 남았다: {line[:80]}"
+    for axis in (
+        "guard", "reachability", "aliasing", "lifetime", "arithmetic",
+        "compile_flag", "input_reachability", "source", "propagate", "sink",
+    ):  # fmt: skip
+        assert f"`{axis}`" in contract.split("반박 체크리스트:")[1].split("- 규칙:")[0], axis
+
+
 # --- 정본 선언(PROJECT-CONTEXT.md) ↔ 모델 registry ------------------------------------
 #
 # PROJECT-CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지
