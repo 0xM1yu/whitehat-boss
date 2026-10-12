@@ -79,9 +79,10 @@ TAIL_WHITESPACE_CHARS = 64
 
 
 def _tail_whitespace_only(text: str) -> bool:
-    """응답 끝 `TAIL_WHITESPACE_CHARS`자가 전부 공백인가. 빈 문자열은 거짓이다 - 아무것도 안 낸
-    응답은 공백 폭주가 아니다(추론 파서가 `content`를 비운 모양이 이쪽이다)."""
-    return text[-TAIL_WHITESPACE_CHARS:].isspace()
+    """응답 끝 `TAIL_WHITESPACE_CHARS`자가 전부 공백인가. **창을 못 채우는 짧은 응답은 거짓이다**
+    (빈 문자열 포함) - 63자 이하가 전부 공백인 응답(개행 둘)은 폭주가 아니고, 아무것도 안 낸
+    응답(추론 파서가 `content`를 비운 모양)도 아니다."""
+    return len(text) >= TAIL_WHITESPACE_CHARS and text[-TAIL_WHITESPACE_CHARS:].isspace()
 
 
 def _tail_whitespace_verdicts(
