@@ -1287,6 +1287,16 @@ def test_an_index_run_that_did_not_report_zero_symbols_stays_ok(stdout: str, why
     assert judge(INDEX_TOOL, [Step(0, stdout, "")], 1) == (True, 0, None), why
 
 
+def test_the_zero_summary_is_found_after_other_output() -> None:
+    """요약 줄이 stdout 첫 줄이 아니어도 읽는다 — 정규식에서 `re.MULTILINE`을 빼면 빨개진다."""
+    stdout = "warning: something the indexer printed first" + "\n" + _ZERO_SYMBOLS
+
+    ok, code, error = judge(INDEX_TOOL, [Step(0, stdout, "")], 1)
+
+    assert (ok, code) == (False, 0)
+    assert error is not None and "심볼 0개" in error
+
+
 def test_a_failed_index_run_keeps_its_own_failure_even_with_a_zero_summary() -> None:
     """exit가 0이 아니면 이전 판정(`index 실패 (exit=N)`) 그대로다 — 새 갈래는 exit 0에만 선다."""
     ok, code, error = judge(INDEX_TOOL, [Step(2, _ZERO_SYMBOLS, "boom")], 1)

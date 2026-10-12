@@ -9,6 +9,16 @@ Evidence이고, 이것이 Evidence Gate E2의 조건 중 하나(`any(e.kind == G
 않는다. `ok=True`는 「인덱서가 돌았고 심볼이 1개 이상이었다」까지다. **심볼 0개는 `ok=False`다**
 (어댑터 `container_tools.judge()` — 인덱서 stdout의 요약 줄에서 읽는다). `FakeToolRunner`는 심볼을
 세지 않으므로 `dev_fake`의 GRAPH는 대상 소스 존재만 말한다.
+
+빈 그래프가 `ok=False`가 되면 **보이는 곳이 셋 늘어난다** (코드로 확인):
+- `tool_call` trace 이벤트가 `ok=False`와 `error`(「index: 심볼 0개 …」)를 싣는다
+  (`RunContext.call_tool`).
+- 모델이 받는 Evidence 목록이 그 GRAPH를 실패로 보인다 — `prompt_loader`의 FACTS `evidence`
+  항목은 `"ok": false`, Critic의 `_describe_evidence` 줄은 `failed`다
+  (인덱서 실패 때와 같은 모양이다).
+- Auditor 탐침 관측 줄(`auditor._probe_observation`)의 `ok=False exit=0 error=…` 모양이 이
+  Evidence에 쓰인다. ⚠ 다만 **`index`는 Auditor 탐침 도구가 아니다**(`AUDITOR_TOOLS`는 `index`를
+  뺀다) — 그 줄에 실제로 나타나는 일은 지금 없고, 도구 목록이 바뀔 때 생길 모양이다.
 """
 
 from src.interfaces.tool_runner import ToolArgs
