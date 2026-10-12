@@ -74,6 +74,11 @@ def tracked_files(*patterns: str, root: Path | None = None) -> list[Path]:
     `Path`에 넣으면 없는 파일을 가리켜 `OSError`가 나고, 검사기가 **문서의 결함처럼 보이는
     실패**를 낸다 — 원인이 문서가 아니라 여기라서 읽는 사람이 엉뚱한 곳을 고친다.
     `-z`는 이스케이프를 끄고 NUL로 가른다.
+
+    **디스크에 없는 추적 파일은 뺀다.** `git ls-files`는 인덱스를 읽으므로 `git rm` 없이 지운
+    파일도 낸다 — 그대로 열면 전수 검사 셋이 `FileNotFoundError`로 죽고, 위와 같이 **문서의
+    결함처럼 보이는 실패**가 된다(`rglob` 판은 없는 파일을 못 봐서 통과했다). 지움 자체는
+    `git status`가 보이는 일이지 이 수집기의 몫이 아니다. 서브모듈(gitlink)도 디렉터리라 같이 빠진다.
     """
     base = REPO_ROOT if root is None else root
     try:
@@ -89,7 +94,8 @@ def tracked_files(*patterns: str, root: Path | None = None) -> list[Path]:
         pytest.skip("git을 실행할 수 없다")
     if result.returncode != 0:  # pragma: no cover - 저장소 밖
         pytest.skip("저장소가 아니다")
-    return [base / name for name in result.stdout.split("\0") if name]
+    paths = (base / name for name in result.stdout.split("\0") if name)
+    return [path for path in paths if path.is_file()]
 
 
 def plant_link(kind: str, link: Path, outside: Path) -> None:
