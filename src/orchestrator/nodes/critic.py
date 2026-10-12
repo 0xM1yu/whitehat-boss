@@ -240,6 +240,10 @@ def _describe_evidence(
         # `container_tools.first_hit_location`). 그 위치는 semgrep `results[0]`(첫 히트) 하나라
         # 주장한 줄과 다를 수 있다. 이 노출이 인용·판정을 바꾸는지는 미실측이다(이슈 #563 —
         # `run_20261007_0001`이 위치를 싣고 돌았으나 그 히트가 후보 위치와 안 겹쳤다).
+        # ⏵ 2026-10-13(#563) - 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다
+        # (6단계 `gate_eval`에서 센 정수). 커밋된 보고서에서 읽히는 #248 뒤 값은 `run_20260924_0003`
+        # 36/36 참(스모크) · `run_20261007_0001` 5/5 거짓 · 2026-10-12 보고서의 첫 `gate_eval` 1건
+        # 거짓이고 과제가 다르다. 통제 대조는 0건이다.
         # 위치가 없으면 아무것도 더하지 않는다 — 산문 한 줄이라 `null`을 적으면 노이즈다.
         if with_location and ev.location is not None:
             line += f" · {_location_text(ev.location)}"
