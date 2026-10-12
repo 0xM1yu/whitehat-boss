@@ -1175,6 +1175,11 @@ def run_pipeline(
         warnings.append(pov_shortfall)
     if state.pov_pool_empty is not None:
         warnings.append(state.pov_pool_empty)
+    # **5단계 도구 루프의 「probe 0」도 같은 자리에 올린다 (#617).** 루프가 돌았는데 모델이 실행
+    # 근거에 닿는 `probe`를 한 번도 안 고르면 그 종류의 근거가 run에 없고 — 사유가 trace에만 있다.
+    probe_warning = _auditor_zero_probe_warning(trace)
+    if probe_warning is not None:
+        warnings.append(probe_warning)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1511,6 +1516,26 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     return finding_id in state.critic_failed_ids or any(
         gate.normalize(decision) is Verdict.REBUT
         for decision in state.decisions.get(finding_id, ())
+    )
+
+
+def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
+    """Auditor 도구 루프가 돌았는데(`auditor_hop` 1건 이상) `probe`가 0건이면 run 경고, 아니면
+    `None`(#617). 루프가 꺼졌으면(`auditor_tool_hops` 0 — 홉 이벤트 0건) 말할 것이 없다.
+
+    말하는 것은 「probe를 **고르지 않았다**」다 — 고른 probe가 실패해도(`observation_error`) 그
+    홉의 `action`은 `probe`라 센다. 왜 안 골랐는지(프롬프트·좌석·입력)는 이 run이 가르지 못한다."""
+    actions = Counter(
+        str(event.data.get("action"))
+        for event in trace.events
+        if event.kind is EventKind.AUDITOR_HOP
+    )
+    if not actions or actions["probe"]:
+        return None
+    return (
+        f"Auditor 도구 루프가 {sum(actions.values())}홉 돌았는데(lookup {actions['lookup']} · "
+        f"answer {actions['answer']}) probe를 한 번도 고르지 않았다 — build·asan·gdb·poc 같은 "
+        f"실행 근거가 이 run의 5단계에 없다 (#617)"
     )
 
 
