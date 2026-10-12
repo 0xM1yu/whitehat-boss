@@ -421,6 +421,21 @@ class EventKind(StrEnum):
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
     CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
+    # Critic 요청에 **Auditor 도구 루프의 홉 관측**을 실었다는 기록과 그 크기의 계산값 (#600 H2ⓐ).
+    # 내는 곳은 `nodes/critic._record_hop_observations`이고 홉 관측이 1개 이상인 Critic 호출마다
+    # 1건, 모델 호출 **앞**에서다. **이벤트 부재 = 관측을 안 실었다**(홉 0 · content-aware가 아닌
+    # 판). `subject_id`는 Finding이다. 싣는 값: `hops`(관측 수 = 홉 1..N) ·
+    # `added_chars`(EVIDENCE에 더한 절의 글자, 구분 줄바꿈 포함 · FACTS의 `auditor_hops` 한 줄은
+    # 안 셌다) · `prompt_chars`(prefix+body) · `est_input_tokens`(= `prompt_chars` ÷ 글자/토큰
+    # 최악 비 1.22, 올림) · `input_share_tokens`(= 그 좌석 모델 `context_limit` − 역할
+    # `output_max`) · `over_input_share`(추정이 몫을 넘음) · `over_without_observations`(관측 절을
+    # 뺀 프롬프트도 넘음 — 참이면 원인이 관측이 아니다) · `window_checked`(Fake 좌석은 창이 없어
+    # false이고 그때는 추정·몫·판정 키가 **없다**). ⚠ **전부 계산값이다**(서버가 센
+    # `input_tokens`가 아니다 — 그 값은 같은 호출의 `model_call`에 있다). 그 비 1.22는 Auditor
+    # 좌석의 최악이고 Critic 좌석의 비는 안 쟀다. `over_input_share=true`는 「최악 비에서 넘을 수
+    # 있다」이다. **하네스는 자르지 않는다** — 넘어도 절은 그대로 나가고 서버가 크기로 거절하면
+    # `critic_failed`가 남는다. `over_input_share`가 참인 건수는 run 경고(`warnings`)로도 오른다.
+    CRITIC_HOP_OBSERVATIONS = "critic_hop_observations"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은

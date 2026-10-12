@@ -139,6 +139,9 @@ class FakeContext(HarnessModel):
     # 사실 블록 파싱을 죽인다**(`prompt_loader._validated_facts`가 "어댑터의 FakeContext와 함께
     # 고친다"고 적는 자리 — 2026-10-02에 이것을 빠뜨려 **132 failed**가 났다).
     fuzz_entrypoint: dict[str, object] | None = None
+    # Critic의 홉 관측 수(`prompt_loader.FACT_KEYS`의 opt-in 키 — #600 H2ⓐ). `fuzz_entrypoint`와
+    # 같은 처리: Fake는 판정에 안 쓰지만 안 받으면 `extra="forbid"`가 사실 블록 파싱을 죽인다.
+    auditor_hops: int | None = None
 
 
 class FakeModelError(RuntimeError):

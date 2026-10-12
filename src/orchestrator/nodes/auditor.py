@@ -51,6 +51,10 @@ hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다
 history · user 순으로 조립하므로(`openai_compat._request_payload`) prefix는 매 홉 system 메시지로,
 hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** — 후속 홉의 *새* 입력이
 관측뿐이라는 뜻이고, 입력 토큰은 홉마다 hop0 몫을 되풀이한다.
+⏵ 2026-10-13 (#600 H2ⓐ) — **관측은 다음 Auditor 홉에만 가지 않는다.** `run(observations=...)`를
+주면 매 홉 관측(그 user 턴 본문)을 그 리스트에도 덧붙이고, 러너가 Finding과 함께 쥐었다가 7단계
+Critic에 넘긴다 (`nodes/critic.py`). 가려지는 것은 그대로다 — 모델의 응답
+턴(`raw_text`)·`rca_draft`·추론은 안 간다.
 
 - **왜 노드 안인가.** `run()`의 반환 계약 `(Finding, list[MissingEvidence])`을 러너가 쥐고 있다.
   러너로 올리면 Finding 없는 정지의 `queued` 전이를 러너가 대신 해야 하고, 빠뜨리면 후보가
@@ -410,6 +414,7 @@ def run(
     evidences: tuple[Evidence, ...] = (),
     source: Callable[[], str] | None = None,
     workdir: str = ".",
+    observations: list[str] | None = None,
 ) -> tuple[Finding, list[MissingEvidence]]:
     """가설 Finding과 그것이 요청한 MissingEvidence를 만들어 저장한다.
 
@@ -423,6 +428,12 @@ def run(
     넘긴다(`state.workdirs[finding_id]`에 이 함수 **뒤에** 넣는 값과 같지만 그것을 읽는 것은 아니다
     — 그 키인 `finding_id`는 이 호출 안에서 발급된다). 한 방 경로는 안 쓴다. 기본값은 러너가 안
     넘겨도 이 함수가 서게 하는 자리다.
+
+    ⏵ 2026-10-13 (#600 H2ⓐ) — `observations`는 **밖으로 내는 통로**다. 주면 도구 루프가 홉마다
+    Auditor가 본 관측(다음 홉 user 턴 본문 그대로 — `_LAST_HOP_NOTE` 꼬리는 뺀다)을 이 리스트에
+    덧붙인다. 러너가 그것을 Critic에 넘긴다(`critic.run(hop_observations=...)`). 반환 계약을 안
+    바꾸려고 값이 아니라 쓰는 통로로 낸다. 한 방 경로(홉 0)는 아무것도 안 덧붙인다. 모델의 원문
+    응답(`raw_text`)·근거 서술은 여기 안 담긴다 — 담기는 것은 하네스가 돌린 조회·도구의 출력뿐이다.
     """
     ids = {
         "candidate_id": candidate.candidate_id,
@@ -438,6 +449,7 @@ def run(
             evidences=evidences,
             source=source,
             workdir=workdir,
+            observations=observations,
         )
         # **재현 명세의 출처를 하네스가 정한다** (#S7). 모델이 낸 명세는 `origin=model`로 덮고
         # (모델이 `harness`를 참칭 못 함), 비워 냈고 `synthesize_repro_spec`이 켜졌으면 후보 위치로
@@ -479,6 +491,7 @@ def _ask_model(
     evidences: tuple[Evidence, ...],
     source: Callable[[], str] | None,
     workdir: str,
+    observations: list[str] | None = None,
 ) -> Finding:
     """Finding을 얻는다 — 한 방 호출 또는 도구 루프. 어느 쪽인지는 프롬프트 meta가 정한다.
 
@@ -525,6 +538,7 @@ def _ask_model(
                 prompt=prompt,
                 workdir=workdir,
                 schema=envelope,
+                observations=observations,
             )
         except BudgetExhausted:
             # 모델 호출 쪽 소진은 `_call_model`이 이미 내렸다(`_queue_candidate`는 `triaged`가
@@ -719,6 +733,7 @@ def _run_hops(
     prompt: Prompt,
     workdir: str,
     schema: type[_LoopEnvelope],
+    observations: list[str] | None = None,
 ) -> Finding:
     """도구 루프 본체 — 모델이 `answer`를 낼 때까지 `lookup`·`probe` 관측을 되먹인다.
 
@@ -803,6 +818,8 @@ def _run_hops(
                 observed={"observation_error": type(exc).__name__},
             )
             raise
+        if observations is not None:  # Critic에 줄 관측 — `run`의 `observations` (#600 H2ⓐ)
+            observations.append(observation)
         _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, observed=observed)
         if "evidence_id" in observed:
             probe_evidence.add(str(observed["evidence_id"]))
