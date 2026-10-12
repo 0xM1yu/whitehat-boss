@@ -1462,7 +1462,11 @@ def _pov_targets(
     결론**이다 — `trigger_status=no_signal` · `confidence` 0.10·0.10·0.05(같은 날 WSL
     `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
     풀은 그것을 거르지 않는다(결정 대기). **그런 Finding에서 PoV가 낼 PoC가 있는지는
-    미측정이다**(`pov_attempt_top_n`을 켠 run은 0건). 출처는 위 보고서 §4·결과 표다.
+    미측정이다**. ⏵ 2026-10-12 — `pov_attempt_top_n`(8)을 켠 실모델 run은 이미 여럿이다
+    (10-08·10-10×4·10-11). 그 풀의 PoV가 PoC를 낸 run은 10-12 하나(PoC 4건·채점 0 — PR #621
+    보고서 §4·§5)고, 그 홉이 붙은 Finding은 `triggerable` E2라 부정 결론 Finding에서 나온 PoC는
+    아직 없다(#615).
+    출처는 위 보고서 §4·결과 표다.
 
     🔴 **`validate.run` 루프는 안 넓힌다.** 그쪽은 유일한 결정론 E4 게이트이고 `from=validated`를
     요구한다 — 거기에 다른 상태를 넣으면 상태 기계(F-10~F-12)가 깨진다. 넓히는 것은 **PoV
