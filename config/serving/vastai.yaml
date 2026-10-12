@@ -83,6 +83,7 @@ servers:
     # ⚠ 그 기동에 없던 인자 둘은 계획값이다 — `--max-num-seqs 8`(그 기동은 vLLM 기본값으로 떴다. 하네스는 단계 안
     #   요청을 한 번에 하나 보낸다) · `--enable-prompt-tokens-details`(응답 usage에 필드를 더할 뿐이다).
     # 준비 상한 600 s ≈ (244 s − 다운로드 44.8 s) × 3 — 캐시된 뒤의 기동을 기준으로 했다(계산값).
+    # ⏵ 2026-10-13(#571) — 「캐시된 뒤」는 기동 전에 가중치를 선취했다는 뜻이다(이 상한은 다운로드 시간을 안 든다 — `vastai-remote.yaml`의 `ready_timeout_s` 주석).
     util: 0.90
     max_num_seqs: 8
     max_model_len: 262144
