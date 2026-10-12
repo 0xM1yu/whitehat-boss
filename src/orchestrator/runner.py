@@ -5446,6 +5446,7 @@ def _new_record(
         compile_flags=compile_flags,
         # `--slices`로 돈 run의 슬라이서 산출(ADR 0012 결정 1). 어댑터가 만든 값을 받는다.
         slicer=slicer,
+        keep_responses=list(spec.keep_responses) or None,
         kb_snapshot=spec.kb_snapshot,
         started_at=started_at,
     )
