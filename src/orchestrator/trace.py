@@ -251,11 +251,12 @@ class EventKind(StrEnum):
     # 먼저 가른다. 미해결로 등재돼 있다(인덱스 참조).
     #
     # **`stage`는 7이다.** 절단이 실행되는 자리는 6단계 뒤이지만 6으로 적으면 "게이트에서
-    # 잘렸다"로 읽히는데 게이트는 이 건을 **Critic에 보냈다**. 7로 적으면
+    # 잘렸다"로 읽히는데 6단계는 이 건을 Critic 선별 풀에 **두었다**. 7로 적으면
     # `count(critic_skipped, stage=7) + count(gate_eval, stage=7)`
-    # `= count(promoted_to_critic) + count(evidence_weak)`로 7단계가 분할로 닫힌다 —
-    # Critic은 HYPOTHESIZED 전부를 받고 E1 HOLD도 HYPOTHESIZED를 유지하므로 우변은 E2
-    # 승격분만이 아니다(#614). "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
+    # `= count(promoted_to_critic) + count(evidence_weak)`로 7단계가 분할로 닫힌다
+    # (`stopped_after >= 7`일 때) — 7단계는 HYPOTHESIZED 전부를 선별 대상으로 삼고
+    # (`critic_top_n`에 잘린 몫이 `critic_skipped`다) E1 HOLD도 HYPOTHESIZED를 유지하므로
+    # 우변은 E2 승격분만이 아니다(#614). "들어갔다가 죽었다"로 오독될 위험은 `kind`가 막는다 —
     # 이 행은 정의상 **안 들어간** 건이다.
     #
     # `confidence`(선별 키)와 `has_repro_spec`(8단계 진입 조건)을 함께 싣는다. #98 (a)가
