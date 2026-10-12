@@ -57,7 +57,7 @@
 | D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
 | D3 | ~~Capsule 확장 횟수 상한~~ (need_evidence 루프의 `max_hops`로 대체 — ADR 0012 결정 6) | 닫힘 | [본문](open-questions/D/D3.md) |
 | D4 | ~~Critic 양자화 검증 표본 크기와 허용 하락폭~~ (전제 소멸 · 표본·합격선은 실험팀 범위) | 닫힘 | [본문](open-questions/D/D4.md) |
-| D5 | GPU-hour → 금액 환산식 | 열림 | [본문](open-questions/D/D5.md) |
+| D5 | ~~GPU-hour → 금액 환산식~~ (전제 소멸 — 대여라 가동시간 × 시급 · 비교표 칸은 실험팀) | 닫힘 | [본문](open-questions/D/D5.md) |
 | D6 | 상태 저장소 SQLite vs DuckDB | 결정 | [본문](open-questions/D/D6.md) |
 | D7 | 오케스트레이터 LangGraph v1 확정 여부 | 결정 | [본문](open-questions/D/D7.md) |
 | D8 | **Evidence Gate와 Critic의 순서** | 닫힘 | [본문](open-questions/D/D8.md) |
@@ -80,7 +80,7 @@
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | **장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다** | 열림 | [본문](open-questions/D/D27.md) |
-| D28 | **Scout 점수에 해상도가 없다 — 원인 미확정** | 열림 | [본문](open-questions/D/D28.md) |
+| D28 | ~~Scout 점수에 해상도가 없다 — 원인 미확정~~ (v4가 점수를 세 값 라벨로 계약 · 판정은 신호 · v4 고유값 미실측) | 닫힘 | [본문](open-questions/D/D28.md) |
 | D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
 | D30 | ~~`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다~~ (선택지 (c) — 자리마다 한 줄) | 닫힘 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 닫힘 | [본문](open-questions/D/D31.md) |
@@ -130,7 +130,7 @@
 | D76 | ~~하네스가 조용히 죽거나 멈춰도 밖에서 못 잡는다 — trace가 flush 안 돼 live 관측·크래시 보존이 안 되고 health-check 신호가 없다~~ | 닫힘 | [본문](open-questions/D/D76.md) |
 | D77 | ~~슬라이서 sink-first 의미·제어문 보존·단계별 재개~~ | 닫힘 | [본문](open-questions/D/D77.md) |
 | D78 | ~~슬라이스를 Scout 입력으로 올리기 전에 풀어야 할 것 셋 — `Location` 표현력·캐시 키·E1 STATIC~~ (Phase 3에서 셋 다 풀림) | 닫힘 | [본문](open-questions/D/D78.md) |
-| D79 | 조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다 | 열림 | [본문](open-questions/D/D79.md) |
+| D79 | ~~조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다~~ (선택지 (b) — evaluation.md §2.2에 명시) | 닫힘 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** (⏵ 2026-10-02 절반만 — exit 0·미측정은 E4가 아니다) | 열림 | [본문](open-questions/D/D80.md) |
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
 | D82 | **Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다 — 풀 프로필에서 라이브** (`slice_criterion`·슬라이스 SOURCE·`requested_context` 객체) | 열림 | [본문](open-questions/D/D82.md) |
