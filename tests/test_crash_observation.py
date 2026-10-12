@@ -395,19 +395,47 @@ def test_a_no_banner_return_one_program_is_still_e4_end_to_end(run_with) -> None
     assert result.grade is EvidenceGrade.E4
 
 
+_OBSERVED = {"crashed", "banner", "crash_banner"}
+
+
+def _observation_reads(source: str) -> list[int]:
+    """`crashed`/`banner`을 **읽는** 줄 번호 — 속성 접근 · 키워드 인자 · `getattr(x, "crashed")` ·
+    `x["crashed"]` · `x.get("crashed")`. 독스트링이 그 이름을 적는 것은 읽기가 아니다."""
+    lines = []
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Attribute) and node.attr in _OBSERVED:
+            lines.append(node.lineno)
+        elif isinstance(node, ast.keyword) and node.arg in _OBSERVED:
+            lines.append(node.value.lineno)
+        elif isinstance(node, ast.Subscript):
+            key = node.slice
+            if isinstance(key, ast.Constant) and key.value in _OBSERVED:
+                lines.append(node.lineno)
+        elif isinstance(node, ast.Call) and node.args:
+            fn = node.func
+            named = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
+            keys = [a.value for a in node.args[:2] if isinstance(a, ast.Constant)]
+            if named in {"getattr", "hasattr", "get"} and _OBSERVED & set(keys):
+                lines.append(node.lineno)
+    return lines
+
+
+def test_the_observation_detector_catches_every_read_form() -> None:
+    reads = (
+        "x.crashed", "f(crashed=1)", 'getattr(x, "crashed", None)',
+        'x["banner"]', 'x.get("crashed")',
+    )
+    for src in reads:
+        assert _observation_reads(src) == [1], src
+    assert _observation_reads('"""crashed banner"""\nx = {"a": 1}["a"]') == []
+
+
 def test_no_decision_code_reads_the_observation() -> None:
-    """게이트·정책·상태 기계·러너 소스에 `crashed`/`banner` **접근**이 0건이다 — 읽는 순간 이 PR의
-    약속이 깨진다. 소스를 AST로 훑는다(독스트링이 그 이름을 적는 것은 접근이 아니다)."""
+    """게이트·정책·상태 기계·러너 소스에 `crashed`/`banner` **읽기**가 0건이다 — 읽는 순간 이 PR의
+    약속이 깨진다."""
     root = Path(__file__).resolve().parent.parent / "src" / "orchestrator"
     for name in ("gate.py", "policy.py", "runner.py", "state_machine.py"):
-        tree = ast.parse((root / name).read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Attribute):
-                assert node.attr not in {"crashed", "banner"}, (name, node.lineno)
-            if isinstance(node, ast.Constant) and not isinstance(node.value, str):
-                continue
-            if isinstance(node, ast.keyword):
-                assert node.arg not in {"crashed", "banner"}, (name, node.value.lineno)
+        assert _observation_reads((root / name).read_text(encoding="utf-8")) == [], name
 
 
 # --- trace ---------------------------------------------------------------------------------------
