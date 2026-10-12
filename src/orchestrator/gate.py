@@ -40,7 +40,8 @@
   죽었고(`run_20260904_0001`) 2026-09-09에 `path_ok`만 넣었다. 그래프 근거·blocking 축은
   스키마가 안 보므로 죽지 않고 조용히 `validated`로 갈 수 있었다 — 2026-09-23에 마저 넣었다.
   술어 사이의 포함은 **`p3 ⟹ p2` 하나다** — `p2`는 `p1`을 요구하지 않고, `p4`는 경로도
-  E2도 안 본다(E4는 이 포함 밖, 이슈 #154의 남은 항목).
+  E2도 안 본다(E4는 이 포함 밖 — 도달 불가의 잠재다. F-10이 `validated`에서만 `proven`을
+  허용하고 `validated`는 `path`를 강제한다. 이슈 #154는 2026-10-12 닫았다).
 - `normalize()`: `verdict == REBUT and not is_grounded` → `UPHOLD`.
   이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
   (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").

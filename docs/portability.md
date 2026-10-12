@@ -107,6 +107,7 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
 
 - 원격 커밋 점검은 `ssh -o BatchMode=yes`다 -> 암호를 묻는 키면 ERROR. 키를 에이전트에 올려 둔다.
 - 가중치 캐시 점검(#571)도 같은 `BatchMode` ssh다 -> 같은 키를 쓰고, 안 닿으면 ERROR가 아니라 WARN이다.
+- 채점기는 run마다 새 `--db_path`로 띄운다 -> 서버가 `(agent_id, task_id, sha256)`로 판정을 캐시해 환경을 고쳐도 옛 행이 남는다(#385). 절차의 기록은 [10-08 보고서](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) 232줄(다음 run 절차)이다.
 - `<slices.json>`의 경로에는 `src-vul/` 접두어가 있어야 한다 -> [slicer-README.md](slicer-README.md) 「`--task-dir`로 쓸 슬라이스」.
 - ⚠ 이 절차로 6까지 끝까지 돈 run은 아직 없다 — 미실측. 5의 두 점검까지만 위 표가 근거다. ⏵ 2026-10-11 — 낡았다: 이 절차로 6까지 돌았다. 2026-10-11 실서빙 run 다섯 번 중 하나(`run_20261011_0001`)가 0~9단계를 완주했고 제출은 0건이었다(#605 보고서 §1·§3 — `docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md`).
 

@@ -48,4 +48,4 @@ v1 러너는 `src/orchestrator/runner.py`의 순차 함수 하나다. 노드 시
     따로 풀어야 할 것 중 하나 — 구버전 `state.db`를 되읽는 버전 게이트 — 는 [D86](../open-questions/D/D86.md)이
     든다(D10에서 승계)
     - ⏵ 2026-10-10 — 판을 적은 파일에 한해 그 게이트가 섰다(이슈 #281, `src/adapters/sqlite_store.py`). 게이트 전 파일(판 0)은
-      종전대로 열린다. resume 자체는 아직 없다
+      종전대로 열린다. resume 자체는 아직 없다(⏵ 2026-10-12 — [D86](../open-questions/D/D86.md) 닫음: resume 비지원이 현 상태다)

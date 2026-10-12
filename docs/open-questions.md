@@ -54,7 +54,7 @@
 | # | 항목 | 상태 | 본문 |
 | --- | --- | --- | --- |
 | D1 | ~~벤치마크 라벨 통합~~ | 닫힘 | [본문](open-questions/D/D1.md) |
-| D2 | Scout 임계값·단계별 승격 비율 | 열림 | [본문](open-questions/D/D2.md) |
+| D2 | ~~Scout 임계값·단계별 승격 비율~~ (전제 소멸 — v4는 신호로 판정, 임계값은 신호 없는 폴백 경로뿐 · 분포 실측은 실험팀 범위) | 닫힘 | [본문](open-questions/D/D2.md) |
 | D3 | ~~Capsule 확장 횟수 상한~~ (need_evidence 루프의 `max_hops`로 대체 — ADR 0012 결정 6) | 닫힘 | [본문](open-questions/D/D3.md) |
 | D4 | ~~Critic 양자화 검증 표본 크기와 허용 하락폭~~ (전제 소멸 · 표본·합격선은 실험팀 범위) | 닫힘 | [본문](open-questions/D/D4.md) |
 | D5 | ~~GPU-hour → 금액 환산식~~ (전제 소멸 — 대여라 가동시간 × 시급 · 비교표 칸은 실험팀) | 닫힘 | [본문](open-questions/D/D5.md) |
@@ -63,28 +63,28 @@
 | D8 | **Evidence Gate와 Critic의 순서** | 닫힘 | [본문](open-questions/D/D8.md) |
 | D9 | ~~1차 분석 대상의 범위~~ (1차는 C/C++ 소스 · 바이너리·펌웨어는 2차 — ADR 0010 §5) | 닫힘 | [본문](open-questions/D/D9.md) |
 | D10 | ~~재평가 횟수를 어디에 보관하는가~~ (ADR 0012 결정 6이 재평가 경로를 폐기 · resume 잔여는 D86) | 닫힘 | [본문](open-questions/D/D10.md) |
-| D11 | Evidence에 "발견 건수"가 없다 | 열림 | [본문](open-questions/D/D11.md) |
-| D13 | **캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가** | 열림 | [본문](open-questions/D/D13.md) |
+| D11 | ~~Evidence에 "발견 건수"가 없다~~ ((c) 관례 + 컴파일 실패 마커·진단 0줄 가드로 서빙 성립 · clang 표기 변경 회귀와 clang-tidy 경고 경로는 서빙 미관측) | 닫힘 | [본문](open-questions/D/D11.md) |
+| D13 | ~~캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가~~ (index_graph가 채움 · types는 NE resolver · 빈 그래프 E2는 #576 · 예산 소멸은 #78) | 닫힘 | [본문](open-questions/D/D13.md) |
 | D12 | ~~build를 몇 단계에서 실행하는가~~ (선택지 (a) — 문서를 코드에 맞춤) | 닫힘 | [본문](open-questions/D/D12.md) |
 | D14 | ~~재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다~~ (확장 안 함 · 바이트 동일은 Fake 경로) | 닫힘 | [본문](open-questions/D/D14.md) |
-| D15 | **`Budget.tool_seconds`의 값에 실대상 근거가 없다** | 열림 | [본문](open-questions/D/D15.md) |
+| D15 | ~~`Budget.tool_seconds`의 값에 실대상 근거가 없다~~ (정한 상한 18,000 s · 서빙 도구 시간 7~16 s로 안 걸린다 · 실대상 규모는 미실측) | 닫힘 | [본문](open-questions/D/D15.md) |
 | D16 | ~~확장자로 대상을 고르는 도구가 `.inc`를 조용히 건너뛴다~~ | 닫힘 | [본문](open-questions/D/D16.md) |
-| D17 | **프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다** | 부분 | [본문](open-questions/D/D17.md) |
+| D17 | ~~프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다~~ (서빙 Auditor v14가 중복을 걷음 · 남은 건 입력 토큰 비용) | 닫힘 | [본문](open-questions/D/D17.md) |
 | D18 | ~~8단계 정책이 게이트 등급을 읽지 않는다~~ (2026-09-20 선택지 (a) — F-10b) | 닫힘 | [본문](open-questions/D/D18.md) |
 | D19 | **프롬프트 본문이 실행 산출물에 남지 않아 W1을 실행에서 검증할 수 없다** | 부분 | [본문](open-questions/D/D19.md) |
 | D20 | ~~Scout이 캡슐로 호출 그래프를 받지 못한다~~ (잔여는 need_evidence 루프의 조회가 대신 채운다) | 닫힘 | [본문](open-questions/D/D20.md) |
-| D21 | **토큰 계상이 실서빙 실측보다 1.8배 과소다** | 부분 | [본문](open-questions/D/D21.md) |
+| D21 | ~~토큰 계상이 실서빙 실측보다 1.8배 과소다~~ (서빙 로컬 카운터는 `approx`지만 묶는 자리가 모두 여유 · 실 토크나이저 PR #31은 ATOM 증명뿐 · 미실측 병기) | 닫힘 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
-| D23 | **`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다** | 열림 | [본문](open-questions/D/D23.md) |
-| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — **`candidate_max`에 근거가 없는 것은 그대로** | 열림 | [본문](open-questions/D/D24.md) |
+| D23 | ~~`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다~~ (등급 영향 0 · 잔여는 순서 해상도뿐 · 위치 불일치는 #563) | 닫힘 | [본문](open-questions/D/D23.md) |
+| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 256은 정한 값) | 닫힘 | [본문](open-questions/D/D24.md) |
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
-| D27 | **장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다** | 열림 | [본문](open-questions/D/D27.md) |
+| D27 | ~~장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다~~ (실서빙 프로필에 Fake 좌석 없음 · 서빙 장부가 서버 적중과 같은 방향 · 정량 대조 미실측) | 닫힘 | [본문](open-questions/D/D27.md) |
 | D28 | ~~Scout 점수에 해상도가 없다 — 원인 미확정~~ (v4가 점수를 세 값 라벨로 계약 · 판정은 신호 · v4 고유값 미실측) | 닫힘 | [본문](open-questions/D/D28.md) |
 | D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
 | D30 | ~~`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다~~ (선택지 (c) — 자리마다 한 줄) | 닫힘 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 닫힘 | [본문](open-questions/D/D31.md) |
-| D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) — **값이 코드 상수인 것은 그대로** | 부분 | [본문](open-questions/D/D32.md) |
+| D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) (값의 config 이동은 실저장소 시점 · 조건 불일치의 서빙 효과는 #507) | 닫힘 | [본문](open-questions/D/D32.md) |
 | D33 | ~~`run_20260825_0001`이 옛 build 배선의 마지막 완전 측정이다~~ | 닫힘 | [본문](open-questions/D/D33.md) |
 | D34 | ~~언어별 Command 분할에서 첫 그룹의 발견이 둘째 그룹을 가린다~~ | 닫힘 | [본문](open-questions/D/D34.md) |
 | D35 | ~~9단계 `dedupe()`가 E3를 지운다~~ | 닫힘 | [본문](open-questions/D/D35.md) |
@@ -95,7 +95,7 @@
 | D40 | **8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다** | 열림 | [본문](open-questions/D/D40.md) |
 | D41 | **예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다** | 열림 | [본문](open-questions/D/D41.md) |
 | D42 | ~~요청당 출력 상한이 없다 — 하네스가 `max_tokens`를 안 보낸다~~ | 닫힘 | [본문](open-questions/D/D42.md) |
-| D43 | **캡슐 재검증이 `using_counter` 밖에서 돌아 저장과 로드가 갈린다** | 부분 | [본문](open-questions/D/D43.md) |
+| D43 | ~~캡슐 재검증이 `using_counter` 밖에서 돌아 저장과 로드가 갈린다~~ (확장 경로 폐기 · 유일한 조회 지점은 감쌈 · 구조 해법 (c)는 미구현) | 닫힘 | [본문](open-questions/D/D43.md) |
 | D44 | ~~critic 단계의 파싱 실패가 run 전체를 죽인다~~ | 닫힘 | [본문](open-questions/D/D44.md) |
 | D45 | ~~실행한 대상의 심볼이 기록에 안 남는다 — 건너뛴 대상만 남는다~~ | 닫힘 | [본문](open-questions/D/D45.md) |
 | D46 | **구조화 출력이 공백 폭주로 안 닫힌 JSON을 낸다 — 상한을 키워도 안 닫힌다** | 열림 | [본문](open-questions/D/D46.md) |
@@ -114,11 +114,11 @@
 | D60 | ~~bench --apply가 --device 없이도 registry에 measured_on: null을 영구히 쓴다~~ | 닫힘 | [본문](open-questions/D/D60.md) |
 | D61 | ~~bench의 context 스윕 꼭대기가 서버 max_model_len을 몰라 항상 400을 받는다~~ | 닫힘 | [본문](open-questions/D/D61.md) |
 | D62 | ~~bench가 판마다 같은 프롬프트를 보내 두 번째 판부터 자기 캐시를 맞는다~~ ((b)로 끝냄 · (a)는 재현성 충돌로 기각) | 닫힘 | [본문](open-questions/D/D62.md) |
-| D63 | 리랭커 순위를 우리가 실제로 보내는 입력 모양에서 ~~한 번도 재지 않았다~~ 4b만 쟀다(2026-09-13 · 짧은 함수 8건) — **0.6b는 한 번도 안 쟀고 실경로(40줄 조각·32건)는 둘 다 아직이다** | 열림 | [본문](open-questions/D/D63.md) |
+| D63 | ~~리랭커 순위를 실제 입력 모양에서 재지 않았다~~ (캡슐 related 경로 전제 소멸 — canonical은 retriever:fake · 4b는 짧은 함수 8건에서 나빴고 실경로는 미실측) | 닫힘 | [본문](open-questions/D/D63.md) |
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
-| D65 | **게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다** — ~~실서빙 run이 7단계에서 죽는다~~ (크래시는 #167이 닫음 · Auditor `missing_evidence` blocking은 해제 경로가 없어 E2 미만) | 부분 | [본문](open-questions/D/D65.md) |
+| D65 | ~~게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다~~ (#167 · 172200f `p3 ⟹ p2` · blocking은 모델 선언분의 정직한 0 · Critic 선별 잔여는 상한 미충돌) | 닫힘 | [본문](open-questions/D/D65.md) |
 | D66 | ~~실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다~~ (선택지 (a)로 해소) | 닫힘 | [본문](open-questions/D/D66.md) |
-| D67 | **Auditor가 `path`·`evidence_refs`를 안 채운다 — v1이 둘 다 요구하는데 150건 중 `path` 150·`evidence_refs` 148이 빈다. ②가 원인으로 실측 · ①③ 미확정** | 열림 | [본문](open-questions/D/D67.md) |
+| D67 | ~~Auditor가 `path`·`evidence_refs`를 안 채운다~~ (닫힘 · 6단계 부착이 게이트 막힘을 풀었다 · v13·v14는 path를 채운다 · 모델 인용 수는 미실측 #554) | 닫힘 | [본문](open-questions/D/D67.md) |
 | D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
@@ -133,31 +133,31 @@
 | D79 | ~~조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다~~ (선택지 (b) — evaluation.md §2.2에 명시) | 닫힘 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** (⏵ 2026-10-02 절반만 — exit 0·미측정은 E4가 아니다) | 열림 | [본문](open-questions/D/D80.md) |
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
-| D82 | **Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다 — 풀 프로필에서 라이브** (`slice_criterion`·슬라이스 SOURCE·`requested_context` 객체) | 열림 | [본문](open-questions/D/D82.md) |
+| D82 | ~~Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다~~ (①~⑤ 고쳐졌고 서빙은 v4 · v4 SOURCE 어긋남은 #529 · ⑥ location.symbol 탈락은 #633) | 닫힘 | [본문](open-questions/D/D82.md) |
 | D83 | ~~모델이 쓴 `state`·ID를 하네스가 대조하지 않는다~~ (하네스가 발급값을 도장 찍어 해소 — `location`은 D82 ⑥으로) | 닫힘 | [본문](open-questions/D/D83.md) |
 | D84 | **모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)과 `reasoning_content`를 보존하지 않는다**(⏵ `finish_reason`은 #550으로 시도별 trace에 남고 소진·거절 호출 원문은 #603으로 남는다) — 증류 데이터·D46 진단 불가 | 열림 | [본문](open-questions/D/D84.md) |
 | D85 | ~~슬라이서가 UTF-8 아닌 소스 파일 하나에 run 전체를 실패시킨다~~ (무효 바이트만 latin-1로 해소) | 닫힘 | [본문](open-questions/D/D85.md) |
-| D86 | **resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다** (D10에서 승계 · ⏵ 2026-10-10 (b) 판을 적은 파일에 한해 판 게이트 섬, resume 지원 여부 남음) | 부분 | [본문](open-questions/D/D86.md) |
-| D87 | **run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다** (2026-09-25 ATOM에서 실제로 났다) | 열림 | [본문](open-questions/D/D87.md) |
+| D86 | ~~resume 시 구버전 `state.db`를 되읽는 버전 게이트가 없다~~ ((b) 판 게이트 PR #585 · 서빙에 resume 경로 없음 — 지원하는 날 새 이슈) | 닫힘 | [본문](open-questions/D/D86.md) |
+| D87 | ~~run이 서빙 창을 안 봐서, 창을 작게 띄워도 하네스가 모른다~~ (서빙 프로필은 시작 전·교대마다 창을 대조 · hybrid 프로필과 호출 전 토큰 계수는 미구현) | 닫힘 | [본문](open-questions/D/D87.md) |
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
-| D89 | **슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가** (해석 위치 미정 · measure-first) | 열림 | [본문](open-questions/D/D89.md) |
-| D90 | **Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다** (줄 기준 재검증 +2 · (a) 정렬 PR #324) | 열림 | [본문](open-questions/D/D90.md) |
-| D91 | **앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다** | 열림 | [본문](open-questions/D/D91.md) |
-| D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
+| D89 | ~~슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가~~ (전제 소멸 — v4 Scout는 값을 Auditor에 넘기고 Auditor 입력이 정의를 싣는다 · miss 실관측 0) | 닫힘 | [본문](open-questions/D/D89.md) |
+| D90 | ~~Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다~~ (정렬 #324 · 서빙 대상 Case A 196 ≪ 상한 4000 · cap 상향은 실험팀) | 닫힘 | [본문](open-questions/D/D90.md) |
+| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (recall 측정은 실험팀 범위 · 하위부류 효과 미실측) | 닫힘 | [본문](open-questions/D/D91.md) |
+| D92 | ~~gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다~~ (결정 (a) 구현 · Docker·Podman 실측 · Singularity는 Seraph dev 프로필뿐이라 서빙 밖 · 조건 5는 덮어씀) | 닫힘 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
-| D94 | **Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다 — 남은 미포착 7개의 원인** ((a) 보류 · hot 우위 held-out 미재현 · level-3 확인 대기) | 열림 | [본문](open-questions/D/D94.md) |
-| D95 | **Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수(피호출 본문·호출자 검사)가 빠진다** | 부분 | [본문](open-questions/D/D95.md) |
-| D96 | **슬라이스 일부가 Scout 입력 몫보다 커서 Scout가 받을 수 없다 (Case B 역추적 꼬리)** | 열림 | [본문](open-questions/D/D96.md) |
+| D94 | ~~Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다~~ (level-3 recall 손실은 실험팀 범위 · main_26·27 미실측) | 닫힘 | [본문](open-questions/D/D94.md) |
+| D95 | ~~Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수가 빠진다~~ (닫힘 · 옵션 넷이 서빙에서 켜졌다 · 남은 s500 전후 재측정은 FT 데이터 쪽) | 닫힘 | [본문](open-questions/D/D95.md) |
+| D96 | ~~슬라이스 일부가 Scout 입력 몫보다 커서 Scout가 받을 수 없다 (Case B 역추적 꼬리)~~ (하네스 트림 #375 가동 · 서빙 트림 0건 · 슬라이서 몫은 실험팀) | 닫힘 | [본문](open-questions/D/D96.md) |
 | D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
-| D98 | **Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계(PoC 생성)가 아예 안 돈다** | 열림 | [본문](open-questions/D/D98.md) |
+| D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
 | D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97·D96) | 닫힘 | [본문](open-questions/D/D100.md) |
 | D101 | **로더가 슬라이스의 `analysis`를 버리고 `degraded`는 Scout에만 실어, 절단·역추적 경계 신호가 Auditor 입력에 안 닿는다** | 열림 | [본문](open-questions/D/D101.md) |
-| D102 | **`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해, 지역·파라미터·필드 이름이 다른 파일 정의를 끌어온다** | 열림 | [본문](open-questions/D/D102.md) |
+| D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 후속 D103) | 닫힘 | [본문](open-questions/D/D102.md) |
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |
 | D104 | ~~Auditor 입력이 피호출 함수를 1단만 붙여, 래퍼·이름만 바꾸는 매크로 뒤의 실제 구현이 빠진다~~ | 닫힘 | [본문](open-questions/D/D104.md) |
 | D105 | **Auditor 입력에 함수 포인터 간접 호출 대상(C6)과 버퍼·길이 쓰기 지점(C5(a))이 없다** | 열림 | [본문](open-questions/D/D105.md) |
-| D106 | **심사 대상의 자기 신고가 심사 여부를 정한다 — 게이트가 모델의 인용 목록을 등급 계산에 쓰던 것. (b) 채택·6단계 수정됨 · ②③④ 미실측 · (b)가 켜는 E2 결함은 #576 | 열림 | [본문](open-questions/D/D106.md) |
+| D106 | ~~심사 대상의 자기 신고가 심사 여부를 정한다~~ ((b) #553 · Critic 도달 6/6 서빙 확인 · ②③④ 미충족 — ②는 #612·#600, E2 결함은 #576) | 닫힘 | [본문](open-questions/D/D106.md) |
 | D107 | ~~`Finding.cwe`가 non-null이라 `no_signal`에도 CWE를 요구한다~~ (v11: `no_signal`에서만 null) | 닫힘 | [본문](open-questions/D/D107.md) |
 
 ## 3. 팀·운영 미정

@@ -19,7 +19,7 @@
    보아야 한다.
 
 설계 선택과 런타임별 실측 범위는 `docs/open-questions/D/D92.md`, 추적 미러는 GitHub
-[이슈 #325](https://github.com/0xM1yu/whitehat-boss/issues/325)가 들고 있다. 기존 ASAN
+[이슈 #325](https://github.com/0xM1yu/whitehat-boss/issues/325)가 들고 있었다(⏵ 2026-10-12 — 닫음, 조건 5를 덮어썼다: 서빙 밖 런타임). 기존 ASAN
 실컨테이너 E4 도달 기록 0건과 분리한 수리는
 [이슈 #326](https://github.com/0xM1yu/whitehat-boss/issues/326)이 추적한다.
 
@@ -157,7 +157,8 @@ Windows는 `TextIOWrapper(newline=None)`). 그래서 이름 자리 `[^\n]{0,64}`
   `tests/test_serve_scripts.py` 40·`tests/test_run_signals.py` 4·`tests/test_model_checksum.py` 2
   (2026-10-01 `pytest -rs`로 확인). 어느 경우에도 gdb 테스트는 skip되지 않았다.
 - Podman은 ATOM에서 직접 실측했다. Singularity/Apptainer는 로컬 실행 파일이 없고 Seraph
-  접속 경로도 열리지 않아 **0회/미실측**이다. D92는 이 조건 때문에 열림이다.
+  접속 경로도 열리지 않아 **0회/미실측**이다. D92는 이 조건 때문에 열려 있었다.
+  (⏵ 2026-10-12 — D92 닫음: 이 조건 5를 덮어썼다. Singularity는 Seraph dev 프로필 런타임이라 서빙 밖이다.)
 - Docker 실측은 gdb가 새 자식 프로세스를 실행하는 배치 모드만 보증한다. 기존 프로세스에
   attach하는 모드와 pwndbg는 범위 밖이다.
 - `validate.tool_for()`는 gdb를 선택하지 않는다. 따라서 독립 ToolRunner 실측은 파이프라인

@@ -92,7 +92,7 @@ graph LR
 >   `read_symbol_source()`의 심볼 본문이고, v3 `ScoutResponse`의 `analysis_summary`는 버려지며
 >   (`nodes/scout.py`) `triage_need_evidence`(0.30)도 `triage_reject`(0.10)처럼 `scout_threshold` 미만으로
 >   `queued`된다 — 루프 0건. 풀 프로필의 v3 프롬프트가 이미 슬라이스를 전제해 지금 입력과 어긋난다 →
->   [D82](open-questions/D/D82.md). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
+>   [D82](open-questions/D/D82.md)(D82 닫힘 2026-10-12 — 서빙은 v4). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
 >   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
 >   need_evidence 루프는 그대로 0건이다(Phase 5).)
 > (⏵ 2026-09-26 — 루프가 이 변경으로 배선됐다: `runner._step_scout_open`(hop0)·`_step_scout_settle`
@@ -271,13 +271,13 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 나머지는 아직 안 정했다 — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
 > → [open-questions.md](open-questions.md) D80(열림)
 
-구체적 임계값(`scout_threshold`, 단계별 승격 비율)은 실측 후 확정한다. → [open-questions.md](open-questions.md)
+`scout_threshold`는 첫 reason code가 세 신호 밖인 응답의 폴백 경로값이다(서빙 Scout는 신호로 판정 — ADR 0012 결정 2 · [open-questions.md](open-questions.md) D2 닫힘 2026-10-12).
 
 ## 5. 횡단 구성 요소
 
 | 구성 요소 | 책임 | 비고 |
 | --- | --- | --- |
-| Stateful Orchestrator | 단계 실행 순서, checkpoint/resume(resume 경로는 `src/`에 없다. ⏵ 2026-10-10 — `state.db`는 여는 자리에서 저장 형태 판(`PRAGMA user_version`)을 대조한다: 새 파일엔 지금 판을 적고, 판이 다르면 행을 읽기 전에 `StateDbVersionError`로 거부, 판 0(게이트 전 파일)은 종전대로 연다. 판 올림은 사람이 판정 — 규칙은 `src/adapters/sqlite_store.py` 모듈 docstring · resume 지원 여부는 [D86](open-questions/D/D86.md)), human gate | LangGraph v1 후보. 각 node는 순수 함수 + Pydantic schema |
+| Stateful Orchestrator | 단계 실행 순서, checkpoint/resume(resume 경로는 `src/`에 없다. ⏵ 2026-10-10 — `state.db`는 여는 자리에서 저장 형태 판(`PRAGMA user_version`)을 대조한다: 새 파일엔 지금 판을 적고, 판이 다르면 행을 읽기 전에 `StateDbVersionError`로 거부, 판 0(게이트 전 파일)은 종전대로 연다. 판 올림은 사람이 판정 — 규칙은 `src/adapters/sqlite_store.py` 모듈 docstring · resume 지원은 미결정 — 하기로 하는 날 새 이슈([D86](open-questions/D/D86.md)은 2026-10-12 닫음)), human gate | LangGraph v1 후보. 각 node는 순수 함수 + Pydantic schema |
 | Model Gateway | 역할→모델 라우팅, fallback, 구조화 출력 강제, prefix cache 활용 | vLLM(OpenAI-compatible) + LiteLLM |
 | Budget Ledger | 실행 단위 토큰·GPU-second 한도 집행, 초과 시 단계 차단 | 예산 소진 시 부분 결과로 리포트 |
 | Evidence Store | 세션에서 관찰된 사실(로그, 분석 결과) 저장 | KB(재사용 지식)와 분리 → [knowledge-base.md](knowledge-base.md) |

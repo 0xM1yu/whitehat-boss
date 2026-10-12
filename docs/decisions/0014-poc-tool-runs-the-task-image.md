@@ -202,5 +202,5 @@ docker run --rm --network none --pull never \
   `tests/test_poc_tool_feeds_the_input.py::test_the_copied_constants_match_the_tool_they_were_copied_from`이
   센다. 둘 다 저자 소스와 어긋나는 경우는 저자 소스 태그를 다시 봐야 한다(그 테스트 docstring).
 - **런타임 실패가 run 상태에 드러나는지**(#559). 이 결정은 그 자리를 **새로 하나 더 만든다** —
-  과제 이미지의 `exit 125`가 도구 결과로 적히면 같은 사고다. 불변식 1이 그것을 막지만 #559 자체는
-  이 ADR이 닫지 않는다.
+  과제 이미지의 `exit 125`가 도구 결과로 적히면 같은 사고다. 불변식 1이 그것을 막지만 #559는 2026-10-12
+  닫았다(서빙 trace 124~127 0건 · 시작 시점은 `preflight`(#534)가 `docker run`으로 본다 · run 도중 데몬 실패의 run 경고는 안 만들었다).

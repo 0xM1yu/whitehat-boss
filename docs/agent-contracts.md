@@ -111,7 +111,7 @@ agent:
   `/* ===== path ===== */` 배너 · `FACTS.slice_criterion` — `prompts/scout_*/v3/prefix.md`)으로 간다.
   **지금 코드는 아니다** — `nodes/scout.py`가 `ctx.read_source()`로 대상 심볼 본문(줄번호·배너 없음,
   `read_symbol_source()`)을 `{{SOURCE}}`에 싣는다. 풀 프로필의 v3 프롬프트는 이미 슬라이스를 전제하므로 그
-  둘이 지금 어긋난다([D82](open-questions/D/D82.md)). 구현은 Phase 3이다.
+  둘이 지금 어긋난다([D82](open-questions/D/D82.md))(D82 닫힘 2026-10-12 — 서빙은 v4). 구현은 Phase 3이다.
   ⏵ 2026-09-25 — `run --slices`로 돈 run은 이제 그 모양이다(Phase 3a PR #283 · 3b PR #284 · 3c): `{{SOURCE}}`가
   슬라이스 렌더이고 FACTS에 `slice_criterion`(`given_end`와, 슬라이서 entry의 file·line·symbol인 `given`)이
   붙는다. `--slices` 없는 run은 앞 문장 그대로라, 풀 프로필을 슬라이스 없이 돌리면 그 어긋남도 그대로다.
@@ -933,7 +933,7 @@ HEAD 커밋의 `src/`와 이 변경의 워킹트리에서 각각 직렬화해 sh
 없는 CWE가 `Finding`에 저장된다. 그 값을 읽는 자리는 여섯이다: SARIF `ruleId`(`src/cli.py`) · Critic의 주장 문장(`nodes/critic.py`) · PoV 입력
 (`nodes/pov.py` — 옛 판·넓은 판 두 줄이 한 함수) · 보고서의 묶음 키와 항목 줄(`nodes/report.py` 둘) · Critic 주장을 되만드는 프로브
 (`tools/probe/critic_output_budget.py`). ⏵ 2026-10-10 — 앞 판은 PoV를 둘로 세고 프로브를 빠뜨려 같은 「여섯」이 다른 목록이었다. 후보의 `suspected_cwe`가 비는 비율도, v10이 그때 무엇을 쓰는지도 안 쟀다.
-⏵ 2026-10-09 — **v11이 이 한계를 스키마·산문에서 고쳤다** — 모델이 `no_signal`에서 실제로 `null`을 내는지는 미측정이다([D107](open-questions/D/D107.md) · 이슈 #525 선택지 1 · 사용자 결정). 위 문단은 v10 계약의 기록으로 남는다 —
+⏵ 2026-10-09 — **v11이 이 한계를 스키마·산문에서 고쳤다** — 모델이 `no_signal`에서 실제로 `null`을 내는지는 v13·v14 서빙 run 4/4로 쟀다(n=4 · 과제 1개 — [D107](open-questions/D/D107.md) 2026-10-12 ⏵ · 이슈 #525 선택지 1 · 사용자 결정). 위 문단은 v10 계약의 기록으로 남는다 —
 v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「묶음 키」는 정렬 키가 아니다 — `report._dedupe_key`는 집합 소속만 본다.
 
 #### v11 — `no_signal`의 `cwe`가 `null`이다 (⏵ 2026-10-09)
@@ -947,7 +947,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 - 읽는 자리 -> CWE가 있으면 렌더가 종전과 바이트 동일, `null`일 때만 다르다: SARIF는 `ruleId`를 CWE 꼴이 아닌 센티넬 `no-cwe`로 둔다(`ruleId`는 스키마상 선택, 규범 본문은 조건부 SHALL — OASIS SARIF 2.1.0 §3.27.5 *"If `rule.id` is absent, `ruleId` SHALL be present"*, 이 결과는 `rule`을 안 싣는다) · 보고서 항목 줄은
   `CWE 없음` · Critic `CLAIM`은 `<제목> (CWE 없음)` · PoV 서술은 `CWE: (없음)`. 보고서 중복 제거 키는 `null`을 그대로 쓰고 셋째 칸을 후보 ID로 둔다 — `no_signal`은 `path=[]`라 대상 함수 대신 모델이 쓴 제목이 들어가 다른 후보가 제목만 같아도 묶였을 자리다.
 - 관측 -> v11 `answer` 홉이 `no_signal`인데 `cwe`가 있으면 `cwe_present_on_no_signal` 키가 생긴다(`nodes/auditor._answer_observed` — v8~v10은 안 센다 · ⏵ 2026-10-10 v12 답도 센다: `AuditProcedureAuditAlways`가 그 서브클래스다).
-- v11로 돈 run은 0건이다 — 모델이 `no_signal`에서 실제로 `null`을 내는지는 미측정이다.
+- v11로 돈 run은 0건이다(v11은 서빙된 적이 없다). 같은 `cwe` 규칙을 든 v13·v14의 `no_signal` 4건은 전부 `cwe` null이었다(n=4 · 과제 1개 — D107 2026-10-12 ⏵).
 
 #### v12 — `audit`를 모든 상태에서 채운다 (⏵ 2026-10-10)
 
