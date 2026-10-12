@@ -592,6 +592,10 @@ def _slice_input_prompts(config: HarnessConfig) -> list[str]:
     ⏵ **2026-10-07 — 저장소의 어느 프로필도 이 목록을 채우지 않는다**(PR #524로 Scout가
     v4 = `input: source`에 배선됐다). 가드는 그대로 선다 — v3가 디스크에 있고 그것을 고르는
     설정이면 다시 찬다. 역할·버전을 여기 박지 않는 이유가 그것이다.
+
+    ⏵ 2026-10-13 — 반대 방향(`input: source`인데 `--slices`를 줌)은 가드가 필요 없다: 노드가
+    `SOURCE`의 모양을 이 선언으로 골라(`scout._ask_model`, #529) `--slices` run에서도 함수 본문이
+    간다.
     """
     return [
         f"{role}/{version}"
@@ -726,6 +730,14 @@ def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
     하네스 트림을 서술하는 프롬프트 판에만 이 좌석을 돌리는 것(#351 `source_options` 선례)이다.
     """
     if not config.thresholds.scout_slice_trim:
+        return []
+    # ⏵ 2026-10-13 — 트림은 `input: slice` 판의 렌더에서만 돈다(`scout._ask_model`, #529). 배선된
+    # Scout가 전부 `input: source`(서빙 v4)면 줄을 빼는 일이 없어 알릴 것이 없다.
+    try:
+        wired = _slice_input_prompts(config)
+    except PromptError:
+        wired = ["scout"]  # 로드 실패는 `_check_prompts`가 ERROR로 댄다 — 여기서는 WARN을 살린다
+    if not any(name.startswith("scout") for name in wired):
         return []
     return [
         Check(

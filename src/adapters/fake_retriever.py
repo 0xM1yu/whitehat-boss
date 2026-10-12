@@ -235,7 +235,11 @@ class FakeRetriever:
         return self.slice_lines(query.slice_id)
 
     def _target_source(self, query: Query) -> str:
-        """`target_function`이 셀 본문. 슬라이스 타깃이면 렌더(Scout가 받는 그것)다."""
+        """`target_function`이 셀 본문. 슬라이스 타깃이면 슬라이스 렌더다.
+
+        `input: slice` 프롬프트의 Scout가 받는 그것이다. `input: source` 선언은 함수 본문을 받으므로
+        이 토큰 수와 프롬프트가 어긋난다 — 알려진 한계(#529).
+        """
         if query.slice_id is None:
             return read_symbol_source(self.root, query.target)
         if self.read_slice is None:
