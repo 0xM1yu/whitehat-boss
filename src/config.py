@@ -797,7 +797,7 @@ class Thresholds(HarnessModel):
     # 16을 들고 정본 Auditor가 루프 판(v9)이다. 「기본」이 어느 쪽인지는 이 필드가 아니라 그
     # 파일이 정한다.
     # 양수면 매 홉 `AuditorAction`(`src/schemas/auditor.py`)을 받아 조회·도구를 돌리고 관측을
-    # 다음 홉 user 턴으로 되먹인다.
+    # 다음 홉 user 턴으로 되먹인다. (⏵ 2026-10-13 #600 H2ⓐ - 같은 관측이 Critic 입력에도 간다.)
     # ⏵ 2026-10-06 — 위 「정본 Auditor가 루프 판(v9)」은 2026-10-07에 v10으로 올라갔고
     # **봉투는 둘이다**: v8·v9는 매 홉 `AuditorAction`, v10은 형제 `AuditorProcedureAction`을
     # 낸다. 홉 구조·상한은 같고 `answer`가 싣는 최종 답만 다르다(`Finding` ↔
