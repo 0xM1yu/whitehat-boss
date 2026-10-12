@@ -72,6 +72,7 @@
 3. 같은 조건은 seed를 바꿔 최소 3회 반복하고 분산을 함께 보고한다.
 4. 프롬프트 버전이 바뀌면 이전 결과와 직접 비교하지 않고 재측정한다.
 5. **장비가 다른 run은 같은 비교 셀에 넣지 않는다.** 두 장비 모두 지원 대상이므로([portability.md](portability.md)) 같은 프로필·같은 조건의 run이 다른 하드웨어의 결과일 수 있다. 실제로 쓰인 장비는 `RunRecord.device`에 남는다([decisions/0006](decisions/0006-record-the-device-a-run-happened-on.md)). `--device`는 규칙 2의 **예외가 아니다** — 설정을 한 글자도 바꾸지 않고 기록만 남기므로 `--tool-runner`와 성격이 다르다.
+6. **Evidence 등급(E2 이상)을 run 사이에 나란히 놓을 때는 인덱서 상태를 같은 칸에 적는다.** E2의 `graph_ok`는 1단계 `index` Evidence **하나**(run 전역)의 `ok`라, 인덱서가 실패한 run은 전 Finding이 E1 이하로 **동시에** 내려가고 서는 run과 등급이 갈린다 — 등급이 근거 품질이 아니라 인덱서 가동률을 섞어 잰다. 인덱서 상태는 trace의 `tool_call`(`tool=index`)의 `ok`·`error`가 답한다(심볼 0개는 `ok=False`). 이 열 없이는 등급 비교를 하지 않는다 (이슈 #576 · [architecture.md](architecture.md) §4 E2 행).
 
 ## 3. 평가 데이터셋
 
