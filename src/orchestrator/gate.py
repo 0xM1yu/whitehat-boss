@@ -158,6 +158,9 @@ def evaluate(
     path_steps = {step.step for step in finding.path}
 
     static_ok = any(ev.kind is EvidenceKind.STATIC for ev in usable)
+    # `location_ok`는 6단계 행만 겹침의 뜻이 있다 - 7·8단계는 `candidate_location`을 안 넘긴다.
+    # run마다의 횟수는 `RunRecord.location_overlap`(이슈 #563). 거짓은 「안 겹쳤다」·「위치 있는
+    # Evidence가 없다」·「후보 위치가 없다」를 가르지 않는다.
     location_ok = candidate_location is not None and any(
         ev.location is not None and ev.location.overlaps(candidate_location) for ev in usable
     )

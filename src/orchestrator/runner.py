@@ -159,7 +159,7 @@ from src.orchestrator.source_definitions import (
 )
 from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
+from src.orchestrator.trace import EventKind, TraceEvent, TraceValue, TraceWriter
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -1088,6 +1088,10 @@ def run_pipeline(
     if oracle_summary is not None:
         # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
         record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
+    # 6단계 위치 겹침 횟수(#563) - 같은 이유로 여기서 한 번 싣고, 리포트도 같은 값을 읽는다.
+    location_overlap = _location_overlap(trace.events)
+    if location_overlap is not None:
+        record = record.transition(location_overlap=location_overlap)
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
@@ -1230,6 +1234,7 @@ def run_pipeline(
         grades=grades,
         ne_absorbed=state.ne_absorbed,
         pov_results=state.pov_results,
+        location_overlap=location_overlap,
     )
     finished = state_machine.finish_run(
         record,
@@ -2223,6 +2228,24 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
             candidate_location=by_cand.get(f.candidate_id),
         ).grade
         for f in state.findings.values()
+    }
+
+
+def _location_overlap(events: Iterable[TraceEvent]) -> dict[str, int] | None:
+    """6단계 `gate_eval` 행에서 센 위치 겹침 (이슈 #563 선택지 4) -> `RunRecord.location_overlap`.
+
+    **6단계 행만 센다.** 7·8단계는 `candidate_location`을 안 넘겨 `location_ok`가 구조상 거짓이라
+    섞으면 겹침률이 깎인다. `location_ok` 키가 없는 행(`p0` 단락)은 `gated`에서 빠진다.
+    6단계 행이 0건이면 `None`이다 - 0이 아니라 「안 쟀다」.
+    """
+    rows = [e for e in events if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.GATE)]
+    if not rows:
+        return None
+    judged = [e for e in rows if "location_ok" in e.data]
+    return {
+        "gated": len(judged),
+        "static_ok": sum(1 for e in judged if e.data["static_ok"] is True),
+        "location_ok": sum(1 for e in judged if e.data["location_ok"] is True),
     }
 
 

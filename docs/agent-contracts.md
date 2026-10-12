@@ -219,7 +219,10 @@ agent:
   `FACTS.evidence[].location`과 EVIDENCE 줄의 위치를 서술한다 — **모델이 그 값을 쓰는지, 인용이 늘어나는지는 미실측이다**(이슈 #563).
   ⏵ **2026-10-09 — 「싣고 돈 run 0건」은 더 이상 참이 아니다**: `run_20261007_0001`이 위치를 싣고 돌았고(`5828a0a` `nodes/auditor.py:197` `_CONTENT_AWARE_VERSIONS` ∋ v10 — 위치를 싣는 판으로 돌았다)
   인용은 **0/5**였다. 단 그 run의 semgrep 히트(`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를
-  보여 주면 인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
+  보여 주면 인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. ⏵ 2026-10-13(#563) - 겹침 횟수는 이제 run마다
+  `RunRecord.location_overlap`이 싣는다(6단계 `gate_eval`에서 센 정수). 커밋된 보고서에서 읽히는 #248 뒤 6단계
+  `location_ok`는 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0) · `run_20261007_0001` 5/5 거짓 · 2026-10-12
+  보고서의 첫 `gate_eval` 1건 거짓이고 과제가 다르다(통제 대조 0건). content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
   항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-05 서빙 프로필(`harness_pool`·
   `harness_pool_hybrid`)의 Auditor와 Critic 모두 content-aware 판이다. 서빙 Critic
   (`gpt-oss-20b`)은 v6으로 바뀌어 본문·위치·SOURCE를 받는다 — 손으로 쓴 값이니 `config/models.yaml`이 정본이다.
