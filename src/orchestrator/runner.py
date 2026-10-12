@@ -1175,6 +1175,11 @@ def run_pipeline(
         warnings.append(pov_shortfall)
     if state.pov_pool_empty is not None:
         warnings.append(state.pov_pool_empty)
+    # **5단계 도구 루프의 「probe 0」도 같은 자리에 올린다 (#617).** 루프가 돌았는데 도구가 한 번도
+    # 안 돌았다는 사실은 홉 수와 함께 trace에만 있다.
+    probe_warning = _auditor_zero_probe_warning(trace)
+    if probe_warning is not None:
+        warnings.append(probe_warning)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1511,6 +1516,28 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     return finding_id in state.critic_failed_ids or any(
         gate.normalize(decision) is Verdict.REBUT
         for decision in state.decisions.get(finding_id, ())
+    )
+
+
+def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
+    """Auditor 도구 루프의 홉이 1건 이상 났는데 `probe`가 한 번도 **실행되지** 않았으면 run 경고,
+    아니면 `None`(#617).
+
+    홉 이벤트가 1건도 없으면 말할 것이 없다 — 루프가 꺼졌거나, 켰어도 첫 모델 호출이
+    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석). 못 가른다.
+
+    `stop_reason`이 달린 `probe` 홉(`MAX_HOP`·`REPEAT_REQUEST`)은 세지 않는다 - 그 홉의 조사는
+    안 돌았다(`_run_hops`). 도구 실패(`observation_error`)로 끝난 probe 홉은 세고, 왜 안 골랐는지는
+    이 run이 가르지 못한다."""
+    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP]
+    ran = sum(1 for d in hops if d.get("action") == "probe" and "stop_reason" not in d)
+    if not hops or ran:
+        return None
+    lookups = sum(1 for d in hops if d.get("action") == "lookup")
+    answers = sum(1 for d in hops if d.get("action") == "answer")
+    return (
+        f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
+        f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
     )
 
 
