@@ -2635,15 +2635,14 @@ def _run_pov_hops(
         # 읽는 판(`pov_wide`)에만 싣는다(v2는 이 PR 전과 바이트가 같다 — `fuzz_entrypoint`와 같은
         # 경계). 실패 Evidence가 없으면 `None`이라 본문도 trace도 종전 그대로다. 도구는 거절하지
         # 않는다.
-        compile_note = (
-            signals.compile_note(ctx.compile_failures.get(workdir, ()), workdir)
-            if pov_wide
-            else None
-        )
+        compile_failures = ctx.compile_failures.get(workdir, ()) if pov_wide else ()
+        compile_note = signals.compile_note(compile_failures, workdir)
         # hop0 `pov_hop` 이벤트에만 싣는 계측 — 노트를 붙인 호출이 있었다는 사실과 그것이 짚은
-        # 도구들. 이 키가 있는 run에서 이후 홉의 `tool`이 그 도구들인 비율이 「노트 뒤
-        # 재선택률」이다.
-        note_trace = signals.COMPILE_NOTE_TRACE if compile_note is not None else None
+        # 도구들(`build`가 실패했을 때만 `build,asan,gdb`). 이 키가 있는 run에서
+        # hop ≥ 0의 `tool`이 그 도구들인 비율이 「노트 뒤 재선택률」이다.
+        note_trace = (
+            signals.compile_note_trace(compile_failures) if compile_note is not None else None
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
