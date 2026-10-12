@@ -185,6 +185,11 @@ _GDB_SCRIPT = "/opt/gdb.batch"
 # `_COMPILE_SUFFIXES`를 받는다 — `.inc`가 빠져 #66의 실패가 재현된다.
 INDEX_TOOL = "index"
 
+# 인덱서가 stdout에 남기는 요약 한 줄(`indexer.main()`)의 심볼 수. `judge()`가 0개를 가른다(#576).
+# 줄 머리에 고정한다 — 줄 중간에 같은 철자가 있어도 요약으로 읽지 않는다.
+# `tests/test_indexer.py`가 실제 인덱서 출력으로 이 철자를 문다.
+_INDEX_SYMBOL_COUNT = re.compile(r"^# index: (\d+) symbols,", re.MULTILINE)
+
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
 # 남기지 않는다(모듈 docstring).
 UNENFORCED: dict[str, tuple[str, ...]] = {
@@ -882,6 +887,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     - 도구가 죽음/실행 불가: `ok=False`
     - 돌았는데 아무것도 못 찾음: `ok=True, exit_code=0`
     - 돌아서 뭔가 찾음: `ok=True, exit_code!=0`
+    - **예외 하나 — `index`가 심볼 0개를 냈다: `ok=False, exit_code=0`** (#576). 인덱서는 그것을
+      실패로 안 보지만 빈 그래프는 E2의 근거가 못 된다. 그래서 「`ok=False`면 exit가 0이 아니다」는
+      성립하지 않는다 — `ok`를 먼저 보는 쪽(`gate.evaluate`의 `usable`)은 영향이 없다.
 
     이 관례가 깨지면 `with_signal()`이 benign 표본을 거르지 못하고 Evidence Gate E1이
     모든 Finding에서 참이 된다.
@@ -973,6 +981,14 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                 f"clang-tidy가 진단을 한 줄도 내지 않았다 (exit={code}). 로그의 stderr 참조"
             )
         return True, code, None
+    if tool == INDEX_TOOL and code == 0:
+        # ⏵ 2026-10-13 (#576) — **심볼 0개의 그래프는 근거가 못 된다.** 인덱서는 그것을 실패로 안
+        # 내지만(`indexer.py` 종료 코드 절 — 헤더뿐인 대상은 정상이다) 게이트의 `graph_ok`는 이
+        # Evidence의 `ok`만 보므로, 여기서 `ok=True`를 내면 **빈 그래프 위에서 E2가 열린다.**
+        # 요약 줄이 없거나 못 읽으면 건드리지 않는다 — 안 잰 것을 0으로 읽지 않는다(CLAUDE.md §0).
+        match = _INDEX_SYMBOL_COUNT.search(last.stdout)
+        if match is not None and int(match.group(1)) == 0:
+            return False, 0, "index: 심볼 0개 — 그래프가 비어 E2 근거가 못 된다 (#576)"
     if code == 0:
         return True, 0, None
     return False, code, f"{tool} 실패 (exit={code})" + (
