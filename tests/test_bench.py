@@ -635,8 +635,10 @@ def test_zero_engine_traffic_is_not_reported_as_a_cache_miss(
     """엔진이 본 요청이 0이면 캐시에 대해 아무 주장도 하지 않는다.
 
     **성공 호출이 있는데 엔진이 본 요청이 0이면 엔드포인트 불일치가 확정이다.** 역할마다
-    포트가 다르고, 이 스택에서는 장부가 항상 0이라(R6) `ledger_only`가 발화할 수 없다 —
-    이 검사가 없으면 엔드포인트 불일치가 "캐시가 안 걸린다"로 보고된다.
+    포트가 다르다. **장부가 항상 0인 것은 아니다** — 2026-10-12 서빙 run의 `model_call`
+    45건 중 15건이 0이 아닌 `cached_tokens`를 든다(R6 ⏵ 2026-10-13). 그래도
+    `ledger_only`에 기댈 수 없다: 장부가 0으로 오는 구간이 남고, 그런 구간에서는 이
+    검사가 없으면 엔드포인트 불일치가 "캐시가 안 걸린다"로 보고된다.
     """
     snapshot = _counters(monkeypatch, metrics_fixture())
     delta = bench_metrics.counter_delta(snapshot, snapshot, calls_ok=3)
