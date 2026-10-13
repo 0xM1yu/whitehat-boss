@@ -359,6 +359,14 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    (`is_size_rejection` — 413, 또는 `maximum context length`가 실린 400)당하는 것만 다르다: 후보는 C-6이
    아니라 C-5로 `queued`에 남고 그 홉에 `auditor_hop`(`stop_reason=context_overflow`)이 남는다. 그 예외도
    **흡수하지 않고 올라온다**(아래 6항 「`CONTEXT_OVERFLOW`」).
+   ⏵ 2026-10-13(#602) — **비어 있는 `answer`(`procedure`·`finding` 없음)도 이 길이다.** 어댑터의 재시도는 이미
+   거절 사유를 모델에게 돌려준다(`openai_compat`이 재시도 본문 끝에 `[스키마 오류] <pydantic 오류>`를 붙인다) -
+   그런데도 적어도 마지막 시도는 같은 거절이었다(첫 시도의 원문은 그 run에 없다 - 2026-10-11 run
+   `run_20261011_0001`, [보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md), 25k 토큰 · 18분). 동작은 안 바꾼다
+   (재시도 횟수·후보 처리 그대로). 대신 **세는 것을 더했다**: `model_call`(`role=auditor` · `ok=false` ·
+   `SchemaParseError`)의 `error_detail`이 `answer 액션은 비지 않은`을 담은 호출 수를 run 경고
+   (`runner._auditor_empty_answer_warning`)로 올린다. 호출 단위이고 마지막 시도의 사유만 보므로 하한이다.
+   프롬프트 쪽 문장은 auditor v15가 넣었다(`prompts/auditor/v15/meta.yaml` 5번 · #662) - 이 수가 그 효과를 판가름한다(v15로 돈 run은 아직 0건).
    5단계 산출 `Finding`은 `answer`에서만 나온다(v10은 `procedure`를 옮겨서 — §3 「AuditProcedure」).
 
 2. **`lookup` 요청 형식.** `requests`의 항목은 Scout 되묻기와 같은 `RequestedContext`다 — `kind`·`target`·
