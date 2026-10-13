@@ -68,7 +68,7 @@
 | D9 | ~~1차 분석 대상의 범위~~ (1차는 C/C++ 소스 · 바이너리·펌웨어는 2차 — ADR 0010 §5) | 닫힘 | [본문](open-questions/D/D9.md) |
 | D10 | ~~재평가 횟수를 어디에 보관하는가~~ (ADR 0012 결정 6이 재평가 경로를 폐기 · resume 잔여는 D86) | 닫힘 | [본문](open-questions/D/D10.md) |
 | D11 | ~~Evidence에 "발견 건수"가 없다~~ ((c) 관례 + 컴파일 실패 마커·진단 0줄 가드로 서빙 성립 · clang 표기 변경 회귀와 clang-tidy 경고 경로는 서빙 미관측) | 닫힘 | [본문](open-questions/D/D11.md) |
-| D13 | ~~캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가~~ (index_graph가 채움 · types는 NE resolver · 빈 그래프 E2는 #576 · 예산 소멸은 #78) | 닫힘 | [본문](open-questions/D/D13.md) |
+| D13 | ~~캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가~~ (index_graph가 채움 · types는 NE resolver · 빈 그래프 E2는 #576 · 예산 소멸은 후속 이슈(#78에서 이어짐)) | 닫힘 | [본문](open-questions/D/D13.md) |
 | D12 | ~~build를 몇 단계에서 실행하는가~~ (선택지 (a) — 문서를 코드에 맞춤) | 닫힘 | [본문](open-questions/D/D12.md) |
 | D14 | ~~재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다~~ (확장 안 함 · 바이트 동일은 Fake 경로) | 닫힘 | [본문](open-questions/D/D14.md) |
 | D15 | ~~`Budget.tool_seconds`의 값에 실대상 근거가 없다~~ (정한 상한 18,000 s · 서빙 도구 시간 7~16 s로 안 걸린다 · 실대상 규모는 미실측) | 닫힘 | [본문](open-questions/D/D15.md) |
@@ -85,7 +85,7 @@
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | ~~장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다~~ (실서빙 프로필에 Fake 좌석 없음 · 서빙 장부가 서버 적중과 같은 방향 · 정량 대조 미실측) | 닫힘 | [본문](open-questions/D/D27.md) |
 | D28 | ~~Scout 점수에 해상도가 없다 — 원인 미확정~~ (v4가 점수를 세 값 라벨로 계약 · 판정은 신호 · v4 고유값 미실측) | 닫힘 | [본문](open-questions/D/D28.md) |
-| D29 | **서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다** | 열림 | [본문](open-questions/D/D29.md) |
+| D29 | ~~서버 `generation_config`의 `top_k`가 run 기록 어디에도 안 남는다~~ (보낸 값·선언값·의도한 기동 인자를 기록 · 서버 실효값은 미측정 · 등가화는 실험팀) | 닫힘 | [본문](open-questions/D/D29.md) |
 | D30 | ~~`single`이라는 이름에 세 문서가 서로 다른 뜻을 붙인다~~ (선택지 (c) — 자리마다 한 줄) | 닫힘 | [본문](open-questions/D/D30.md) |
 | D31 | ~~`Evidence.ok`가 "실패"와 "해당 없음"을 못 가른다~~ | 닫힘 | [본문](open-questions/D/D31.md) |
 | D32 | ~~컴파일 플래그(`-std`·`-I`)가 `RunRecord`에 없다~~ 기록됐다(#74) (값의 config 이동은 실저장소 시점 · 조건 불일치의 서빙 효과는 #507) | 닫힘 | [본문](open-questions/D/D32.md) |
@@ -97,12 +97,12 @@
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
 | D39 | **심볼 단위 후보에서 캡슐 캐시는 원리상 무효다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D39.md) |
 | D40 | ~~8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다~~ (validate.run은 점수 경로 밖(#326 c) · (a)는 8단계 등급 대표 때문에 못 한다 · 실 대상 비용·Finding 사이 재사용 필요는 미실측) | 닫힘 | [본문](open-questions/D/D40.md) |
-| D41 | **예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다** | 열림 | [본문](open-questions/D/D41.md) |
+| D41 | ~~예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다~~ (확장 경로 폐기로 `search` 시점 절단만 남음 · 영향 미측정 · 낮을 것으로 봄 · 잔여는 후속 이슈) | 닫힘 | [본문](open-questions/D/D41.md) |
 | D42 | ~~요청당 출력 상한이 없다 — 하네스가 `max_tokens`를 안 보낸다~~ | 닫힘 | [본문](open-questions/D/D42.md) |
 | D43 | ~~캡슐 재검증이 `using_counter` 밖에서 돌아 저장과 로드가 갈린다~~ (확장 경로 폐기 · 유일한 조회 지점은 감쌈 · 구조 해법 (c)는 미구현) | 닫힘 | [본문](open-questions/D/D43.md) |
 | D44 | ~~critic 단계의 파싱 실패가 run 전체를 죽인다~~ | 닫힘 | [본문](open-questions/D/D44.md) |
 | D45 | ~~실행한 대상의 심볼이 기록에 안 남는다 — 건너뛴 대상만 남는다~~ | 닫힘 | [본문](open-questions/D/D45.md) |
-| D46 | **구조화 출력이 공백 폭주로 안 닫힌 JSON을 낸다 — 상한을 키워도 안 닫힌다** | 열림 | [본문](open-questions/D/D46.md) |
+| D46 | ~~구조화 출력이 공백 폭주로 안 닫힌 JSON을 낸다 — 상한을 키워도 안 닫힌다~~ (재현은 은퇴한 모델만 · 현재 로스터는 본 적 없음(미측정) · 재개 조건 `attempt_tail_whitespace_only`의 true) | 닫힘 | [본문](open-questions/D/D46.md) |
 | D47 | ~~스키마 재시도가 실패한 응답 원문을 프롬프트에 되싣는다 — D42의 상한이 그 자리에서 입력 초과로 되돌아온다~~ | 닫힘 | [본문](open-questions/D/D47.md) |
 | D48 | ~~`target_skipped.stage`가 실제로 실패한 단계를 안 가리킨다~~ | 닫힘 | [본문](open-questions/D/D48.md) |
 | D49 | ~~재시도 프롬프트가 산출물에 안 남는다 — 실제로 서버에 간 요청을 재현할 수 없다~~ | 닫힘 | [본문](open-questions/D/D49.md) |
@@ -122,7 +122,7 @@
 | D64 | ~~Auditor·Critic을 DeepSeek 계열로 교체하는 제안 — 등재와 미확인 항목~~ (ADR 0010 §7로 기각) | 닫힘 | [본문](open-questions/D/D64.md) |
 | D65 | ~~게이트가 E3를 주는 조건과 스키마가 `validated`를 허용하는 조건이 다르다~~ (#167 · 172200f `p3 ⟹ p2` · blocking은 모델 선언분의 정직한 0 · Critic 선별 잔여는 상한 미충돌) | 닫힘 | [본문](open-questions/D/D65.md) |
 | D66 | ~~실패 경로에서 `_record_retries` 파일 쓰기가 `emit`·`charge`보다 먼저라, 그 쓰기가 실패하면 원 예외를 덮고 소비된 토큰·GPU가 미청구된다~~ (선택지 (a)로 해소) | 닫힘 | [본문](open-questions/D/D66.md) |
-| D67 | ~~Auditor가 `path`·`evidence_refs`를 안 채운다~~ (닫힘 · 6단계 부착이 게이트 막힘을 풀었다 · v13·v14는 path를 채운다 · 모델 인용 수는 미실측 #554) | 닫힘 | [본문](open-questions/D/D67.md) |
+| D67 | ~~Auditor가 `path`·`evidence_refs`를 안 채운다~~ (닫힘 · 부착이 게이트 막힘을 풀었다 · v13·v14는 path를 채운다 · 모델 인용 수 미실측: 자리는 `gate_eval.cited_by_model` #554, 키 단 run 0건) | 닫힘 | [본문](open-questions/D/D67.md) |
 | D68 | ~~Scout 풀 멤버 하나가 전량 실패해도 연속 폐기 차단기가 안 걸려, 커버리지 1/3이 빈 run이 `is_complete=True`로 비교표에 들어간다~~ (연속 폐기를 역할별로 셈) | 닫힘 | [본문](open-questions/D/D68.md) |
 | D69 | ~~Scout 풀 run의 `token_counter`가 돌지 않은 `scout`을 싣고 실제로 켜진 첫 멤버는 안 싣는다 — 토큰 회계의 근거가 기록에서 사라진다~~ (counter_report가 프로필 자리만·공유 캡슐은 counted_by로) | 닫힘 | [본문](open-questions/D/D69.md) |
 | D70 | ~~팬아웃이 기록의 단위를 `target`에서 `(target × Scout 자리)`로 바꿨다 — 「못 본 대상 수」가 사라지고 capsule cache 적중률이 낮게 나온다~~ (unanalyzed_targets·scout_member·cache 이벤트) | 닫힘 | [본문](open-questions/D/D70.md) |
