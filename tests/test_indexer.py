@@ -10,6 +10,7 @@
 아무것도 검증하지 않는 상태.
 """
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -35,6 +36,27 @@ def _load_indexer():
 
 
 indexer = _load_indexer()
+
+
+# 이미지 태그 -> 그 이미지에 구워진 `/opt/indexer.py`의 sha256. 이미지를 다시 구우면 여기를 올린다.
+_BAKED_INDEXER_SHA256 = {
+    "harness-tools:v3": "de9c643b0d76f04a29526d1e3a0245425c3668c533f0bed266cd65287ac91d34",
+}
+
+
+def test_indexer_bytes_match_the_pin_of_the_baked_image() -> None:
+    """저장소 `indexer.py`의 바이트 해시가 서빙 이미지에 구워진 것과 같아야 한다.
+
+    이 파일을 고치면 — 주석 한 줄이어도 — 이미지를 다시 굽고 위 핀을 올려야 한다. 안 그러면
+    서빙 preflight(`src/preflight.py`가 파일 전체 sha256을 이미지 `/opt/indexer.py`와 견준다)가
+    ERROR로 exit 2를 낸다 (PR #634 HIGH 1, 2026-10-13: docstring 3줄이 이미지와 해시를 갈랐다).
+    재빌드는 `tool_images` digest를 바꿔 기존 run과 비교 축이 갈리니 의식적으로 한다.
+    """
+    digest = hashlib.sha256(_INDEXER_PATH.read_bytes()).hexdigest()
+    assert digest == _BAKED_INDEXER_SHA256["harness-tools:v3"], (
+        "indexer.py가 이미지 harness-tools:v3와 달라졌다 — 이미지를 다시 굽고 핀을 올리거나, "
+        "수정을 되돌린다. 주석만 고쳐도 preflight가 죽는다"
+    )
 
 
 @pytest.fixture
