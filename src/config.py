@@ -11,6 +11,7 @@ YAML의 오타 필드가 조용히 무시되지 않고 로드 시점에 실패�
 박제되므로(evaluation.md §6) 별도 타입을 두면 두 정의가 갈라진다.
 """
 
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import ClassVar, Literal
@@ -583,6 +584,7 @@ class CapsuleBudgets(HarnessModel):
 # 동일, 이슈 #67).
 # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와 바이트
 # 동일, 이슈 #67).
+# ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술은 v14와 같다).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -766,6 +768,7 @@ class Thresholds(HarnessModel):
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
     # trace `scout_slice_trimmed`가 남는다. 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를
     # 줄이 빠진 슬라이스로 서술한다). 기본은 끈다 — 켜면 같은 슬라이스 집합의 Scout 입력이 달라진다.
+    # `input: slice` 프롬프트의 슬라이스 타깃에서만 돈다(`input: source`는 함수 본문이라 — #529).
     scout_slice_trim: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`가 어디까지 믿을 입력인지를 `auditor_source` 이벤트의 `gate_reasons`로
     # 남기는가(`orchestrator/source_gate.py` — 슬라이서가 낸 절단·경계와 `SOURCE` 조립이 본 것에서
@@ -797,7 +800,7 @@ class Thresholds(HarnessModel):
     # 16을 들고 정본 Auditor가 루프 판(v9)이다. 「기본」이 어느 쪽인지는 이 필드가 아니라 그
     # 파일이 정한다.
     # 양수면 매 홉 `AuditorAction`(`src/schemas/auditor.py`)을 받아 조회·도구를 돌리고 관측을
-    # 다음 홉 user 턴으로 되먹인다.
+    # 다음 홉 user 턴으로 되먹인다. (⏵ 2026-10-13 #600 H2ⓐ - 같은 관측이 Critic 입력에도 간다.)
     # ⏵ 2026-10-06 — 위 「정본 Auditor가 루프 판(v9)」은 2026-10-07에 v10으로 올라갔고
     # **봉투는 둘이다**: v8·v9는 매 홉 `AuditorAction`, v10은 형제 `AuditorProcedureAction`을
     # 낸다. 홉 구조·상한은 같고 `answer`가 싣는 최종 답만 다르다(`Finding` ↔
@@ -810,6 +813,8 @@ class Thresholds(HarnessModel):
     # `audit`를 채운다, 이슈 #578)을 낸다.
     # ⏵ 같은 날 — 서빙 판은 v13으로 올라갔고 그 봉투는 v11의 셋째와 같다(이슈 #67 — FACTS만 다르다).
     # ⏵ 2026-10-11 — 서빙 판은 v14이고 그 봉투는 v12의 넷째와 같다(이슈 #67 — FACTS만 다르다).
+    # ⏵ 2026-10-13 — 서빙 판은 v15이고 봉투는 다섯째 `AuditorProcedureProbeInputAction`이다(v12
+    # 봉투의 서브클래스 — `probe`의 `spec` 설명만 다르다). 허용집합은 여섯이다.
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -824,12 +829,15 @@ class Thresholds(HarnessModel):
     # hop0가 이보다 크다. ⏵ 2026-10-07부터 v10 — prefix 56,906자(v9는 35,501자 ·
     # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
     # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 ·
-    # ⏵ 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다)을
+    # ⏵ 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
+    # 더해져 더 길다, 글자 수는 안 쟀다)을
     # 넣으면 167,775가
     # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
     # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
     # 주석). 이 상한은 홉이 끝없이 쌓이는 것을 막을 뿐 창은 안 막는다 — 넘으면 서버가 크기
-    # 거절한다.
+    # 거절한다. ⏵ 2026-10-13(이슈 #514) 그러면 노드가 그 홉에 `context_overflow` 이벤트를 남기고
+    # 러너가 그 후보만 버린다(run은 가고 경고 한 줄 - 후보 전부가 그러면 #296의 성공 0 백스톱이
+    # 선다).
     # ⚠ 53,248 창(입력 몫 20,480)은 **ATOM 시절 계획값**이다 — ATOM 사용 종료 2026-09-29(#340).
     #
     # 🔴 **`max_hops`(지금 3)를 올려 대신 쓰지 않는다.** 그 값을 읽는 자리가 둘이고
@@ -851,6 +859,7 @@ class Thresholds(HarnessModel):
     # #525).
     # ⏵ 2026-10-10 — v12는 `AuditorProcedureAuditAlwaysAction`을 선언해 허용집합은 다섯이다(이슈
     # #578).
+    # ⏵ 2026-10-13 — v15는 `AuditorProcedureProbeInputAction`을 선언해 허용집합은 여섯이다.
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
@@ -1384,6 +1393,66 @@ class ServerLaunch(HarnessModel):
     # 그 기동을 버리고 다시 시도한다. 장비·모델마다 몇 배씩 갈려 기본값을 두지 않는다(근거는
     # 장비 파일 주석).
     ready_timeout_s: float = Field(gt=0)
+
+    def intended_args(self) -> list[str]:
+        """이 행이 **의도한** 기동 인자 — `RunRecord.serving_launch_intended`에 실리는 값.
+
+        `tools/serve/swap.sh`가 `vllm serve`에 붙이는 순서 그대로다(`--gpu-memory-utilization`
+        -> `--max-model-len` -> `--max-num-seqs` -> `extra_args`). 모델·포트·revision은 registry가
+        들므로 여기 없다. **환경변수(`env`)는 싣지 않는다** - 비밀이 가장 흔히 걸리는 자리이고
+        샘플링 설정과 무관하다. 비밀처럼 보이는 인자는 가려서 낸다(`redact_launch_args`).
+        """
+        return redact_launch_args(
+            [
+                "--gpu-memory-utilization",
+                str(self.util),
+                "--max-model-len",
+                str(self.max_model_len),
+                "--max-num-seqs",
+                str(self.max_num_seqs),
+                *self.extra_args,
+            ]
+        )
+
+
+# 이 이름 조각이 플래그에 들어 있으면 그 값은 비밀로 본다(`--api-key`·`--hf-token` ...). 조각 단위로
+# 맞춘다 - `--tokenizer`·`--max-num-batched-tokens`는 걸리지 않는다. **고른 목록이고 잰 것이
+# 아니다.**
+_SECRET_FLAG_PARTS = frozenset(
+    {"key", "token", "secret", "password", "passwd", "credential", "credentials", "apikey", "auth"}
+)
+# 플래그 없이 값만 박힌 모양(HF·OpenAI·GitHub·Slack 토큰 접두).
+_SECRET_VALUE = re.compile(r"^(?:hf_|sk-|ghp_|github_pat_|xox[abp]-)\S+")
+REDACTED = "***"
+
+
+def _is_secret_flag(arg: str) -> bool:
+    name = arg.split("=", 1)[0]
+    parts = set(name.lstrip("-").lower().replace("_", "-").split("-"))
+    return name.startswith("-") and bool(_SECRET_FLAG_PARTS & parts)
+
+
+def redact_launch_args(args: list[str]) -> list[str]:
+    """기동 인자에서 비밀로 보이는 값을 `***`로 가린다. 새 리스트를 돌려준다.
+
+    세 모양을 본다: `--api-key VALUE`(다음 인자) · `--api-key=VALUE` · 플래그 없는 토큰 접두 값.
+    플래그 이름의 `_`는 `-`로 보고 맞춘다(`--api_key`도 가린다).
+    **휴리스틱이다** - 이름이 다른 비밀 플래그는 못 거른다. 그래서 장비 파일 `extra_args`에 비밀을
+    직접 적지 않는다(환경변수로 넘긴다).
+    """
+    out: list[str] = []
+    mask_next = False
+    for arg in args:
+        if mask_next and not arg.startswith("-"):
+            out.append(REDACTED)
+        elif _is_secret_flag(arg) and "=" in arg:
+            out.append(f"{arg.split('=', 1)[0]}={REDACTED}")
+        elif _SECRET_VALUE.match(arg):
+            out.append(REDACTED)
+        else:
+            out.append(arg)
+        mask_next = _is_secret_flag(arg) and "=" not in arg
+    return out
 
 
 class ServingConfig(HarnessModel):

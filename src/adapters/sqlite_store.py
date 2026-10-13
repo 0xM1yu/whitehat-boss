@@ -34,7 +34,24 @@ Enum 멤버 추가·삭제와 중첩 모델(`Location` 등)의 필드 변경도 
 `None`을 받는데 JSON 스키마는 종전 그대로다(`src/schemas/finding.py`의 `_FindingCwe`).
 
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
-#525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
+#525).
+
+판 2 = 필드가 더 붙은 모양이다. 기본값이 있어 이 코드는 판 1 행도 읽지만 옛 코드는 새 행을
+못 읽는다(`extra="forbid"`). 그래서 판 1 파일은 이제 거부된다. 판 2에 든 것은 아래다.
+
+- `Evidence.harness_note`(#573) — 관측 머리에 붙는 하네스 노트. trace에서도 `harness_note`다.
+- `Evidence.crashed`·`banner`(#232) — 크래시 관측. trace에서는 `crashed`·`crash_banner`다.
+- `RunRecord.location_overlap`(#563) — 정적 신호 위치 겹침 수.
+- `RunRecord.serving_launch_intended`(#99) — 교대 프로필 + 장비일 때 장비 파일이 의도한 기동 인자.
+  판 1 코드는 이 필드를 든 행을 못 읽는다(`extra="forbid"`).
+- `RunRecord`의 trace 집계 필드 넷(#613·#618·#619) — `schema_failure_max_run_by_role`·
+  `schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`.
+- `RunRecord.keep_responses`(#618·#612) — main `f0cdba76`가 더하면서 판을 **안 올렸다.**
+  판 1이라 적힌 파일에 이 필드가 든 행이 섞여 있을 수 있다(선례). 판 1을 적은 `state.db`에
+  그 필드를 든 행이 이미 있으면 판 1 코드로는 못 읽힌다. 그 run은 되읽기를 안 하므로(서빙에
+  resume 경로가 없다) 서빙 결함은 아니고, 그 선례를 이 판에서 같이 닫는다.
+
+게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 이 판의
 파일을 여는 것은 여전히 막지 못한다.
 """
 
@@ -57,7 +74,22 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 """
 
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
-STATE_DB_SCHEMA_VERSION = 1
+STATE_DB_SCHEMA_VERSION = 2
+
+# 판을 올린 변경 — 오류 문구가 이 표를 읽어, 옛 파일을 만난 사람이 **어느 체크아웃이 그 판을
+# 읽는지** 안다. 판을 올리는 PR은 여기에 한 줄을 더한다. 커밋 해시는 squash로 바뀔 수 있어
+# 이슈 번호가 기준이다.
+_VERSION_INTRODUCED_BY = {
+    2: (
+        "이슈 #232 — `Evidence.crashed`·`banner` 추가(커밋 19c2bad). 같은 판에 이슈 #573의 "
+        "`Evidence.harness_note`와 이슈 #563의 `RunRecord.location_overlap`, 이슈 #613·#618·#619의 "
+        "`RunRecord` trace 집계 필드 넷(`schema_failure_max_run_by_role`·"
+        "`schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`·"
+        "`trace_aggregate_failures`), 이슈 #99의 `RunRecord.serving_launch_intended`, "
+        "main `f0cdba76`의 `RunRecord.keep_responses`(#618·#612)도 든다 — 그 커밋은 판을 "
+        "안 올렸다"
+    ),
+}
 
 
 class StateDbVersionError(RuntimeError):
@@ -99,6 +131,14 @@ class SqliteStateStore:
             self._conn.commit()
             return
         newer = version > STATE_DB_SCHEMA_VERSION
+        # 옛 파일이면 「이 코드의 다음 판」을 올린 변경을 댄다 — 그 앞 체크아웃이 이 파일을 읽는다.
+        introduced = _VERSION_INTRODUCED_BY.get(version + 1)
+        hint = (
+            f" (판 {version + 1}을 올린 변경: {introduced} — 판 {version} 파일은 그 변경"
+            " 이전 체크아웃이 읽는다.)"
+            if not newer and introduced is not None
+            else ""
+        )
         raise StateDbVersionError(
             f"{self.path}: state.db 저장 형태 판 {version}은 이 코드가 읽는 판 "
             f"{STATE_DB_SCHEMA_VERSION}과 다르다 — "
@@ -107,6 +147,7 @@ class SqliteStateStore:
                 if newer
                 else "더 옛 코드가 쓴 파일이고 옮기는 변환이 없다. 그 판의 체크아웃으로 연다."
             )
+            + hint
             + " 행은 하나도 읽지 않았다(이슈 #281)."
         )
 

@@ -1252,6 +1252,71 @@ def test_the_adapter_compares_against_the_constant_not_a_literal() -> None:
     assert offenders == [], f"리터럴 비교가 남아 있다: {offenders}"
 
 
+# --- 이슈 #576 — 심볼 0개의 그래프는 근거가 못 된다 ------------------------------------
+
+# 요약 줄의 실형태는 `tools/harness-tools/indexer.py` `main()`의 print다(tests/test_indexer.py가
+# 실제 출력으로 같은 철자를 문다). 321은 실서빙 arvo:1065의 심볼 수다.
+_ZERO_SYMBOLS = "# index: 0 symbols, 0 calls, 0 unresolved calls, 0 unresolved symbols, 1 files\n"
+_SOME_SYMBOLS = (
+    "# index: 321 symbols, 870 calls, 4 unresolved calls, 0 unresolved symbols, 9 files\n"
+)
+
+
+def test_an_index_run_with_zero_symbols_is_not_ok() -> None:
+    """인덱서는 exit 0이지만 빈 그래프는 E2 근거가 못 된다 — `judge()`가 내린다."""
+    ok, code, error = judge(INDEX_TOOL, [Step(0, _ZERO_SYMBOLS, "")], 1)
+
+    assert (ok, code) == (False, 0)
+    assert error is not None and "심볼 0개" in error and "#576" in error
+
+
+@pytest.mark.parametrize(
+    ("stdout", "why"),
+    [
+        (_SOME_SYMBOLS, "심볼이 있으면 그대로 ok — 양성 짝"),
+        (
+            "# index: 10 symbols, 2 calls, 0 unresolved calls, 0 unresolved symbols, 1 files"
+            + "\n",
+            "10은 0으로 읽지 않는다",
+        ),
+        ("", "요약 줄이 없으면 건드리지 않는다 — 안 잰 것을 0으로 읽지 않는다(CLAUDE.md §0)"),
+        ("note: # index: 0 symbols, 0 calls\n", "줄 머리가 아니면 요약이 아니다"),
+    ],
+)
+def test_an_index_run_that_did_not_report_zero_symbols_stays_ok(stdout: str, why: str) -> None:
+    assert judge(INDEX_TOOL, [Step(0, stdout, "")], 1) == (True, 0, None), why
+
+
+def test_the_zero_summary_is_found_after_other_output() -> None:
+    """요약 줄이 stdout 첫 줄이 아니어도 읽는다 — 정규식에서 `re.MULTILINE`을 빼면 빨개진다."""
+    stdout = "warning: something the indexer printed first" + "\n" + _ZERO_SYMBOLS
+
+    ok, code, error = judge(INDEX_TOOL, [Step(0, stdout, "")], 1)
+
+    assert (ok, code) == (False, 0)
+    assert error is not None and "심볼 0개" in error
+
+
+def test_a_failed_index_run_keeps_its_own_failure_even_with_a_zero_summary() -> None:
+    """exit가 0이 아니면 이전 판정(`index 실패 (exit=N)`) 그대로다 — 새 갈래는 exit 0에만 선다."""
+    ok, code, error = judge(INDEX_TOOL, [Step(2, _ZERO_SYMBOLS, "boom")], 1)
+
+    assert (ok, code, error) == (False, 2, "index 실패 (exit=2)")
+
+
+def test_the_runner_turns_a_zero_symbol_index_into_a_failed_graph_evidence(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """전 구간 — 컨테이너 stdout → `Evidence(kind=GRAPH, ok=False)`. 게이트 `usable`이 거른다."""
+    spy.stdout = _ZERO_SYMBOLS
+
+    evidence = _runner(tmp_path).run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
+
+    assert evidence.kind is EvidenceKind.GRAPH
+    assert evidence.ok is False
+    assert evidence.error is not None and "심볼 0개" in evidence.error
+
+
 # --- 배선 ----------------------------------------------------------------------
 
 
@@ -1977,3 +2042,18 @@ def test_compile_reason_is_capped_and_one_line() -> None:
     assert len(reason.split("첫 오류: ", 1)[1]) == container_tools._COMPILE_REASON_CHARS
     assert cr not in reason and "\n" not in reason
     assert cr not in container_tools.compile_failure_reason(f"a.c:1:1: error: bad{cr}tab\n")
+
+
+def test_compile_reason_folds_unicode_line_separators() -> None:
+    r"""`#error` 메시지의 `\x85`(NEL)·`\u2028`·`\u2029`는 `str.splitlines`가
+    줄로 읽는다 — 이 문구가 들어가는 노트·관측에서 새 줄을 시작하면 안 된다.
+
+    ⚠ 셋을 **이스케이프로** 적는다(핀 데이터·docstring 양쪽). 리터럴로 두면 에디터의
+    「비정상 줄 종결자 제거」가 조용히 지워 핀이 빈 문자열을 재게 된다."""
+    for separator in ("\x85", "\u2028", "\u2029"):
+        stderr = f"a.c:1:1: error: bad{separator}injected line\n"
+        reason = container_tools.compile_failure_reason(stderr)
+
+        assert "bad injected line" in reason, repr(separator)
+        assert len(reason.splitlines()) == 1, repr(separator)
+        assert separator not in reason

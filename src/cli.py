@@ -145,9 +145,12 @@ RUN_DIR_PREFIX = "run_"
 # 실측 전 초기값인 임계값 (이슈 #91·#92 — 둘 다 닫혔다, 값은 여전히 안 잰 초기값).
 # 조건 간 비교 전에 확정해야 한다. `pov_tool_hops`(#511, 2026-10-12 닫음)는 값이
 # 16(사용자 결정 2026-10-06)이나 효과 미실측이라 같은 자리다.
+# ⏵ 2026-10-13 - `capsule_expansion_max`를 이 목록에서 뺐다(#78). 그 값을 읽는 정책 결정점은 코드에
+# 남아 있으나 러너가 부르는 곳이 없다(ADR 0012 결정 6이 확장 경로를 `max_hops` 루프로 대체) -
+# 어느 run도 그 값에 좌우되지 않는데 doctor가 「확정하라」고 말하는 것은 거짓 경고다. 코드 삭제는
+# 별 작업이다.
 PROVISIONAL_THRESHOLDS = (
     "scout_threshold",
-    "capsule_expansion_max",
     "requeue_max",
     "max_hops",
     "pov_tool_hops",
@@ -549,7 +552,8 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
 
     내용 인식 집합의 정본은 각 노드다. Scout·Single에는 그 집합이 없어 대상이 아니다.
     Fake 여부는 `ModelEntry.is_fake`로 가른다 — 공유 엔트리의 한 역할만 범프하면 다른 역할의
-    파일이 없어질 수 있다(#172). Fake는 정해진 답을 내므로 낡은 판도 ERROR로 막지 않는다.
+    파일이 없어질 수 있다(#172, 2026-10-12 닫음). Fake는 정해진 답을 내므로 낡은 판도
+    ERROR로 막지 않는다.
     디스크의 순서는 정수 `vN`만 비교한다. `v4_t1` 같은 실험 이름의 우열은 추측하지 않는다.
     """
     versions = {
@@ -576,7 +580,7 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
             checks.append(Check(
                 Severity.WARN,
                 f"{role} 프롬프트는 {version}에 배선됐지만 디스크에 새 판 v{newer[-1]}이 있다 — "
-                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
+                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (근거: 닫힌 이슈 #172)",
             ))
     return checks
 
@@ -592,6 +596,10 @@ def _slice_input_prompts(config: HarnessConfig) -> list[str]:
     ⏵ **2026-10-07 — 저장소의 어느 프로필도 이 목록을 채우지 않는다**(PR #524로 Scout가
     v4 = `input: source`에 배선됐다). 가드는 그대로 선다 — v3가 디스크에 있고 그것을 고르는
     설정이면 다시 찬다. 역할·버전을 여기 박지 않는 이유가 그것이다.
+
+    ⏵ 2026-10-13 — 반대 방향(`input: source`인데 `--slices`를 줌)은 가드가 필요 없다: 노드가
+    `SOURCE`의 모양을 이 선언으로 골라(`scout._ask_model`, #529) `--slices` run에서도 함수 본문이
+    간다.
     """
     return [
         f"{role}/{version}"
@@ -727,6 +735,14 @@ def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
     """
     if not config.thresholds.scout_slice_trim:
         return []
+    # ⏵ 2026-10-13 — 트림은 `input: slice` 판의 렌더에서만 돈다(`scout._ask_model`, #529). 배선된
+    # Scout가 전부 `input: source`(서빙 v4)면 줄을 빼는 일이 없어 알릴 것이 없다.
+    try:
+        wired = _slice_input_prompts(config)
+    except PromptError:
+        wired = ["scout"]  # 로드 실패는 `_check_prompts`가 ERROR로 댄다 — 여기서는 WARN을 살린다
+    if not any(name.startswith("scout") for name in wired):
+        return []
     return [
         Check(
             Severity.WARN,
@@ -742,7 +758,8 @@ def _check_thresholds() -> Check:
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
         "— 조건 간 비교 전에 확정한다 (근거: config/budgets.yaml 각 키 주석 — "
-        "이슈 #91·#92·#511은 닫혔고 값은 안 잰 초기값 그대로다)",
+        "이슈 #91·#92·#511은 닫혔다 — #91·#92의 값은 안 잰 초기값 그대로고 "
+        "`pov_tool_hops`(16)는 사용자 결정이나 효과가 미실측이다)",
     )
 
 
@@ -1716,6 +1733,7 @@ def run(args: argparse.Namespace) -> int:
     # 같다, 이슈 #67).
     # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와
     # 같다, 이슈 #67).
+    # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술·body는 v14와 같다, S19).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
