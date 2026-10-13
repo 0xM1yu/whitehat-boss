@@ -159,6 +159,10 @@ class Deps:
     # 된다. `tool_images`와 같은 성격 — 러너는 `src/adapters/`를 import 하지 않으므로(계층 규칙)
     # 어댑터가 모델 파일을 읽어 만든 값을 이 dataclass가 나른다.
     model_sampling: dict[str, ModelSampling] = field(default_factory=dict)
+    # 역할 → 장비 파일이 의도한 기동 인자 (#99). `RunRecord.serving_launch_intended`가 된다. 교대
+    # 프로필 + 장비일 때만 값이 있고 아니면 `None`(`_serving_launch_intended`). 장비 파일은 어댑터
+    # 쪽 데이터라 `model_sampling`과 같이 이 dataclass가 나른다.
+    serving_launch_intended: dict[str, list[str]] | None = None
     # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). `RunRecord.compile_flags`가
     # 된다. `tool_images`와 같은 성격이고 같은 이유로 **구현에게 묻는다** — 여기서 상수를
     # 조립하면 Fake와 컨테이너가 같은 조건으로 기록된다.
@@ -210,8 +214,9 @@ class Deps:
     # 슬라이스 id → 렌더(gutter·배너). `build_deps`가 run 전에 **전부** 렌더해 둔 dict의 조회다 —
     # drift가 첫 모델 호출 전에 `SliceInputError`로 나야 해서다(run 도중에 나면 앞 슬라이스의 호출을
     # 이미 태운 뒤다).
-    # Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서 나온다 — `read_source`가
-    # Retriever와 같은 함수여야 하는 것과 같은 이유다.
+    # `input: slice` 프롬프트의 Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서
+    # 나온다 — `read_source`가 Retriever와 같은 함수여야 하는 것과 같은 이유다
+    # (`input: source`면 Scout는 함수 본문 — #529).
     read_slice: Callable[[str], str] = _no_slices
     # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다(#96 (b)).
@@ -601,8 +606,9 @@ def build_deps(
         locals_of=graph.locals_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
-        # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
-        # `target_function` 토큰이 한 렌더에서 나온다.
+        # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — `input: slice` 프롬프트의 Scout
+        # `SOURCE`와 캡슐의 `target_function` 토큰이 한 렌더에서 나온다
+        # (`input: source`면 아니다 — #529).
         read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
@@ -612,7 +618,29 @@ def build_deps(
             resolve, table=graph.table, read_lines=partial(_read_target_lines, source_root)
         ),
         swap_to=_swap_to(config, run_id=run_id, device=device),
+        serving_launch_intended=_serving_launch_intended(config, device=device),
     )
+
+
+def _serving_launch_intended(
+    config: HarnessConfig, *, device: str | None
+) -> dict[str, list[str]] | None:
+    """교대 명령이 올릴 역할(상주 ∪ 교대)의 **의도한** 기동 인자. 교대 + 장비가 아니면 `None`.
+
+    `_swap_to`와 같은 게이트다 - 장비 파일을 읽는 run만 값을 든다. 장비 행이 없는 실서빙 역할은
+    뺀다(`check_serving`은 교대 역할의 행만 요구한다). 실제 argv의 증거가 아니라 config의 의도다
+    (`RunRecord.serving_launch_intended`).
+    """
+    swap = config.swap
+    if swap is None or device is None:
+        return None
+    servers = load_serving(device).servers
+    launched = {*swap.resident, *swap.swappable}
+    return {
+        role: servers[key].intended_args()
+        for role, key in config.served_models().items()
+        if role in launched and key in servers
+    }
 
 
 def _swap_to(config: HarnessConfig, *, run_id: str, device: str | None) -> SwapTo | None:
