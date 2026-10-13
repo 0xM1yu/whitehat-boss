@@ -160,7 +160,15 @@ from src.orchestrator.source_definitions import (
 )
 from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceEvent,
+    TraceValue,
+    TraceWriter,
+    pov_inspect_max_run_by_finding,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -860,6 +868,25 @@ class _Accumulator:
         return [f for f in self.findings.values() if f.state is state]
 
 
+def _count_trace(
+    key: str,
+    count: Callable[[Sequence[TraceEvent]], dict[str, int] | None],
+    events: Sequence[TraceEvent],
+    warnings: list[str],
+    failures: dict[str, str],
+) -> dict[str, int] | None:
+    """`RunRecord.<key>`의 trace 집계 하나를 센다 - 던지면 `None`(안 쟀다)을 돌려주고 사유를
+    `warnings`(stderr)와 `failures`(매니페스트·리포트 - 「행이 없다」와 「집계가 죽었다」가 같은
+    `None`이라 갈라 읽는 자리)에 싣는다."""
+    try:
+        return count(events)
+    except Exception as exc:  # noqa: BLE001 - 계측이 run의 결과·원 예외를 덮으면 안 된다
+        reason = f"{type(exc).__name__}: {exc}"
+        warnings.append(f"trace 집계 {key}를 못 셌다: {reason}")
+        failures[key] = reason
+        return None
+
+
 def run_pipeline(
     spec: RunSpec,
     *,
@@ -1081,6 +1108,49 @@ def run_pipeline(
     if oracle_summary is not None:
         # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
         record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
+    # 6단계 위치 겹침 횟수(#563) - 같은 이유로 여기서 한 번 싣고, 리포트도 같은 값을 읽는다.
+    location_overlap = _location_overlap(trace.events)
+    if location_overlap is not None:
+        record = record.transition(location_overlap=location_overlap)
+
+    # trace에서 센 분모 전용 집계 셋(#613·#618·#619) — 행이 없으면 `None`이다(안 쟀다 - 0이 아니다).
+    # `unforeseen` 경로의 매니페스트도 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 리포트도 읽는다.
+    # 🔴 **집계가 던져도 `unforeseen`을 덮지 않는다** — 이 줄은 아래 `raise unforeseen` 앞이라 새는
+    # 예외가 원 예외와 매니페스트를 통째로 가린다(위 `finally`·아래 방어선 주석과 같은 이유).
+    # 못 센 키는 `None`(안 쟀다)이고 사유는 경고로 남는다 - 예상 밖 경로에서는 원 예외의 노트로도.
+    aggregate_warnings: list[str] = []
+    aggregate_failures: dict[str, str] = {}
+    schema_failure_runs = _count_trace(
+        "schema_failure_max_run_by_role",
+        schema_failure_max_run_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    schema_recovered = _count_trace(
+        "schema_recovered_calls_by_role",
+        schema_recovered_calls_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    pov_inspect_runs = _count_trace(
+        "pov_inspect_max_run_by_finding",
+        pov_inspect_max_run_by_finding,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    warnings.extend(aggregate_warnings)
+    if unforeseen is not None:
+        for note in aggregate_warnings:
+            unforeseen.add_note(note)
+    record = record.transition(
+        schema_failure_max_run_by_role=schema_failure_runs,
+        schema_recovered_calls_by_role=schema_recovered,
+        pov_inspect_max_run_by_finding=pov_inspect_runs,
+        trace_aggregate_failures=aggregate_failures or None,
+    )
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
@@ -1232,6 +1302,11 @@ def run_pipeline(
         grades=grades,
         ne_absorbed=state.ne_absorbed,
         pov_results=state.pov_results,
+        location_overlap=location_overlap,
+        schema_failure_max_run=schema_failure_runs,
+        schema_recovered_calls=schema_recovered,
+        pov_inspect_max_run=pov_inspect_runs,
+        trace_aggregate_failures=record.trace_aggregate_failures,
     )
     finished = state_machine.finish_run(
         record,
@@ -2295,6 +2370,24 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
     }
 
 
+def _location_overlap(events: Iterable[TraceEvent]) -> dict[str, int] | None:
+    """6단계 `gate_eval` 행에서 센 위치 겹침 (이슈 #563 선택지 4) -> `RunRecord.location_overlap`.
+
+    **6단계 행만 센다.** 7·8단계는 `candidate_location`을 안 넘겨 `location_ok`가 구조상 거짓이라
+    섞으면 겹침률이 깎인다. `location_ok` 키가 없는 행(`p0` 단락)은 `gated`에서 빠진다.
+    6단계 행이 0건이면 `None`이다 - 0이 아니라 「안 쟀다」.
+    """
+    rows = [e for e in events if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.GATE)]
+    if not rows:
+        return None
+    judged = [e for e in rows if "location_ok" in e.data]
+    return {
+        "gated": len(judged),
+        "static_ok": sum(1 for e in judged if e.data["static_ok"] is True),
+        "location_ok": sum(1 for e in judged if e.data["location_ok"] is True),
+    }
+
+
 def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
     """Finding별 `confidence`. **`_grades_by_finding`과 키 집합이 같다** — 둘 다 `state.findings`를
     전수로 돈다. 최종 PoC 지정이 이 둘과 `_verdict_ranks_by_finding`(같은 전수)을 나란히 읽고,
@@ -2638,6 +2731,12 @@ def _run_pov_hops(
     `inspect`는 늘 직전 gen의 바이트를 싣고 gen이 `poc` 키를 덮는다). 옛 결과에
     `inspect_repeat …` 줄을 달아 되먹이고 루프는 안 선다 — 모델 홉은 쓴다(`MAX_HOP` 유효). 인프라
     실패(`pov.INFRA_FAILURE_EXITS`)는 기억하지 않아 재시도를 막지 않는다.
+    ⏵ **2026-10-13 (#572) — 첫 `gen` 전의 `inspect poc`도 도구를 안 돌린다**(돌릴 PoC가 없다):
+    `_POV_INSPECT_WITHOUT_POC` 관측을 되먹이고 홉을 소비하며(`MAX_HOP` 유효) `ran`에 넣지 않는다.
+    홉 이벤트는 `inspect_without_poc: true`로 가른다. **0바이트 gen 뒤의 `inspect poc`는 이 분기가
+    아니다** — `poc`는 `b""`로 이미 돌았으니 #619 반복이다(`is None`으로 가른다 — 아래 분기 주석).
+    `v6` prefix는 이 거절의 첫 gen 전 몫을 서술하고 0바이트 몫은 서술하지 않는다(그쪽이 반복이라
+    `inspect_repeat`로 답한다). `v5` prefix는 둘 다 서술하지 않는다.
 
     ⏵ **2026-10-13 (#507) — 2단계 컴파일 실패는 hop0 본문 끝의 하네스 노트로 알린다**
     (`compile_note` — 코드를 읽는 판만 · 실패 Evidence가 없으면 `None`이고 바이트가 종전과 같다).
@@ -2835,11 +2934,22 @@ def _run_pov_hops(
                 tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
+            # ⏵ 2026-10-13 (#572) — `poc`는 PoC 바이트를 입력으로 **요구**하는 도구라(ADR 0014) 첫
+            # `gen` 전의 `inspect poc`는 돌릴 것이 없다. 도구를 안 돌리고(`tool_call` 없음) 모델에게
+            # 알려 홉만 소비한다 — `ran`에 넣지 않는다(안 돌았다). 아래 꼬리(이벤트 · MAX_HOP ·
+            # 관측 · 홉 줄)는 평소와 같은 코드를 `evidence=None`으로 쓴다.
+            # `asan`·`gdb`·`build`는 입력을 안 받으니 이 분기 밖이다.
+            # 🔴 `is None`으로 가른다 — `not tool_poc`가 아니다. 0바이트(`b""`) gen은 `poc`를 빈
+            # 입력으로 실제로 돌렸고 관측이 `last_gen_bytes=0`을 말한다: 뒤따른 `inspect poc`는
+            # 「없음」이 아니라 #619 반복이다(사이드카도 `b""`를 「PoC 있음」으로 적는다).
+            no_poc = action.action == "inspect" and tool == "poc" and tool_poc is None
             # ⚠ `asan`·`gdb`·`build`가 PoC를 받게 바뀌면 키에 바이트를 넣어라(container_tools 핀).
             prior = ran.get(tool) if action.action == "inspect" else None
             try:
                 evidence = (
-                    prior[1]
+                    None
+                    if no_poc
+                    else prior[1]
                     if prior is not None
                     else pov.run_tool(
                         ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
@@ -2868,7 +2978,7 @@ def _run_pov_hops(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
-            if prior is None:
+            if prior is None and evidence is not None:
                 if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
                     ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
                 else:
@@ -2880,7 +2990,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
-                    fuzz=fuzz if hop == 0 else None,
+                    inspect_without_poc=no_poc, fuzz=fuzz if hop == 0 else None,
                     hop0_note=note_trace if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
@@ -2889,16 +2999,21 @@ def _run_pov_hops(
                 )
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
-                inspect_repeat_of=repeat_of, fuzz=fuzz if hop == 0 else None,
+                inspect_repeat_of=repeat_of, inspect_without_poc=no_poc,
+                fuzz=fuzz if hop == 0 else None,
                 hop0_note=note_trace if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
-            followup = _pov_observation(
-                action.action,
-                evidence,
-                read_payload=ctx.read_payload,
-                wide=pov_wide,
-                poc=last_poc,
+            followup = (
+                _POV_INSPECT_WITHOUT_POC
+                if evidence is None
+                else _pov_observation(
+                    action.action,
+                    evidence,
+                    read_payload=ctx.read_payload,
+                    wide=pov_wide,
+                    poc=last_poc,
+                )
             )
             if prior is not None:
                 why = (
@@ -2925,6 +3040,12 @@ def _run_pov_hops(
             prev = current
             hop += 1
 
+
+# 돌릴 PoC가 없는 `inspect poc`에 도구 대신 되먹이는 관측(#572). 운영 문구라 철자를 핀한다.
+_POV_INSPECT_WITHOUT_POC = (
+    "inspect_without_poc tool=poc ran=false — poc는 당신의 PoC를 돌리는 도구인데 돌릴 "
+    "바이트가 없다(gen을 낸 적이 없다) — 이 홉에서 도구는 돌지 않았다. 먼저 gen을 내라."
+)
 
 # 접두 지명의 최소 길이 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 가리키는 것을 막는다.
 _MIN_DIGEST_PREFIX = 8
@@ -3052,6 +3173,9 @@ def _pov_observation(
     도구가 받은 것으로 읽힌다. 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
     `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
     `wide=False`면 안 싣는다(꼬리와 같은 경계).
+
+    ⏵ 2026-10-13 (#573) — `Evidence.harness_note`(`poc` `exit=1` 모호성 줄)가 있으면 머리줄 바로
+    뒤 **별도 줄**로 붙는다(로그를 거치지 않는다). `wide=False`에서는 이것도 안 싣는다.
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
@@ -3063,6 +3187,10 @@ def _pov_observation(
     if poc is not None:
         head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
     head += detail
+    # ⏵ 2026-10-13 (#573) — 하네스가 만든 줄(`poc` `exit=1` 모호성)은 로그를 거치지 않고 여기서
+    # 붙는다. 로그 끝에 두면 읽기 상한(200,000자)에 잘려 v5 prefix의 약속이 깨졌다.
+    if evidence.harness_note:
+        head = f"{head}\n{evidence.harness_note}"
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
@@ -3122,6 +3250,7 @@ def _emit_pov_hop(
     submit_digest: str | None = None,
     parse_truncated: bool = False,
     inspect_repeat_of: tuple[str, int] | None = None,
+    inspect_without_poc: bool = False,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
@@ -3146,6 +3275,10 @@ def _emit_pov_hop(
 
     `inspect_repeat_of`는 `(도구, 옛 홉)`이다 — 같은 (도구, 입력)을 이미 돌려 **이번엔 안 돌린**
     `inspect` 홉(#619)이라 `tool`·`inspect_repeat_of_hop`만 싣고 도구 결과 키(`tool_ok`…)는 없다.
+
+    `inspect_without_poc`는 돌릴 PoC가 없어 `poc` 도구를 **안 돌린** `inspect` 홉(#572)이라
+    `tool`(요청한 도구 - `inspect_repeat_of`와 같은 뜻)과 `inspect_without_poc: true`만 싣는다 —
+    `tool_ok`·`exit_code`·`evidence_kind`는 이 홉에서 잰 값이 아니라 없다.
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
@@ -3163,6 +3296,8 @@ def _emit_pov_hop(
         data["evidence_kind"] = evidence.kind.value
     if inspect_repeat_of is not None:
         data["tool"], data["inspect_repeat_of_hop"] = inspect_repeat_of
+    if inspect_without_poc:
+        data["tool"], data["inspect_without_poc"] = "poc", True
     if poc is not None:
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:

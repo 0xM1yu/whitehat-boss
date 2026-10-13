@@ -1936,6 +1936,12 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
     (`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를 보여 주면
     인용이 느는가」는 여전히 0회다 — 그 축이 #563이다.
 
+    ⏵ 2026-10-13(#563) — 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다.
+    #248 뒤 읽힌 값은 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0) · 2026-10-12 보고서
+    run 6/6 거짓(trace 재계수 - 저장소 밖)이고 과제가 다르다. `run_20261007_0001`은 `p0`
+    지름길이라 이 지표로는 미측정이다(D106의 오프라인 재등급 5/5 거짓은 run 실측이 아니다).
+    통제 대조 0건.
+
     **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
     (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
     위치가 없는 Evidence는 `null`로 싣는다 — 바로 위 `target`과 같은 관례이고, 키가 아예 없으면
@@ -2982,6 +2988,26 @@ def test_render_marks_ungraded_finding_as_unknown_not_e0(ctx: RunContext) -> Non
     assert "[-]" in rendered
     assert "[E0]" not in rendered
     assert "등급 분포" not in rendered  # 아는 등급이 0건이면 분포 줄 자체가 없다
+
+
+def test_render_lists_only_long_inspect_runs_and_counts_the_rest(ctx: RunContext) -> None:
+    """분모 전용 집계 줄(#619 (d)): inspect 연속 최장이 2 이상인 Finding만 나열하고 나머지는
+    건수다 - 줄이 Finding 수에 비례해 자라지 않는다. 값이 없는(`None`) 집계는 줄을 빼지 않고
+    「미측정」으로 찍는다."""
+    rendered = report.run(
+        ctx,
+        findings=[],
+        schema_failure_max_run={"auditor": 3},
+        pov_inspect_max_run={"find_0001": 3, "find_0002": 2, "find_0003": 1, "find_0004": 0},
+    ).render()
+
+    line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    assert "find_0001 3 · find_0002 2" in line
+    assert "find_0003" not in line and "find_0004" not in line
+    assert "나열하지 않은 Finding 2건" in line
+    assert "연속 스키마 파싱 실패 최장(역할별, 분모만): auditor 3" in rendered
+    recovered = next(ln for ln in rendered.splitlines() if ln.startswith("스키마 재시도로"))
+    assert "미측정" in recovered
 
 
 def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> None:
