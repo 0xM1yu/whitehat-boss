@@ -1073,7 +1073,7 @@ def _normalized_ddl_hash(ddl: str) -> str:
 # 판을 올리고 이 짝을 같이 갱신한다.** 주석만 고친 것은 해시를 안 바꾼다. (이슈 #594 (a))
 # ⚠ 이 짝은 **DDL만** 문다. 모델 쪽(`store_common.KIND_MAP`의 필드)은 DDL이 그대로라 여기서
 # 안 잡히고, 아래 `_PINNED_KIND_FIELDS`가 그 자리를 문다.
-_PINNED_SCHEMA = (1, "6a9e60b5a393697a75091c7a5bc4f5a5bd1ff057dae198eec3ab3423737cb43a")
+_PINNED_SCHEMA = (2, "6a9e60b5a393697a75091c7a5bc4f5a5bd1ff057dae198eec3ab3423737cb43a")
 
 
 def test_the_state_db_ddl_and_its_version_move_together() -> None:
@@ -1154,7 +1154,9 @@ def _kind_field_fingerprints() -> dict[str, str]:
 # 있어도) 지우거나 타입을 바꿨으면 같은 커밋에서 판을 올리고 이 짝을 같이 갱신한다** — 저장은
 # JSON 한 컬럼이라 DDL이 그대로여서 `_PINNED_SCHEMA`가 못 무는 자리다(이슈 #594 ·
 # `sqlite_store.py` 모듈 docstring의 올림 규칙).
-# 지문은 판 1일 때 쟀다. 잰 환경: CPython 3.14.5 · pydantic 2.13.4. 정규화(`_type_notation`)는
+# 지문은 판 2일 때 쟀다. 판 2는 Evidence.harness_note · crashed · banner와 RunRecord 필드들을 든
+# 모양이다(`sqlite_store.py` 판 이력). 판 1의 값과 다른 종류는 evidence·run 둘뿐이다.
+# 잰 환경: CPython 3.14.5 · pydantic 2.13.4. 정규화(`_type_notation`)는
 # 파이썬·pydantic 판에 안 흔들리게 쓰였으나 **3.11에서는 미실행**이다(이 장비에 3.11이 없다) —
 # 3.11에서 어긋나면 이 값을 그 환경에서 다시 재야 한다.
 # ⚠ 이 짝이 무는 것은 **필드 이름 집합 · 정규화한 타입 표기(Enum 멤버·`Literal` 값·중첩 모델의
@@ -1164,16 +1166,16 @@ def _kind_field_fingerprints() -> dict[str, str]:
 # 필드」. `Finding.cwe`가 그 예다 — `src/schemas/finding.py`의 `_FindingCwe`).
 # ⚠ 표기만 바뀌어 빨개지면(라이브러리 판 이동) 저장 형태 판을 올리지 말고 지문만 갱신한다.
 _PINNED_KIND_FIELDS = (
-    1,
+    2,
     {
         "artifact": "dd314177f00d12af5402a63f632a227663ca2146a1024cd52e3cff89ca7ab56f",
         "candidate": "245bc19e92f6dcea8897822c7a3a524581a11eb797d8546106d924a63d92c4a2",
-        "evidence": "b3db754059cb1c1cf899e00b73c1f292e7b9bbde4810400a0d8401aa1df219b5",
+        "evidence": "06310b1eb78699248d09dc77a174d58724dfb90f300681aa55d5c836c2aa8052",
         "finding": "4fd7cc52eaf8885ecea7ac393f1499d9ce8f2f37aaed17400cdeee22efd5aaa1",
         "missing_evidence": "5e9a017771fe115254bad8871eb6af709baa75d22db659750f0850083ba22db8",
         "decision": "03b43880636ce24dae6e26c2bdaeb042c6cb413caafcd10c494e932c86df332e",
         "capsule": "dbbc8932e9d63e1eb3eee9fc37b1c58f8d3cdac8ff1daead3b7f6b627eb6f4d2",
-        "run": "f4348f5dae0a91b53effd1263d9f805979e74fdbac122b8dad545016f228f65c",
+        "run": "4964eaa03e6b924f83183976aa3b72ce8e3576900e84eee7a44d016b7de92c0f",
     },
 )
 
