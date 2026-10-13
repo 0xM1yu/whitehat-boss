@@ -338,7 +338,8 @@ class GraphIndex:
 
         ## 슬라이스 타깃의 본문은 슬라이스다 (#220 ①)
 
-        `run --slices`면 LIGHT `target_function`과 Scout `SOURCE`가 슬라이스 렌더다. 위 등식을
+        `run --slices`면 LIGHT `target_function`이 슬라이스 렌더다(Scout `SOURCE`는 프롬프트의
+        `input: slice` 선언일 때만 — ⏵ 2026-10-13 #529). 위 등식을
         지키는 본문은 `target`(entry 줄 하나)의 범위가 아니라 **슬라이스의 (file, line) 집합**
         (`body`)이다 — entry만 보면 Case B(sink 줄)는 감싸는 함수의 호출자가, Case A(함수 머리)는
         본문의 호출이 빠졌다. 「본문 안에 정의」는 정의 **범위**가 그 집합과 겹치는가로 본다 —
