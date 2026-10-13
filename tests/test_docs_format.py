@@ -908,6 +908,28 @@ def test_the_rebut_rule_is_stated_the_same_way_by_adr_0015_and_the_contract() ->
         assert f"`{axis}`" in contract.split("반박 체크리스트:")[1].split("- 규칙:")[0], axis
 
 
+# 옛 규칙(근거 없는 `rebut` -> `uphold`)이 취하는 문형. 문자열이 아니라 **형**으로 센다.
+# ① 목적지 조사형 · ② 화살표형 - 아래 한 정규식. 백틱은 있어도 없어도 된다(gate.py:47은 없다).
+_OLD_RULE_TARGET = re.compile(
+    r"uphold`?(?:으)?로\s*(?:처리|정규화|바꾸|바꾼|바뀐|바뀌|변환|전환)|→\s*`?uphold(?![A-Za-z_])"
+)
+# ③ 공기형 - 한 줄에 `uphold`와 `정규화`가 같이 있다. 목적지를 조사로 안 말해도 단언이다.
+_OLD_RULE_COOCCUR = re.compile(r"uphold(?![a-z]).*정규화|정규화.*uphold(?![a-z])")
+# 과거형·철회 표지 - 같은 줄에 있으면 단언이 아니라 ⏵ 노트다. `였다`는 「목적지가 uphold였다」.
+_OLD_RULE_EXCUSES = ("전엔", "전에는", "그전", "였다", "~~")
+
+
+def _states_the_old_rebut_rule(line: str) -> bool:
+    """줄 하나가 옛 규칙을 **현재형으로** 단언하는가."""
+    if any(e in line for e in _OLD_RULE_EXCUSES):
+        return False
+    # 공기형만 `need_evidence`가 같은 줄에 있으면 면제다 - 새 목적지를 말하는 문장이다.
+    return bool(
+        _OLD_RULE_TARGET.search(line)
+        or (_OLD_RULE_COOCCUR.search(line) and "need_evidence" not in line)
+    )
+
+
 def test_no_live_source_states_the_old_rebut_rule_in_the_present_tense() -> None:
     """ADR 0015의 옛 규칙(근거 없는 반박 -> `uphold`)이 `src`의 살아 있는 산문에 **현재형으로**
     남지 않는다.
@@ -919,30 +941,77 @@ def test_no_live_source_states_the_old_rebut_rule_in_the_present_tense() -> None
     무는 핀은 그것을 영영 못 잡는다.
 
     ⚠ **무는 것은 「`uphold`가 목적지라고 현재형으로 적는가」까지다.** 과거형·철회 표지(`전엔` ·
-    `전에는` · `그전` · `~~`)가 같은 줄에 있으면 통과다 - `runner.py`·`decision.py`의 ⏵ 문장이
-    그 형태다. 인용한 코드가 실제로 `need_evidence`를 내는지는 `tests/test_gate.py`·
-    `tests/test_nodes.py`가 문다.
+    `전에는` · `그전` · `였다` · `~~`)가 같은 줄에 있으면 통과다 - `runner.py`·`decision.py`의
+    ⏵ 문장이 그 형태다. 인용한 코드가 실제로 `need_evidence`를 내는지는 `tests/test_gate.py`·
+    `tests/test_nodes.py`가 문다. **한 줄 안에서만 본다** - `uphold로` 와 `처리`가 줄바꿈으로
+    갈리면 못 잡는다(손 훑기 ±2줄 창에서 그런 실형태는 0건이었다).
+
+    **문형은 셋이다 — 문자열 하나를 넓힌 것이 아니라 명제가 취하는 형이다(CLAUDE.md §2.5).**
+    ① 목적지 조사형 `uphold`로 처리·정규화·바꾸다 ② 화살표형 `→ uphold` ③ 공기형 - 한 줄에
+    `uphold`와 `정규화`가 같이 있고 `need_evidence`는 없는 것(`F-5 | 정규화 포함 uphold 기록`).
+    측정 - 병합 기준점(5b68a69)의 `src/`에서 옛 규칙을 현재형으로 단언한 줄은 **손으로 11개**였고,
+    넓히기 전 검출기(`uphold`로 처리·정규화·바꾼 네 문자열)는 **5개**만 잡았다. 지금은 11 대 11이다.
     """
-    claims = ("`uphold`로 처리", "`uphold`로 정규화", "uphold로 정규화", "`uphold`로 바꾼")
-    excuses = ("전엔", "전에는", "그전", "~~")
-
-    def states_the_old_rule(line: str) -> bool:
-        return any(c in line for c in claims) and not any(e in line for e in excuses)
-
-    # 양성 핀 - `src/schemas/decision.py:22`가 이 PR 전에 들고 있던 실형태.
-    assert states_the_old_rule(
-        '    반박은 `uphold`로 처리하되 **지표에 기록한다**"고 정한다. Critic의 구조화 출력은'
-    ), "검출기가 이 파일이 실제로 들고 있던 형태를 못 잡는다"
-    # 음성 핀 - `src/orchestrator/runner.py:1438`의 실형태(과거형 ⏵). 막아서는 안 되는 문장이다.
-    assert not states_the_old_rule(
-        "    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는"
-    ), "철회를 적은 ⏵ 문장을 검출기가 막는다"
+    # 양성 핀 - 병합 기준점(5b68a69)의 `src/` 실형태. 줄 번호는 그 판의 것이다.
+    # (11개 전부 - 넓히기 전 검출기는 ★ 다섯만 잡았다)
+    for sample in (
+        # ★ fake_model.py:412
+        "    후자는 agent-contracts.md §2.3대로 오케스트레이터가 `uphold`로 정규화하고 지표에",
+        # context.py:792 - 화살표형
+        '        """근거 없는 `rebut` → `uphold` 정규화를 지표에 남긴다 (agent-contracts.md §2.3).',
+        # gate.py:47 - 백틱 없는 조사형
+        '  (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").',
+        # ★ gate.py:127
+        '    """근거 없는 `rebut`을 `uphold`로 정규화한다 (agent-contracts.md §2.3).',
+        # critic.py:12 - `바꾸는`
+        "**정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에",
+        # ★ runner.py:1436 (줄 끝 생략)
+        "    반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류는",
+        # state_machine.py:39 - 표 행(뒤 두 칸 생략), 공기형
+        "| F-5 | 정규화 포함 `uphold` 기록 | 7 | `hypothesized` | `hypothesized` |",
+        # state_machine.py:52 - 공기형
+        "F-5의 `uphold`에는 **근거 없는 `rebut`을 정규화한 것**도 포함된다(gate.normalize,",
+        # ★ decision.py:18
+        '    반박은 `uphold`로 처리하되 **지표에 기록한다**"고 정한다. Critic의 구조화 출력은',
+        # decision.py:22 - 화살표형
+        "    따라서 Decision은 Critic이 말한 것을 그대로 담고, 정규화(`rebut` → `uphold`)와",
+        # ★ decision.py:42
+        "        `False`인 `rebut`은 오케스트레이터가 `uphold`로 정규화하고 그 사건을 지표에",
+    ):
+        assert _states_the_old_rebut_rule(sample), f"검출기가 실형태를 못 잡는다: {sample}"
+    # 음성 핀 - 이 브랜치의 실형태. 막아서는 안 되는 문장이다(과거형 ⏵ · 새 목적지를 말하는 문장 ·
+    # 옛 규칙과 무관하게 `uphold`를 읽는 문장). 이 문형들이 실제로 나타나는 이유: 이 PR이 옛 규칙을
+    # 지우며 남긴 ⏵ 노트가 전부 이 모양이다.
+    for sample in (
+        # runner.py:1438 - `전엔`
+        "    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는",
+        # decision.py:78 - 괄호 안 `전엔`
+        "        남긴다 (⏵ 2026-10-13, ADR 0015 - 전엔 `uphold`로 정규화했다). 여기서 판정만",
+        # state_machine.py:54 - 공기형이지만 `였다`
+        "⏵ 2026-10-13 (ADR 0015) — 정규화 목적지가 F-5의 `uphold`였다.",
+        # critic.py:15 - 같은 줄에 `정규화`와 `uphold`가 다 있지만 `였다`
+        "**정규화된 값**을 정책에 넘긴다. ⏵ 2026-10-13 (ADR 0015) — 목적지가 `uphold`였다.",
+        # trace.py:60 - 공기형이지만 줄에 `need_evidence`가 새 목적지로 있다
+        "정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —",
+        # decision.py:31 - `uphold`에서 `need_evidence`로 바뀌었다
+        "    ⏵ 2026-10-13 (ADR 0015) — 정규화 목적지가 `uphold`에서 **`need_evidence`**로 바뀌었다",
+        # runner.py:2264 - 게이트가 `uphold`를 읽는 문장 (옛 규칙과 무관)
+        "    있으면 게이트는 그 Finding을 uphold로 읽으므로 이 함수도 0으로 맞춘다 - 다음은 반박",
+    ):
+        assert not _states_the_old_rebut_rule(sample), f"검출기가 정상 문장을 막는다: {sample}"
+    # 이름을 직접 부르는 단언 한 쌍 - `test_every_detector_carries_a_contamination_pin`이 센다.
+    assert _OLD_RULE_TARGET.search("정규화(`rebut` → `uphold`)"), "목적지·화살표형을 못 잡는다"
+    assert _OLD_RULE_TARGET.search("목적지가 `uphold`였다") is None, "조사 없는 uphold를 잡는다"
+    assert _OLD_RULE_COOCCUR.search("정규화 포함 `uphold` 기록"), "공기형을 못 잡는다"
+    assert _OLD_RULE_COOCCUR.search("`uphold`·`need_evidence`는 반박이 아니므로") is None, (
+        "정규화 없는 줄을 잡는다"
+    )
 
     offenders = [
         f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: {line.strip()[:90]}"
-        for path in sorted((REPO_ROOT / "src").rglob("*.py"))
+        for path in sorted(_tracked("src/*.py"))
         for lineno, line in enumerate(_read(path).splitlines(), 1)
-        if states_the_old_rule(line)
+        if _states_the_old_rebut_rule(line)
     ]
     assert offenders == [], (
         "`src`가 옛 규칙(근거 없는 반박 -> `uphold`)을 현재형으로 적는다 — 살아 있는 규칙은 "
