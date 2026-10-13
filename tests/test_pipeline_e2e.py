@@ -6043,9 +6043,16 @@ def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> N
     for key, value in expected.items():
         assert manifest[key] == value, key
         assert getattr(result.record, key) == value, key
+    # 양성 핀: 집계 셋이 다 성공한 run은 이 키가 `None`이다 - `{}`가 아니다(`aggregate_failures or
+    # None`). `{}`가 실리면 「집계가 죽었는데 사유가 비었다」로 읽히고, 그것은 run.py의 「안
+    # 던졌으면 `None`」과 어긋난다. 음성 짝은 아래
+    # `test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured`다.
+    assert manifest["trace_aggregate_failures"] is None
+    assert result.record.trace_aggregate_failures is None
     rendered = result.report.render()
     assert "### 분모 전용 집계 (임계값 아님)" in rendered
     assert "미측정" not in rendered, "잰 값이 있는데 미측정으로 찍혔다"
+    assert "집계 실패" not in rendered, "안 죽은 집계가 실패로 찍혔다"
     schema_line = "연속 스키마 파싱 실패 최장(역할별, 분모만): " + " · ".join(
         f"{r} 0" for r in sorted(roles)
     )
