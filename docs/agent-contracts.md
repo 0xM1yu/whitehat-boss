@@ -272,6 +272,11 @@ agent:
   `_CONTENT_AWARE_VERSIONS`), v10 prefix도 `FACTS.evidence[].body`를 이름으로 불러 「a bounded excerpt of a tool log,
   not a generated summary」로 적는다. v9로 돈 run은 0건이고 v10으로 돈 run은 1건이다([10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) — `checksum` 0이라 비교표 밖 · `docs/experiments/` grep, 2026-10-08).
   지금 판은 이 사슬이 아니라 `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
+
+  ⏵ 2026-10-13(#563) - 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다(6단계 `gate_eval`에서 센 정수). #248 뒤 읽힌 6단계
+  `location_ok`는 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0) · 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖,
+  [D106](open-questions/D/D106.md) ⏵ 2026-10-13)이고 과제가 다르다. `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(D106의 오프라인
+  재등급 5/5 거짓은 run 실측이 아니다). 통제 대조 0건.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
   내는 것이 봉투(`AuditorAction` — v8·v9)**이고 `Finding`은 그 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.

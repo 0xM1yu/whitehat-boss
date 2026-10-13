@@ -11,6 +11,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | --- | --- | --- |
 | 제거율 — Scout | `transition`(stage=4) | `1 − count(scout_promoted) / count(생성)` |
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
+| 정적 신호 위치 겹침 (#563) | `gate_eval`(stage=6) | `count(location_ok)`·`count(static_ok)`를
+`location_ok` 키가 있는 행 수로 센다 — **횟수이고 비율이 아니다**. 6단계만(7·8단계는 후보 위치를
+안 넘겨 `location_ok`가 구조상 거짓). `RunRecord.location_overlap`이 같은 세 수를 싣는다 |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
 | 모델 인용 수 | `gate_eval`(stage=6) | `cited_by_model` = 부착 전 ID 수, 중복 포함 (#554) |

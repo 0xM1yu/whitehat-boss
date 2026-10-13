@@ -443,6 +443,13 @@ def _describe_evidence(
         # 위치가 없으면 아무것도 더하지 않는다 — 산문 한 줄이라 `null`을 적으면 노이즈다.
         if with_location and ev.location is not None:
             line += f" · {_location_text(ev.location)}"
+
+        # ⏵ 2026-10-13(#563) — 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다
+        # (6단계 `gate_eval`에서 센 정수). #248 뒤 읽힌 값은 `run_20260924_0003` 36/36 참(스모크 ·
+        # `checksum` 0) · 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖)이고 과제가
+        # 다르다. `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(이슈 #552의 오프라인
+        # 재등급 5/5 거짓은 run 실측이 아니다). 통제 대조는 0건이다.
+
         body = bodies.get(ev.evidence_id)
         if body and body.get("body"):
             snippet = str(body["body"]).replace("\n", "\n    ")
