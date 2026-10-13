@@ -202,5 +202,6 @@ docker run --rm --network none --pull never \
   `tests/test_poc_tool_feeds_the_input.py::test_the_copied_constants_match_the_tool_they_were_copied_from`이
   센다. 둘 다 저자 소스와 어긋나는 경우는 저자 소스 태그를 다시 봐야 한다(그 테스트 docstring).
 - **런타임 실패가 run 상태에 드러나는지**(#559). 이 결정은 그 자리를 **새로 하나 더 만든다** —
-  과제 이미지의 `exit 125`가 도구 결과로 적히면 같은 사고다. 불변식 1이 그것을 막지만 #559는 2026-10-12
-  닫았다(서빙 trace 124~127 0건 · 시작 시점은 `preflight`(#534)가 `docker run`으로 본다 · run 도중 데몬 실패의 run 경고는 안 만들었다).
+  과제 이미지의 `exit 125`가 도구 결과로 적히면 같은 사고다. 불변식 1이 그것을 막지만 ~~#559 자체는
+  이 ADR이 닫지 않는다.~~ ⏵ 2026-10-12 — #559는 닫았다(서빙 trace 124~127 0건 · 시작 시점은 `preflight`(#534)가 `docker run`으로 본다 · run 도중 데몬 실패의 run 경고는 안 만들었다).
+  ⏵ 2026-10-13 — 정정(#634 사후 리뷰). ① 위 취소선 문장은 PR #634가 ⏵ 없이 지웠던 것을 되살린 꼴이다. ② 「서빙 trace 124~127 0건」은 모집단을 밝혀야 읽힌다: 센 것은 trace 여섯 — 2026-10-10·11 run 다섯(`C:\w\s14-results\run_20261010_0001`~`0004`·`run_20261011_0001`)과 2026-10-12 run(`C:\w\s17-artifacts\run_20261011_0001`) — 이고, 본 종료 코드는 0과 1뿐이다(2026-10-13 재계수). 그중 **PoV 도구(`poc`·`gdb`)가 돈 trace는 2026-10-12 run 하나**다 — `poc` 6회 exit 0 · `gdb` 1회 exit 1 · `build` exit 1; 나머지 다섯은 1·2단계 도구(`index`·`semgrep`·`clang-tidy`·`build`)만 있어 이 도구의 124~127을 볼 자리가 아니었다. ③ 이 모집단 밖의 2026-10-08 run은 로컬 `poc` 도구가 **매 홉 exit 127**이었다([#513](https://github.com/0xM1yu/whitehat-boss/issues/513) · [10-08 보고서](../experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) §1) — 이 결정이 고친 바로 그 사고다. 그러므로 「0건」은 **이 결정 뒤 PoV 도구가 한 번 돈 run 하나에서의 0건**이다.
