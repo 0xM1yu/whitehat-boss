@@ -100,8 +100,9 @@ servers:
     env: *vllm_env
     probe: chat
     # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh`) — 2026-10-11 콜드 기동 TIMEOUT 실측(attempt 1 · n=1) · 따뜻한 attempt 2 147 s · 이후 65~75 s는 선취 효과와 분리되지 않는다(#571).
-    # ⏵ 2026-10-13(#571) — 이 600 s은 가중치를 **교대 전에 받아 둔 뒤의 기동** 기준이다. 선취 단계: `pip install hf_transfer &&
-    # HF_HUB_ENABLE_HF_TRANSFER=1 hf download <repo> --revision <rev>`(`tools/serve/prefetch-weights.sh`가 하는 일 · 원 절차는 docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md §5).
+    # ⏵ 2026-10-13(#571) — 이 600 s은 가중치를 **교대 전에 받아 둔 뒤의 기동** 기준이다. 선취는 손으로 치지 말고
+    # `tools/serve/prefetch-weights.sh`를 돌린다 — 그 스크립트가 가속 환경변수 둘과 `--exclude`를 같이 주고(머리 주석 9-13행),
+    # 받을 크기 대 원격 여유도 먼저 본다. 원 절차는 docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md §5.
     # 값은 일부러 안 바꿨다 — 바꾸면 안 잰 숫자가 하나 는다. 콜드 기동은 이 좌석에서 10-11에 TIMEOUT이었다(위 · n=1).
     ready_timeout_s: 600
 
@@ -151,7 +152,8 @@ servers:
     probe: chat
     # 이 값은 가중치 선취를 전제한다(`tools/serve/prefetch-weights.sh` · #571) — 10-06 프로브에서 **첫(콜드) 기동이 이 600 s 상한에 걸렸다**
     # (n=1 · 다운로드 23 MB/s · 그 보고서 결함 4) · 캐시 뒤 따뜻한 319 s(상한의 53% — 계산값 · `Model loading took 51.1 GiB`) · 10-11 run에서는 8단계가 안 돌아 미기동.
-    # ⏵ 2026-10-13(#571) — 이 600 s은 가중치를 **교대 전에 받아 둔 뒤의 기동** 기준이다. 선취 단계: `pip install hf_transfer &&
-    # HF_HUB_ENABLE_HF_TRANSFER=1 hf download <repo> --revision <rev>`(`tools/serve/prefetch-weights.sh`가 하는 일 · 원 절차는 10-06 프로브 보고서 §5).
+    # ⏵ 2026-10-13(#571) — 이 600 s은 가중치를 **교대 전에 받아 둔 뒤의 기동** 기준이다. 선취는 손으로 치지 말고
+    # `tools/serve/prefetch-weights.sh`를 돌린다 — 그 스크립트가 가속 환경변수 둘과 `--exclude`를 같이 주고(머리 주석 9-13행),
+    # 받을 크기 대 원격 여유도 먼저 본다. 원 절차는 10-06 프로브 보고서 §5.
     # 값은 일부러 안 바꿨다 — 바꾸면 안 잰 숫자가 하나 는다. 콜드 첫 기동은 600 s 안에 못 끝났다(위 · 다운로드 23 MB/s · n=1 · 그 보고서 결함 4).
     ready_timeout_s: 600

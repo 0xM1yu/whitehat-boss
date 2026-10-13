@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import get_args
 
 import pytest
+from pydantic import model_validator
 
 from src.adapters import fake_tools, sqlite_store
 from src.adapters.factory import WIRINGS, build_deps
@@ -28,6 +29,7 @@ from src.adapters.fake_tools import FakeToolRunner
 from src.adapters.memory_store import InMemoryStateStore
 from src.adapters.routing_model import RoutingModelClient, UnknownRoleError
 from src.adapters.sqlite_store import SqliteStateStore
+from src.adapters.store_common import KIND_MAP
 from src.config import AdapterSelection, HarnessConfig, load_config
 from src.ids import IdFactory, new_run_id, sha256_text
 from src.interfaces import tool_runner
@@ -48,6 +50,7 @@ from src.schemas import (
     Location,
     MissingEvidence,
     Role,
+    RunRecord,
     Verdict,
 )
 from tests.conftest import plant_link, served_scout_config
@@ -1059,9 +1062,8 @@ def _normalized_ddl_hash(ddl: str) -> str:
 
 # (STATE_DB_SCHEMA_VERSION, `_SCHEMA`의 정규화 해시). **`_SCHEMA`(DDL)를 고쳤으면 같은 커밋에서
 # 판을 올리고 이 짝을 같이 갱신한다.** 주석만 고친 것은 해시를 안 바꾼다. (이슈 #594 (a))
-# ⚠ 이 짝은 **DDL만** 문다. 판을 올려야 하는 주된 경우 — `store_common.KIND_MAP` 모델의
-# 필드·값 집합이 바뀌어 저장된 JSON을 못 읽게 되는 것 — 은 DDL이 그대로라 여기서 안 잡힌다
-# (`sqlite_store.py` 모듈 docstring).
+# ⚠ 이 짝은 **DDL만** 문다. 모델 쪽(`store_common.KIND_MAP`의 필드)은 DDL이 그대로라 여기서
+# 안 잡히고, 아래 `_PINNED_KIND_FIELDS`가 그 자리를 문다.
 _PINNED_SCHEMA = (1, "6a9e60b5a393697a75091c7a5bc4f5a5bd1ff057dae198eec3ab3423737cb43a")
 
 
@@ -1083,6 +1085,82 @@ def test_the_ddl_normalizer_ignores_comments_and_spacing_but_not_a_token() -> No
     changed = base.replace("payload TEXT NOT NULL", "payload TEXT")
     assert changed != base
     assert _normalized_ddl_hash(changed) != _normalized_ddl_hash(base)
+
+
+def _kind_field_fingerprint(model: type) -> str:
+    """모델의 (필드 이름, 타입 표기) 짝을 정렬해 sha256을 낸다.
+
+    표기는 `repr(FieldInfo.annotation)`이다 — 기본값·`Field` 제약·validator는 안 든다.
+    """
+    items = sorted((name, repr(f.annotation)) for name, f in model.model_fields.items())
+    return hashlib.sha256(repr(items).encode("utf-8")).hexdigest()
+
+
+def _kind_field_fingerprints() -> dict[str, str]:
+    return {kind: _kind_field_fingerprint(model) for kind, (model, _) in KIND_MAP.items()}
+
+
+# (STATE_DB_SCHEMA_VERSION, 종류별 필드 지문). **`KIND_MAP` 모델의 필드를 더하거나(기본값이
+# 있어도) 지우거나 타입을 바꿨으면 같은 커밋에서 판을 올리고 이 짝을 같이 갱신한다** — 저장은
+# JSON 한 컬럼이라 DDL이 그대로여서 `_PINNED_SCHEMA`가 못 무는 자리다(이슈 #594 ·
+# `sqlite_store.py` 모듈 docstring의 올림 규칙).
+# 지문은 `86c3a26a`(이 브랜치 머리)에서 쟀고 그때 판은 1이었다.
+# ⚠ 이 짝이 무는 것은 **필드 이름 집합 · 타입 표기 · `KIND_MAP` 종류 집합**이다. 참인 명제는
+# 「이 지문으로 바뀌면 죽는다」다 — validator·기본값·`Field` 제약만 바뀌면 지문은 그대로이고,
+# 그 경우도 판을 올려야 할 수 있다(모듈 docstring의 「값 집합을 넓히거나 좁히기」·「뜻만 바뀐
+# 필드」. `Finding.cwe`가 그 예다 — `src/schemas/finding.py`의 `_FindingCwe`).
+# ⚠ 표기는 pydantic·파이썬 판에 달렸다(잰 환경은 pydantic 2.12.4 · CPython 3.11). 판이 올라
+# 표기만 바뀌면 모델이 그대로여도 빨개진다 — 그때는 저장 형태 판을 올리지 말고 지문만 갱신한다.
+_PINNED_KIND_FIELDS = (
+    1,
+    {
+        "artifact": "8eea8b0fd18b150d52aab684c6d943cf7069367d2b42522ff178cd2b3204d6d2",
+        "candidate": "380295d3958c46e31d5a9f9e961b9bf2c2add5f9f9b9846430b30df007560550",
+        "evidence": "8183ed893060ffe77f9e86633bd74d83cec759b6d53432d218ecbdfa15f4d5ef",
+        "finding": "ef67fb76b9918b65b86c8aa885c6afe9536312b771d87dfd7e2f46d88cf44464",
+        "missing_evidence": "ad6b9a45c5d8ba5c46018fb6748b9cfb9f42bca0b11ce97e7d54afc35eddc522",
+        "decision": "cfd7cc671c05ba7169fc283348f03d9cb7a665cf1e3009bcc8e6501f7bf2ca01",
+        "capsule": "17f838e61acf16b926e78038ac8ca36a268ecfc4f267b0bd9d11b6b858e5359b",
+        "run": "c3af41e4e66801d954c4cd3a456a516d84eb2bf4e0a7d2707b1c5c0fd4ec44b3",
+    },
+)
+
+
+def test_the_stored_model_fields_and_the_db_version_move_together() -> None:
+    pinned_version, pinned = _PINNED_KIND_FIELDS
+    live = _kind_field_fingerprints()
+    moved = sorted(k for k in set(live) | set(pinned) if live.get(k) != pinned.get(k))
+    assert (sqlite_store.STATE_DB_SCHEMA_VERSION, live) == (pinned_version, pinned), (
+        f"저장되는 모델의 필드가 바뀌었거나 판이 움직였다 — 바뀐 종류 {moved} · 판 "
+        f"{pinned_version} -> {sqlite_store.STATE_DB_SCHEMA_VERSION}. 필드가 바뀌었으면 "
+        "`STATE_DB_SCHEMA_VERSION`을 올리고 이 짝을 같은 커밋에서 "
+        f"{(sqlite_store.STATE_DB_SCHEMA_VERSION, live)}로 갱신한다."
+    )
+
+
+def test_the_kind_field_fingerprint_bites_a_new_field_but_not_prose_or_a_validator() -> None:
+    """지문이 무는 것과 안 무는 것.
+
+    양성 핀은 저장소에서 샌 실형태다 — `RunRecord.keep_responses`(`src/schemas/run.py:361`)가
+    기본값 있는 필드 하나로 커밋 `f0cdba76`에 들어오면서 판을 안 올렸다.
+    """
+
+    class WithAnotherKeptList(RunRecord):
+        another_kept_list: list[str] | None = None
+
+    class ProseOnly(RunRecord):
+        """docstring만 다른 모델 — 모듈 docstring이 「docstring만 바뀐 것은 아니다」라 적는다."""
+
+    class ValidatorOnly(RunRecord):
+        @model_validator(mode="after")
+        def _accepts_everything(self) -> "ValidatorOnly":
+            return self
+
+    base = _kind_field_fingerprint(RunRecord)
+    assert _kind_field_fingerprint(WithAnotherKeptList) != base  # 양성
+    assert _kind_field_fingerprint(ProseOnly) == base  # 음성
+    # 음성이고 **한계**다 — validator만 바뀌어도 판을 올려야 할 수 있는데 지문은 안 움직인다.
+    assert _kind_field_fingerprint(ValidatorOnly) == base
 
 
 # --- factory ----------------------------------------------------------------
