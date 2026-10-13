@@ -995,7 +995,12 @@ def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert _pov_subjects(ctx) == [finding.finding_id]
-    assert state.findings[finding.finding_id].state is FindingState.HYPOTHESIZED, (
+    # ⏵ 2026-10-13 (ADR 0015) - 이 Finding은 7단계에서 Fake Critic의 **근거 없는 반박**을 받는다.
+    # 전엔 그것이
+    # `uphold`로 정규화돼 `HYPOTHESIZED`로 남았고, 지금은 `need_evidence`(F-7)라 `QUEUED`다. 이
+    # 테스트가 묻는
+    # 명제는 그대로다 - PoV(추가형)가 상태를 더 올리지 않는다(`validated`·`proven`이 아니다).
+    assert state.findings[finding.finding_id].state is FindingState.QUEUED, (
         "pov는 추가형이다 — 상태를 바꾸지 않는다"
     )
 
@@ -1113,8 +1118,8 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
             id="upheld_but_held_for_a_missing_repro_spec_F9",
         ),
         pytest.param(
-            FindingState.HYPOTHESIZED, Verdict.REBUT, False, False, True,
-            id="an_ungrounded_rebuttal_is_normalized_to_uphold",
+            FindingState.QUEUED, Verdict.REBUT, False, False, True,
+            id="an_ungrounded_rebuttal_is_normalized_to_need_evidence",
         ),
         pytest.param(
             FindingState.HYPOTHESIZED, None, False, False, True,
@@ -1136,9 +1141,11 @@ def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
 ) -> None:
     """풀 판정표 - 상태가 아니라 **Critic이 이 Finding에 무엇을 했나**로 가른다. `QUEUED`는
     F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6(밀어 냄)·F-7(보류 - 든다)이 섞인 상태라 상태만으로는
-    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `uphold`로 바꾸므로 정책이 `QUEUED`로 안
-    보내고(`HYPOTHESIZED` F-9) 풀에 든다 - 정규화가 한 곳(`gate.normalize`)에서만 일어난다는 전제를
-    같이 문다.
+    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `need_evidence`로 바꾸므로 보류(F-7)와 같은
+    길로
+    풀에 든다(⏵ 2026-10-13 ADR 0015 - 전엔 `uphold`로 바뀌어 `HYPOTHESIZED`로 들었다) - 정규화가
+    한 곳
+    (`gate.normalize`)에서만 일어난다는 전제를 같이 문다.
 
     ⚠ 판정표 여덟은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
     절단 · `_drop_finding`)에서 골랐다 - 지어낸 상태가 아니다."""
@@ -1364,7 +1371,8 @@ def test_an_empty_pov_pool_with_a_pov_seat_lands_in_the_run_warnings_with_its_br
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
     assert "8단계 PoV는 한 건도 시도되지 않았다" in message
@@ -1385,7 +1393,8 @@ def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백 포함) 2 · 판정 실패 1"
+        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
         " · Critic 미경유 4 · pov_attempt_top_n 0."
     ), message
     assert "상한 0" in message
@@ -1404,8 +1413,12 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
     ctx: RunContext,
 ) -> None:
     """칸 우선순위와 정규화를 한 번에 문다 — 상한 0 · validated 0, 여섯 Finding이 각자 한 칸:
-    근거 없는 반박(→ `normalize`가 업홀드 → 업홀드 미승격) · 근거 있는 업홀드(미승격) · **판정 실패
-    목록에도 반박이 있는 것**(→ 판정 실패가 먼저) · 근거 있는 반박 · 보류 · 판정 없음."""
+    근거 없는 반박(→ `normalize`가 `need_evidence` → 보류) · 근거 있는 업홀드(미승격) · **판정 실패
+    목록에도 반박이 있는 것**(→ 판정 실패가 먼저) · 근거 있는 반박 · 보류 · 판정 없음.
+
+    ⏵ 2026-10-13 (ADR 0015) - 근거 없는 반박의 칸이 「업홀드 미승격」에서 「보류」로 옮겼다.
+    전에는 그 반박이
+    `uphold`로 읽혀 **업홀드 칸에 두 건**(미승격 2)이 쌓였다."""
     _with_top_n(ctx, 0)
     state = runner._Accumulator()
     plan = {
@@ -1428,8 +1441,9 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
 
     assert state.pov_pool_empty is not None
     assert state.pov_pool_empty.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백 포함) 1 · 판정 실패 1"
-        " · Critic 미경유 1 · 업홀드 미승격 2 · pov_attempt_top_n 0."
+        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
+        " · Critic 미경유 1 · 업홀드 미승격 1 · pov_attempt_top_n 0."
     ), state.pov_pool_empty
 
 
@@ -1444,7 +1458,8 @@ def test_an_empty_pov_pool_with_no_findings_at_all_still_warns(ctx: RunContext) 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
 
@@ -1709,10 +1724,38 @@ def test_critic_prompt_omits_auditor_reasoning(ctx: RunContext) -> None:
     assert finding.finding_id in prompt.body
 
 
-def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
-    """근거 없는 반박은 uphold로 처리하되 지표에 남는다. 정규화 지점은 한 곳이다.
+def _critic_says(ctx: RunContext, **update: object) -> None:
+    """Fake Critic은 표준 어휘로만 답한다 - 실서빙에서만 나는 응답 모양을 **응답에 끼워 넣는다**
+    (`test_unreadable_critic_verdict_is_held_and_recorded`와 같은 방식). `DecisionDraft`의 필드를
+    덮어쓴다."""
+    inner = ctx.models.complete
 
-    호출 그래프 근거가 없는 상태를 만든다 — 그래야 Critic이 근거 없이 반박한다.
+    def forced(*, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+        result = inner(role=role, prompt=prompt, schema=schema, history=history)
+        if role is not Role.CRITIC:
+            return result
+        return result.model_copy(update={"value": result.value.model_copy(update=update)})
+
+    ctx.models.complete = forced  # type: ignore[method-assign]
+
+
+def _normalized_events(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_NORMALIZED]
+
+
+def _critic_verdict_policy(ctx: RunContext):  # noqa: ANN202
+    return next(
+        e
+        for e in ctx.trace.events
+        if e.kind is EventKind.POLICY_DECISION and e.data["point"] == "critic_verdict"
+    )
+
+
+def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
+    """근거 없는 반박은 `need_evidence`로 처리하되 지표에 남는다. 정규화 지점은 한 곳이다.
+
+    호출 그래프 근거가 없는 상태를 만든다 — 그래야 Critic이 근거 없이 반박한다(Fake는 이때 ID도 축도
+    비운다). ⏵ 2026-10-13 (ADR 0015) - 목적지가 `uphold`였다. 사유는 `empty_axis`다.
     """
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
@@ -1720,15 +1763,68 @@ def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
     after, decision = critic.run(ctx, finding=finding)
 
     assert decision.verdict is Verdict.REBUT and not decision.is_grounded
-    normalized = [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_NORMALIZED]
+    normalized = _normalized_events(ctx)
     assert len(normalized) == 1
-    verdict_decision = next(
-        e
-        for e in ctx.trace.events
-        if e.kind is EventKind.POLICY_DECISION and e.data["point"] == "critic_verdict"
+    assert normalized[0].data["original_verdict"] == "rebut"
+    assert normalized[0].data["reason"] == "empty_axis"
+    assert normalized[0].data["invalid_axes"] == "[]"
+    verdict_decision = _critic_verdict_policy(ctx)
+    assert verdict_decision.data["basis.verdict"] == Verdict.NEED_EVIDENCE.value
+    assert verdict_decision.data["reason"] == "critic_need_evidence"
+    assert after.state is FindingState.QUEUED  # F-7 - 모델이 낸 need_evidence와 같은 길이다
+
+
+def test_a_rebut_with_an_axis_outside_the_vocabulary_is_recorded_with_the_offending_values(
+    ctx: RunContext,
+) -> None:
+    """`critic_normalized`가 사유와 어휘 밖 원문을 싣는다 - 첫 v7 run의 무효 축 비율이 이것으로
+    센다.
+
+    어휘 안의 축(`guard`)이 섞여 있어도 **무효인 것만** 싣는다. 값은 40자·다섯 개로 자른다.
+    """
+    _critic_says(
+        ctx,
+        verdict="rebut",
+        rebuttal_axis=["guard", "guard-check", "무근거", "x" * 100],
+        evidence_refs=[],
     )
-    assert verdict_decision.data["basis.verdict"] == Verdict.UPHOLD.value
-    assert after.state is not FindingState.QUEUED  # 반박으로 탈락하지 않았다
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    after, _ = critic.run(ctx, finding=finding)
+
+    (event,) = _normalized_events(ctx)
+    assert event.data["reason"] == "invalid_axis"
+    assert json.loads(event.data["invalid_axes"]) == ["guard-check", "무근거", "x" * 40]
+    assert _critic_verdict_policy(ctx).data["basis.verdict"] == "need_evidence"
+    assert after.state is FindingState.QUEUED
+
+
+def test_the_offending_axes_are_bounded(ctx: RunContext) -> None:
+    bad = [f"bad{i}" for i in range(9)]
+    _critic_says(ctx, verdict="rebut", rebuttal_axis=bad, evidence_refs=[])
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    critic.run(ctx, finding=finding)
+
+    (event,) = _normalized_events(ctx)
+    assert json.loads(event.data["invalid_axes"]) == [f"bad{i}" for i in range(5)]
+
+
+def test_a_v7_shaped_rebut_with_vocabulary_axes_is_a_real_rebuttal(ctx: RunContext) -> None:
+    """어휘 안의 축을 든 `rebut`(`evidence_refs=[]`)은 정규화 대상이 아니다 - 이벤트도 없고
+    F-6이다."""
+    _critic_says(ctx, verdict="rebut", rebuttal_axis=["guard", "sink"], evidence_refs=[])
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    after, decision = critic.run(ctx, finding=finding)
+
+    assert decision.verdict is Verdict.REBUT and decision.is_grounded
+    assert _normalized_events(ctx) == []
+    assert _critic_verdict_policy(ctx).data["reason"] == "critic_rebutted"
+    assert after.state is FindingState.QUEUED
 
 
 def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> None:
@@ -1750,8 +1846,17 @@ def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> No
     )
     assert gated.grade.value == "E1" and held.state is FindingState.HYPOTHESIZED
     assert held.path and held.repro_spec is not None
+    # ⏵ 2026-10-13 (ADR 0015) - 이 테스트는 Fake Critic의 **근거 없는 반박**이 `uphold`로
+    # 정규화되는 것에
+    # 기대 반박 실패를 얻었다. 지금은 그것이 `need_evidence`(F-7, `QUEUED`)라 명제가 안 선다. 반박
+    # 실패는
+    # **진짜 `uphold`로** 준다 - 인용한 정적 근거를 든 근거 있는 지지다.
+    static_ids = [ev.evidence_id for ev in no_graph if ev.kind is EvidenceKind.STATIC]
+    _critic_says(ctx, verdict="uphold", rebuttal_axis=[], evidence_refs=static_ids)
 
-    after, _ = critic.run(ctx, finding=held, evidences=no_graph, missings=tuple(missings))
+    after, decision = critic.run(ctx, finding=held, evidences=no_graph, missings=tuple(missings))
+
+    assert decision.verdict is Verdict.UPHOLD and decision.evidence_refs
 
     assert after.state is FindingState.HYPOTHESIZED
     last = [e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL][-1]

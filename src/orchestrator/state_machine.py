@@ -36,7 +36,7 @@
 | F-2 | Gate E0 | 6 | `hypothesized` | `queued` | `insufficient_evidence` |
 | F-3 | Gate E1 (무전이) | 6 | `hypothesized` | `hypothesized` | `evidence_weak` |
 | F-4 | Gate E2 → Critic (무전이) | 6 | `hypothesized` | `hypothesized` | `promoted_to_critic` |
-| F-5 | 정규화 포함 `uphold` 기록 | 7 | `hypothesized` | `hypothesized` | `critic_upheld` |
+| F-5 | `uphold` 기록 | 7 | `hypothesized` | `hypothesized` | `critic_upheld` |
 | F-6 | `rebut` **이면서** `is_grounded` | 7 | `hypothesized` | `queued` | `critic_rebutted` |
 | F-7 | Critic `need_evidence` | 7 | `hypothesized` | `queued` | `critic_need_evidence` |
 | F-8 | Gate E3 (E2 + 반박 실패 + 명세) | 7 | `hypothesized` | `validated` | `critic_upheld` |
@@ -54,8 +54,9 @@
 없이 `validated`에 남고 trace `repro_not_measured`만 낸다 - F-10b와 달리 `from == to` 행이
 **없다.**
 
-F-5의 `uphold`에는 **근거 없는 `rebut`을 정규화한 것**도 포함된다(gate.normalize,
-agent-contracts.md §2.3). 정규화가 일어난 사건 자체는 `critic_normalized`로 따로 남는다.
+F-7의 `need_evidence`에는 **근거 없는 `rebut`을 정규화한 것**도 포함된다(gate.normalize,
+agent-contracts.md §2.3). 정규화가 일어난 사건 자체는 사유와 함께 `critic_normalized`로 따로 남는다.
+⏵ 2026-10-13 (ADR 0015) — 정규화 목적지가 F-5의 `uphold`였다.
 
 F-5와 F-8은 `(from, reason)`이 같고 `to`만 다르다. 7단계에서 두 사건이 순서대로
 일어나기 때문이다 — 먼저 Critic 판정을 무전이로 기록하고, 그다음 게이트가 E3이면

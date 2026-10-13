@@ -578,7 +578,27 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
 - **표준값 층과 동의어 층은 같은 정규화를 본다** — 단어 양끝의 장식(`**`·따옴표·백틱·목록 기호·번호 매김·비ASCII 구두점)을 뗀 뒤 양쪽을 대조한다. 장식 제거가 표준값 층에만 걸려 있던 판(#182 재리뷰 H-A)은 `Yes`를 UPHOLD로 읽고 `**Yes**`·`Yes.`를 `None`으로 읽어 **마침표 하나로 판정이 갈렸고**, 그 `None`이 `need_evidence`를 거쳐 게이트 `p3`(`upheld` 요구)에 걸려 **진짜 취약을 `validated`에서 막았다.** ⚠ **동의어에 CWE 이름을 넣지 않는다** — `use-after-free` 한 계열만 매핑되면 Critic 제거율이 대상 CWE에 따라 다른 규칙으로 만들어진다([evaluation.md](evaluation.md) §2.3).
 - **ID·`produced_by`는 모델 스키마(`DecisionDraft`)에서 빼고 하네스가 주입한다** — 모델에 provenance를 맡기면 `produced_by.model`이 실제 모델이 아닌 `"ChatGPT"` 등으로 오염된다(실측).
 - 반박 체크리스트: guard 존재 여부 / reachability(호출 가능 경로) / aliasing / lifetime / 컴파일 타임 조건·플래그 / 입력 도달성 제약
-- 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. 근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.
+  ⏵ 2026-10-13([ADR 0015](decisions/0015-rebut-grounding.md)) — **여섯이 아니라 열이다.** `rebuttal_axis`의 어휘는
+  `guard` · `reachability` · `aliasing` · `lifetime` · `arithmetic` · `compile_flag` · `input_reachability` · `source` ·
+  `propagate` · `sink`이고 `RebuttalAxis`(`src/schemas/enums.py`)가 든다. 원천은 프롬프트다 -
+  `prompts/critic/v7/prefix.md:193-202`와 `prompts/critic/v6/prefix.md:141-144`가 글자까지 같은 열 개를 적는다.
+  앞의 여섯은 위 체크리스트의 말(guard·reachability·aliasing·lifetime·컴파일 조건·입력 도달성)이고 나머지 넷
+  (`arithmetic` · `source` · `propagate` · `sink`)은 프롬프트가 더한 것이다.
+- 규칙: 반박은 근거 ID 또는 코드 위치를 동반해야 한다. ~~근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다.~~
+  ⏵ 2026-10-13([ADR 0015](decisions/0015-rebut-grounding.md)) — **근거 없는 반박은 `need_evidence`로 처리하고 사유와
+  함께 지표에 기록한다.** `uphold`로 처리하면 게이트 `p3`이 서서 Finding이 `validated`까지 올라간다 - Critic이
+  반박을 못 해서 승격되는 길이다(PR #588 적대적 리뷰 2026-10-10 - `evidence_refs=[]`인 rebut이 사유
+  `critic_upheld`로 `validated`가 됐다).
+  - **근거 = 둘 중 하나다.** ① `evidence_refs`가 비어 있지 않다 ② `rebuttal_axis`가 비어 있지 않고 **전부**
+    위 열 값이다. ⚠ **둘 다 모든 프롬프트 판에 걸린다** - `Decision.is_grounded`에는 판 구분이 없다.
+    그래서 ID 없이 유효 축만 든 **v6** `rebut`도 ②로 근거 있는 반박이 된다
+    ([ADR 0015](decisions/0015-rebut-grounding.md) 「서빙 v6의 라우팅이 뒤집힌다」 ·
+    [D108](open-questions/D/D108.md)). 판 이름이 붙는 자리는 **그 규약을 요구하는 프롬프트**다 - v6은
+    등록된 ID를 인용하라고 적고, v7은 rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
+    「코드 위치」는 ②에서 rationale 속 인용이고, **하네스는 축 어휘만 본다** - 인용한 코드가 SOURCE에 실재하는지는
+    안 본다(ADR 0015의 P0b, 보류). 어휘 안인 축은 근거의 **자격**이고 근거의 참이 아니다.
+  - **사유 둘.** `empty_axis`(ID도 축도 없다) · `invalid_axis`(축이 어휘 밖이다 - `GUARD`·`guard-check`·`무근거`).
+    `critic_normalized` trace의 `reason`과 `invalid_axes`(어휘 밖 원문)가 싣는다.
 
 **본문 누락에 대한 보류는 자동 재요청이 아니다.** Auditor의 비어 있지 않은 `missing_evidence`는
 blocking `MissingEvidence`로 남아 `gate.evaluate`의 `unblocked`를 거짓으로 만들고 E3 승격을 막는다.
@@ -1092,6 +1112,9 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 
 `verdict` 열거형: `uphold` | `rebut` | `need_evidence`
 
+`rebuttal_axis`는 자유 문자열 목록이고 어휘는 `RebuttalAxis` 열 값이다(§2.3 ⏵ 2026-10-13, ADR 0015). 스키마가
+`enum`으로 강제하지 않는 이유는 `verdict`와 같다 - 검사는 파싱 뒤 `Decision.is_grounded`가 한다.
+
 ### RunRecord (재현성)
 
 ```json
@@ -1157,7 +1180,10 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 검토가 필요한 미해결 항목:
 
 1. **근거 없는 반박의 처리 위치.** §2.3은 "근거 없는 반박은 `uphold`로 처리하되 지표에 기록한다"고 정한다. 현재 구현은 `Decision` 스키마에서 이를 막지 않고 `is_grounded`만 제공한 뒤 정규화·기록을 오케스트레이터에 맡긴다 — 스키마에서 거부하면 Critic의 구조화 출력이 파싱 단계에서 실패해 "근거 없는 반박"과 "스키마 파싱 실패"가 한 지표로 뭉개지기 때문이다. 반대로 이 선택은 근거 0건짜리 `rebut`이 저장소에 남는 것을 허용한다. 둘 중 어느 비용을 받을지 결정 필요.
+   ⏵ 2026-10-13([ADR 0015](decisions/0015-rebut-grounding.md)) — **처리 위치는 그대로다**(스키마는 막지 않고 오케스트레이터가 정규화·기록한다).
+   바뀐 것은 정규화 목적지(`uphold` → `need_evidence`)와 근거의 정의다(§2.3).
 2. **`rebuttal_axis`·`CapsuleSection.kind`의 열거형 승격.** §2.3의 반박 체크리스트 6종과 [knowledge-base.md](knowledge-base.md) §4의 섹션 종류는 사실상 닫힌 집합이다. 지금은 문자열로 두었으나 값이 안정되면 열거형으로 닫는 편이 낫다.
+   ⏵ 2026-10-13([ADR 0015](decisions/0015-rebut-grounding.md)) — **`rebuttal_axis`는 해소됐다.** 어휘는 6종이 아니라 10종이고 `RebuttalAxis`가 든다. 필드 타입은 자유 문자열 그대로이고(grammar 강제가 맞는 답을 덮는다) 검증은 파싱 뒤에 한다. **`CapsuleSection.kind`는 그대로 열려 있다.**
 3. **`Candidate.reason_codes`의 축.** 위 예시의 `memcpy_unbounded`·`changed_in_diff`는 §2.4가 열거형 고정을 요구한 "상태 전이 사유"가 아니라 트리아지 신호다. 현재는 두 축을 분리해 전자만 열거형(`ReasonCode`)으로 두었다. 이 해석이 맞는지 확인 필요.
 
 ## 4. 프롬프트 관리 규약
