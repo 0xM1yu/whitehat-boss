@@ -520,8 +520,12 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
   함께 지표에 기록한다.** `uphold`로 처리하면 게이트 `p3`이 서서 Finding이 `validated`까지 올라간다 - Critic이
   반박을 못 해서 승격되는 길이다(PR #588 적대적 리뷰 2026-10-10 - `evidence_refs=[]`인 rebut이 사유
   `critic_upheld`로 `validated`가 됐다).
-  - **근거 = 둘 중 하나다.** ① `evidence_refs`가 비어 있지 않다(v6 - 등록된 ID를 인용한다) ② `rebuttal_axis`가
-    비어 있지 않고 **전부** 위 열 값이다(v7 - rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다).
+  - **근거 = 둘 중 하나다.** ① `evidence_refs`가 비어 있지 않다 ② `rebuttal_axis`가 비어 있지 않고 **전부**
+    위 열 값이다. ⚠ **둘 다 모든 프롬프트 판에 걸린다** - `Decision.is_grounded`에는 판 구분이 없다.
+    그래서 ID 없이 유효 축만 든 **v6** `rebut`도 ②로 근거 있는 반박이 된다
+    ([ADR 0015](decisions/0015-rebut-grounding.md) 「서빙 v6의 라우팅이 뒤집힌다」 ·
+    [D108](open-questions/D/D108.md)). 판 이름이 붙는 자리는 **그 규약을 요구하는 프롬프트**다 - v6은
+    등록된 ID를 인용하라고 적고, v7은 rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
     「코드 위치」는 ②에서 rationale 속 인용이고, **하네스는 축 어휘만 본다** - 인용한 코드가 SOURCE에 실재하는지는
     안 본다(ADR 0015의 P0b, 보류). 어휘 안인 축은 근거의 **자격**이고 근거의 참이 아니다.
   - **사유 둘.** `empty_axis`(ID도 축도 없다) · `invalid_axis`(축이 어휘 밖이다 - `GUARD`·`guard-check`·`무근거`).
