@@ -1185,6 +1185,11 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **빈 `answer`로 거절된 Auditor 호출도 같은 자리에 올린다 (#602).** 후보가 C-6으로 버려지는데
+    # 사유(`error_detail`)와 원문은 호출 단위 이벤트에만 있어 빈도를 아무도 세지 않았다.
+    empty_answer_warning = _auditor_empty_answer_warning(trace)
+    if empty_answer_warning is not None:
+        warnings.append(empty_answer_warning)
     # **Critic에 실은 홉 관측이 이 좌석의 입력 몫을 넘을 수 있다는 사실도 같은 자리에 올린다 (#600
     # H2ⓐ).** 하네스는 그 절을 자르지 않으므로(저자 결정 — 자동 절단 없음) 경고가 없으면 크기 거절
     # (`critic_failed`)이 나기 전까지 trace에만 있다.
@@ -1581,6 +1586,40 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     return (
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
+    )
+
+
+# `schemas/auditor.py`의 `_check_action` 거절 문구 앞부분 - 봉투마다 payload 이름(`finding` ↔
+# `procedure`)이 달라 그 앞에서 끊는다. 다른 액션의 같은 검사(`lookup 액션은 …`)와 다른 액션의
+# 필드가 실린 거절(`… 다른 액션의 필드가 실렸다`)은 이 문구가 아니다.
+_EMPTY_ANSWER_PHRASE = "answer 액션은 비지 않은"
+
+
+def _auditor_empty_answer_warning(trace: TraceWriter) -> str | None:
+    """비어 있는 `answer`를 스키마가 거절한 Auditor 호출이 있으면 run 경고, 아니면 `None`(#602).
+    재시도가 소진돼 `SchemaParseError`로 끝난 호출만 센다.
+
+    **호출 단위다** - 시도(`attempts`)가 아니라 `model_call` 이벤트 한 건이 한 번이다(한 호출이
+    두 시도 모두 거절돼도 버려진 후보는 하나). 홉 번호를 보지 않으므로 hop 0도 센다.
+
+    ⚠ **마지막 시도의 오류만 본다** - `error_detail`이 소진 시점의 `last_error`를 싣는다
+    (`openai_compat`). 첫 시도가 빈 `answer`였다가 둘째 시도가 다른 이유로 거절되면 세지 않고,
+    재시도로 살아난 호출(`ok: true`)도 세지 않는다. 그래서 이 수는 「후보를 잃은 호출」의 하한이다.
+    `error_detail`은 512자에서 잘리지만 이 문구는 그 앞(모델 이름 · 스키마 이름 바로 뒤)에 있다."""
+    dropped = sum(
+        1
+        for event in trace.events
+        if event.kind is EventKind.MODEL_CALL
+        and event.data.get("role") == Role.AUDITOR.value
+        and event.data.get("ok") is False
+        and event.data.get("error") == SchemaParseError.__name__
+        and _EMPTY_ANSWER_PHRASE in str(event.data.get("error_detail", ""))
+    )
+    if not dropped:
+        return None
+    return (
+        f"Auditor answer에 procedure/finding이 비어 거절된 호출 {dropped}건(#602) — "
+        f"후보가 C-6으로 버려졌다; 원문은 model_call.response_refs"
     )
 
 
