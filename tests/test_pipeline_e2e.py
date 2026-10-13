@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from slicer_source import assemble
 from src import cli, console
@@ -42,6 +43,7 @@ from src.orchestrator.nodes import critic
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
+from src.schemas.auditor import AuditorProcedureAuditAlwaysAction
 from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location, ProducedBy
 from src.schemas.decision import Decision
@@ -4981,6 +4983,90 @@ def test_a_schema_failure_drops_only_that_target(
     # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
     failed = [e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]
     assert len(failed) == 1
+
+
+def _schema_failure_from(**fields: object) -> SchemaParseError:
+    """재시도 소진 때 어댑터가 만드는 `SchemaParseError` 문구 - 사유는 **진짜 검증기 것**이다.
+
+    `openai_compat`의 raise: `"{role} 역할의 {model}이 N회 안에 {스키마}을 만들지 못했다: {오류}"`.
+    지어낸 문구는 우리가 잡는 문구만 고르게 되므로 검증기를 실제로 부른다(CLAUDE.md §2.5).
+    """
+    with pytest.raises(ValidationError) as caught:
+        AuditorProcedureAuditAlwaysAction(**fields)
+    return SchemaParseError(
+        "auditor 역할의 qwen3-coder-30b-a3b이 2회 안에 AuditorProcedureAuditAlwaysAction을 "
+        f"만들지 못했다: {caught.value}",
+        attempts=2,
+    )
+
+
+def _empty_answer_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "(#602)" in w]
+
+
+def test_an_auditor_call_rejected_for_an_empty_answer_is_counted_in_the_run_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#602 - 빈 `answer`(`procedure` 없음)로 두 시도가 다 거절된 호출은 경고에 1건으로 오른다.
+
+    **동작은 안 바뀐다**: 후보는 그대로 `schema_parse_failed`로 버려지고 나머지는 돈다.
+    """
+    failure = _schema_failure_from(action="answer", rationale="x")
+    assert "answer 액션은 비지 않은 procedure가 필요하다" in str(failure), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [failure], role_under_test=Role.AUDITOR)
+
+    result, trace_path = _run(tmp_path, name="empty-answer", before=_with_index())
+
+    (warning,) = _empty_answer_warnings(result)
+    assert "호출 1건(#602)" in warning
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["schema_parse_failed"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"])
+
+
+def test_other_schema_failures_do_not_reach_the_empty_answer_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 쌍 - 같은 검증기의 **다른 액션** 거절(`probe`에 `tool`이 없다)은 이 수에 안 든다.
+    그리고 같은 문구가 Scout 호출에 붙어도 안 든다(역할로 가른다)."""
+    # `probe`에 `tool`이 없는 거절 - 같은 검증기의 같은 접두(`… 액션은 비지 않은`)지만 answer 아님.
+    other = _schema_failure_from(action="probe", rationale="x")
+    assert "probe 액션은 비지 않은 tool" in str(other), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [other], role_under_test=Role.AUDITOR)
+    result, _ = _run(tmp_path, name="probe", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    empty = _schema_failure_from(action="answer", rationale="x")
+    _failing_model(monkeypatch, [empty], role_under_test=Role.SCOUT)
+    result, _ = _run(tmp_path, name="scout", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    clean, _ = _run(tmp_path, name="clean", before=_with_index())
+    assert _empty_answer_warnings(clean) == []
+
+
+def test_the_empty_answer_count_is_per_call_not_per_attempt() -> None:
+    """한 `model_call`이 `attempts: 2`로 소진돼도 1건이다. 성공 호출·다른 사유·다른 역할은 제외."""
+    log = trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    phrase = "1 validation error Value error, answer 액션은 비지 않은 procedure가 필요하다"
+
+    def call(**data: object) -> None:
+        base = {"role": "auditor", "ok": False, "error": "SchemaParseError", "error_detail": phrase}
+        log.emit(trace.EventKind.MODEL_CALL, stage=5, **{**base, **data})
+
+    call(attempts=2)  # 세는 것 - 한 호출
+    call(hop=3, attempts=2)  # 세는 것 - 홉 번호와 무관하다
+    call(ok=True, error=None, error_detail=None)  # 재시도로 살아난 호출
+    call(ok=True)  # 문구가 남아 있어도 ok면 안 센다 - `ok is False` 항을 문다
+    call(error_detail="answer 액션에 다른 액션의 필드가 실렸다: ['tool']")
+    call(error="ModelGatewayError")
+    call(role="critic")
+
+    warning = runner._auditor_empty_answer_warning(log)
+    assert warning is not None and "호출 2건(#602)" in warning
+    assert runner._auditor_empty_answer_warning(
+        trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    ) is None
 
 
 def test_three_oversized_targets_in_a_row_do_not_stop_the_run(

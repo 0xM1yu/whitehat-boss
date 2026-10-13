@@ -32,6 +32,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 토큰 계상 방식 | `token_counter` | 역할별 `real`/`approx`와 그 사유. run당 **정확히 1건** |
 | 스키마 파싱 실패율 | `model_call`(`attempts`·`ok`·`error`) | 시도 단위 — 산식 아래 (#83) |
 | 시도별 출력 토큰·종료 사유 | `model_call`의 `attempt_*` 둘 | 시도 순서 — 아래 (#550) |
+| 빈 `answer` 거절 호출 | `model_call`의 `error_detail` | 호출 단위 — run 경고 (#602) |
 | 실패 응답 원문 | `model_call`의 `response_refs`·`response_sha256` | 스키마 소진·게이트웨이
 거절로 끝난 호출의 스키마 실패 시도(JSON 배열 문자열, 시도 순서).
 **칸이 `null`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답이 아니고 파일도
