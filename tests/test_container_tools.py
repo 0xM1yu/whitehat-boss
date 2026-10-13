@@ -1980,9 +1980,12 @@ def test_compile_reason_is_capped_and_one_line() -> None:
 
 
 def test_compile_reason_folds_unicode_line_separators() -> None:
-    """`#error` 메시지의 `\x85`·` `·` `는 `str.splitlines`가 줄로 읽는다 — 이 문구가 들어가는
-    노트·관측에서 새 줄을 시작하면 안 된다."""
-    for separator in ("\x85", " ", " "):
+    r"""`#error` 메시지의 `\x85`(NEL)·`\u2028`·`\u2029`는 `str.splitlines`가
+    줄로 읽는다 — 이 문구가 들어가는 노트·관측에서 새 줄을 시작하면 안 된다.
+
+    ⚠ 셋을 **이스케이프로** 적는다(핀 데이터·docstring 양쪽). 리터럴로 두면 에디터의
+    「비정상 줄 종결자 제거」가 조용히 지워 핀이 빈 문자열을 재게 된다."""
+    for separator in ("\x85", "\u2028", "\u2029"):
         stderr = f"a.c:1:1: error: bad{separator}injected line\n"
         reason = container_tools.compile_failure_reason(stderr)
 
