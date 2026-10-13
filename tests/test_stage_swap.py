@@ -528,6 +528,36 @@ def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_origina
     assert any("No space left on device" in note for note in notes), notes
 
 
+def test_a_failing_trace_aggregate_does_not_hide_an_unforeseen_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run 끝 집계(#613·#618·#619)는 `raise unforeseen` 앞에서 돈다 - 집계가 던지면 원 예외와
+    매니페스트를 덮는다. 원 예외가 그대로 올라가고, 매니페스트가 남고, 못 센 키만 `None`
+    (안 쟀다)이며 사유는 원 예외의 노트로 붙는다. 나머지 둘은 평소처럼 센다."""
+    original = _Defect("원 예외")
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise original
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("집계 결함")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+    monkeypatch.setattr(runner, "schema_failure_max_run_by_role", broken)
+
+    with pytest.raises(_Defect) as caught:
+        _run_bare(tmp_path, TraceWriter(RUN_ID))
+
+    assert caught.value is original, "집계 예외가 원 예외를 덮었다"
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("schema_failure_max_run_by_role" in n and "집계 결함" in n for n in notes), notes
+    record = json.loads(
+        (tmp_path / "artifacts" / RUN_ID / "run_manifest.json").read_text(encoding="utf-8")
+    )
+    assert record["schema_failure_max_run_by_role"] is None
+    assert record["schema_recovered_calls_by_role"] is not None, "다른 집계까지 잃었다"
+
+
 @pytest.mark.parametrize("status", [None, 404, 503], ids=["no_status", "http_404", "http_503"])
 def test_a_gateway_stop_warning_does_not_name_a_cause_the_status_cannot_prove(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, status: int | None
