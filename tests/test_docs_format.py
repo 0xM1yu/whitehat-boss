@@ -2373,3 +2373,37 @@ def test_the_poc_split_regex_matches_the_real_forms() -> None:
     assert not _POC_SPLIT_KEPT.search("`poc` 도구는 과제 이미지를 돌린다")
     # 음성 — 셋 중 하나만 든 문장은 묶음이 아니다.
     assert not _POC_SPLIT_KEPT.search("`asan`은 ASan+UBSan으로 새로 빌드한다")
+
+
+# --- #576 — E2 행은 `gate.py`의 실제 술어를 말한다 ---------------------------------------------
+#
+# **명제:** `docs/architecture.md` §4의 E2 정의가 `gate.py`의 `p2`보다 세게 말하지 않는다.
+# 옛 행은 *"source→sink 경로가 call graph로 확인되고 guard 부재가 코드로 확인"*이었는데
+# (`docs/architecture.md:204`, 2026-10-13 전) `p2 = path_ok and graph_ok and unblocked`는 모델이 쓴
+# `finding.path`와 run 전역 GRAPH Evidence 하나를 볼 뿐이다.
+#
+# ⚠ **무는 것은 철자다 — 「행이 술어와 같은 뜻이다」까지는 못 문다**(그 형태를 못 찾았다).
+# 술어가 바뀌면 첫 단언이 빨개져 이 행을 다시 읽게 만드는 것까지가 이 검사의 몫이다.
+# 문자열 비교만 쓰고 정규식을 두지 않는다 — `test_every_detector_carries_a_contamination_pin` 밖.
+
+
+def test_the_e2_row_names_the_real_predicate_and_not_the_old_claim() -> None:
+    gate_source = (REPO_ROOT / "src" / "orchestrator" / "gate.py").read_text(encoding="utf-8")
+    architecture = (REPO_ROOT / "docs" / "architecture.md").read_text(encoding="utf-8")
+    lines = architecture.splitlines()
+    # 「등급 | 성립 조건」 표 안의 행만 본다 — 같은 파일에 `| E2 |`로 시작하는 다른 표(정책)가 있다.
+    start = next(i for i, line in enumerate(lines) if line.startswith("| 등급 | 성립 조건"))
+    table = lines[start:]
+    table = table[: next((i for i, line in enumerate(table) if not line.startswith("|")), None)]
+    rows = [line for line in table if line.startswith("| E2 |")]
+
+    # 코드 쪽: 술어가 바뀌면 여기서 먼저 빨개진다.
+    assert "p2 = path_ok and graph_ok and unblocked" in gate_source
+    assert len(rows) == 1, "E2 행이 정확히 하나여야 한다"
+    row = rows[0]
+    # 문서 쪽: 술어의 세 항과 한계(run 전역 · 모델이 쓴 값)를 행이 직접 든다.
+    for needle in ("path_ok", "graph_ok", "unblocked", "모델이 쓴", "run 전역"):
+        assert needle in row, f"E2 행에서 `{needle}`이 빠졌다 — 이슈 #576"
+    # 옛 주장은 행에 없다. (⏵ 노트가 인용하는 것은 행 밖이다.)
+    assert "call graph로 확인" not in row
+    assert "guard 부재" not in row
