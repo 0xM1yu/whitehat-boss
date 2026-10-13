@@ -28,6 +28,13 @@ def attach_observed(ctx: RunContext, finding: Finding, evidences: Sequence[Evide
 
     **`ok`로 걸러내지 않는다.** 실패한 Evidence는 등급에 안 세지만(`gate.evaluate`의 `usable`)
     Critic 프롬프트에는 실려야 한다 — 「도구가 실패했다」도 심사 재료다.
+
+    **⚠ 같은 `(kind, obj_id)`로 upsert하므로 5단계가 저장한 `evidence_refs`가 여기서 덮인다**
+    (이슈 #554). 부착 뒤 `state.db`에서는 모델이 몇 건 인용했는지 셀 수 없다. 그 수는 **부착 전에**
+    `run()`이 세어 `gate_eval.cited_by_model`로 남긴다 - 6단계 행이 있는 Finding에 한해서다.
+    6단계에 못 간 Finding(예산 소진 등)의 `state.db` 행은 부착 전 원본이다(`trace.py`).
+    모델의 ID 자체를 Finding에 따로 보존하는 안(이슈 #554 선택지 c)은 **일부러 안 골랐다**:
+    결함 본문이 잰 것이 수라서 수로 충분하고, #552가 「Finding에 새 필드 안 만든다」로 정했다.
     """
     new_refs = [ev.evidence_id for ev in evidences if ev.evidence_id not in finding.evidence_refs]
     if not new_refs:
@@ -58,6 +65,8 @@ def run(
     0건이었다. 같은 풀을 붙이면 5건 전부 E1이다.
     """
     with ctx.stage(Stage.GATE):
+        # 부착이 목록을 덮기 **전**에 센다(이슈 #554). 이 시점의 `evidence_refs`가 모델의 원본이다.
+        cited_by_model = len(finding.evidence_refs)
         finding = attach_observed(ctx, finding, evidences)
         result = ctx.evaluate_gate(
             finding,
@@ -65,6 +74,7 @@ def run(
             missings=missings,
             stage=Stage.GATE,
             candidate_location=candidate_location,
+            cited_by_model=cited_by_model,
         )
         action = ctx.decide(
             RoutingRequest(
