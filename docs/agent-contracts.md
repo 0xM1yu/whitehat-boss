@@ -152,7 +152,9 @@ agent:
   낸다(`tools/harness-tools/indexer.py` `_NAME_NODES`의 `qualified_identifier`). **미실측**이다.
   슬라이스 타깃의 hop0 `FACTS.target`을 같은 인덱스 표(`entry_scope.enclosing_scope`)에서 읽는 별도 PR
   #641이 병합되면 그 경로(`input: source`이고 인덱스가 entry를 품는 함수를 아는 hop0)에서는 같은 표를
-  읽어 같은 값이다. 그 PR에서도 창 폴백(인덱스가 entry를 품는 함수를 모를 때)의 `FACTS.target.symbol`은
+  읽는다 — **후보 줄이 그 함수 안일 때** 같은 값이고, 후보가 같은 파일 **다른 함수**에 앉으면
+  다르다(바로 위 ⚠가 그 동작이다 — 도장은 `candidate.location.line_start`를, FACTS `target`은
+  `slice.entry.line_start`를 품는 함수를 읽는다). 그 PR에서도 창 폴백(인덱스가 entry를 품는 함수를 모를 때)의 `FACTS.target.symbol`은
   `capsule.target`의 것이고, 되묻기 홉은 FACTS를 다시 싣지 않는다(도장 가드가 보는 `target`은 세션이 이어
   쥔 `capsule.target`이다).
   `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
