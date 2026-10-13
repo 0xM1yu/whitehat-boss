@@ -94,6 +94,10 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   `ToolArgs(argv=[action.tool], …)`로 **안 싣는다.** 그것이 서면 이 경고와 관측의 그 줄을 같이
   고친다. 🔴 **그래서 지금 Auditor의 `probe poc`는 입력 없이 도는 호출이고** 컨테이너 런타임에서
   실패 근거가 된다 — 홉 하나를 태운다(이슈 #572).
+  ⏵ **2026-10-13 — v15 산문은 싣는다고 적는다.** 그 문장은 위 선행(#419)에 의존하고 그 선행은
+  아직 안 섰으므로 **이 문단이 코드의 정본이다.** 반복 키(`_input_aware_key`)가 `poc`의 `spec`을
+  가르지만 그것은 **모델이 보낸 바이트**이고 도구가 받은 입력이 아니다. 선행이 서면 고칠 자리가
+  셋이다 — 이 문단 · `_probe` docstring · `_input_aware_key` docstring.
 """
 
 import hashlib
@@ -300,7 +304,9 @@ CALLERS_SECTION = "callers"
 # `tests/test_auditor_prompt_v10.py`가 핀으로 든다 · ⏵ 2026-10-09 서빙 판 v11은 56,872자 —
 # `tests/test_nullable_cwe.py`가 핀으로 든다 · ⏵ 2026-10-10 서빙 판 v13은 v11에서 한 조각만 빠졌고
 # hop0 user 턴은 FACTS의 `source` 사본만큼 짧다 — `tests/test_auditor_v13_facts.py` · ⏵ 2026-10-11
-# 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py`) ↔
+# 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py` ·
+# ⏵ 2026-10-13 서빙 판 v15의 prefix는 v14 + 계약 문장 여섯이라 더 길다 — 글자 수는 안 쟀고 user
+# 턴(body)은 v14와 바이트 동일이다) ↔
 # v4
 # 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
 # hop0가 클수록 넘는 폭도 커진다).
@@ -708,7 +714,8 @@ def _render_hop0(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
-            # `facts_source: false` 판(v13·v14 · 이슈 #67)은 FACTS에 `source` 사본을 안 싣는다 —
+            # `facts_source: false` 판(v13·v14 · 이슈 #67 · ⏵ 2026-10-13 v15도)은 FACTS에
+            # `source` 사본을 안 싣는다 —
             # 원문은 아래 산문 `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
             include_source=template.facts_source,
             callers=caller_names(capsule),
@@ -987,15 +994,24 @@ def _request_key(action: _Hop) -> Hashable:
 
 
 def _input_aware_key(action: _Hop) -> Hashable:
-    """`_request_key`에 v15 봉투의 `poc` 입력 바이트 digest를 더한 키 — 직전 홉과 같은 요청인지
-    본다.
+    """`_request_key`에 v15 봉투의 `poc` 입력 바이트 digest를 더한 키.
 
-    v15(`AuditorProcedureProbeInputAction`)는 `probe`의 `spec`을 도구에 싣는다. 그중 입력을
-    읽는 도구는 `poc` 하나(ADR 0014)라 **`poc`만** 입력이 질문을 바꾼다 — `spec`만 바꾼
-    `probe poc`는 다른 질문이므로 키가 다르고, 같은 바이트로 조립되는 `spec` 둘(또는 `spec`
-    없음 둘)은 같다. `asan`·`gdb`·`build`는 `spec`을 받아도 안 읽으므로 키가 도구 이름 그대로다.
-    그 밖의 봉투(v8~v14)는 종전 키다 — 그 판들의 산문이 「`spec`만 바꿔도 같은 호출」이라
-    적는다(`_request_key`).
+    v15 봉투(`AuditorProcedureProbeInputAction`)의 산문은 `probe`의 `spec`을 도구에 싣는다고
+    적는다. 그중 입력을 **읽는** 도구는 `poc` 하나(ADR 0014)라 **`poc`만** 입력이 질문을 바꾼다 —
+    `spec`만 바꾼 `probe poc`는 다른 질문이므로 키가 다르고, 같은 바이트로 조립되는 `spec` 둘(또는
+    `spec` 없음 둘)은 같다. `spec` 없음은 **빈 바이트가 아니라** 그 자체로 하나의 입력이다(키의
+    꼬리가 `None`이다). `asan`·`gdb`·`build`는 `spec`을 받아도 안 읽으므로 키가 도구 이름
+    그대로다. 그 밖의 봉투(v8~v14)는 종전 키다 — 그 판들의 산문이 「`spec`만 바꿔도 같은
+    호출」이라 적는다(`_request_key`).
+
+    ⚠ **한계 둘 — 지금 이 함수의 서술은 코드까지만 말한다.**
+    ① **쓰는 쪽은 직전 홉만 본다.** `_stop_without_finding`이 `key == previous`를 보므로 A,B,A는
+      반복으로 안 걸린다. v15 prefix는 「a request identical to any earlier call in this audit」로
+      적어 **더 세다** — 이슈 #514의 PR이 들어오면 그 어긋남이 풀린다.
+    ② **`spec` 바이트는 아직 도구에 안 간다.** 이 모듈의 머리 docstring과 `_probe`가 그것을 적고,
+      그 둘이 정본이다 — `_probe`는 `ToolArgs(argv=[action.tool], …)`로 입력을 안 싣는다(이슈
+      #419). 그래서 이 키가 가르는 것은 **모델이 보낸 `spec`**이고 도구가 실제로 받은 입력이
+      아니다. 그 선행이 서면 셋(머리 docstring · `_probe` · 이 문단)을 같이 고친다.
     """
     key = _request_key(action)
     if (
@@ -1162,6 +1178,8 @@ def _probe(
 
     ⚠ **`spec`은 도구에 안 간다**(모듈 docstring). 조립한 바이트는 sha256과 길이만 홉 이벤트에
     남긴다(`runner._emit_pov_hop`의 `poc_sha256`과 같은 형식).
+    ⏵ 2026-10-13 — v15 산문은 싣는다고 적는다(이슈 #419 선행 미착). 이 줄과 모듈 docstring이
+    코드의 정본이고, 반복 키(`_input_aware_key`)가 가르는 것은 모델이 보낸 `spec`이다.
     """
     observed: dict[str, TraceValue] = {}
     if action.spec is not None:
