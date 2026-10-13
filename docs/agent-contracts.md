@@ -137,11 +137,17 @@ agent:
   사실 블록의 대상을 옮겨 적는 값이다.
 
   ⏵ 2026-10-13 — 위 `location`은 덮지 않는다는 말에 **예외 하나**가 생겼다: 후보의 `location.symbol`이
-  `null`이면 하네스가 `FACTS.target.symbol`(= `capsule.target.symbol`)을 채운다(이슈 #633 선택지 (a) —
-  `nodes/scout._stamp_target_symbol`, 발급값 도장 **뒤**의 별도 도장). 세 조건이 다 맞을 때만이다 —
+  `null`이면 하네스가 **그 줄을 품는 함수**의 이름을 채운다(이슈 #633 선택지 (a)+(b) —
+  `nodes/scout._stamp_target_symbol`, 발급값 도장 **뒤**의 별도 도장). 네 조건이 다 맞을 때만이다 —
   모델이 `symbol`을 안 썼다(`null`; `""`·틀린 이름은 쓴 값이라 그대로) · 후보 `location.file`이 대상
   `file`과 같다(다른 파일 후보는 안 건드린다) · 대상이 `symbol`을 든다(이름 없는 대상에서는 지어내지
-  않는다). `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
+  않는다) · 인덱스(`ctx.symbols_for`)가 후보 `line_start`를 품는 함수를 안다(모르면 안 찍는다 —
+  줄이 없는 후보·인덱스 없는 프로필(`dev_fake`)이 그렇다).
+  ⚠ **찍는 값은 `FACTS.target.symbol`이 아니다.** 슬라이스 타깃의 `FACTS.target`은 entry 한 줄이고
+  `SOURCE`는 여러 함수에 걸치므로, 대상 이름을 그대로 찍으면 **같은 파일 다른 함수**의 후보에 대상
+  함수 이름이 붙어 `repro_spec`·`validate` argv에 실린다. 그래서 인덱스가 아는 품는 함수를 찍는다 —
+  대상 함수 안의 후보에서는 그 둘이 같은 값이다.
+  `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
   `scout_symbol_stamped`(`hop`·`symbol`)가 남는다 — **이벤트 부재 = 채우지 않았다**이고 `issued_override`와는
   섞지 않는다. **한계:** 이것은 후보 객체의 빈 칸을 채울 뿐 모델이 `symbol`을 옮겼다는 뜻이 아니다 — 모델의
   복사 실패율(s17 12/12 `null`)은 그대로이고 도장은 그 실패를 가린다. **모델 요청 바이트는 안 변한다** —
