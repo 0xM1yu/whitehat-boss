@@ -130,7 +130,7 @@ from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.orchestrator import gate, oracle_log, source_gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
-from src.orchestrator.context import RunContext
+from src.orchestrator.context import TAIL_WHITESPACE_CHARS, RunContext
 from src.orchestrator.heartbeat import Heartbeat
 from src.orchestrator.nodes import (
     auditor,
@@ -1586,9 +1586,12 @@ def _whitespace_tail_warning(trace: TraceWriter) -> str | None:
     if not by_role:
         return None
     detail = ", ".join(f"{role} {count}시도" for role, count in sorted(by_role.items()))
+    # 창 크기는 `TAIL_WHITESPACE_CHARS`에서 포매팅해 넣는다 - 숫자를 문구에 박으면 상수가
+    # 움직일 때 경고가 거짓을 말한다(CLAUDE.md §2.3).
     return (
-        f"length 절단 시도의 꼬리 64자가 전부 공백인 시도: {detail} - 이슈 #79 재개봉 조건. "
-        "trace model_call의 attempt_tail_whitespace_only가 어느 호출인지 가리킨다"
+        f"length 절단 시도의 꼬리 {TAIL_WHITESPACE_CHARS}자가 전부 공백인 시도: {detail} - "
+        "이슈 #79 재개봉 조건. trace model_call의 attempt_tail_whitespace_only가 어느 호출인지 "
+        "가리킨다"
     )
 
 

@@ -691,6 +691,30 @@ def test_the_intended_launch_covers_the_swap_roles_that_have_a_device_row(
     assert factory._serving_launch_intended(_swap_fake(), device="rig") == {}  # noqa: SLF001
 
 
+def test_a_role_outside_the_swap_declaration_is_left_out_though_it_has_a_device_row(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """핀: 상주 ∪ 교대 **밖**의 역할은 장비 행이 있어도 안 든다.
+
+    위 테스트의 `harness_pool`은 프롬프트 역할 전부가 교대라(`SWAPPED`) `role in launched`가
+    아무것도 안 거른다 - 그 조건을 빼도 초록이었다. 여기서는 한 역할만 교대로 선언하고 장비
+    파일에는 **모든** served 모델의 행을 둔다. 그러면 뺄 수 있는 것은 그 조건뿐이다.
+    """
+    rows = _rows(load_config(POOL))
+    served = load_config(POOL).served_models()
+    config = _with_swap(load_config(POOL), ("auditor",))
+    _write(tmp_path, "rig", {"command": ["x"], "servers": rows})
+    real = load_serving
+    monkeypatch.setattr(factory, "load_serving", lambda device, **_k: real(device, tmp_path))
+
+    intended = factory._serving_launch_intended(config, device="rig")  # noqa: SLF001
+
+    assert intended is not None
+    assert set(intended) == {"auditor"}
+    # 뺀 역할들이 장비 행을 실제로 들고 있었다 - 이 핀이 「행이 없어서」로 통과하지 않는다.
+    assert {key for role, key in served.items() if role != "auditor"} <= set(rows)
+
+
 def test_build_deps_carries_the_intended_launch_onto_deps(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
