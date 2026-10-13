@@ -2,8 +2,11 @@
 2026-10-06).
 
 ⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). ⏵ 같은 날 — **v13이 됐다**(이슈 #67 — v11 +
-FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12 + 같은 변경, PR #601). 아래
-「서빙 판」은 config에서 읽으므로 지금은 v14를 문다. v10 파일은 동결이라 그것만 읽는 핀은 다시
+FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12 + 같은 변경, PR #601).
+⏵ 2026-10-13 — **v15가 됐다**(v14 + 계약 문장 여섯, S19).
+아래 「서빙 판」은 config에서 읽으므로 그 판을 문다 — 이 docstring의 「v14」는
+2026-10-11~10-13의 기록이고, v15에서 갈린 자리는 아래 ⏵ 2026-10-13 단락이 든다.
+v10 파일은 동결이라 그것만 읽는 핀은 다시
 빨개질 수 없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 여섯을 빼고 **v10과 config의 서빙
 판** 둘에서 돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와
 같은 장치). v10 전용 여섯(봉투 이름 · `cwe` null 금지 · 글자 수 둘 · result↔status 짝 ·
@@ -16,8 +19,9 @@ null `audit`↔status 짝)의 서빙 판 쪽은 이렇다. 뒤 둘은 `tests/tes
 (`test_v14_differs_from_v12_in_exactly_one_line_per_file`) body는 v13과 바이트
 동일(`test_v14_body_is_the_v13_body`)이라는 `tests/test_auditor_v14_facts.py`의 등식과 v12 쪽
 핀(`tests/test_auditor_v12.py`)이 간접으로 문다. `tests/test_nullable_cwe.py`는 v11을 문다.
-서빙 판 prefix 글자 수는 59,074(`len(load_prompt(Role.AUDITOR, "v14").prefix)` ·
-2026-10-11 실측)이고 그 숫자를 드는 핀은 없다.
+v14 prefix 글자 수는 59,074(`len(load_prompt(Role.AUDITOR, "v14").prefix)` ·
+2026-10-11 실측)이고 그 숫자를 드는 핀은 없다. ⏵ 2026-10-13 — 서빙 판이 v15가 되어 그 수는
+**v14의 것**이다. v15 prefix 글자 수는 안 쟀다.
 
 v8·v9는 「앞 판과 바이트 동일」을 세는 핀 파일(`test_auditor_prompt_v8.py` · `_v9.py`)이 있고, 그
 핀의 절반은 노드 상수·러너 문구와 산문을 묶는 것이다. **그 둘은 자기 판 파일만 읽는다** — v10은
@@ -124,9 +128,24 @@ V10 = PROMPTS_DIR / "auditor" / "v10"
 _VERSION = "v10"
 
 
+# ⏵ 2026-10-13 — 서빙 판이 v15가 되며 아래 셋은 **v10과 v14**로 편다. v15가 그 셋이 묻는 문장을
+# 일부러 고쳤다: 반복 규칙(`poc`에 한해 입력 바이트도 본다 — 키가 `_input_aware_key`)과 `probe`
+# 봉투 예시(`spec`이 이제 예시에 든다). v15 쪽 대응 핀은 `tests/test_auditor_v15.py`가 든다.
+_PRE_V15_PINS = frozenset(
+    {
+        "test_the_v10_repeat_rule_lists_exactly_the_fields_the_request_key_ignores",
+        "test_the_v10_repeat_rule_states_both_what_the_request_key_uses_and_what_it_ignores",
+        "test_the_v10_prose_envelope_examples_use_the_fields_each_action_uses",
+    }
+)
+
+
 def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
-    """`_V10_ONLY` 밖의 검사를 `_VERSIONS`(v10 + 서빙 판)로 편다."""
-    if metafunc.function.__name__ not in _V10_ONLY:
+    """`_V10_ONLY` 밖의 검사를 `_VERSIONS`(v10 + 서빙 판)로 편다 — `_PRE_V15_PINS`는 v10과 v14로."""
+    name = metafunc.function.__name__
+    if name in _PRE_V15_PINS:
+        metafunc.parametrize("_prompt_under_test", ("v10", "v14"), indirect=True)
+    elif name not in _V10_ONLY:
         metafunc.parametrize("_prompt_under_test", _VERSIONS, indirect=True)
 
 
@@ -518,12 +537,20 @@ def test_the_v10_prose_counts_the_ways_a_hop_loop_ends_without_an_answer() -> No
     """「Two things end the audit with no audit result」의 둘이 `AuditorStopReason`에서 `answered`를
     뺀 수와 같고 번호 항목도 그 수다 — 사유가 하나 늘면(예: `nothing_resolved`) 산문이 거짓이 된다.
 
-    ⚠ 열거형 독스트링이 「셋이다」를 적는 이유와 같은 규율이다 — 그 수가 움직이면 두 군데가 같이
-    움직인다."""
+    ⚠ 열거형 독스트링이 정지를 「넷, Finding 없는 것은 셋」으로 적는 이유와 같은 규율이다 - 그 수가
+    움직이면 두 군데가 같이 움직인다. 이 검사는 그중 모델이 낸 답이 부를 수 있는 정지만 센다.
+
+    ⏵ 2026-10-13(#514) `CONTEXT_OVERFLOW`는 뺀다: 그 정지는 **모델이 답을 낸 뒤의 결과가 아니라**
+    서버가 호출을 거절한 것이라 모델 턴에 오는 일이 없고(모델은 그 홉을 못 본다) 프롬프트가 모델에게
+    말할 「끝나는 길」이 아니다. 이 검사는 **모델이 낸 답이 부르는 정지**의 수를 문다."""
     prefix = _prefix()
     word = re.search(r"(\w+) things end the audit", prefix)
     assert word, "산문에 「N things end the audit」이 없다"
-    without_finding = set(AuditorStopReason) - {AuditorStopReason.ANSWERED}
+    # CONTEXT_OVERFLOW는 모델이 낸 답이 부르는 정지가 아니라 서버 거절이다(위 docstring).
+    without_finding = set(AuditorStopReason) - {
+        AuditorStopReason.ANSWERED,
+        AuditorStopReason.CONTEXT_OVERFLOW,
+    }
 
     assert _NUMBER_WORDS[word.group(1).lower()] == len(without_finding)
     lines = prefix.splitlines()
@@ -1085,7 +1112,7 @@ def _evidence(source: str = "asan") -> Evidence:
 def _probe_lines(payload: str | None, source: str = "asan") -> list[str]:
     """`probe` 관측(`_probe_observation`)을 실제로 만들어 줄로 돌려준다."""
     ctx = SimpleNamespace(read_payload=lambda _ref: payload)
-    return auditor._probe_observation(ctx, 1, _evidence(source), spec_ignored=False).splitlines()
+    return auditor._probe_observation(ctx, 1, _evidence(source)).splitlines()
 
 
 def _backticked(flat: str) -> set[str]:
@@ -1407,7 +1434,9 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # (`tests/test_auditor_v13_facts.py`가 차이를 그 두 줄로 묶는다).
 # ⏵ 2026-10-11 v14(이슈 #67 · #578)도 같다 — v12에서 FACTS `source` 서술 두 줄만 바꿨다
 # (`tests/test_auditor_v14_facts.py`).
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14"})
+# ⏵ 2026-10-13 v15도 같다 — 그 약속 문장(§5 CWE and reproduction)을 안 건드렸다
+# (`tests/test_auditor_v15.py`가 v14와의 차이에 그 줄이 없음을 문다).
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14", "v15"})
 
 
 def _profiles_serving_v10() -> list[str]:
