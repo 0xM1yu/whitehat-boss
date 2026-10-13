@@ -108,7 +108,7 @@
 | 전제 | 2026-09-24 ADR 서술 | **2026-09-29 실제** |
 | --- | --- | --- |
 | ① **학습 입력 = 서빙 입력 형식** | 없다 | **흔들린다.** Auditor 프롬프트가 **v1**이다(`config/models.yaml:468` `prompt_template_version: "v1"`). v2·v3는 디스크에 있으나 미배선이고(`prompts/auditor/v3/meta.yaml` 머리: *"미배선(disk-only)"*), **v4 PR #328이 열려 있다** ⏵ 낡음 — 위 시점 노트 ⑥ |
-| ② **모델 원문 기록** | 없다 | **반쪽 충족.** `ModelResult.raw_text`가 생겼고(`src/interfaces/model_client.py`) 어댑터가 채운다(`openai_compat.py:262`). **그러나 그 필드 주석이 스스로 적는다 — *"사고 토큰은 담지 않는다 — 그 자리는 Phase 8이다."*** `finish_reason`·`reasoning`도 그대로 없다. **[D84](../open-questions/D/D84.md) 열림** ⏵ 2026-10-08 -> `finish_reason`은 #550으로 시도별 trace(`model_call.attempt_finish_reasons`)에 남는다. 없는 것은 `reasoning`이다 |
+| ② **모델 원문 기록** | 없다 | **반쪽 충족.** `ModelResult.raw_text`가 생겼고(`src/interfaces/model_client.py`) 어댑터가 채운다(`openai_compat.py:262`). **그러나 그 필드 주석이 스스로 적는다 — *"사고 토큰은 담지 않는다 — 그 자리는 Phase 8이다."*** `finish_reason`·`reasoning`도 그대로 없다. **[D84](../open-questions/D/D84.md)** (이 조사 시점에는 열려 있었다) ⏵ 2026-10-08 -> `finish_reason`은 #550으로 시도별 trace(`model_call.attempt_finish_reasons`)에 남는다. 없는 것은 `reasoning`이다 ⏵ 2026-10-13 -> `reasoning`도 이제 같은 칸·조건으로 `prompts/…_reasoning[_retryK].txt`에 남는다(D84 좁혀 닫음, 내보내기는 [D109](../open-questions/D/D109.md)) |
 | ③ **내보내기** | 없다 | **그대로 없다.** CLI 서브커맨드는 다섯이다 — `doctor`·`estimate`·`run`·`bench`·`gc`(`src/cli.py:919-957`) |
 
 > **②가 이 계획에 가장 아프게 걸린다.** Auditor는 **`reasoning_effort: xhigh` · `thinking_token_budget: 28672`**로 돈다
