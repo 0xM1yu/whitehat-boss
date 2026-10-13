@@ -56,7 +56,8 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `--keep-responses` 밖의 깨끗한 성공은 같은 모양이다. 응답 원문이 `null`인 칸(`content: null`)에도
 추론은 있을 수 있다. 추론 파일 쓰기가 실패하면 **세 키 대신** `reasoning_record_error`가 실리고
 `response_refs`·`response_sha256`은 그대로 남는다 — 응답 쪽 쓰기 실패(`response_record_error`)와
-다른 키다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
+다른 키다. 그 실패가 칸 도중이면 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조 없는 고아로
+남는다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |

@@ -668,6 +668,8 @@ class RunContext:
         추론은 있을 수 있다 — 추론이 예산을 다 먹은 호출이 정확히 그 모양이다.
         **추론 쓰기가 실패하면 응답 참조는 그대로 두고 `reasoning_record_error`만 더한다** —
         응답은 이미 디스크에 있는데 참조를 버리면 trace가 「응답 안 남음」으로 읽힌다.
+        다만 추론 쓰기가 칸 도중에 실패하면 그 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조가
+        없는 고아로 디스크에 남는다(`reasoning_*` 세 키는 칸 전체가 성공해야 실린다).
         """
         if not raw_texts or self.prompts is None:
             return {}
