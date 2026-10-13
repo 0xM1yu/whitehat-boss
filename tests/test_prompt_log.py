@@ -1138,22 +1138,52 @@ def test_the_fake_model_pipeline_writes_no_reasoning_even_with_keep_responses(
     assert not any(k.startswith("reasoning") for c in _traced_model_calls(trace) for k in c)
 
 
-def test_a_reasoning_write_failure_keeps_the_call_and_lands_as_a_reason(
+def test_a_reasoning_write_failure_keeps_the_response_refs_and_lands_as_its_own_reason(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    prompts = PromptLog(tmp_path)
+    """막는 명제 — **추론 쓰기 실패가 이미 쓴 응답의 참조를 trace에서 지우지 않는다.**
+
+    양성 핀: `write_reasoning`만 던지면 `response_refs`가 살아 있고 사유는
+    `reasoning_record_error`다. 앞 판은 `_record_failed_responses` 전체가 예외가 돼 호출부가
+    `response_record_error`만 실었고, 그러면 디스크의 `…_response.txt`는 남는데 trace는
+    「응답 안 남음」으로 읽혔다(참조 없는 고아 파일).
+
+    음성 핀: **응답** 쓰기가 실패한 경우는 종전대로 `response_record_error`다 — 그때는 남은
+    응답 파일이 없으니 참조를 싣지 않는 것이 맞다. 둘을 한 테스트에 두는 것은 두 사유 키를
+    하나로 합치는 수정이 여기서 죽게 하기 위해서다.
+    """
 
     def disk_full(*_a: object, **_k: object) -> None:
         raise OSError(28, "No space left on device")
 
+    prompts = PromptLog(tmp_path)
     monkeypatch.setattr(prompts, "write_reasoning", disk_full)
     ctx = _context(prompts=prompts, models=_RecoveredReasoningClient())
 
     _call_ok(ctx)
 
     (call,) = _model_calls(ctx)
-    assert call["ok"] is True and call["response_record_error"] == "OSError(errno=28)"
+    assert call["ok"] is True
+    assert call["reasoning_record_error"] == "OSError(errno=28)"
+    assert "response_record_error" not in call
+    refs = [r for r in json.loads(call["response_refs"]) if r]
+    assert refs, "전제 - 버려진 1차의 응답 원문이 파일로 남는다"
+    for ref in refs:
+        assert (tmp_path / ref).exists()
+    # 추론 세 키는 안 실린다 — 반쪽짜리 배열을 실으면 안 쓴 칸이 `null`(추론 없음)로 읽힌다.
+    assert not any(k in call for k in ("reasoning_refs", "reasoning_sha256", "reasoning_field"))
     assert ctx.ledger.input_tokens == 40
+
+    other = PromptLog(tmp_path / "resp_fail")
+    monkeypatch.setattr(other, "write_response", disk_full)
+    resp_ctx = _context(prompts=other, models=_RecoveredReasoningClient())
+
+    _call_ok(resp_ctx)
+
+    (resp_call,) = _model_calls(resp_ctx)
+    assert resp_call["response_record_error"] == "OSError(errno=28)"
+    assert "reasoning_record_error" not in resp_call
+    assert "response_refs" not in resp_call
 
 
 def test_the_real_adapter_to_files_path_restores_request_response_finish_reason_and_reasoning(

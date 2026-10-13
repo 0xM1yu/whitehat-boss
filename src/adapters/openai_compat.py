@@ -257,8 +257,15 @@ class OpenAICompatModelClient:
                 attempt_log.append(
                     AttemptRecord(reasoning=exc.reasoning, reasoning_field=exc.reasoning_field)
                 )
-                # 그 200의 원문(또는 추론)도 마지막 칸으로 올린다 — 읽을 `message`가 없던
-                # 응답은 칸이 안 생긴다(`ModelGatewayError.raw_texts`).
+                # 그 200의 원문(또는 추론)도 마지막 칸으로 올린다.
+                # ⚠ **칸이 안 생기는 조건은 「`message`를 못 읽었다」가 아니다** — 아래 둘이
+                # **같은** `(None, None)`이라 둘 다 칸이 없다: ① 읽을 `message`가 없던 응답
+                # (`choices` 비었음 등) ② `message`는 읽혔으나 `content`가 비문자열이고 추론
+                # 키도 없던 응답. ②는 스키마 실패 경로로 가면 `None` 칸이 생기므로 **두 경로의
+                # 칸 규칙이 다르다**(2026-10-13 실측 - `_chat_body(None, usage="깨짐")`로 돌려
+                # `raw_texts == ()`). 읽을 수 있었던 `finish_reason`도 이 갈래에선 `None`으로
+                # 남는다(`AttemptRecord()`가 전부 `None`이라서다). 맞추지 않은 이유는 「읽혔다」를
+                # 예외에 따로 실어야 해서고, 그 전까지 서술이 이 차이를 숨기지 않게 적어 둔다.
                 if exc.raw_text is not None or exc.reasoning is not None:
                     raw_texts.append(exc.raw_text)
                 exc.usage = spent
