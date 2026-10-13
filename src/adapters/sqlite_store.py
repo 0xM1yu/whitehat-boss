@@ -31,12 +31,16 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525).
 
-판 2에 든 것은 아래 둘이다. 기본값이 있어 이 코드는 판 1 행도 읽지만 옛 코드는 새 행을 못
+판 2에 든 것은 아래다. 기본값이 있어 이 코드는 판 1 행도 읽지만 옛 코드는 새 행을 못
 읽는다(`extra="forbid"`). 그래서 판 1 파일은 이제 거부된다.
 
 - `Evidence.crashed`·`banner`(#232) — 이 PR이 더한다. trace에서는 `crashed`·`crash_banner`다.
 - `RunRecord.keep_responses`(#618·#612) — main `f0cdba76`가 더하면서 판을 **안 올렸다.**
   판 1이라 적힌 파일에 이 필드가 든 행이 섞여 있을 수 있다. 그 선례를 여기서 같이 닫는다.
+- `Finding.audit`의 값 집합 확대(#580) — 그 PR도 판을 **안 올렸고** 열린 #594가 그 잔여를
+  든다(`no_signal`에도 audit을 받는 중첩 모델 셋이 늘었다). 판 1 이후 `KIND_MAP` 모델에
+  간 변경을 세면 이것이 셋째다 — 안 적으면 다음에 판을 올리는 사람이 이 행을 복구할
+  근거를 잃는다.
 
 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 이 판의
 파일을 여는 것은 여전히 막지 못한다.
@@ -68,8 +72,9 @@ STATE_DB_SCHEMA_VERSION = 2
 # 이슈 번호가 기준이다.
 _VERSION_INTRODUCED_BY = {
     2: (
-        "이슈 #232 — `Evidence.crashed`·`banner` 추가(커밋 19c2bad). 같은 판에 main "
-        "`f0cdba76`의 `RunRecord.keep_responses`(#618·#612)도 든다 — 그 커밋은 판을 안 올렸다"
+        "이슈 #232 — `Evidence.crashed`·`banner` 추가. 같은 판에 main "
+        "`f0cdba76`의 `RunRecord.keep_responses`(#618·#612)와 #580의 `Finding.audit` 확대도 "
+        "든다 — 둘 다 판을 안 올렸다(#594)"
     ),
 }
 
