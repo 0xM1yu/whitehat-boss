@@ -2,8 +2,11 @@
 2026-10-06).
 
 ⏵ 2026-10-10 — **서빙 판은 v11이다**(이슈 #525). ⏵ 같은 날 — **v13이 됐다**(이슈 #67 — v11 +
-FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12 + 같은 변경, PR #601). 아래
-「서빙 판」은 config에서 읽으므로 지금은 v14를 문다. v10 파일은 동결이라 그것만 읽는 핀은 다시
+FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 — **v14가 됐다**(v12 + 같은 변경, PR #601).
+⏵ 2026-10-13 — **v15가 됐다**(v14 + 계약 문장 여섯, S19).
+아래 「서빙 판」은 config에서 읽으므로 그 판을 문다 — 이 docstring의 「v14」는
+2026-10-11~10-13의 기록이고, v15에서 갈린 자리는 아래 ⏵ 2026-10-13 단락이 든다.
+v10 파일은 동결이라 그것만 읽는 핀은 다시
 빨개질 수 없다(적대적 리뷰 H1). 그래서 아래 검사는 `_V10_ONLY` 여섯을 빼고 **v10과 config의 서빙
 판** 둘에서 돈다(`pytest_generate_tests` · `tests/test_pov_prompt_v4.py`의 `VERSION` = config와
 같은 장치). v10 전용 여섯(봉투 이름 · `cwe` null 금지 · 글자 수 둘 · result↔status 짝 ·
@@ -16,8 +19,9 @@ null `audit`↔status 짝)의 서빙 판 쪽은 이렇다. 뒤 둘은 `tests/tes
 (`test_v14_differs_from_v12_in_exactly_one_line_per_file`) body는 v13과 바이트
 동일(`test_v14_body_is_the_v13_body`)이라는 `tests/test_auditor_v14_facts.py`의 등식과 v12 쪽
 핀(`tests/test_auditor_v12.py`)이 간접으로 문다. `tests/test_nullable_cwe.py`는 v11을 문다.
-서빙 판 prefix 글자 수는 59,074(`len(load_prompt(Role.AUDITOR, "v14").prefix)` ·
-2026-10-11 실측)이고 그 숫자를 드는 핀은 없다.
+v14 prefix 글자 수는 59,074(`len(load_prompt(Role.AUDITOR, "v14").prefix)` ·
+2026-10-11 실측)이고 그 숫자를 드는 핀은 없다. ⏵ 2026-10-13 — 서빙 판이 v15가 되어 그 수는
+**v14의 것**이다. v15 prefix 글자 수는 안 쟀다.
 
 v8·v9는 「앞 판과 바이트 동일」을 세는 핀 파일(`test_auditor_prompt_v8.py` · `_v9.py`)이 있고, 그
 핀의 절반은 노드 상수·러너 문구와 산문을 묶는 것이다. **그 둘은 자기 판 파일만 읽는다** — v10은

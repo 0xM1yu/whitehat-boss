@@ -81,7 +81,8 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
-v13·v14)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드는 산문
+v13·v14 · ⏵ 2026-10-13 v15도)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지
+않는다 — 분석 대상 코드는 산문
 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈 #67). ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.
@@ -671,7 +672,8 @@ def build_facts(
     evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
     `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
-    `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67)에만 노드가 `False`를 준다.
+    `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67 · ⏵ 2026-10-13 v15도 — 서빙
+    판)에만 노드가 `False`를 준다.
     그때 키가 **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은
     「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트
     그대로다.

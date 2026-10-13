@@ -956,6 +956,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 이슈 #578 · 팀 결정 2026-10-10. FT 데이터 Teacher v4가 `no_signal`에도 `audit`를 채운다 -> v10·v11 계약(`no_signal`이면 `audit` null)으로는
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
 ⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
+⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 · S19). 봉투는 v12의 넷째를 상속한 `AuditorProcedureProbeInputAction`이라 이 절의 `cwe`·`audit` 규칙은 그대로 선다. v12 자체는 여전히 미선택이다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
