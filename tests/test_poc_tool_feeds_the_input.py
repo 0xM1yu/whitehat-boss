@@ -732,6 +732,9 @@ def test_a_poc_call_without_input_is_failed_evidence(tmp_path: Path, spy: _Spy) 
 
     **이 경로는 실제로 돈다** — Auditor `probe(poc)`는 `ToolArgs`에 `input_bytes`를 안 싣고
     (`nodes/auditor._probe`), hop0의 `inspect(poc)`도 직전 `gen`이 없어 입력이 없다.
+    ⏵ 2026-10-13(#419) — 앞의 것은 낡았다: `probe`는 이제 `spec`이 있으면 싣는다.
+    **`spec` 없는 `probe(poc)`는 여전히 입력이 없다**(모델이 `spec`을 안 보낸 경우) — 이 테스트가
+    서는 이유는 그대로다.
     """
     evidence = _runner(tmp_path, poc_target=ARVO).run(
         "poc", ToolArgs(argv=["poc"], workdir="."), SANDBOX
@@ -803,30 +806,85 @@ def test_the_factory_hands_the_task_image_to_every_container_runtime(
     assert not hasattr(fake, "poc_target"), "fake는 과제 이미지를 받지 않는다"
 
 
-def test_the_ambiguous_note_survives_the_observation_tail(tmp_path: Path, spy: _Spy) -> None:
-    """🔴 **적대적 리뷰 2026-10-09 M1 — 약속한 줄이 모델에게 안 닿았다.**
+def _pov_observation_of(tmp_path: Path, spy: _Spy, *, code: int, stderr: str) -> str:
+    """실 러너 → 실 `make_payload_reader` → 실 `_pov_observation` — **관측 전체**를 돌려준다.
 
-    모델 관측은 로그의 **마지막 2,000자**만 싣는다(`runner._POV_OBSERVATION_TAIL_CHARS`). 전 판은
-    모호성 줄을 **머리에만** 넣어서, ASan 보고서처럼 긴 출력(3 KB 이상은 흔하다)에서는 그 줄이
-    잘려 나갔다 — 그런데 v5 prefix가 *"관측에 그 사실이 한 줄로 붙는다"*고 약속한다. 프롬프트가
-    약속한 것을 하네스가 안 하면 그것이 §2.2의 거짓이다.
-
-    그래서 **꼬리에도** 넣는다. 이 검사는 꼬리 상한보다 긴 출력으로 그것을 잰다.
+    🔴 이 검사들이 전 판과 다른 점: 전 판은 로그를 `log[-2000:]`로 **직접** 잘라 단언해서
+    `read_payload`의 읽기 상한(`PAYLOAD_READ_CAP` 200,000자)이 꼬리를 먹는 구멍을 못 봤다
+    (이슈 #573).
     """
-    from src.orchestrator.runner import _POV_OBSERVATION_TAIL_CHARS
+    from src.orchestrator.runner import _pov_observation
+
+    spy.returncode = code
+    spy.stderr = stderr
+    evidence = _runner(tmp_path, poc_target=ARVO).run("poc", _args(POC_A), SANDBOX)
+    return _pov_observation(
+        "gen", evidence, read_payload=container_tools.make_payload_reader(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(
+    "stderr_chars",
+    [
+        pytest.param(1_000, id="short-log-no-duplicate"),
+        pytest.param(3_300, id="over-the-tail-cap"),
+        pytest.param(150_000, id="under-the-read-cap"),
+        pytest.param(300_000, id="over-the-read-cap"),
+    ],
+)
+def test_the_ambiguous_note_reaches_the_observation_exactly_once(
+    tmp_path: Path, spy: _Spy, stderr_chars: int
+) -> None:
+    """🔴 **이슈 #573 — 약속한 줄이 모델에게 안 닿았다.** v5 prefix가 *"가를 수 없을 때 관측에 그
+    사실이 한 줄로 붙는다"*고 약속한다. 로그 끝에 붙이던 줄은 읽기 상한(200,000자)을 넘는 출력에서
+    읽히지도 않았다(독립 재현 2인: 150,000자까지 있고 250,000자에서 없다). 이제 하네스가 만든 줄이라
+    로그를 거치지 않고 머리줄에 붙는다.
+
+    **정확히 한 번**이다 — 짧은 로그에서 머리·꼬리·머리줄이 다 들어가 3번 나오면 그것도 결함이다.
+    """
+    observation = _pov_observation_of(tmp_path, spy, code=1, stderr="x" * stderr_chars)
+
+    assert observation.count(container_tools.POC_AMBIGUOUS_NOTE) == 1
+    # 위치 — 머리줄 바로 다음 줄이고, 도구 출력 꼬리 구간보다 앞이다(뒤로 옮기면 상한에 잘린다).
+    assert observation.splitlines()[1] == container_tools.POC_AMBIGUOUS_NOTE
+    tail_at = observation.find("--- poc 출력 꼬리 ---")
+    assert tail_at == -1 or observation.index(container_tools.POC_AMBIGUOUS_NOTE) < tail_at
+
+
+@pytest.mark.parametrize(
+    ("code", "stderr"),
+    [
+        pytest.param(0, "x" * 300_000, id="exit-0"),
+        pytest.param(77, "x" * 300_000, id="exit-77-unambiguous"),
+        pytest.param(1, "x" * 300_000 + _WINDOWS_DAEMON_DOWN, id="exit-1-daemon-down"),
+    ],
+)
+def test_no_ambiguity_note_when_exit_one_is_not_ambiguous(
+    tmp_path: Path, spy: _Spy, code: int, stderr: str
+) -> None:
+    """음성 — 애매하지 않은 코드와 환경 실패로 이미 갈린 `1`(데몬 불통 · `ok=False`)에는 줄이 없다.
+    `exit=1`이 크래시일 수 있다는 줄이 `exit=77`에 붙으면 그것이 거짓 주석이다."""
+    observation = _pov_observation_of(tmp_path, spy, code=code, stderr=stderr)
+
+    assert container_tools.POC_AMBIGUOUS_NOTE not in observation
+
+
+def test_the_v2_observation_carries_no_harness_note(tmp_path: Path, spy: _Spy) -> None:
+    """`wide=False`(pov v2)는 전 판과 바이트가 같다 — 값이 있는 `harness_note`도 안 싣는다."""
+    from src.orchestrator.runner import _pov_observation
 
     spy.returncode = 1
-    spy.stderr = "ASan 보고서 " * _POV_OBSERVATION_TAIL_CHARS
     evidence = _runner(tmp_path, poc_target=ARVO).run("poc", _args(POC_A), SANDBOX)
+    assert evidence.harness_note == container_tools.POC_AMBIGUOUS_NOTE  # 전제: 노트가 실제로 있다
 
-    log = (tmp_path / RUN_ID / evidence.source / f"{evidence.evidence_id}.log").read_text(
-        encoding="utf-8"
+    observation = _pov_observation(
+        "gen",
+        evidence,
+        read_payload=container_tools.make_payload_reader(tmp_path),
+        wide=False,
     )
-    tail = log[-_POV_OBSERVATION_TAIL_CHARS:]
 
-    assert container_tools.POC_AMBIGUOUS_NOTE in tail, (
-        "모호성 줄이 관측 꼬리에서 잘렸다 — v5 prefix가 그 줄을 약속한다"
-    )
+    assert container_tools.POC_AMBIGUOUS_NOTE not in observation
 
 
 def test_the_copied_constants_match_the_tool_they_were_copied_from() -> None:
