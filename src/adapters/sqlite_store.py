@@ -37,6 +37,8 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 - `Evidence.harness_note`(#573) — 관측 머리에 붙는 하네스 노트. trace에서도 `harness_note`다.
 - `Evidence.crashed`·`banner`(#232) — 크래시 관측. trace에서는 `crashed`·`crash_banner`다.
 - `RunRecord.location_overlap`(#563) — 정적 신호 위치 겹침 수.
+- `RunRecord.serving_launch_intended`(#99) — 교대 프로필 + 장비일 때 장비 파일이 의도한 기동 인자.
+  판 1 코드는 이 필드를 든 행을 못 읽는다(`extra="forbid"`).
 - `RunRecord`의 trace 집계 필드 넷(#613·#618·#619) — `schema_failure_max_run_by_role`·
   `schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`.
 - `RunRecord.keep_responses`(#618·#612) — main `f0cdba76`가 더하면서 판을 **안 올렸다.**
@@ -83,6 +85,7 @@ _VERSION_INTRODUCED_BY = {
         "이슈 #613·#618·#619의 `RunRecord` trace 집계 필드 넷"
         "(`schema_failure_max_run_by_role`·`schema_recovered_calls_by_role`·"
         "`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`), "
+        "이슈 #99의 `RunRecord.serving_launch_intended`, "
         "main `f0cdba76`의 `RunRecord.keep_responses`(#618·#612), "
         "#580의 `Finding.audit` 확대도 든다 — 뒤 둘은 판을 안 올렸다(#594)"
     ),
