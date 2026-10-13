@@ -14,13 +14,15 @@ from pathlib import Path
 
 import pytest
 
-from src.orchestrator import runner
+from src.orchestrator import gate, runner
 from src.orchestrator.nodes import auditor, critic
 from src.orchestrator.prompt_loader import build_facts, load_prompt
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas import Role
 from src.schemas.auditor import AuditorAction
+from src.schemas.decision import DecisionDraft
+from src.schemas.enums import Verdict
 from tests.test_auditor_loop import (
     VULN_TARGET,
     _arm,
@@ -362,3 +364,72 @@ def test_no_prompt_file_changed_and_the_template_has_no_new_slot() -> None:
         "PATH",
         "SOURCE",
     ]
+
+
+# --- (f) 관측이 보인 Evidence ID를 Critic이 인용하면 - 기록만 한다 -----------------------
+
+
+class _RebuttingCritic:
+    """Critic 좌석만 가로채 지정한 `evidence_refs`로 `rebut`을 낸다 - 나머지 역할은 원래 모델로."""
+
+    def __init__(self, real, refs: tuple[str, ...]) -> None:  # noqa: ANN001
+        self.real, self.refs = real, refs
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
+        result = self.real.complete(role=role, prompt=prompt, schema=schema, history=history)
+        if role is not Role.CRITIC:
+            return result
+        draft = DecisionDraft(
+            verdict="rebut", rationale="the guard is there", evidence_refs=list(self.refs)
+        )
+        return result.model_copy(update={"value": draft})
+
+
+def test_a_rebut_citing_an_id_only_the_observation_showed_is_recorded_not_filtered(
+    ctx, monkeypatch, tmp_path  # noqa: ANN001
+) -> None:
+    """`probe` 관측이 보인 `evidence_id`는 게이트 입력(`state.evidences`)에 없다. Critic이 그 ID로
+    `rebut`하면 **게이트가 버리지 않는다** - `gate.evidences_for`는 Finding의 refs만 거르고
+    `Decision.is_grounded`는 `bool(evidence_refs)`라 정규화를 비껴간다. 거르는 것은 설계 판단이라
+    안 하고, 그 인용이 왔다는 사실만 trace에 남겨 사후에 셀 수 있게 한다.
+
+    인용하는 ID는 지어낸 것이 아니라 **관측 글에서 뽑은** 것이다(CLAUDE.md §2.5).
+    """
+    finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, _hopped_actions())
+    (probe_id,) = re.findall(r"evidence_id=(\S+)", "\n".join(sink))
+    _critic_at(ctx, "v6")
+    ctx.models = _RebuttingCritic(ctx.models.real, (probe_id,))
+
+    _, decision = critic.run(ctx, finding=finding, hop_observations=tuple(sink))
+
+    # 판정은 그대로다 - 이 기록이 정규화를 일으키지 않는다.
+    assert decision.verdict is Verdict.REBUT and decision.is_grounded is True
+    assert gate.was_normalized(decision) is False
+    (event,) = _events(ctx, EventKind.CRITIC_UNKNOWN_EVIDENCE_REFS)
+    assert event.data["cited"] == 1 and event.data["unknown"] == 1
+    assert event.data["all_unknown"] is True
+    assert (event.data["verdict"], event.data["grounded"]) == ("rebut", True)
+    assert event.data["decision_id"] == decision.decision_id
+
+
+def test_a_rebut_citing_only_the_gate_input_leaves_no_such_record(
+    ctx, monkeypatch, tmp_path  # noqa: ANN001
+) -> None:
+    """음성 피 - 게이트 입력 안의 ID만 인욨했으면 이벤트가 없다(부재 = 모르는 인욨이 없었다)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    ctx.resolve_requests = _StubResolver(_found())
+    ctx.read_payload = lambda ref: PROBE_LOG
+    ctx.models = _Split(_ScriptedModel(_hopped_actions()), ctx.models)
+    sink: list[str] = []
+    finding, _ = auditor.run(
+        ctx, candidate=candidate, capsule=capsule, evidences=evidences, observations=sink
+    )
+    _critic_at(ctx, "v6")
+    refs = tuple(e.evidence_id for e in evidences)
+    assert refs, "전제 - 2단계가 모은 근거가 있다"
+    ctx.models = _RebuttingCritic(ctx.models.real, refs)
+
+    critic.run(ctx, finding=finding, evidences=evidences, hop_observations=tuple(sink))
+
+    assert _events(ctx, EventKind.CRITIC_UNKNOWN_EVIDENCE_REFS) == []
