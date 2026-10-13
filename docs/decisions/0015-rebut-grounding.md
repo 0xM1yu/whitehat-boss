@@ -101,7 +101,8 @@ is_grounded = bool(evidence_refs) or (
 ### 3. 지표 - `critic_normalized`가 사유를 싣는다
 
 `critic_normalized` 이벤트의 키: `original_verdict`(`rebut`) · `reason` · `invalid_axes`.
-`reason`은 `empty_axis`(ID도 축도 없다) 또는 `invalid_axis`(축이 어휘 밖이다). `invalid_axes`는 어휘 밖
+`reason`은 `empty_axis`(ID도 축도 없다) 또는 `invalid_axis`(축이 어휘 밖이다).
+⚠ 사유는 **ID가 없을 때만** 선다 — `evidence_refs`가 비어 있지 않으면 `ungrounded_reason`이 즉시 `None`이라 **어휘 밖 축이 있어도** `invalid_axis`가 안 서고 `critic_normalized`도 `invalid_axes`도 안 남는다. 그래서 **ID와 축을 둘 다 요구하는 서빙 v6에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 0으로 보인다.** `invalid_axes`는 어휘 밖
 원문의 JSON 배열 문자열이다(최대 5개, 값마다 40자 - `TraceValue`가 스칼라라서 문자열이다).
 `gate.was_normalized`의 뜻은 그대로다 - "반박이 반박으로 세어지지 않았다".
 

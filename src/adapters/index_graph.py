@@ -338,7 +338,8 @@ class GraphIndex:
 
         ## 슬라이스 타깃의 본문은 슬라이스다 (#220 ①)
 
-        `run --slices`면 LIGHT `target_function`과 Scout `SOURCE`가 슬라이스 렌더다. 위 등식을
+        `run --slices`면 LIGHT `target_function`이 슬라이스 렌더다(Scout `SOURCE`는 프롬프트의
+        `input: slice` 선언일 때만 — ⏵ 2026-10-13 #529). 위 등식을
         지키는 본문은 `target`(entry 줄 하나)의 범위가 아니라 **슬라이스의 (file, line) 집합**
         (`body`)이다 — entry만 보면 Case B(sink 줄)는 감싸는 함수의 호출자가, Case A(함수 머리)는
         본문의 호출이 빠졌다. 「본문 안에 정의」는 정의 **범위**가 그 집합과 겹치는가로 본다 —
@@ -1147,7 +1148,8 @@ def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
     걸면 안 된다 — 줄은 그대로 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
 
     **`items=k`가 `k < len(names)`인지는 캡슐만 봐서는 구별되지 않는다.** `_fit_related`도
-    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건으로 #78에 있다.
+    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건이다 - #78(2026-10-13 닫힘)이 `search` 시점
+    절단만 남는 형태로 좁혀 후속 이슈 #663으로 넘겼다.
     """
     total = 0
     fitted: list[str] = []
