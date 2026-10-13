@@ -70,6 +70,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
 6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
 전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
+⏵ 2026-10-14 - **셋째 경우: 6단계 행이 있어도 부착이 0건이면 그 행은 원본 그대로다.**
+`attach_observed`가 더할 ID가 없으면(`new_refs`가 빈다) `store.put`을 **안 한다** - 그래서
+「6단계 행이 있는 Finding은 못 센다」는 **관측 Evidence가 붙은** 경우까지만 참이다. 이 키는
+그 경우에도 실린다(부착 전에 읽으므로) - 못 세는 쪽이 `state.db`다.
 ⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
