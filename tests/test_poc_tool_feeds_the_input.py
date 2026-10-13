@@ -842,6 +842,10 @@ def test_the_ambiguous_note_reaches_the_observation_exactly_once(
     observation = _pov_observation_of(tmp_path, spy, code=1, stderr="x" * stderr_chars)
 
     assert observation.count(container_tools.POC_AMBIGUOUS_NOTE) == 1
+    # 위치 — 머리줄 바로 다음 줄이고, 도구 출력 꼬리 구간보다 앞이다(뒤로 옮기면 상한에 잘린다).
+    assert observation.splitlines()[1] == container_tools.POC_AMBIGUOUS_NOTE
+    tail_at = observation.find("--- poc 출력 꼬리 ---")
+    assert tail_at == -1 or observation.index(container_tools.POC_AMBIGUOUS_NOTE) < tail_at
 
 
 @pytest.mark.parametrize(
