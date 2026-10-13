@@ -491,6 +491,28 @@ def test_cited_by_model_zero_is_a_measured_zero(ctx: RunContext) -> None:
     assert row.data["cited_by_model"] == 0
 
 
+def test_cited_by_model_is_a_bare_len_that_counts_duplicates_and_invented_ids(
+    ctx: RunContext,
+) -> None:
+    """정의를 문다: 세는 것은 **ID 개수**다 - 중복도, 풀에 없는 지어낸 ID도 센다 (`trace.py`).
+
+    이 값은 run 사이 비교(D67 「판을 올려 인용이 늘었나」)에 쓰인다. `len(set(...))`이나 「풀로
+    풀리는 것만」으로 바꾸면 앞뒤 run의 값이 **다른 정의로** 한 열에 섞이므로, 바꾸려면 이 핀과
+    `trace.py`의 「모델 인용 수」를 같이 고친다.
+    """
+    pool = (_evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),)
+
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=["ev_a", "ev_a", "ev_zz"]),
+        evidences=pool,
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 3, "중복 1 + 풀에 없는 ID 1 - 둘 다 세는 것이 정의다"
+
+
 def test_cited_by_model_is_absent_when_the_caller_does_not_measure(ctx: RunContext) -> None:
     """`evaluate_gate`를 인자 없이 부르면 키가 없다 - `None`·`0`으로 채우지 않는다(CLAUDE.md §0)."""
     ctx.evaluate_gate(_finding(refs=["ev_a"]), (_static_signal(),), stage=Stage.GATE)
