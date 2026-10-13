@@ -963,14 +963,20 @@ def _spy_connect(
     return seen
 
 
+# 판은 움직이는 값이라 칸을 `STATE_DB_SCHEMA_VERSION` 기준으로 쓴다 — 리터럴 `2`를 「더 새 판」
+# 으로 적어 뒀더니 판이 2로 오른 커밋에서 그 칸이 **같은 판**이 돼 거부가 안 났다.
 @pytest.mark.parametrize(
     ("stored", "code_version", "says"),
     [
-        (2, None, "더 새 코드"),
-        (5, None, "더 새 코드"),
+        (sqlite_store.STATE_DB_SCHEMA_VERSION + 1, None, "더 새 코드"),
+        (sqlite_store.STATE_DB_SCHEMA_VERSION + 4, None, "더 새 코드"),
         (2**31 - 1, None, "더 새 코드"),
         (-1, None, "더 옛 코드"),
-        (1, 2, "더 옛 코드"),
+        (
+            sqlite_store.STATE_DB_SCHEMA_VERSION,
+            sqlite_store.STATE_DB_SCHEMA_VERSION + 1,
+            "더 옛 코드",
+        ),
     ],
 )
 def test_a_state_db_of_another_version_is_refused_before_any_row_is_read(
