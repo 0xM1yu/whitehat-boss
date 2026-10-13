@@ -201,7 +201,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | --- | --- | --- |
 | E0 | 모델 주장만 존재 | 6 |
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
-| E2 | 모델이 쓴 `finding.path`에 source·sink 단계가 둘 다 있고(`path_ok`) **∧** 인덱서의 GRAPH Evidence가 `ok`이고(`graph_ok` — 심볼 1개 이상. **run 전역 Evidence 하나라 이 Finding의 경로를 확인한 것이 아니다**) **∧** blocking `MissingEvidence`가 없다(`unblocked`) | 6 |
+| E2 | 모델이 쓴 `finding.path`에 source·sink 단계가 둘 다 있고(`path_ok`) **∧** 인덱서의 GRAPH Evidence가 `ok`이고(`graph_ok` — **심볼 0개로 보고되지 않았다**까지다. `judge()`는 요약 줄이 없으면 `ok`를 그대로 두고 `FakeToolRunner`는 심볼을 안 센다. **run 전역 Evidence 하나라 이 Finding의 경로를 확인한 것이 아니다**) **∧** blocking `MissingEvidence`가 없다(`unblocked`) | 6 |
 | E3 | **E2의 조건 전부** + Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
 | E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **「실행됐고 비-0으로 끝났다」까지만 보증한다**(크래시의 대용 지표다 — D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
 
