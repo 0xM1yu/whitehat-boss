@@ -76,9 +76,10 @@ sink 인자에 나온 식별자(필드 이름 포함 · 함수 이름·키워드
 ## 어디에 붙나
 
 `runner._auditor_source`가 entry 함수 바로 뒤에 붙인다. **Case B만**이다 — 슬라이스의 `entry`가
-sink 호출 줄이고 `entry.symbol`이 그 호출 이름이다(`slice_refs`). Case A(진입점에서 앞으로
-자른 것)의 entry는 함수 자신이라 sink를 하네스가 모른다. 안 붙인 사유(`case_a`·`window`·
-`formfeed`·`bare_cr`·`no_sink`)는 trace `auditor_source`의 `guards_skipped`가 든다.
+sink 호출 줄이고 `entry.symbol`이 그 호출 이름이다(`slice_refs`). 쥐여 준 끝이 source인
+슬라이스(Case A — 진입점에서 앞으로 · Case F — 대상 지정 모드의 정방향)의 entry는 함수 자신이라
+sink를 하네스가 모른다. 안 붙인 사유(`given_source`·`window`·`formfeed`·`bare_cr`·`no_sink`)는
+trace `auditor_source`의 `guards_skipped`가 든다.
 
 ⚠ **PoV도 이 블록을 받는다.** 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로
 물려 주고(`runner._step_auditor`) 8단계 PoV가 `pov._WIDE_INPUT_VERSIONS`인 판에서 그것을 그대로
@@ -169,7 +170,7 @@ _NOT_DATA = frozenset(
 class GuardScan:
     """훑은 결과. `rows`는 SOURCE에 싣는 행, `dropped`는 행 상한에 걸려 뺀 행(둘 다
     `파일:줄 | 조건`, 소스 순서), `names`는 맞춰 본 이름 전부(인자 이름 + 대입 한 걸음)다.
-    `skipped`가 있으면 훑지 않은 것이다 — 사유는 `case_a`·`window`·`formfeed`·`bare_cr`·
+    `skipped`가 있으면 훑지 않은 것이다 — 사유는 `given_source`·`window`·`formfeed`·`bare_cr`·
     `no_sink`."""
 
     rows: tuple[str, ...] = ()
@@ -248,12 +249,14 @@ def scan_guards(
     사유가 든 빈 결과다 — 옵션이 켜진 run은 안 훑은 후보도 사유를 trace에 남긴다. `read_raw`는
     파일의 원본 바이트다(`RunContext.read_raw` — `None`이면 못 읽은 것이고 그 검사는 텍스트로만
     한다)."""
-    # ponytail: Case A(`given_end == "source"`)는 entry가 진입점 함수 자신이라 sink를 하네스가
-    # 모른다 — 건너뛴다. 슬라이서가 슬라이스에 `source_sink`(source·sink로 본 위치 — 슬라이서 쪽
-    # 별도 변경)를 싣고 로더가 그것을 `SliceRef`까지 나르면, 여기서 그 sink 위치를 `sink_line`으로
-    # `scan_function`을 부르면 된다.
+    # ponytail: 쥐여 준 끝이 source면(`given_end == "source"`) entry가 함수 자신이라 sink를
+    # 하네스가 모른다 — 건너뛴다. 사유가 케이스 이름이 아닌 이유: 그 끝을 주는 case는 A(진입점에서
+    # 앞으로)와 F(대상 지정 모드의 정방향)이고 `SliceRef`는 `case`를 안 들어(`given_end`만 든다)
+    # 여기서 둘을 못 가른다. 슬라이서가 슬라이스에 `source_sink`(source·sink로 본 위치)를 싣고
+    # 로더가 그것을 `SliceRef`까지 나르면, 여기서 그 sink 위치를 `sink_line`으로 `scan_function`을
+    # 부르면 된다.
     if ref.given_end != "sink":
-        return GuardScan(skipped="case_a")
+        return GuardScan(skipped="given_source")
     # `_auditor_target`은 품는 함수를 모르면 이름 없는 앞뒤 창을 준다 — 그 창에는 다른 함수의 조건이
     # 든다.
     if not anchor.symbol:

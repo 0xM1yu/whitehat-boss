@@ -487,8 +487,11 @@ FIND_NODES = r"""
       }.distinct
 """
 
-# The traversal text is the PR #638 one, unchanged (it was run on a live Joern there; there is no
-# Joern in this repo's tests). One text serves both directions; with `__PRUNE__` = false (backward)
+# The traversal text is the PR #638 one, unchanged. "It was run on a live Joern there" is
+# unrecorded in this repo -- no run ID, no report, no reproduction procedure -- and there is no
+# Joern in this repo's tests, so nothing here re-checks it. The same holds for every case named in
+# the comments below (cJSON, jasper, libtiff): they come from that run and are not measured here.
+# One text serves both directions; with `__PRUNE__` = false (backward)
 # the pruning, `local` and `afterTarget` parts are inert and the result keeps every visited
 # state.
 TRAVERSAL = r"""
@@ -694,7 +697,8 @@ BACKWARD_STEP = r"""
                 next += State(a, current.stack.drop(1), current.depth + 1, up)))
             // An operator call that is not an assignment (`*dstptr2`, `a[i]`, `p->f`, `x + y`): go
             // into its operands -- the operator node itself often has no incoming DDG edge, so the
-            // walk stopped at the sink (jasper `*dstptr2 = *srcptr2`: 2 nodes).
+            // walk stopped at the sink (jasper `*dstptr2 = *srcptr2`: 2 nodes -- from the PR #638
+            // live-Joern run, unrecorded: no run ID or reproduction procedure in this repo).
             case c: nodes.Call
                 if c.name.startsWith("<operator>") && !c.name.contains("ssignment") =>
               c.argument.l.sortBy(key).foreach(a =>
@@ -1004,7 +1008,8 @@ class TargetSlicer(base.Slicer):
         function's last slice line (a guard that can stop the flow reaching it), no repo-wide
         assignments to referenced variables (the DDG walk already brought the data dependency), and
         no `case`/`default` labels of switches the slice does not touch. With the discovery
-        rules two data lines of cJSON `parse_string` grew to 51 of its 60 lines."""
+        rules two data lines of cJSON `parse_string` grew to 51 of its 60 lines -- a count from the
+        PR #638 live-Joern run, unrecorded: no run ID or reproduction procedure in this repo."""
         points = {tuple(p) for p in state["points"]}
         guard_points = sorted(points)  # start points + data-dependency lines: the guard bound
         while True:
@@ -1030,9 +1035,10 @@ class TargetSlicer(base.Slicer):
         """A slice without a graph, for when Joern found no node on the start line.
 
         c2cpg that cannot read a function body (libtiff `NeXTDecode`: a 95-line function with 12
-        AST nodes) leaves no start node and so no slice. The two lines the spec gives and the
-        syntax around them are still known from the source; the result is marked `degraded: true`
-        and has no data dependency, like upstream `degraded_slice`."""
+        AST nodes -- counts from the PR #638 live-Joern run, unrecorded: no run ID or reproduction
+        procedure in this repo) leaves no start node and so no slice. The two lines the spec gives
+        and the syntax around them are still known from the source; the result is marked
+        `degraded: true` and has no data dependency, like upstream `degraded_slice`."""
         spec = self.spec[role]
         if spec["file"] not in self.sources:
             return None
@@ -1304,6 +1310,16 @@ def load_index(path: Path) -> tuple[dict | None, dict | None, str | None]:
     return index, {"version": index["version"], "sha256": hashlib.sha256(raw).hexdigest()}, None
 
 
+def code_files(here: Path, base_dir: Path) -> list[Path]:
+    """The Python whose bytes go into `run_signature` (`code_hashes`): the canon slicer modules,
+    this directory's `slicer*.py`, and its `input_*.py`. The `input_*` modules write
+    `analysis.input_evidence`/`input_context`, so a change in them is a different run -- a glob of
+    `slicer*.py` alone would leave their output outside the signature."""
+    return sorted(
+        [*base_dir.glob("slicer*.py"), *here.glob("slicer*.py"), *here.glob("input_*.py")]
+    )
+
+
 def parser() -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     result.add_argument("--repo", required=True, type=Path)
@@ -1394,13 +1410,9 @@ def main(argv: list[str] | None = None) -> int:
     job.result["settings"] = job.settings
     job.compile_commands = args.compile_commands.resolve() if args.compile_commands else None
     job.compile_db_dir = payload_dir
-    here = Path(__file__).parent
-    base_dir = Path(base.__file__).parent
     job.code_hashes = {
         p.name: hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in sorted(
-            [*base_dir.glob("slicer*.py"), *here.glob("slicer*.py"), *here.glob("input_*.py")]
-        )
+        for p in code_files(Path(__file__).parent, Path(base.__file__).parent)
     }
     job.heartbeat_seconds = args.heartbeat_seconds
     try:
