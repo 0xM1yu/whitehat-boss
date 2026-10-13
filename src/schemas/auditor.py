@@ -23,6 +23,13 @@
   있지만**(과제 `-vul` 이미지의 `/tmp/poc`) `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를
   **안 싣는다**. 그래서 `probe(poc)`는 입력 없는 호출이라 실패 Evidence다 — 싣게 하는 것은
   이슈 #419이고 이 ADR의 범위가 아니다.
+  ⏵ **2026-10-13(#419) — 위 두 문장(⚠ 다만 …·⏵ 2026-10-09)은 이제 그 이전의 기록이다. 이제 싣는다.**
+  `_probe`가 `spec`을 `assemble_poc`으로 조립해 `ToolArgs.input_bytes`로 보낸다(`pov.run_tool`과
+  같은 계약). `probe(poc)`가 입력 없는 호출이라 실패 Evidence라는 말도 그 이전의 서술이다.
+  컨테이너에서 읽는 도구는 `poc` 하나다.
+  ⚠ **동결된 문구가 낡았다** — 아래 `spec`의 필드 설명과 `AuditorAction`·`AuditorProcedureAction`
+  (·형제)의 `probe` 줄(*「이 경로는 입력 바이트를 안 싣는다」*)은 v8~v14의 요청 payload라 고칠 수
+  없다. 고침은 다음 프롬프트 판(auditor v15)과 같이 새 필드·새 봉투로 간다.
 - **코드 열람은 이름으로 묻는다** — 경로·정규식을 받는 `grep`·`cat`을 열지 않는다. 모델
   문자열이 도구 인자로 들어가지 않고, 같은 사실의 두 번째 데이터원이 생기지 않는다.
 
@@ -65,6 +72,7 @@ AUDITOR_TOOLS: tuple[str, ...] = get_args(AuditorTool)
 # `probe`가 `spec`도 쓰는 것은 바이트를 넣어야 관측이 모델 행동의 함수가 되기 때문이다.
 # ⏵ 2026-10-09 — **이 경로가** 그 값을 도구에 안 싣으므로 `spec`은 **기록으로만** 남는다(컨테이너
 # `poc`는 ADR 0014로 받을 수 있다 — 안 싣는 쪽이 이슈 #419다). 그 한계는 노드가 적는다.
+# ⏵ 2026-10-13(#419) — **이제 싣는다**(`nodes/auditor._probe`). 위 두 줄은 그 이전의 기록이다.
 _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
     "lookup": ("requests",),
     "probe": ("tool", "spec"),
@@ -116,6 +124,11 @@ class _AuditorEnvelope(HarnessModel):
     # 바이트를 구성한다」고 적으면 모델이 「내가 만든 입력으로 돌렸더니」라는 거짓 문장을 궤적에
     # 쓴다. 이 경로가 바이트를 싣게 되면(이슈 #419) 이 설명과 노드 관측의 그 줄
     # (`_probe_observation`)을 같이 고친다.
+    # ⏵ 2026-10-13(#419) — **노드는 이제 싣는다**(관측의 그 줄은 지웠다). ⚠ **그런데 아래
+    # `description`은 못 고친다 — 요청 payload라 v8~v14의 요청 바이트다.** 그 문구
+    # (*「지금은 쓰지 않는다 … 싣지 않는다」*)는 이제 **거짓이다**: 모델이 이 문구를 믿으면
+    # `spec`을 안 보낸다(`probe poc`가 0회인 한 원인 — 이슈 #617). 고침은 다음 프롬프트 판(auditor
+    # v15)에서 이 필드를 새 설명으로 다시 선언하는 것과 같이 간다.
     spec: PovSpec | None = Field(
         default=None,
         description=(
@@ -177,6 +190,8 @@ class _AuditorEnvelope(HarnessModel):
 # 따라와야 한다 — 이 봉투 하나로 FT 데이터가 서지 않는다.
 # ⚠ `probe`의 `spec`이 도구 입력으로 들어가려면 **이 노드가 싣는 것**이 선행이다(이슈 #419) —
 # 컨테이너 `poc` 쪽 선행은 ADR 0014로 섰다.
+# ⏵ 2026-10-13(#419) — 노드 쪽 선행도 섰다. 아래 docstring의 `probe` 줄(*「이 경로는 입력 바이트를
+# 안 싣는다」*)은 **이제 낡았다** — v8·v9의 요청 바이트라 못 고치고 다음 판(auditor v15)에서 간다.
 class AuditorAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 
@@ -266,6 +281,9 @@ class AuditProcedure(HarnessModel):
 # 좁다** - 반복 판정은 직전 홉이 아니라 앞선 **어느 홉과든** 같은 요청이면 선다(`nodes/auditor`의
 # `seen`). 이 문장은 v10~v14의 요청 payload라 한 글자도 못 고친다(요청 바이트가 바뀐다) -
 # 고치려면 다음 프롬프트 판과 함께 올린다. 그 전에는 모델이 알린 것보다 넓게 선다.
+# ⏵ 2026-10-13(#419) — 같은 이유로 아래 `probe` 줄의 *「이 경로는 입력 바이트를 안 싣는다 — `spec`을
+# 실어도 도구에 전달되지 않고」*도 이제 거짓이다(노드가 싣는다). v10~v14의 요청 바이트라 못 고치고
+# 다음 판(auditor v15)에서 간다. 형제 봉투(`…NullableCwe…`·`…AuditAlways…`)의 같은 줄도 같다.
 class AuditorProcedureAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 

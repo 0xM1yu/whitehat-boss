@@ -372,6 +372,20 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    (`src/orchestrator/gate.py` 모듈 docstring, 이슈 #232). 프롬프트가 `exit`≠0을 근거 문장으로 승격시키지
    않게 한다.
 
+   ⏵ **2026-10-13(#419) — 위 셋(머리의 ⚠·⚠ 단락·⏵ 2026-10-09 단락)은 이제 그 이전의 기록이다.** 노드는 `spec`을
+   싣는다: `nodes/auditor._probe`가 `spec`을 `assemble_poc`으로 조립해 PoV `run_tool`과 같은 계약으로 보낸다 —
+   `[tool, INPUT_PLACEHOLDER]` + `ToolArgs.input_bytes`, `spec`이 없으면 `[tool]`. 홉 이벤트는
+   `poc_sha256`·`poc_bytes`를 남기고(`tool_call` 이벤트도 `input_sha256`·`input_bytes`를 따로 싣는다)
+   관측 머리줄에는 `input_bytes=<크기> input_sha256=<hex>`가 붙는다(`_probe_observation` — PoV 관측의
+   `last_gen_bytes`·`last_gen_sha256`과 같은 모양). *"recorded but NOT given to the tool"* 줄은 없다.
+   ⚠ **싣는 것과 읽히는 것은 다르다** — 컨테이너에서 입력을 읽는 도구는 `poc` 하나다(위 ⏵ 2026-10-09).
+   `poc`가 아닌 도구에 실은 입력은 머리줄에 *"not read by this tool"* 사실 문구가 붙는다.
+   ⚠ **동결된 프롬프트(v8~v14)와 그 요청 스키마의 설명은 아직 "안 싣는다"고 말한다** — 요청 payload라
+   고칠 수 없고 다음 판(auditor v15)에서 고친다. 그 전까지 모델은 `spec`을 안 보낸다고 읽는다(이슈 #617).
+   반복 판정의 키(`_request_key`)도 아직 도구 이름만 본다 — `spec`만 바꾼 `probe`를 같은 요청으로 읽는다.
+   같은 판과 같이 움직인다. 그리고 "프롬프트가 이 사실을 안 적으면 모델이 거짓을 쓴다"는 위 경고는 거꾸로도
+   같다: 이제 싣는데 프롬프트가 안 싣는다고 적으면 모델이 `spec`을 안 보낸다.
+
 4. **관측 형식.** 도구·조회 결과는 **다음 홉의 user 턴 본문**으로 온다. prefix(역할 지시·스키마 서술)와 hop0의
    `SOURCE`·`FACTS`는 hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청을
    system(prefix) · history · user(이번 관측) 순으로 조립하므로 prefix는 **매 홉 다시 실리고** hop0 user 턴은
@@ -421,6 +435,9 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
      **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 그 값을 안 받는다 — ⏵ 2026-10-07 「그래서 같은 관측이 온다」는 **과장이라 뺐다**: 나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다). 직전
      ~~홉하고만 비교한다 — A,B,A는 안 잡히고 상한이 막는다.~~ ⏵ 2026-10-13(#514) 지금은 **지나온 모든 홉의 키**와 비교한다(`nodes/auditor._run_hops`의 `seen`) - A,B,A는 `repeat_request`로
      선다(종전 판은 직전 홉하고만 비교해 A→B→A→B가 상한까지 갔다).
+     ⏵ **2026-10-13(#419) — 위 괄호 「`spec`만 바꿔도 도구가 그 값을 안 받는다」의 근거는 낡았다**: 노드가
+     이제 `spec`을 싣는다. 키는 동결된 프롬프트(v8~v14)의 반복 규칙과 짝이라 도구 이름만 보는 채로 두었고,
+     PoC digest를 더하는 것은 다음 판(auditor v15)과 같이 간다.
    - 상한까지 조사만 함(hop N이 `answer`가 아님) → `MAX_HOP`.
    - ⏵ 2026-10-13(#514) 홉의 **모델 호출이 크기 거절**당함 → `CONTEXT_OVERFLOW`. 응답이 없으므로 이 홉의
      `auditor_hop` 이벤트(`stop_reason=context_overflow`)에는 `action`·토큰이 없고 `error`·`error_detail`이
