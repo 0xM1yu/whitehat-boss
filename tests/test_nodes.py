@@ -1309,7 +1309,13 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
     state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
 
     def ask(
-        ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list, source=None
+        ctx_: RunContext,
+        *,
+        decision_id: str,
+        finding: Finding,
+        evidences: list,
+        source=None,
+        hop_observations=(),
     ) -> Decision:
         verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
         return Decision(
@@ -2276,7 +2282,8 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
-        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14"}
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"}
+        | {"v13", "v14", "v15"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
@@ -3049,8 +3056,13 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     # `slice_criterion`은 슬라이스 타깃에만 붙는다(opt-in) — 슬라이스 없는 프롬프트는 그 키가
     # 생기기 전과 글자가 같아야 한다. 이 호출은 슬라이스 타깃이 아니다.
     # `fuzz_entrypoint`도 opt-in이고 **PoV만** 준다(2026-10-02) — Scout은 슬라이스 타깃이어도
-    # 안 받는다. 등식을 유지하는 것이 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint"}
+    # 안 받는다. `auditor_hops`(2026-10-13)도 opt-in이고 **Critic만** 준다. 등식을 유지하는 것이
+    # 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {
+        "slice_criterion",
+        "fuzz_entrypoint",
+        "auditor_hops",
+    }
 
 
 def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
@@ -3078,7 +3090,7 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
     # 슬라이스 타깃이라 `slice_criterion`은 붙지만 `fuzz_entrypoint`는 **PoV 전용**이라 안 붙는다
     # (2026-10-02). 등식이라 어느 쪽으로 새도 죽는다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint"}
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint", "auditor_hops"}
     assert facts["source"] == render
     assert facts["slice_criterion"] == {
         "given_end": "sink",
