@@ -287,7 +287,11 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 대상의 판정으로 읽을 수 없는 경우(asan은 종료 코드 `_EXEC_FAILED` = 125·126·127로, `poc`는 더 넓은
 > `_poc_is_harness_failure`로 — ADR 0014 · #513 · `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지 않는다, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
-> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다.
+> ⏵ 2026-10-14 (#326) — **`judge()` 밖에 둘이 더 있다.** 시간 초과(124)와 실행 자체가 못 난
+> 경우(`OSError` → 127)는 `judge()`를 안 거치고 `container_tools._execute`가 `ok=False`와
+> 그 코드를 직접 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리(`nodes/validate.py`·
+> `trace.py`·위 §4)는 셋이 아니라 그 둘까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
 > E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
 > Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은
