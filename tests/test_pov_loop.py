@@ -2066,8 +2066,14 @@ def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
     )
     for tool in ("`poc`", "`asan`", "`gdb`", "`build`"):
         assert tool in prefix, f"서빙 prefix가 {tool}을 안 든다"
-    assert "`poc`는 받는다" in prefix
-    assert "셋은 안 받는다" in prefix
+    # ⏵ 2026-10-13 — 서빙 판이 v6(영어로 다시 쓴 판)이라 갈림 문장의 철자가 판마다 다르다. 판이 또
+    # 올라가면 `KeyError`가 이 검사를 빨갛게 한다(새 판의 문장을 읽고 표에 더한다).
+    split_sentences = {
+        "v5": ("`poc`는 받는다", "셋은 안 받는다"),
+        "v6": ("**`poc` receives your PoC.**", "do not receive your bytes"),
+    }[_POV_SERVED_VERSION]
+    for sentence in split_sentences:
+        assert sentence in prefix, sentence
 
 
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)
@@ -2340,6 +2346,19 @@ def test_pov_schema_caps_are_the_documented_values() -> None:
 # 값을 새로 잰 경우 아래 `PovActionNamed` 대조도 같이 본다.
 _POV_ACTION_SCHEMA_SHA256 = "a61a7097011509c14c582f9b972ca382ce41a06fd969f1d1848259d307a70066"
 
+# 형제 봉투의 같은 핀 — **2026-10-13 · 서빙 판을 v6으로 올린 커밋(이 PR)에서 쟀다**
+# (`json.dumps(schema, ensure_ascii=False)`의 sha256 · 위와 같은 직렬화 ·
+# Python 3.11.0 · pydantic 2.12.4).
+# 이 스키마가 **v5·v6의 요청 payload**라 한 글자도 안 바뀌어야 한다 — 클래스 docstring이
+# `response_format.json_schema.schema.description`으로 실리므로(`src/schemas/pov.py`의 ⚠ 주석 ·
+# `src/adapters/openai_compat.py`) 주석 한 자가 두 판의 요청을 움직인다. 의도적으로 바꾸려면
+# 그 판들의 요청이
+# 바뀐다는 사실을 먼저 받아들인다(evaluation §2.3) — 전 `df3a73d4e8a3…`에서 이 값으로 움직인 기록은
+# `prompts/pov/v5/meta.yaml`의 ⏵ 2026-10-13에 있다.
+_POV_ACTION_NAMED_SCHEMA_SHA256 = (
+    "faa3ade61a2ea26274e411514a2b00719bec98b42e5f0f326d7a339634198a9b"
+)
+
 
 def test_pov_action_request_schema_is_the_frozen_one() -> None:
     """v2~v4가 요청하는 `PovAction`의 JSON 스키마가 #549 ② 전과 바이트 동일하다 — 지명 필드는
@@ -2348,6 +2367,20 @@ def test_pov_action_request_schema_is_the_frozen_one() -> None:
 
     assert hashlib.sha256(text.encode("utf-8")).hexdigest() == _POV_ACTION_SCHEMA_SHA256
     assert "poc_sha256" not in text
+
+
+def test_pov_action_named_request_schema_is_the_frozen_one() -> None:
+    """v5·v6이 요청하는 `PovActionNamed`의 JSON 스키마가 2026-10-13에 잰 것과 바이트 동일하다.
+
+    형제 봉투에는 핀이 없었고, 그래서 클래스 docstring 한 자(`(v5 — …)` → `(v5·v6 — …)`)가
+    **두 서빙 판의 요청 payload를 조용히 바꿨다** — 그 변경을 받아들인 기록이
+    `prompts/pov/v5/meta.yaml`의 ⏵ 2026-10-13이다. 한계: 이 핀은 **철자**를 단언한다. 같은 바이트를
+    유지하면서 의미를 바꾸는 변이는 안 걸린다(그 축은 위
+    `test_the_named_sibling_adds_exactly_one_property`와
+    `test_pov_action_description_in_the_request_has_no_repo_internal_references`가 본다)."""
+    text = json.dumps(PovActionNamed.model_json_schema(), ensure_ascii=False)
+
+    assert hashlib.sha256(text.encode("utf-8")).hexdigest() == _POV_ACTION_NAMED_SCHEMA_SHA256
 
 
 def test_the_named_sibling_adds_exactly_one_property() -> None:
@@ -2376,13 +2409,19 @@ def test_the_named_sibling_adds_exactly_one_property() -> None:
 
 
 def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
-    """v2~v4는 `PovAction`, v5는 지명을 받는 `PovActionNamed`를 선언한다 — 요청 스키마는 meta
-    선언이 정한다(`nodes/pov.resolve_output_schema`). v5가 아닌 판이 형제로 옮겨가면
-    그 판의 요청이 바뀐다."""
-    declared = {v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5")}
+    """v2~v4는 `PovAction`, v5·v6은 지명을 받는 `PovActionNamed`를 선언한다 — 요청 스키마는 meta
+    선언이 정한다(`nodes/pov.resolve_output_schema`). 어느 판이 봉투를 바꿔 달면
+    그 판의 요청이 바뀐다.
+
+    ⚠ **이 표는 열거라 다음 판(v7…)을 못 막는다** — 그 축은 아래
+    `test_the_served_pov_version_requests_the_named_envelope`가 본다."""
+    declared = {
+        v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5", "v6")
+    }
 
     assert declared == {
-        "v2": "PovAction", "v3": "PovAction", "v4": "PovAction", "v5": "PovActionNamed",
+        "v2": "PovAction", "v3": "PovAction", "v4": "PovAction",
+        "v5": "PovActionNamed", "v6": "PovActionNamed",
     }
     assert pov_node.resolve_output_schema("PovActionNamed") is PovActionNamed
     assert pov_node.resolve_output_schema("PovAction") is PovAction
@@ -2390,12 +2429,35 @@ def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
         pov_node.resolve_output_schema("Finding")
 
 
+def test_the_served_pov_version_requests_the_named_envelope() -> None:
+    """**서빙** pov 판의 meta가 `PovActionNamed`를 선언한다 — 판 이름을 열거하지 않고
+    `config/models.yaml`에서 읽는다(`_POV_SERVED_VERSION`).
+
+    왜 열거가 아닌가: 위 표는 `("v2"…"v6")`에서 멈추므로 다음 판을 서빙 좌석에 올리면서 부모
+    `PovAction`을 선언해도 **초록이다**(`tests/test_config.py`는 `POV_ALLOWED_SCHEMA_NAMES`
+    **소속**만
+    보고 부모도 그 집합 안이다). 그러면 서빙 PoV가 `poc_sha256` 없는 봉투를 요청하고
+    `runner._run_pov_hops`의 `getattr(action, "poc_sha256", None)`이 조용히 None을 내
+    **지명이 영구히 「마지막 gen」으로 접힌다**(이슈 #549 ②가 세운 것이 사라진다). 축을 판 이름에서
+    **서빙 좌석**으로 옮긴 선례가 같은 파일의 `_POV_PREFIX_VERSIONS` 둘레 주석이다."""
+    template = load_prompt(Role.POV, _POV_SERVED_VERSION)
+
+    assert template.output_schema == "PovActionNamed", (
+        f"서빙 pov 판 {_POV_SERVED_VERSION}이 `{template.output_schema}`를 요청한다 — "
+        "지명(`poc_sha256`)이 조용히 사라진다"
+    )
+    assert pov_node.resolve_output_schema(template.output_schema) is PovActionNamed
+
+
 def test_bench_resolves_the_pov_envelope_the_node_requests() -> None:
-    """`bench_report.schema_for`가 pov도 meta 선언으로 푼다 — 안 풀면 v5 bench가 운영과 다른
+    """`bench_report.schema_for`가 pov도 meta 선언으로 푼다 — 안 풀면 v5·v6 bench가 운영과 다른
     `PovAction` 문법을 잰다(Santa 2라운드 C: 이 분기를 지워도 초록이었다)."""
     assert bench_report.schema_for(Role.POV, load_prompt(Role.POV, "v4"), PovAction) is PovAction
     assert (
         bench_report.schema_for(Role.POV, load_prompt(Role.POV, "v5"), PovAction) is PovActionNamed
+    )
+    assert (
+        bench_report.schema_for(Role.POV, load_prompt(Role.POV, "v6"), PovAction) is PovActionNamed
     )
 
 
@@ -2412,7 +2474,10 @@ def test_the_fake_builds_every_pov_envelope() -> None:
     assert type(action) is PovActionNamed and action.poc_sha256 is None
 
 
-@pytest.mark.parametrize(("version", "expected"), [("v3", PovAction), ("v5", PovActionNamed)])
+@pytest.mark.parametrize(
+    ("version", "expected"),
+    [("v3", PovAction), ("v5", PovActionNamed), ("v6", PovActionNamed)],
+)
 def test_the_model_is_asked_for_the_envelope_the_meta_declares(
     ctx: RunContext, version: str, expected: type  # noqa: F811
 ) -> None:
