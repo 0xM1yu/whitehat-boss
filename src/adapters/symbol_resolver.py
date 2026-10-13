@@ -608,7 +608,21 @@ def _declared_type_name(
             line = int(record["line_start"])
             span = _read_span(read_lines, str(record["file"]), line, line)
     if not span:
-        return None
+        # C++ 멤버를 암시적 this로 bare 접근(`pcHeader->f`) — 지역·파라미터·전역이 아니면 그
+        # 이름의 필드(멤버)로 보고, 선언한 struct/class 본문에서 멤버 자신의 타입을 찾는다
+        # (`_field_own_type` — 체인의 다음-타입 해석과 같은 휴리스틱). `_type_name_from_line`이
+        # `types`에 없는 토큰(매크로 한정자·네임스페이스)은 건너뛴다. 리졸버는 "현재 함수"를
+        # 모르므로(계약 고정) 소유 struct는 `visible`·`target_file` 점수로 고른다.
+        member = _pick_record(
+            (table("fields") or {}).get(base, ()),
+            definition_kind="field",
+            requested_kind=_VARIABLE_KIND,
+            target_file=target_file,
+            visible_files=frozenset(visible),
+        )
+        if member is None:
+            return None
+        return _field_own_type(base, member, table=table, read_lines=read_lines)
     return _type_name_from_line(span[0][1], table("types") or {})
 
 
