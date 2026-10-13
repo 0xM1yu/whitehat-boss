@@ -37,6 +37,7 @@ from src.schemas import (
     PathStep,
     PathStepKind,
     ProducedBy,
+    RebuttalAxis,
     ReproSpec,
     Role,
     RunRecord,
@@ -387,6 +388,118 @@ def test_verdict_from_text_reads_only_explicit_verdicts(
     미해석을 `uphold`(지지)로 소비하지 않는 것이 요점이다(진짜 취약 기각·거짓 validated 방지).
     """
     assert Verdict.from_text(text) is expected
+
+
+_PROMPTS = pathlib.Path(__file__).resolve().parent.parent / "prompts" / "critic"
+
+
+def _v7_axis_list() -> list[str]:
+    """v7 판정 규칙(§5)이 적는 축 목록 - 백틱 축 이름으로 시작하는 목록 줄만. 앞 절의 `source`
+    fails 줄은 안 센다."""
+    text = (_PROMPTS / "v7" / "prefix.md").read_text(encoding="utf-8")
+    section = text[text.index("### 5. Apply the verdict rules") :]
+    section = section[: section.index("Other mismatches")]
+    return [line.split("`")[1] for line in section.splitlines() if line.startswith("- `")]
+
+
+def _v6_axis_list() -> list[str]:
+    text = (_PROMPTS / "v6" / "prefix.md").read_text(encoding="utf-8")
+    tail = text[text.index("Use only these prompt-level axis values:") :].split("\n\n")[1]
+    return [part.strip() for part in tail.replace("\n", " ").split(",")]
+
+
+def test_the_axis_vocabulary_matches_the_critic_prompts() -> None:
+    """열 값의 원천은 프롬프트다 (ADR 0015) - v6·v7이 글자까지 같은 열 개를 들고 enum이 그것과 같다.
+
+    프롬프트를 읽어 대조한다. enum을 손으로 지어내면 모든 `rebut`이 어휘 밖으로 읽혀
+    `need_evidence`로
+    간다 - 그 어긋남을 이 검사가 먼저 잡는다. 어휘를 바꾸는 프롬프트 판이 생기면 이 검사가 빨개진다.
+    """
+    v7, v6 = _v7_axis_list(), _v6_axis_list()
+
+    assert len(v7) == len(v6) == 10
+    assert set(v7) == set(v6) == {axis.value for axis in RebuttalAxis}
+    assert len(RebuttalAxis) == 10
+
+
+def test_every_axis_the_prompts_list_reads_back_as_itself() -> None:
+    """양성: 프롬프트가 쓴 철자 그대로가 `from_text`로 읽힌다."""
+    for text in _v7_axis_list() + _v6_axis_list():
+        assert RebuttalAxis.from_text(text) is RebuttalAxis(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "GUARD",
+        "Guard",
+        "guard-check",
+        "guard_check",
+        "guards",
+        "guard,reachability",
+        "guard reachability",
+        "`guard`",
+        '"guard"',
+        "guard.",
+        "input-reachability",
+        "compile flag",
+        "무근거",
+        "",
+        "   ",
+    ],
+)
+def test_axis_from_text_never_guesses(text: str) -> None:
+    """음성 핀 - 대소문자 접기·부분 문자열·장식 제거·구분자 정규화를 **하지 않는다.**
+
+    고른 기준: 모델이 자유 문자열 필드에 낼 수 있는 어휘 변형이다(대소문자 · 접미 · 합침 · 장식 ·
+    하이픈 ·
+    한국어). 이 중 하나라도 읽히면 첫 v7 run의 무효 축 비율이 그만큼 가려진다.
+    """
+    assert RebuttalAxis.from_text(text) is None
+
+
+@pytest.mark.parametrize("text", ["guard ", " guard", "\tguard\n"])
+def test_axis_from_text_strips_surrounding_whitespace_only(text: str) -> None:
+    assert RebuttalAxis.from_text(text) is RebuttalAxis.GUARD
+
+
+def test_decision_grounding_is_ids_or_a_fully_valid_axis_list() -> None:
+    """`is_grounded` = `bool(evidence_refs)` 또는 (축이 비어 있지 않고 전부 어휘 안)."""
+
+    def decision(axes: list[str], refs: list[str]) -> Decision:
+        return Decision(
+            decision_id="dec_0004",
+            run_id="run_20260901_0001",
+            finding_id="find_0007",
+            verdict=Verdict.REBUT,
+            rebuttal_axis=axes,
+            rationale="r",
+            evidence_refs=refs,
+            produced_by=ProducedBy(role=Role.CRITIC, model="m", prompt_version="v7"),
+        )
+
+    assert decision(["guard"], []).is_grounded
+    assert decision(["guard", "sink"], []).is_grounded
+    assert decision([], ["ev_0001"]).is_grounded
+    assert decision(["무근거"], ["ev_0001"]).is_grounded
+    assert not decision([], []).is_grounded
+    assert not decision(["무근거"], []).is_grounded
+    assert not decision(["guard", "무근거"], []).is_grounded
+    assert decision([], []).ungrounded_reason == "empty_axis"
+    assert decision(["GUARD"], []).ungrounded_reason == "invalid_axis"
+    assert decision(["guard"], []).ungrounded_reason is None
+
+
+def test_decision_draft_keeps_the_axis_list_free_text() -> None:
+    """스키마는 enum을 강제하지 않는다 - grammar 마스크가 맞는 답을 덮는다 (gpt-oss-20b, PR #182).
+    어휘 밖 축도 파싱은 성공하고 검증은 `is_grounded`가 한다."""
+    from src.schemas.decision import DecisionDraft
+
+    draft = DecisionDraft(verdict="rebut", rebuttal_axis=["guard-check"], rationale="r")
+
+    assert draft.rebuttal_axis == ["guard-check"]
+    axis_schema = DecisionDraft.model_json_schema()["properties"]["rebuttal_axis"]
+    assert "enum" not in json.dumps(axis_schema)
 
 
 def test_decision_draft_maps_unreadable_verdict_to_need_evidence() -> None:
