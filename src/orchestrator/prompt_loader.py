@@ -119,10 +119,13 @@ FACTS_TOKEN = "FACTS"
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
 #
-# **opt-in은 둘이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다):
+# **opt-in은 셋이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
+# ⏵ 2026-10-13 셋째 `auditor_hops`):
 #   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
 #     「Slice criterion」 절).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
+#   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
+#     (아래 그 항목의 주석 · #600 H2ⓐ).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14)이 뺀다.
 # 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
 # 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
@@ -140,6 +143,11 @@ FACT_KEYS = (
     # opt-in이라 인자를 안 주는 역할의 프롬프트는 바이트가 그대로다(`docs/evaluation.md:69` —
     # 프롬프트가 바뀌면 이전 결과와 직접 비교하지 않는다).
     "fuzz_entrypoint",
+    # Auditor 도구 루프가 Critic 입력에 건넨 관측 **사본**의 수(#600 H2ⓐ) — 돈 홉 수가 아니다
+    # (가림에 실패한 홉은 빠진다). **Critic만 싣는다** — 사본이 1개 이상인 Finding에만 키가 생기고
+    # (사본 0이면 키 자체가 없다 — `0`을 적지 않는다, 바이트 동일), 본문은 EVIDENCE 블록
+    # (`critic._describe_hop_observations`)에 있다.
+    "auditor_hops",
 )
 
 
@@ -655,6 +663,7 @@ def build_facts(
     include_source: bool = True,
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
+    auditor_hops: int | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
@@ -675,6 +684,10 @@ def build_facts(
     그때 키가 **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은
     「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트
     그대로다.
+
+    `auditor_hops`도 같은 opt-in이다 — **Critic만**, Critic용 홉 관측 사본이 1개 이상인
+    Finding일 때만 준다(**사본 수** - 돈 홉 수가 아니다). 사본이 없으면 `None`이라 키가 없다 —
+    `0`으로 적으면 사본 0 Finding의 FACTS 바이트가 바뀐다(#600 H2ⓐ).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -761,6 +774,7 @@ def build_facts(
         "callers": list(callers),
         **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
         **({"fuzz_entrypoint": dict(fuzz_entrypoint)} if fuzz_entrypoint is not None else {}),
+        **({"auditor_hops": auditor_hops} if auditor_hops is not None else {}),
     }
 
 

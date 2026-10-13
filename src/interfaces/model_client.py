@@ -154,8 +154,9 @@ def is_size_rejection(exc: Exception) -> bool:
     """이 실패가 **이 후보가 크다**인가 - 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
 
     413(본문 초과)과 컨텍스트 초과 문구(`CONTEXT_OVERFLOW_PHRASE`)가 실린 400뿐이다. 게이트웨이
-    오류가 아니면(스키마 실패) 크기가 아니다. 러너(`runner._is_size_rejection`)와 Auditor 노드가
-    같은 판정을 쓴다 - 노드는 러너를 import할 수 없어 여기에 둔다(러너가 노드를 import한다).
+    오류가 아니면(스키마 실패) 크기가 아니다. 러너(`runner._is_size_rejection`)와 Auditor 노드,
+    그리고 Critic 노드(`critic.run`의 홉 관측 폴백 - #600 H2ⓐ)가 같은 판정을 쓴다 - 노드는
+    러너를 import할 수 없어 여기에 둔다(러너가 노드를 import한다).
     """
     if not isinstance(exc, ModelGatewayError):
         return False
