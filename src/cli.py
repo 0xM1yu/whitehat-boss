@@ -28,6 +28,10 @@ ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 �
   `none`·`not_reached`)을 본다. **0은 비교표 적격도 아니다** — 낮은 `--stop-after`·`--dry-run`·예산
   소진은 `stopped_after`가 차서 `RunRecord.is_complete`가 거짓이고, 기록이 불완전한 run도 빠진다
   (`docs/evaluation.md` §6).
+- **2에는 프롬프트 배선 어긋남이 든다**(⏵ 2026-10-13, #600 H3). `run`은 `doctor`와 같은 검사
+  (`_check_prompts`)의 ERROR — 프롬프트 로드 실패 · 내용 인식 집합 밖의 판 — 에 모델을 부르기 전에
+  2로 선다. 그 run이 닿는 단계의 역할만 본다. WARN은 막지 않고, `--dry-run`(3단계에서 섬)은 일부러
+  가드 밖이다.
 - ① 트레이스백: `run`의 예상 밖 예외(`UNFORESEEN_FAILURE` — 러너가 매니페스트를 남기고 다시
   던진다) · `_claim_run_dir`의 하루 상한 초과(설계된 `SystemExit`) ·
   `estimate`·`bench`의 `ConfigError`.
@@ -508,10 +512,19 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
     ]
 
 
-def _check_prompts(config: HarnessConfig) -> list[Check]:
+# 역할이 처음 모델을 부르는 단계 — 적히지 않은 역할(Scout 계열·single)은 `SCOUT`이다.
+_PROMPT_FIRST_STAGE = {"auditor": Stage.AUDITOR, "critic": Stage.CRITIC, "pov": Stage.VALIDATE}
+
+
+def _check_prompts(config: HarnessConfig, *, last_stage: Stage = MAX_STAGE) -> list[Check]:
     """프롬프트 파일의 실재·내용 인식 배선·디스크의 새 판을 본다.
 
     run 도중에 없는 것을 알면 그때까지 쓴 시간을 버린다(config.py의 판단과 같다).
+
+    **`doctor`와 `run`이 이 함수를 같이 부른다**(⏵ 2026-10-13, #600 H3). `run`은 `last_stage`에
+    그 run이 닿는 마지막 단계를 넘겨, 안 부를 역할의 프롬프트는 보지 않는다(`--stop-after 4` run이
+    8단계 PoV 프롬프트 때문에 막히지 않는다 — Auditor 루프 가드와 같은 판단). `doctor`는 기본값
+    (전 단계)이다. `run`은 이 중 ERROR만 막고 WARN은 막지 않는다.
 
     **슬라이스 입력 프롬프트는 WARN 한 줄을 더한다** — `run`은 그것을 `--slices` 없이 시작하지
     않는다(ADR 0012 결정 1). ERROR가 아닌 것은 doctor가 `--slices`를 받지 않아 막을 대상이
@@ -521,6 +534,8 @@ def _check_prompts(config: HarnessConfig) -> list[Check]:
     for role in PROMPTED_ROLES:
         if role not in config.profile.roles:
             continue  # 이 프로필이 안 쓰는 역할(예: single-pass 전용 single)은 건너뛴다
+        if _PROMPT_FIRST_STAGE.get(role, Stage.SCOUT) > last_stage:
+            continue  # 이 run이 그 단계에 닿지 않는다
         version = config.model_for(role).prompt_template_version
         try:
             load_prompt(Role(role), version)
@@ -549,7 +564,8 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
 
     내용 인식 집합의 정본은 각 노드다. Scout·Single에는 그 집합이 없어 대상이 아니다.
     Fake 여부는 `ModelEntry.is_fake`로 가른다 — 공유 엔트리의 한 역할만 범프하면 다른 역할의
-    파일이 없어질 수 있다(#172). Fake는 정해진 답을 내므로 낡은 판도 ERROR로 막지 않는다.
+    파일이 없어질 수 있다(#172, 2026-10-12 닫음). Fake는 정해진 답을 내므로 낡은 판도
+    ERROR로 막지 않는다.
     디스크의 순서는 정수 `vN`만 비교한다. `v4_t1` 같은 실험 이름의 우열은 추측하지 않는다.
     """
     versions = {
@@ -576,7 +592,7 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
             checks.append(Check(
                 Severity.WARN,
                 f"{role} 프롬프트는 {version}에 배선됐지만 디스크에 새 판 v{newer[-1]}이 있다 — "
-                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
+                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (근거: 닫힌 이슈 #172)",
             ))
     return checks
 
@@ -742,7 +758,8 @@ def _check_thresholds() -> Check:
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
         "— 조건 간 비교 전에 확정한다 (근거: config/budgets.yaml 각 키 주석 — "
-        "이슈 #91·#92·#511은 닫혔고 값은 안 잰 초기값 그대로다)",
+        "이슈 #91·#92·#511은 닫혔다 — #91·#92의 값은 안 잰 초기값 그대로고 "
+        "`pov_tool_hops`(16)는 사용자 결정이나 효과가 미실측이다)",
     )
 
 
@@ -1685,6 +1702,21 @@ def run(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 2
+    # **`doctor`와 같은 프롬프트 검사를 run도 시작 전에 건다**(#600 H3). 내용 인식 집합에 없는 판
+    # (반쯤 배선된 Critic·PoV 판)은 1~6단계의 GPU 시간을 쓰고 7·8단계에서 `PromptError`로 죽는다.
+    # ERROR만 막는다 — 디스크에 새 판이 있다는 WARN은 `doctor`가 알린다. 모델에 안 닿는 run은 막지
+    # 않고, 닿더라도 그 run이 부를 역할만 본다(`_check_prompts`). **`--dry-run`(3단계에서 선다)이
+    # 가드 밖인 것은 의도다** — 모델을 안 부르므로 어긋난 프롬프트가 해를 끼칠 일이 없다.
+    if reaches_model:
+        prompt_errors = [
+            check
+            for check in _check_prompts(config, last_stage=Stage(spec.stop_at()[0]))
+            if check.severity is Severity.ERROR
+        ]
+        if prompt_errors:
+            for check in prompt_errors:
+                print(check.render(), file=sys.stderr)
+            return 2
     # **슬라이스 입력 프롬프트는 `--slices` 없이 부르지 않는다**(ADR 0012 결정 1). v3 Scout는
     # `SOURCE`를 슬라이스(원본 줄번호 gutter·파일 배너)로 정의하는데, 슬라이스가 없으면 그 자리에
     # 심볼 본문이 가고 **오류 없이** 어긋난다(#278). 실서빙 여부와 무관하다 — 어긋나는 것은
@@ -1716,6 +1748,7 @@ def run(args: argparse.Namespace) -> int:
     # 같다, 이슈 #67).
     # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와
     # 같다, 이슈 #67).
+    # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술·body는 v14와 같다, S19).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
