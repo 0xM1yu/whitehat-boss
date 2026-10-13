@@ -122,8 +122,8 @@ FACTS_TOKEN = "FACTS"
 #
 # **opt-in은 셋이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
 # ⏵ 2026-10-13 셋째 `auditor_hops`):
-#   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
-#     「Slice criterion」 절).
+#   - `slice_criterion` — 슬라이스 타깃이고 `input: slice`를 선언한 Scout 프롬프트에만(ADR 0012
+#     결정 1, Scout v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `source`는 안 받는다 — #529).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
 #   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
 #     (아래 그 항목의 주석 · #600 H2ⓐ).
@@ -756,6 +756,12 @@ def build_facts(
         # 보여 주면 인용이 느는가」는 여전히 0회다. 그 run의 E0 5/5는 인용 부재에서 왔고 그
         # 구조는 #552(2026-10-12 닫음)가 6단계 부착으로 풀었다 — 남은 잔여는 열린 이슈
         # #612·#600·#576이 든다.
+
+        # ⏵ 2026-10-13(#563) — 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다
+        # (6단계 `gate_eval`에서 센 정수). #248 뒤 읽힌 값은 `run_20260924_0003` 36/36 참(스모크 ·
+        # `checksum` 0) · 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖)이고 과제가
+        # 다르다. `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(이슈 #552의 오프라인
+        # 재등급 5/5 거짓은 run 실측이 아니다). 통제 대조 0건 - 인용이 느는지는 여전히 미실측이다.
         "evidence": [
             {
                 "evidence_id": ev.evidence_id,
