@@ -115,6 +115,10 @@ class ScoutSession:
     # 다시 안 싣고 hop0 본문을 재사용하므로 이 집합은 hop0에서 고정돼 세션마다 그대로 이어진다.
     # `None`은 안 잘렸다(또는 슬라이스 없음) — resolver가 `SliceRef.lines` 전체를 `visible`로 쓴다.
     shown_lines: tuple[tuple[str, int], ...] | None = None
+    # hop0 프롬프트의 `FACTS.target`(= `capsule.target`) — 되묻기 홉이 후보의 `location.symbol`을
+    # 채울지 가르려고 이어 쥔다(`_stamp_target_symbol`의 네 조건 중 파일·이름 둘이 이것을 본다.
+    # 찍는 값은 이 심볼이 아니라 후보 줄을 품는 함수다). `None`이면 안 채운다(손으로 짠 세션).
+    target: Location | None = None
 
 
 @dataclass(frozen=True)
@@ -207,6 +211,7 @@ def open_session(
         hop_response=hop_response,
         history=(),
         shown_lines=hop_response.shown_lines,
+        target=capsule.target,
     )
 
 
@@ -233,6 +238,7 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
         schema=ScoutResponse,
         history=session.history,
         hop=hop,
+        target=session.target,
     )
     return _session_from_hop(
         candidate_id=session.candidate_id,
@@ -243,6 +249,7 @@ def continue_session(ctx: RunContext, session: ScoutSession, followup_text: str)
         history=session.history,
         # 되묻기 홉은 SOURCE를 다시 안 싣는다 — hop0에서 고정된 집합을 그대로 이어 간다(#375 M-2).
         shown_lines=session.shown_lines,
+        target=session.target,
     )
 
 
@@ -285,6 +292,7 @@ def _session_from_hop(
     hop_response: _HopResponse,
     history: tuple[ChatTurn, ...],
     shown_lines: tuple[tuple[str, int], ...] | None,
+    target: Location | None,
 ) -> ScoutSession:
     requested = (
         tuple(hop_response.summary.requested_context) if hop_response.summary is not None else ()
@@ -310,6 +318,7 @@ def _session_from_hop(
         prompt_version=hop_response.prompt_version,
         history=new_history,
         shown_lines=shown_lines,
+        target=target,
     )
 
 
@@ -323,6 +332,7 @@ def _call_hop(
     schema: type[Candidate] | type[ScoutResponse],
     history: Sequence[ChatTurn],
     hop: int,
+    target: Location | None,
 ) -> _HopResponse:
     """모델 호출 하나 — hop0·hop k 공통. 예외를 그대로 올린다(호출자가 흡수 여부를 정한다)."""
     started = ctx.monotonic_ms()
@@ -367,6 +377,7 @@ def _call_hop(
         subject_kind="candidate",
         subject_id=candidate_id,
     )
+    candidate = _stamp_target_symbol(ctx, candidate, target, hop=hop)
     return _HopResponse(
         candidate=candidate,
         summary=summary,
@@ -377,6 +388,80 @@ def _call_hop(
         prefix=prompt.prefix,
         prompt_version=prompt.prompt_version,
     )
+
+
+def _stamp_target_symbol(
+    ctx: RunContext, candidate: Candidate, target: Location | None, *, hop: int
+) -> Candidate:
+    """후보의 `location.symbol`이 `null`이면 **그 줄을 품는 함수**의 이름을 찍는다 (이슈 #633).
+
+    v4 prefix는 「`location`을 `FACTS.target`에서 복사하라」고 하는데 두 실모델이 `symbol`을 못
+    옮겼다(s17 12/12 null). 값의 원천이 모델이 아니라 하네스가 쥔 대상이라 `stamp_issued`와 같은
+    논법으로 덮는다 — 단 **넷 다 맞을 때만**이다:
+
+    - 모델이 `symbol`을 안 썼다(`None`) — 쓴 값은 틀려도 그대로 둔다(`""`도 쓴 값이다).
+    - 후보가 **대상 파일**에 있다 — 다른 파일 후보는 안 건드린다. 슬라이스 Scout는 여러 파일을
+      보므로 이 경우가 실재한다.
+    - 대상이 `symbol`을 든다 — 찍는 값은 이제 대상 이름이 아니라 인덱스가 아는 품는 함수라, 이것은
+      그 값의 근거가 아니다. 이름 없는 대상(Case B entry 등)에서는 인덱스가 그 줄의 함수를 알아도
+      **안 찍는다** — 보수적 동작이다(미측정: 이 가드가 막는 후보 수는 안 쟀다).
+    - 인덱스가 후보 줄을 품는 함수를 안다(`_enclosing_symbol`) — 모르면 **안 찍는다**(CLAUDE.md §0).
+
+    ⚠ **대상 이름을 그대로 찍지 않는다**(⏵ 2026-10-13 — 전 판은 `target.symbol`을 찍었다). 슬라이스
+    타깃의 `FACTS.target`은 entry 한 줄이고(`line_end` 없음) `SOURCE`는 여러 함수에 걸치므로, 같은
+    파일의 **다른 함수** 후보에 대상 이름이 붙어 `repro_spec`·`validate` argv에 실렸다. 찍는 값은
+    `ctx.symbols_for`가 아는 품는 함수라 하네스가 그 줄에 대해 실제로 아는 것이다.
+
+    `file`·`line_*`는 안 건드린다. 건드린 건마다 `scout_symbol_stamped`를 남긴다 — 모델이 쓴
+    `null`과 하네스가 채운 값이 `state.db`의 후보에서는 구별되지 않아서다. `stamp_issued`의
+    `issued_override`와 섞지 않았다: 그 이벤트는 「부재 = 모델이 발급값을 그대로 썼다」로 읽히고
+    테스트가 0건을 단언한다.
+    """
+    if (
+        target is None
+        or not target.symbol
+        or candidate.location.symbol is not None
+        or candidate.location.file != target.file
+    ):
+        return candidate
+    symbol = _enclosing_symbol(ctx, candidate.location)
+    if symbol is None:
+        return candidate
+    ctx.trace.emit(
+        EventKind.SCOUT_SYMBOL_STAMPED,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate.candidate_id,
+        hop=hop,
+        symbol=symbol,
+    )
+    return candidate.model_copy(
+        update={"location": candidate.location.model_copy(update={"symbol": symbol})}
+    )
+
+
+def _enclosing_symbol(ctx: RunContext, location: Location) -> str | None:
+    """`location.line_start`를 품는 가장 좁은 심볼의 이름 — 인덱스가 없거나 못 품으면 `None`.
+
+    `runner._narrowest_symbol`과 같은 규칙이다. 그쪽을 import하지 않는 이유는 순환이다 —
+    러너가 이 모듈을 import한다. 줄이 없는 후보(`line_start`가 `None`)도 `None`이다: 품는 함수를
+    고를 근거가 없고, 대상 이름으로 메우면 그것이 위 ⚠의 결함이다.
+    """
+    line = location.line_start
+    if line is None:
+        return None
+    spanning = [
+        symbol
+        for symbol in ctx.symbols_for(location.file) or []
+        if symbol.line_start is not None
+        and symbol.line_start <= line <= (symbol.line_end or symbol.line_start)
+    ]
+    narrowest = min(
+        spanning,
+        key=lambda symbol: (symbol.line_end or symbol.line_start or 0) - (symbol.line_start or 0),
+        default=None,
+    )
+    return None if narrowest is None else narrowest.symbol
 
 
 def _ask_model(
@@ -434,6 +519,7 @@ def _ask_model(
             schema=schema,
             history=(),
             hop=0,
+            target=capsule.target,
         )
     except BudgetExhausted:
         _queue_previous(ctx, previous, ReasonCode.BUDGET_EXHAUSTED)
