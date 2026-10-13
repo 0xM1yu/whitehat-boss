@@ -199,6 +199,7 @@ v4가 못 잡는 것:
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -299,13 +300,32 @@ _NAMED_TABLES = (
 _WRITE_FORMS = {"subscript_expression": "element", "pointer_expression": "deref"}
 
 
-def _parser_for(suffix: str):
-    """확장자에 맞는 파서. 문법 모듈은 이미지에 함께 설치돼 있다."""
+# `.h`는 C 문법에 고정돼 있지만 C++ 프로젝트는 클래스·네임스페이스·템플릿을 `.h` 헤더에 둔다.
+# C 문법은 그것들을 ERROR로 만들어 클래스 본문과 그 안의 멤버·타입이 통째로 유실된다. 강한
+# C++ 구조 마커가 있을 때만 그 헤더를 C++ 문법으로 올린다 — 마커가 없는 순수 C 헤더는 C 그대로라
+# C 프로젝트 회귀가 없다.
+_CPP_HEADER_MARKERS = re.compile(
+    rb"\bnamespace\s+[\w:]+\s*\{|\bclass\s+\w+\s*[:{]|\btemplate\s*<|^\s*(?:public|private|protected)\s*:",
+    re.MULTILINE,
+)
+
+
+def _grammar_module(suffix: str, source: bytes) -> str:
+    """파싱에 쓸 tree-sitter 문법 모듈 이름. `.h`에 C++ 구조 마커가 있으면 C++로 올린다."""
+    module = _GRAMMARS[suffix]
+    if module == "tree_sitter_c" and suffix == ".h" and _CPP_HEADER_MARKERS.search(source):
+        return "tree_sitter_cpp"
+    return module
+
+
+def _parser_for(module_or_suffix: str):
+    """파서. 인자는 문법 모듈 이름(`tree_sitter_c`)이거나, 하위호환으로 확장자(`.c`)다 —
+    확장자면 `_GRAMMARS`로 모듈 이름을 찾는다. 문법 모듈은 이미지에 함께 설치돼 있다."""
     from importlib import import_module
 
     from tree_sitter import Language, Parser
 
-    module = import_module(_GRAMMARS[suffix])
+    module = import_module(_GRAMMARS.get(module_or_suffix, module_or_suffix))
     return Parser(Language(module.language()))
 
 
@@ -951,7 +971,7 @@ def index_file(path: Path, relative: str) -> dict:
     읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다.
     """
     source = path.read_bytes()
-    tree = _parser_for(path.suffix).parse(source)
+    tree = _parser_for(_grammar_module(path.suffix, source)).parse(source)
 
     symbols: list[dict] = []
     calls: list[dict] = []
