@@ -793,6 +793,13 @@ class _Accumulator:
     # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
     # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
+    # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 관측의
+    # Critic용 사본(Auditor가 홉마다 본 관측에서 모델이 고른 식별자를 가린 것 - 가림에 실패한 홉은
+    # 빠진다. 모델 응답 턴은 없다).
+    # `auditor.run(observations=...)`가 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다.
+    # `finding_sources`와 같은 자리에 두는 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가
+    # 물려받는다(#600 H2ⓐ). 8단계 PoV는 안 읽는다.
+    finding_observations: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -1169,6 +1176,12 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **Critic에 실은 홉 관측이 이 좌석의 입력 몫을 넘을 수 있다는 사실도 같은 자리에 올린다 (#600
+    # H2ⓐ).** 하네스는 그 절을 자르지 않으므로(저자 결정 — 자동 절단 없음) 경고가 없으면 크기 거절
+    # (`critic_failed`)이 나기 전까지 trace에만 있다.
+    hop_obs_warning = _critic_hop_observations_warning(trace)
+    if hop_obs_warning is not None:
+        warnings.append(hop_obs_warning)
     # **그리고 크기 거절로 버린 후보도 (#514).** 러너가 그 후보를 `_drop`으로 받아 run은 가므로
     # 조용히 넘어가기 쉽다.
     warnings.extend(_auditor_overflow_warnings(trace))
@@ -1281,6 +1294,9 @@ def _analyze(
                 missings=state.missings.get(finding.finding_id, ()),
                 # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
                 source=state.finding_sources.get(finding.finding_id),
+                # Auditor가 도구 루프에서 본 관측 — 추론은 안 간다(#600 H2ⓐ · critic.py 모듈
+                # docstring).
+                hop_observations=state.finding_observations.get(finding.finding_id, ()),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
@@ -1546,6 +1562,47 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
     )
+
+
+def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
+    """Critic에 Auditor 홉 관측을 실은 요청이 (a) 추정 입력 몫을 넘을 수 있거나 (b) 크기 거절을
+    받아 관측 절을 빼고 다시 물은 건이 있거나 (c) 홉의 Critic 사본을 못 만든 건
+    (`observation_sanitize_failed`)이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
+
+    `critic_hop_observations`는 두 모양이다: 관측을 실은 호출마다 1건(`over_input_share`)과, 그
+    호출이 400/413으로 거절돼 `critic.run`이 절을 통째로 빼고 한 번 다시 물었다는 표지
+    (`observations_dropped`).
+    (a)는 글자 수 ÷ 최악 비 1.22의 **계산값**이라 「넘을 수 있다」이지 「넘었다」가 아니다 - 서버의
+    크기 거절은 (b)가 실제로 센다. 관측 절을 뺀 프롬프트도 넘는 건(`over_without_observations`)은
+    원인이 관측이 아니라 따로 센다."""
+    events = [e.data for e in trace.events if e.kind is EventKind.CRITIC_HOP_OBSERVATIONS]
+    dropped = [d for d in events if d.get("observations_dropped")]
+    carried = [d for d in events if not d.get("observations_dropped")]
+    over = [d for d in carried if d.get("over_input_share")]
+    # 가림에 실패해 Critic 사본을 못 만든 홉 - Critic 절의 사본 수가 돈 홉 수보다 작은 이유다.
+    unsanitized = sum(
+        1
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP and "observation_sanitize_failed" in e.data
+    )
+    if not over and not dropped and not unsanitized:
+        return None
+    parts = [f"Critic 요청 {len(carried)}건이 Auditor 홉 관측을 실었다"]
+    if unsanitized:
+        parts.append(f"Critic 사본을 만들지 못한 홉 {unsanitized}건(가림 실패 · 사유는 trace)")
+    if over:
+        alone = sum(1 for d in over if d.get("over_without_observations"))
+        parts.append(
+            f"그중 {len(over)}건의 추정 입력이 입력 몫({over[0].get('input_share_tokens')}토큰)을 "
+            f"넘을 수 있다 - 글자/토큰 최악 비 1.22로 센 계산값이고 하네스는 자르지 않았다"
+            f"(관측 절 없이도 넘는 건 {alone})"
+        )
+    if dropped:
+        parts.append(
+            f"{len(dropped)}건은 서버가 크기로 거절해 관측 절을 통째로 빼고 한 번 다시 물었다 "
+            "(실측한 거절이다)"
+        )
+    return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
 
 
 def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
@@ -3945,6 +4002,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
+    # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
+    observations: list[str] = []
     try:
         finding, missings = auditor.run(
             ctx,
@@ -3952,6 +4011,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             capsule=expanded,
             evidences=evidences,
             source=source,
+            observations=observations,
             # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
@@ -3983,6 +4043,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
     # 비슬라이스도 Auditor가 처음 읽은 문자열을 재사용한다(사용자 선택 B 보완안, 2026-10-05).
     state.finding_sources[finding.finding_id] = source
+    state.finding_observations[finding.finding_id] = tuple(observations)
     return True
 
 
