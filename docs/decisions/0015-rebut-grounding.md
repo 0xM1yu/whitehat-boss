@@ -162,8 +162,9 @@ is_grounded = bool(evidence_refs) or (
 Skeptic 목소리는 **G3 먼저, 축 유효성은 로깅만, G1은 P0b 뒤에**를 주장했다. 근거: 축 어휘 검사는
 **외부 앵커가 없는 자기 신고**다 - 모델이 매번 `["guard"]`를 적으면 어휘를 통과하는 일괄 기각기가 된다.
 council은 2:1로 G1을 채택했다(Architect·Pragmatist·Critic). **이 이견은 반증되지 않았다.** 그 위험을 이
-ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고 (b) `or evidence_refs`를 유지해 v6 경로를
-건드리지 않으며 (c) P0b를 별 이슈로 남기는 것으로 받는다. Skeptic의 안이 지금 서면 v7 `rebut`이 전부
+ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고 (b) `or evidence_refs`를 유지해 v6의 **ID
+경로**는 그대로 두며 - ⚠ 다만 **ID 없이 유효 축만 든 v6 `rebut`은 뒤집힌다**(위 「서빙 v6의 라우팅이
+뒤집힌다」 표 · `is_grounded`에 판 구분이 없다) - (c) P0b를 별 이슈로 남기는 것으로 받는다. Skeptic의 안이 지금 서면 v7 `rebut`이 전부
 `need_evidence`가 되어 G3 단독과 같은 결과가 된다(위 표).
 
 ## 결과
