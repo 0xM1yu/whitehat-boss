@@ -13,6 +13,7 @@
 import dataclasses
 import inspect
 import io
+import itertools
 import json
 import re
 import socket
@@ -6107,3 +6108,111 @@ def test_doctor_errors_on_an_undescribed_auditor_source_option(
     text = _doctor_text("dev_fake", tmp_path)
     lines = [line for line in text.splitlines() if "source_options" in line]
     assert lines and all(line.startswith("[ERROR") for line in lines)
+
+
+# --- 분모 전용 집계 셋 (#613·#618·#619 (d)) — 매니페스트와 report.md까지 가는 배선 -------------
+
+
+def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> None:
+    """dev_fake 완주 run: 집계가 trace에서 센 값 그대로 매니페스트·report.md에 실린다. Fake는 스키마
+    실패도 재시도도 없으므로 역할마다 잰 `0`이고 `None`이 아니다."""
+    result, trace_path = _run(tmp_path)
+
+    events = _events(trace_path)
+    roles = {e["data"]["role"] for e in _of(events, "model_call")}
+    assert roles, "model_call이 없으면 이 검사가 공허하다"
+    findings = {e["subject_id"] for e in _of(events, "pov_hop") if "action" in e["data"]}
+    assert findings, "PoV 홉이 없으면 이 검사가 공허하다"
+    expected = {
+        "schema_failure_max_run_by_role": {r: 0 for r in sorted(roles)},
+        "schema_recovered_calls_by_role": {r: 0 for r in sorted(roles)},
+        "pov_inspect_max_run_by_finding": {
+            f: max(
+                (
+                    sum(1 for _ in grp)
+                    for is_inspect, grp in itertools.groupby(
+                        e["data"]["action"] == "inspect"
+                        for e in _of(events, "pov_hop")
+                        if e["subject_id"] == f and "action" in e["data"]
+                    )
+                    if is_inspect
+                ),
+                default=0,
+            )
+            for f in sorted(findings)
+        },
+    }
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key, value in expected.items():
+        assert manifest[key] == value, key
+        assert getattr(result.record, key) == value, key
+    # 양성 핀: 집계 셋이 다 성공한 run은 이 키가 `None`이다 - `{}`가 아니다(`aggregate_failures or
+    # None`). `{}`가 실리면 「집계가 죽었는데 사유가 비었다」로 읽히고, 그것은 run.py의 「안
+    # 던졌으면 `None`」과 어긋난다. 음성 짝은 아래
+    # `test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured`다.
+    assert manifest["trace_aggregate_failures"] is None
+    assert result.record.trace_aggregate_failures is None
+    rendered = result.report.render()
+    assert "### 분모 전용 집계 (임계값 아님)" in rendered
+    assert "미측정" not in rendered, "잰 값이 있는데 미측정으로 찍혔다"
+    assert "집계 실패" not in rendered, "안 죽은 집계가 실패로 찍혔다"
+    schema_line = "연속 스키마 파싱 실패 최장(역할별, 분모만): " + " · ".join(
+        f"{r} 0" for r in sorted(roles)
+    )
+    assert schema_line in rendered
+    assert "스키마 재시도로 살아난 호출(역할별, 분모만): " in rendered
+    inspect_line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    # 규칙이 줄에 적혀 있다 - 최장 2 이상만 나열하고 나머지는 건수다. 그 건수가 분모를 맞춘다.
+    values = expected["pov_inspect_max_run_by_finding"]
+    listed = [f for f, n in values.items() if n >= 2]
+    assert "최장 2 이상인 Finding만 나열" in inspect_line
+    assert all(f in inspect_line for f in listed)
+    assert not any(f in inspect_line for f in values if f not in listed)
+    assert f"나열하지 않은 Finding {len(values) - len(listed)}건" in inspect_line
+
+
+def test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정상 경로에서 집계 하나가 던지면: run은 끝나고, 그 키만 `None`이며, 사유가 매니페스트
+    (`trace_aggregate_failures`)와 report.md(「집계 실패」)에 남는다. 「미측정(행이 없다)」으로
+    찍히면 안 된다 - 같은 `None`이라도 원인이 다르다(CLAUDE.md §0). 나머지 둘은 평소처럼 센다."""
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("집계 결함")
+
+    monkeypatch.setattr(runner, "pov_inspect_max_run_by_finding", broken)
+    result, trace_path = _run(tmp_path)
+
+    key = "pov_inspect_max_run_by_finding"
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest[key] is None and getattr(result.record, key) is None
+    assert manifest["trace_aggregate_failures"] == {key: "ValueError: 집계 결함"}
+    assert result.record.trace_aggregate_failures == {key: "ValueError: 집계 결함"}
+    assert manifest["schema_failure_max_run_by_role"], "다른 집계까지 잃었다"
+    assert manifest["schema_recovered_calls_by_role"], "다른 집계까지 잃었다"
+    assert any(key in w and "집계 결함" in w for w in result.warnings), result.warnings
+    inspect_line = next(
+        ln for ln in result.report.render().splitlines() if ln.startswith("PoV 연속 inspect")
+    )
+    assert "집계 실패: ValueError: 집계 결함" in inspect_line
+    assert "미측정" not in inspect_line
+    assert "미측정" not in result.report.render(), "잰 두 줄까지 미측정으로 찍혔다"
+
+
+def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Path) -> None:
+    """모델을 한 번도 안 부른 run의 집계는 `None`이다 - `{}`도 `0`도 아니다 (CLAUDE.md §0).
+    report.md는 그 줄을 **빼지 않고** 「미측정」으로 찍는다 - 안 쟀다와 안 그렸다가 갈려야 한다."""
+    result, trace_path = _run(tmp_path, stop_after=int(Stage.RETRIEVAL))
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key in (
+        "schema_failure_max_run_by_role",
+        "schema_recovered_calls_by_role",
+        "pov_inspect_max_run_by_finding",
+    ):
+        assert key in manifest and manifest[key] is None, key
+    lines = [ln for ln in result.report.render().splitlines() if "분모만" in ln]
+    assert len(lines) == 3 and all("미측정" in ln for ln in lines), lines
+    assert not any(re.search(r"0", ln) for ln in lines), "미측정 줄에 0이 찍혔다"
