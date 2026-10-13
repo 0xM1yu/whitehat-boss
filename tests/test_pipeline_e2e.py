@@ -4718,7 +4718,7 @@ def test_an_empty_pov_pool_reaches_the_run_warnings(
 def _critic_rebuts_every_finding(monkeypatch: pytest.MonkeyPatch) -> None:
     """Critic이 모든 Finding을 근거 있는 반박(F-6 -> `QUEUED`)으로 판정하게 한다."""
 
-    def rebut(ctx, *, decision_id, finding, evidences, source=None):  # noqa: ANN001, ANN202
+    def rebut(ctx, *, decision_id, finding, evidences, source=None, hop_observations=()):  # noqa: ANN001, ANN202
         return Decision(
             decision_id=decision_id,
             run_id=ctx.run_id,

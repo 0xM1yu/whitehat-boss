@@ -1355,7 +1355,8 @@ def source_lines(text: str) -> list[str]:
     r"""인덱스 줄 번호와 같은 좌표로 원문을 줄로 나눈다 -> `\n`에서만 끊고 줄 끝 `\r`만 뗀다.
 
     인덱서는 tree-sitter 행(`start_point[0] + 1`)을 쓰고 그 행은 `\n`에서만 넘어간다.
-    `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·` `에서도 끊어 그 글자마다
+    `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·`\u2028`에서도 끊어
+    그 글자마다
     한 줄씩 밀린다 -> 폼피드가 많은 파일(ImageMagick 등)에서 함수 범위가 주석부터 시작하고
     끝이 잘렸다(#446). 슬라이서 좌표는 `slices.split_source`가 같은 이유로 따로 맞춘다(#259).
 
