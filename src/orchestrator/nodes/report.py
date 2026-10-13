@@ -36,6 +36,9 @@ _GRADE_UNKNOWN = "-"
 _GRADE_RANK_UNKNOWN = 99
 # 요약 줄에 등급을 높은 것부터 적는다 (PR #37).
 _GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
+# PoV 연속 `inspect` 최장 줄이 Finding을 나열하는 하한(#619 (d)). 줄이 Finding 수에 비례해 자라지
+# 않게 하는 표시 규칙일 뿐 판정 임계값이 아니다 - 값은 manifest에 Finding별로 전부 남는다.
+_INSPECT_LISTED_MIN = 2
 
 
 @dataclass(frozen=True)
@@ -117,10 +120,72 @@ class Report:
     # 같은 이유다. 줄을 아예 빼지 않는 것은 「안 쟀다」가 리포트에서 사라지면 읽는 쪽이
     # 게이트가 안 돈 run과 구별할 수 없기 때문이다. 같은 말을 `docs/evaluation.md` §5.1이 한다.
     location_overlap: dict[str, int] = field(default_factory=dict)
+    # trace에서 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 (d)) — 러너가 `RunRecord`에 싣는
+    # 값을 그대로 받는다(산식은 `trace.py`). `None`은 그 종류의 trace 행이 없었다(안 쟀다)이고
+    # 「미측정」 줄로 찍는다 - `0`을 지어 찍지도, 줄을 빼지도 않는다(CLAUDE.md §0). 임계값이
+    # 아니다: 값은 실험팀 몫이다.
+    schema_failure_max_run: dict[str, int] | None = None
+    schema_recovered_calls: dict[str, int] | None = None
+    pov_inspect_max_run: dict[str, int] | None = None
+    # 위 셋 중 집계가 던져 `None`이 된 키 → 사유(`RunRecord.trace_aggregate_failures`). 그 키의 줄은
+    # 「미측정」이 아니라 「집계 실패」로 찍는다.
+    trace_aggregate_failures: dict[str, str] | None = None
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
         return self.grades.get(finding.finding_id)
+
+    def _aggregate_lines(self) -> list[str]:
+        """분모 전용 집계 셋(#613·#618, 셋째는 #619 (d))의 줄. `None`은 **생략이 아니라 「미측정」
+        줄**이다 - 안 쟀다와 안 그렸다가 페이지에서 갈려야 한다(CLAUDE.md §0). 임계값이 아니다."""
+        failures = self.trace_aggregate_failures or {}
+
+        def unmeasured(key: str) -> str:
+            # `None`은 「행이 없다」와 「집계가 죽었다」 둘 다다 - 사유가 있으면 그것을 적는다.
+            if key in failures:
+                return f"집계 실패: {failures[key]}"
+            return "미측정 — trace 행이 없거나 집계가 실패했다(실패면 run 경고에 사유)"
+
+        def per_key(label: str, counts: dict[str, int] | None, key: str) -> str:
+            if counts is None:
+                return f"{label}: {unmeasured(key)}"
+            return f"{label}: " + " · ".join(f"{key} {n}" for key, n in counts.items())
+
+        runs = self.pov_inspect_max_run
+        if runs is None:
+            inspect_line = (
+                "PoV 연속 inspect 최장(Finding별, 분모만): "
+                + unmeasured("pov_inspect_max_run_by_finding")
+            )
+        else:
+            # 줄이 Finding 수에 비례해 자라지 않게 한다 - 최장 2 이상만 나열하고 나머지는 건수다.
+            long_runs = {fid: n for fid, n in runs.items() if n >= _INSPECT_LISTED_MIN}
+            rest = len(runs) - len(long_runs)
+            listed = " · ".join(f"{fid} {n}" for fid, n in long_runs.items())
+            listed = listed or f"최장 {_INSPECT_LISTED_MIN} 이상 없음"
+            inspect_line = (
+                f"PoV 연속 inspect 최장(Finding별, 분모만 - 최장 {_INSPECT_LISTED_MIN} 이상인 "
+                f"Finding만 나열): {listed} · 나열하지 않은 Finding {rest}건 "
+                f"(최장 {_INSPECT_LISTED_MIN - 1} 이하)"
+            )
+        return [
+            "### 분모 전용 집계 (임계값 아님)",
+            "",
+            per_key(
+                "연속 스키마 파싱 실패 최장(역할별, 분모만)",
+                self.schema_failure_max_run,
+                "schema_failure_max_run_by_role",
+            ),
+            "",
+            per_key(
+                "스키마 재시도로 살아난 호출(역할별, 분모만)",
+                self.schema_recovered_calls,
+                "schema_recovered_calls_by_role",
+            ),
+            "",
+            inspect_line,
+            "",
+        ]
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -208,6 +273,7 @@ class Report:
                 f"(상한 {self.critic_top_n} · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
+        lines += self._aggregate_lines()
         for state in _STATE_ORDER:
             group = [f for f in self.findings if f.state is state]
             if not group:
@@ -292,6 +358,10 @@ def run(
     ne_absorbed: dict[str, int] | None = None,
     pov_results: dict[str, str] | None = None,
     location_overlap: dict[str, int] | None = None,
+    schema_failure_max_run: dict[str, int] | None = None,
+    schema_recovered_calls: dict[str, int] | None = None,
+    pov_inspect_max_run: dict[str, int] | None = None,
+    trace_aggregate_failures: dict[str, str] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
@@ -345,6 +415,10 @@ def run(
         ne_absorbed=dict(ne_absorbed) if ne_absorbed else {},
         pov_results=dict(pov_results) if pov_results else {},
         location_overlap=dict(location_overlap) if location_overlap else {},
+        schema_failure_max_run=schema_failure_max_run,
+        schema_recovered_calls=schema_recovered_calls,
+        pov_inspect_max_run=pov_inspect_max_run,
+        trace_aggregate_failures=trace_aggregate_failures,
     )
 
 

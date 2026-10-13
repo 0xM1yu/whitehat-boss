@@ -371,6 +371,23 @@ class RunRecord(UtcModel):
     # 같다). 0건이 아니라 「안 쟀다」다 - `slicer`·`oracle`과 같은 관용구라 옛 manifest가 그대로
     # 로드된다.
     location_overlap: dict[str, int] | None = None
+    # trace에서 run 끝에 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 선택지 (d)) — 하네스는
+    # 동작을 안 바꾸고 값(상한 등)은 실험팀이 정한다. `None`은 **그 종류의 trace 행이 하나도
+    # 없었다**(안 쟀다 - 0이 아니다, CLAUDE.md §0)이고 이 필드 이전의 manifest도 같다(`slicer`와
+    # 같은 관용구 - 하위호환 유지).
+    # `{}`는 나오지 않는다 - 행이 있으면 그 역할·Finding은 잰 `0`으로라도 든다. 산식은 `trace.py`.
+    #
+    # 역할 → 연속 `SchemaParseError` `model_call`의 최장 길이((역할, 대상)별 연속, 역할별 최댓값).
+    schema_failure_max_run_by_role: dict[str, int] | None = None
+    # 역할 → 스키마 재시도로 살아난(`ok`·`attempts>1`) `model_call` 수.
+    schema_recovered_calls_by_role: dict[str, int] | None = None
+    # Finding → 연속 `inspect` PoV 홉의 최장 길이(`action`을 실은 `pov_hop`만 - #619 (d)).
+    pov_inspect_max_run_by_finding: dict[str, int] | None = None
+    # 위 셋 중 **센 집계가 던져서** `None`이 된 키 → 사유(`ExcType: 메시지`). 「그 종류의 행이
+    # 없다」와 「집계가 죽었다」가 같은 `None`이라 갈라 읽는 자리다(CLAUDE.md §0 - 안 쟀다와 못
+    # 쟀다). 안 던졌으면 `None`이고 이 필드 이전의 manifest도 같다(위와 같은 관용구). 같은 사유는
+    # run 경고(stderr)에도 간다.
+    trace_aggregate_failures: dict[str, str] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime
