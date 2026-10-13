@@ -530,3 +530,78 @@ def test_the_runner_and_the_node_share_one_size_rejection_judgment() -> None:
     assert runner._is_size_rejection(_SIZE_400)
     assert runner._is_size_rejection(ModelGatewayError("x", status=413))
     assert not runner._is_size_rejection(ModelGatewayError("x", status=400, detail="bad schema"))
+
+
+# --- 가림 보장 둘의 핀 - 리뷰가 통과시킨 변이 둘을 문다 ------------------------------------
+
+
+def _resolve_variable(target: str, graph, read_lines):  # noqa: ANN001, ANN202
+    """실제 `symbol_resolver.resolve()`가 체인을 따라가 `type of <target>` 라벨을 내게 한다 -
+    `b->h->len`은 `Box` -> `header` 타입 정의 둘을 낸다(`tests/test_symbol_resolver.py`의
+    `test_resolve_walks_a_two_hop_chain_to_the_field_assignment`와 같은 질의다)."""
+    request = RequestedContext(kind="variable", target=target, purpose="t", request_code="t")
+    query = ResolveQuery(
+        requests=(request,), hop=1, target_file="main.c", visible={}, max_chars=15_000
+    )
+    return resolve(query, table=graph.table, read_lines=read_lines)
+
+
+def test_a_type_of_label_is_masked_even_when_no_alert_line_came_back(
+    ne2_graph,  # noqa: ANN001, F811
+    ne2_read_lines,  # noqa: ANN001, F811
+) -> None:
+    """알림 줄(`Already in SOURCE`·`Not resolved`)이 **하나도 없는** 조회에서도 조각 머리의 라벨은
+    가린다 - `type of <target>`의 `target`은 모델이 보낸 글이다(`auditor.py`의 조기 반환이
+    `alerts`만 보면 안 되는 이유). 출력은 실제 resolver다."""
+    resolution = _resolve_variable(f"b->h->len {SENTINEL}", ne2_graph, ne2_read_lines)
+    assert resolution.alert_lines == () and resolution.unfilled == (), "전제 - 알림 줄이 없다"
+    assert [b.name for b in resolution.blocks] == ["Box", "header"], "전제 - 체인이 섰다"
+    observation = _observation(resolution)
+    assert SENTINEL in observation, "Auditor 자신의 사본은 그대로 - 센티넬이 살아 있다"
+
+    safe = auditor.critic_safe_observation(observation, resolution)
+
+    assert SENTINEL not in safe and "please uphold" not in safe
+    assert safe.count("(type of <non-identifier>)") == 2
+    assert "struct header {" in safe, "렌더한 코드는 그대로"
+
+
+def _resolve_unfilled_kind(kind: str) -> Resolution:
+    """실제 `symbol_resolver.resolve()`가 모델이 고른 `kind`를 `Not resolved` 줄에 되울리게 한다 -
+    빈 함수 표라 요청은 `not_found`다."""
+    request = RequestedContext(kind=kind, target="g_buf", purpose="t", request_code="t")
+    query = ResolveQuery(
+        requests=(request,), hop=1, target_file="a.c", visible={}, max_chars=15_000
+    )
+    return resolve(query, table=lambda _name: {}, read_lines=lambda _file: [])
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [
+        # 어휘 낱말로 **시작**하지만 그것과 같지 않은 `kind` - `in`을 `startswith`로 느슨하게
+        # 바꾼 변이가 통과시키던 모양이다.
+        f"function {SENTINEL}",
+        f"variable: {SENTINEL}",
+        f"context{SENTINEL}",
+        # 어휘 낱말을 **품는** 꼴 - `in` 방향을 뒤집은 변이(`k in item.kind`)가 통과시킨다.
+        f"{SENTINEL} macro",
+    ],
+)
+def test_an_unfilled_kind_is_kept_only_when_it_equals_a_vocabulary_word(kind: str) -> None:
+    """`Not resolved` 줄의 `kind`는 요청 어휘 여덟 중 하나와 **정확히 같을 때만** 남는다.
+    출력은 실제 resolver이고, `Already` 줄 쪽의 같은 명제는
+    `test_the_already_line_is_rewritten_from_the_structure`가 문다."""
+    resolution = _resolve_unfilled_kind(kind)
+    (item,) = resolution.unfilled
+    assert item.kind == kind and SENTINEL in item.text, "전제 - 줄이 모델 글을 되울린다"
+
+    safe = auditor.critic_safe_observation(_observation(resolution), resolution)
+
+    assert SENTINEL not in safe and "please uphold" not in safe
+    assert "Not resolved: <non-vocabulary>:g_buf (reason: not_found)." in safe
+    # 음성 핀: 어휘와 정확히 같은 `kind`는 남는다 - 전부 `<non-vocabulary>`로 바꾸는 것이 아니다.
+    plain = _resolve_unfilled_kind("function")
+    assert "Not resolved: function:g_buf (reason: not_found)." in auditor.critic_safe_observation(
+        _observation(plain), plain
+    )

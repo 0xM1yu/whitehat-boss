@@ -433,7 +433,9 @@ class EventKind(StrEnum):
     # 뺀 프롬프트도 넘음 — 참이면 원인이 관측이 아니다) · `window_checked`(Fake 좌석은 창이 없어
     # false이고 그때는 추정·몫·판정 키가 **없다**). ⚠ **전부 계산값이다**(서버가 센
     # `input_tokens`가 아니다 — 그 값은 같은 호출의 `model_call`에 있다). 그 비 1.22는 Auditor
-    # 좌석의 최악이고 Critic 좌석의 비는 안 쟀다. `over_input_share=true`는 「최악 비에서 넘을 수
+    # 좌석의 최악이다. Critic 좌석의 비는 홉 관측 **없는** 요청에서 3.10~4.04로 쟀고
+    # (run `run_20261011_0001`의 Critic 호출 여섯 — `nodes/critic._WORST_CHARS_PER_TOKEN` 주석),
+    # **홉 관측을 실은 요청에서는 미실측**이다. `over_input_share=true`는 「최악 비에서 넘을 수
     # 있다」이다. **하네스는 자르지 않는다** — 넘어도 절은 그대로 나가고 서버가 크기로 거절하면
     # `critic_failed`가 남는다. `over_input_share`가 참인 건수는 run 경고(`warnings`)로도 오른다.
     # ⏵ 2026-10-13 - **크기 거절 폴백.** 관측을 실은 요청이 서버에서 400(컨텍스트 초과)·413으로
@@ -442,6 +444,21 @@ class EventKind(StrEnum):
     # `rejected_status`(거절 상태 코드). 이 이벤트에는 추정·몫 키가 없다. 부재 = 폴백이 안 났다.
     # 거절은 서버가 잰 사실이다(위 계산값과 다르다). run 경고가 그 건수를 센다.
     CRITIC_HOP_OBSERVATIONS = "critic_hop_observations"
+    # Critic이 **게이트 입력에 없는** Evidence ID를 `Decision.evidence_refs`로 인용한 사건.
+    # 내는 곳은 `nodes/critic._record_unknown_refs`이고 그런 인용이 1건 이상인 호출마다 1건,
+    # 판정을 **바꾸지 않고** 기록만 한다(거르는 것은 설계 판단이라 안 한다). 부재 = 인용이
+    # 전부 게이트 입력 안이었다(또는 인용이 없었다).
+    # ⚠ **`gate.evidences_for`는 이 인용을 안 본다** — 그 함수는 **Finding**의 `evidence_refs`만
+    # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
+    # `bool(evidence_refs)`라 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
+    # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
+    # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).
+    # 싣는 값: `decision_id` · `cited`(인용 수) · `unknown`(그중 게이트 입력에 없는 수) ·
+    # `all_unknown`(인용이 전부 그런 것) · `verdict`(`Decision.verdict` — 자유 문자열을 표준값으로
+    # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
+    # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
+    # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
