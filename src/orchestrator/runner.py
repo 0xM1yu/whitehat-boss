@@ -2532,7 +2532,7 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5·v6 = 서빙 판은 형제
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6은 형제
     `PovActionNamed`)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로

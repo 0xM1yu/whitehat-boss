@@ -837,7 +837,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5·v6 = 서빙 판은 `PovActionNamed`)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
