@@ -219,3 +219,19 @@ def test_scout_slice_trim_keeps_the_warn_when_the_prompt_cannot_be_read(monkeypa
     # 로드 실패는 `_check_prompts`가 ERROR로 댄다 — 여기서는 모른다고 조용해지지 않고 WARN을 살린다.
     checks = _trim_checks(monkeypatch, PromptError)
     assert [c.severity for c in checks] == [cli.Severity.WARN]
+
+
+def _trim_checks_with_scout_version(version):
+    """실 `_slice_input_prompts`(갈아끼우지 않음)로 세 Scout 좌석이 고른 판을 갈라 부른다."""
+    config = load_config("harness_pool")
+    config = config.transition(thresholds=config.thresholds.transition(scout_slice_trim=1))
+    for role in ("scout_memory", "scout_boundary", "scout_injection"):
+        config = _version(config, role, version)
+    return cli._check_scout_slice_trim(config)
+
+
+def test_scout_slice_trim_follows_the_wired_prompts_input_declaration():
+    # 양성 원천: prompts/scout_*/v3/meta.yaml이 `input: slice`, v4가 `input: source`(#529).
+    # 위 테스트들은 `_slice_input_prompts`를 갈아끼운다 — 이쪽은 meta 선언 두 값을 실제로 읽는다.
+    assert _trim_checks_with_scout_version("v4") == []
+    assert [c.severity for c in _trim_checks_with_scout_version("v3")] == [cli.Severity.WARN]

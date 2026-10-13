@@ -124,8 +124,9 @@ class FakeRetriever:
         # 그래프가 주입되지 않은 호출부(어댑터 단위 테스트)는 경로 없는 인덱스를 쓴다 —
         # `status=missing`이 되어 그래프 섹션이 부재한다. 빈 그래프를 지어내지 않는다.
         self.graph = graph if graph is not None else GraphIndex(None)
-        # 슬라이스 id → 렌더. Scout `SOURCE`와 **같은 조회**다(`build_deps`가 둘에 같은 것을
-        # 넣는다) — 다르면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다(`read_symbol_source` 주석).
+        # 슬라이스 id → 렌더. `input: slice` 프롬프트의 Scout `SOURCE`와 **같은 조회**다
+        # (`build_deps`가 둘에 같은 것을 넣는다; `input: source`면 Scout는 함수 본문 — #529)
+        # — 다르면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다(`read_symbol_source` 주석).
         self.read_slice = read_slice
         # 그 렌더를 낸 슬라이서 run의 `run_signature`. 캐시 키에 든다(`cache_key_for`).
         self.slice_signature = slice_signature
