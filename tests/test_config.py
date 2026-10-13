@@ -573,8 +573,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v14(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v14`를 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v15`를 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -601,10 +601,13 @@ def test_the_canonical_auditor_selects_prompt_v14(profile: str) -> None:
     하나로 간다. v12는 열린 PR #580이 쓰는 번호라 건너뛰었다. v11을 그 자리에서 고치지 않은 것은
     FACTS가 v11의 요청 바이트라서다(같은 규칙 1). ⏵ **v14**(2026-10-11 · 이슈 #67 · #578) = v12 +
     같은 FACTS 변경 — v13은 봉투가 v11 것이라 v12 계약인 FT 정답과 어긋났다. v13의 요청
-    바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1)."""
+    바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1). ⏵ **v15**(2026-10-13 · S19) =
+    v14 + 계약 문장 여섯(`probe`가 `spec`을 `poc`에 싣는다 등 — `prompts/auditor/v15/meta.yaml`).
+    봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
+    바뀌었다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v14"
+    assert config.model_for("auditor").prompt_template_version == "v15"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -703,8 +706,18 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
     # `test_v5_evidence_completeness_wording`과 같고, 그쪽은 경로에 v5를 하드코딩한다.
     assert "factual summary" not in flat
+    # ⏵ 2026-10-13 — v15가 「유계 발췌이고 생성 요약이 아니다」 문장을 **일부러 뺐다**(접힌
+    # semgrep 로그는 발췌가 아니다). 대신 같은 자리가 「is bounded: …」로 시작한다.
+    # 철자는 **서빙 판의 것**이다 - 판별이 OR이면 v15에서 v14의 옛 문장이 되살아나도 통과한다.
+    excerpt_sentence = {
+        "v14": "not a generated summary",
+        "v15": "is bounded: some execution-header lines are removed",
+    }
+    assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
+    assert excerpt_sentence[version] in flat
+    has_old = "not a generated summary" in flat
+    assert has_old == (version == "v14"), "v15가 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
-        "not a generated summary",
         "`truncated` is false",
         "line containing only `...`",
         r"`\n...\n`",

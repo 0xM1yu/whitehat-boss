@@ -183,6 +183,11 @@ class RunContext:
     # 요구하는 것은 역할별 **지표**이지 역할별 상한이 아니다. 역할을 아는 곳이 여기이고,
     # 이 값은 `runner.unmeasured_gpu_warning()`의 입력이 된다.
     gpu_unmeasured_roles: dict[str, int] = field(default_factory=dict)
+    # 2단계(`signals.run`)가 **컴파일러 오류 문구를 들고 실패한** `build`·`clang-tidy` Evidence —
+    # 키는 그 호출의 `workdir`(= `artifact.path`)다. `with_signal()`이 `ok=False`를 걸러 타깃의
+    # `evidences` 에는 안 남으므로 따로 둔다(이슈 #507). 8단계 PoV·5단계 Auditor 루프의 hop0
+    # 노트가 읽고, 없으면 노트도 없다(요청 바이트가 종전과 같다).
+    compile_failures: dict[str, tuple[Evidence, ...]] = field(default_factory=dict)
     # 마지막으로 진입한 단계. Retriever 콜백이 자기 단계를 모르므로 여기서 채운다.
     current_stage: Stage = Stage.PREPROCESS
     # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
