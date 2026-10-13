@@ -8,18 +8,20 @@
 그리고 문서가 요구한 계약뿐이다.
 """
 
+import enum
 import errno
 import hashlib
 import json
 import re
 import sqlite3
 import tempfile
+import types
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import get_args
+from typing import Annotated, Literal, Optional, Union, get_args, get_origin
 
 import pytest
-from pydantic import model_validator
+from pydantic import BaseModel, model_validator
 
 from src.adapters import fake_tools, sqlite_store
 from src.adapters.factory import WIRINGS, build_deps
@@ -1087,12 +1089,53 @@ def test_the_ddl_normalizer_ignores_comments_and_spacing_but_not_a_token() -> No
     assert _normalized_ddl_hash(changed) != _normalized_ddl_hash(base)
 
 
-def _kind_field_fingerprint(model: type) -> str:
-    """모델의 (필드 이름, 타입 표기) 짝을 정렬해 sha256을 낸다.
+def _type_notation(tp: object, seen: frozenset = frozenset()) -> str:
+    """타입 표기를 파이썬·pydantic 판에 안 흔들리는 문자열로 정규화한다.
 
-    표기는 `repr(FieldInfo.annotation)`이다 — 기본값·`Field` 제약·validator는 안 든다.
+    `repr(annotation)`은 판마다 다르다(`Optional[X]` ↔ `X | None`). 그래서 직접 푼다 —
+    Union·Optional·`|`는 모두 `Union[...]`(인자 이름순), `Annotated`는 기저 타입만, 클래스는
+    `__name__`, 제네릭은 원본 이름 + 인자, `Literal`은 값 목록, Enum은 (멤버 이름=값) 목록,
+    중첩 pydantic 모델은 (필드 이름, 표기) 목록이다(`seen`이 순환을 끊는다).
+    ponytail: Annotated 안의 제약(`Field`·`StringConstraints`)은 안 든다 — 한계로 적혀 있다.
     """
-    items = sorted((name, repr(f.annotation)) for name, f in model.model_fields.items())
+    origin = get_origin(tp)
+    if origin is Annotated:
+        return _type_notation(get_args(tp)[0], seen)
+    if origin is Union or origin is types.UnionType:
+        return "Union[" + ",".join(sorted(_type_notation(a, seen) for a in get_args(tp))) + "]"
+    if origin is Literal:
+        vals = (  # Enum 멤버의 repr은 판 따라 달라질 수 있어 이름=값으로 직접 쓴다
+            f"{type(a).__name__}.{a.name}={a.value!r}" if isinstance(a, enum.Enum) else repr(a)
+            for a in get_args(tp)
+        )
+        return "Literal[" + ",".join(sorted(vals)) + "]"
+    if origin is not None:
+        args = ",".join(_type_notation(a, seen) for a in get_args(tp))
+        return f"{getattr(origin, '__name__', repr(origin))}[{args}]"
+    if tp is None or tp is type(None):
+        return "None"
+    if isinstance(tp, type) and issubclass(tp, enum.Enum):
+        members = sorted(f"{m.name}={m.value!r}" for m in tp)
+        return f"Enum:{tp.__name__}({','.join(members)})"
+    if isinstance(tp, type) and issubclass(tp, BaseModel):
+        if tp in seen:
+            return f"Model:{tp.__name__}(...)"
+        inner = sorted(
+            (n, _type_notation(f.annotation, seen | {tp})) for n, f in tp.model_fields.items()
+        )
+        return f"Model:{tp.__name__}{inner}"
+    return getattr(tp, "__name__", None) or repr(tp)
+
+
+def _kind_field_fingerprint(model: type) -> str:
+    """모델의 (필드 이름, 정규화한 타입 표기) 짝을 정렬해 sha256을 낸다.
+
+    표기는 `_type_notation`이다 — 기본값·`Field` 제약·validator는 안 든다.
+    """
+    items = sorted(
+        (name, _type_notation(f.annotation, frozenset({model})))
+        for name, f in model.model_fields.items()
+    )
     return hashlib.sha256(repr(items).encode("utf-8")).hexdigest()
 
 
@@ -1104,24 +1147,26 @@ def _kind_field_fingerprints() -> dict[str, str]:
 # 있어도) 지우거나 타입을 바꿨으면 같은 커밋에서 판을 올리고 이 짝을 같이 갱신한다** — 저장은
 # JSON 한 컬럼이라 DDL이 그대로여서 `_PINNED_SCHEMA`가 못 무는 자리다(이슈 #594 ·
 # `sqlite_store.py` 모듈 docstring의 올림 규칙).
-# 지문은 `86c3a26a`(이 브랜치 머리)에서 쟀고 그때 판은 1이었다.
-# ⚠ 이 짝이 무는 것은 **필드 이름 집합 · 타입 표기 · `KIND_MAP` 종류 집합**이다. 참인 명제는
-# 「이 지문으로 바뀌면 죽는다」다 — validator·기본값·`Field` 제약만 바뀌면 지문은 그대로이고,
+# 지문은 판 1일 때 쟀다. 잰 환경: CPython 3.14.5 · pydantic 2.13.4. 정규화(`_type_notation`)는
+# 파이썬·pydantic 판에 안 흔들리게 쓰였으나 **3.11에서는 미실행**이다(이 장비에 3.11이 없다) —
+# 3.11에서 어긋나면 이 값을 그 환경에서 다시 재야 한다.
+# ⚠ 이 짝이 무는 것은 **필드 이름 집합 · 정규화한 타입 표기(Enum 멤버·`Literal` 값·중첩 모델의
+# 필드 포함) · `KIND_MAP` 종류 집합**이다. 참인 명제는 「이 지문으로 바뀌면 죽는다」다 —
+# validator·기본값·`Annotated`의 `Field`/`StringConstraints` 제약만 바뀌면 지문은 그대로이고,
 # 그 경우도 판을 올려야 할 수 있다(모듈 docstring의 「값 집합을 넓히거나 좁히기」·「뜻만 바뀐
 # 필드」. `Finding.cwe`가 그 예다 — `src/schemas/finding.py`의 `_FindingCwe`).
-# ⚠ 표기는 pydantic·파이썬 판에 달렸다(잰 환경은 pydantic 2.12.4 · CPython 3.11). 판이 올라
-# 표기만 바뀌면 모델이 그대로여도 빨개진다 — 그때는 저장 형태 판을 올리지 말고 지문만 갱신한다.
+# ⚠ 표기만 바뀌어 빨개지면(라이브러리 판 이동) 저장 형태 판을 올리지 말고 지문만 갱신한다.
 _PINNED_KIND_FIELDS = (
     1,
     {
-        "artifact": "8eea8b0fd18b150d52aab684c6d943cf7069367d2b42522ff178cd2b3204d6d2",
-        "candidate": "380295d3958c46e31d5a9f9e961b9bf2c2add5f9f9b9846430b30df007560550",
-        "evidence": "8183ed893060ffe77f9e86633bd74d83cec759b6d53432d218ecbdfa15f4d5ef",
-        "finding": "ef67fb76b9918b65b86c8aa885c6afe9536312b771d87dfd7e2f46d88cf44464",
-        "missing_evidence": "ad6b9a45c5d8ba5c46018fb6748b9cfb9f42bca0b11ce97e7d54afc35eddc522",
-        "decision": "cfd7cc671c05ba7169fc283348f03d9cb7a665cf1e3009bcc8e6501f7bf2ca01",
-        "capsule": "17f838e61acf16b926e78038ac8ca36a268ecfc4f267b0bd9d11b6b858e5359b",
-        "run": "c3af41e4e66801d954c4cd3a456a516d84eb2bf4e0a7d2707b1c5c0fd4ec44b3",
+        "artifact": "dd314177f00d12af5402a63f632a227663ca2146a1024cd52e3cff89ca7ab56f",
+        "candidate": "245bc19e92f6dcea8897822c7a3a524581a11eb797d8546106d924a63d92c4a2",
+        "evidence": "b3db754059cb1c1cf899e00b73c1f292e7b9bbde4810400a0d8401aa1df219b5",
+        "finding": "4fd7cc52eaf8885ecea7ac393f1499d9ce8f2f37aaed17400cdeee22efd5aaa1",
+        "missing_evidence": "5e9a017771fe115254bad8871eb6af709baa75d22db659750f0850083ba22db8",
+        "decision": "03b43880636ce24dae6e26c2bdaeb042c6cb413caafcd10c494e932c86df332e",
+        "capsule": "dbbc8932e9d63e1eb3eee9fc37b1c58f8d3cdac8ff1daead3b7f6b627eb6f4d2",
+        "run": "f4348f5dae0a91b53effd1263d9f805979e74fdbac122b8dad545016f228f65c",
     },
 )
 
@@ -1161,6 +1206,32 @@ def test_the_kind_field_fingerprint_bites_a_new_field_but_not_prose_or_a_validat
     assert _kind_field_fingerprint(ProseOnly) == base  # 음성
     # 음성이고 **한계**다 — validator만 바뀌어도 판을 올려야 할 수 있는데 지문은 안 움직인다.
     assert _kind_field_fingerprint(ValidatorOnly) == base
+
+
+def test_the_type_notation_ignores_the_union_spelling_but_bites_enum_and_nested_fields() -> None:
+    class Color(enum.Enum):
+        RED = "red"
+
+    class MoreColor(enum.Enum):
+        RED = "red"
+        BLUE = "blue"
+
+    class Inner(BaseModel):
+        a: int
+
+    class InnerPlus(BaseModel):
+        a: int
+        b: int
+
+    # 판 독립 — 3.11의 `Optional[X]`와 3.14의 `X | None`, 인자 순서가 같은 표기로 접힌다.
+    assert _type_notation(Optional[str]) == _type_notation(str | None)  # noqa: UP045
+    assert _type_notation(Union[int, str]) == _type_notation(str | int)  # noqa: UP007
+    assert _type_notation(Annotated[str, "meta"]) == _type_notation(str)
+    # 양성 — Enum 멤버 추가 · 중첩 모델 필드 추가 · 인자 타입 변경.
+    # 이름이 다른 두 Enum이라 멤버 부분(`(` 뒤)만 비교한다.
+    assert _type_notation(Color).split("(")[1] != _type_notation(MoreColor).split("(")[1]
+    assert _type_notation(list[Inner]) != _type_notation(list[InnerPlus])
+    assert _type_notation(list[int]) != _type_notation(list[str])
 
 
 # --- factory ----------------------------------------------------------------
