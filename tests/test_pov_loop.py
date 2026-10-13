@@ -45,8 +45,10 @@ from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import pov as pov_node
 from src.orchestrator.nodes import preprocess
+from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
+from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind, pov_inspect_max_run_by_finding
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location, ProducedBy
@@ -1361,7 +1363,8 @@ def test_pov_v2_prompt_ignores_the_pr_inputs_and_keeps_the_pre_pr_finding_format
     ① v2 FINDING 블록이 main `d85ea62`의 옛 모양과 **글자째** 같다(`_pre_pr_finding_block`).
     ② 이 PR의 입력을 전부 채운 렌더와 하나도 안 채운 렌더가 **prefix·body 모두 같다**
        (SOURCE·FACTS·FINDING 어디로도 새지 않는다).
-    ③ FACTS 키 집합이 opt-in 둘(`slice_criterion`·`fuzz_entrypoint`)을 뺀 `FACT_KEYS`와 같다.
+    ③ FACTS 키 집합이 opt-in 셋(`slice_criterion`·`fuzz_entrypoint`·`auditor_hops`)을 뺀
+       `FACT_KEYS`와 같다.
     ④ v2 프롬프트 파일(prefix·body·meta)의 해시가 main blob과 같다 — 파일이 안 바뀌었다.
 
     ⚠ **「main과 바이트가 같다」의 전부는 아니다.** v2 요청에는 이 검사가 못 보는 차이가 둘 더
@@ -1385,7 +1388,7 @@ def test_pov_v2_prompt_ignores_the_pr_inputs_and_keeps_the_pre_pr_finding_format
     assert body_a == body_b, "v2 body가 이 PR의 입력에 따라 달라졌다"
     assert prompt_a.prefix == prompt_b.prefix
     facts = json.loads(prompt_a.body.split("```json")[1].split("```")[0])
-    assert set(facts) == set(FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint"}
+    assert set(facts) == set(FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint", "auditor_hops"}
     for name, digest in _V2_PROMPT_SHA256.items():
         text = (PROMPTS_DIR / "pov" / "v2" / name).read_text(encoding="utf-8")
         assert hashlib.sha256(text.encode()).hexdigest() == digest, f"v2/{name}이 바뀌었다"
@@ -2022,6 +2025,31 @@ def test_tool_call_events_carry_the_input_size_and_digest_never_the_bytes(
     forms = (canary.decode(), canary.hex(), canary.hex().upper(), base64.b64encode(canary).decode())
     for form in forms:
         assert form not in blob, f"원바이트가 trace에 실렸다: {form[:10]}…"
+
+
+def test_tool_call_event_carries_the_harness_note_only_when_the_evidence_has_one(
+    ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """이슈 #573 — `Evidence.harness_note`는 `tool_call` 이벤트에도 실린다(보고서가 모호성 건수를
+    `state.db`가 아니라 로그에서 센다). `error`처럼 있을 때만 — 없으면 **키 자체가 없다**."""
+    note = "note: exit=1 is ambiguous"
+    real_run = ctx.tools.run
+    monkeypatch.setattr(
+        ctx.tools,
+        "run",
+        lambda tool, args, sandbox: real_run(tool, args, sandbox).model_copy(
+            update={"harness_note": note if tool == "poc" else None}
+        ),
+    )
+    args = lambda tool: tool_runner.ToolArgs(argv=[tool], workdir=".")  # noqa: E731
+    sandbox = DEFAULT_SANDBOX
+    for tool in ("poc", "build"):
+        ctx.call_tool(tool=tool, args=args(tool), sandbox=sandbox, stage=Stage.VALIDATE)
+
+    calls = {e.data["tool"]: e.data for e in ctx.trace.events if e.kind is EventKind.TOOL_CALL}
+    assert calls["poc"]["harness_note"] == note
+    assert "harness_note" not in calls["build"]
 
 
 @pytest.mark.parametrize("version", _POV_PREFIX_VERSIONS)

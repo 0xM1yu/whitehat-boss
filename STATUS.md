@@ -188,7 +188,7 @@ gdb는 2026-09-28 독립 `ContainerToolRunner` 실행에서 정상 종료·SIGSE
 
 지금 픽스처(`tests/fixtures/target/parser.c`)에는 `main`이 없어 링크되지 않고, `./poc`를
 만드는 주체도 없다. 즉 **E4를 막고 있는 것은 실행 환경이 아니라 PoC 생성**이다(아래 PoV 항목).
-중간 발표 DoD "`proven` 1건 이상 재현"은 PoV가 들어와야 성립한다.
+중간 발표 DoD "`proven` 1건 이상 재현"은 PoV가 들어와야 성립한다. (⏵ 2026-10-13 `proven`은 「실행됐고 비-0」이지 재현 확정이 아니다 — 판정은 오라클, `docs/evaluation.md` §5.1.)
 
 **남은 한계 2가지:**
 - ~~`index`가 `clang -fsyntax-only`다~~ — **걷어냈다(2026-08-14).** tree-sitter 인덱서가
@@ -312,7 +312,7 @@ PoC의 함수가 아니었고(⏵ ADR 0014가 `poc` 쪽을 세웠다) 그 뒤로
 | B | LLM이 PoC 생성 — `Role.POV` + `prompts/pov/v4/` + `nodes/pov.py` **← 루프 착지(호스트 전)** |
 | C | 퍼징으로 크래시 발견 (비용 큼, 후순위) |
 
-⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
+⚠ **중간 발표 DoD "`proven` 1건 이상 재현"은 아직이다** (⏵ 2026-10-13 `proven`은 「실행됐고 비-0」의 대용 지표 — 재현 확정은 오라클 판정) — 루프는 Finding→다중 홉(`PovAction`)→(submit 시)
 최종 PoC 바이트까지이고(그 PoC를 채점기에 내보내 판정을 기록하는 길은 `--oracle-submit`으로 들어왔다 —
 ⏵ 2026-10-03 vul 다리 제출 8건(고유 PoC 1개) 실측 · 왕복은 0건), 실제 크래시 재현은 후속(서빙+도구 호스트 배선)이다.
 
