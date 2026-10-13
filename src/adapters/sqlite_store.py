@@ -37,6 +37,8 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 - `Evidence.harness_note`(#573) — 관측 머리에 붙는 하네스 노트. trace에서도 `harness_note`다.
 - `Evidence.crashed`·`banner`(#232) — 크래시 관측. trace에서는 `crashed`·`crash_banner`다.
 - `RunRecord.location_overlap`(#563) — 정적 신호 위치 겹침 수.
+- `RunRecord`의 trace 집계 필드 넷(#613·#618·#619) — `schema_failure_max_run_by_role`·
+  `schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`.
 - `RunRecord.keep_responses`(#618·#612) — main `f0cdba76`가 더하면서 판을 **안 올렸다.**
   판 1이라 적힌 파일에 이 필드가 든 행이 섞여 있을 수 있다(선례). 판 1을 적은 `state.db`에
   그 필드를 든 행이 이미 있으면 판 1 코드로는 못 읽힌다. 그 run은 되읽기를 안 하므로(서빙에
@@ -77,9 +79,12 @@ STATE_DB_SCHEMA_VERSION = 2
 _VERSION_INTRODUCED_BY = {
     2: (
         "이슈 #232 — `Evidence.crashed`·`banner` 추가. 같은 판에 이슈 #573의 "
-        "`Evidence.harness_note`, 이슈 #563의 `RunRecord.location_overlap`, main "
-        "`f0cdba76`의 `RunRecord.keep_responses`(#618·#612), #580의 `Finding.audit` "
-        "확대도 든다 — 뒤 둘은 판을 안 올렸다(#594)"
+        "`Evidence.harness_note`, 이슈 #563의 `RunRecord.location_overlap`, "
+        "이슈 #613·#618·#619의 `RunRecord` trace 집계 필드 넷"
+        "(`schema_failure_max_run_by_role`·`schema_recovered_calls_by_role`·"
+        "`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`), "
+        "main `f0cdba76`의 `RunRecord.keep_responses`(#618·#612), "
+        "#580의 `Finding.audit` 확대도 든다 — 뒤 둘은 판을 안 올렸다(#594)"
     ),
 }
 

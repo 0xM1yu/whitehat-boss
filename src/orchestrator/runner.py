@@ -167,7 +167,15 @@ from src.orchestrator.source_definitions import (
 )
 from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceEvent, TraceValue, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceEvent,
+    TraceValue,
+    TraceWriter,
+    pov_inspect_max_run_by_finding,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -869,6 +877,25 @@ class _Accumulator:
         return [f for f in self.findings.values() if f.state is state]
 
 
+def _count_trace(
+    key: str,
+    count: Callable[[Sequence[TraceEvent]], dict[str, int] | None],
+    events: Sequence[TraceEvent],
+    warnings: list[str],
+    failures: dict[str, str],
+) -> dict[str, int] | None:
+    """`RunRecord.<key>`의 trace 집계 하나를 센다 - 던지면 `None`(안 쟀다)을 돌려주고 사유를
+    `warnings`(stderr)와 `failures`(매니페스트·리포트 - 「행이 없다」와 「집계가 죽었다」가 같은
+    `None`이라 갈라 읽는 자리)에 싣는다."""
+    try:
+        return count(events)
+    except Exception as exc:  # noqa: BLE001 - 계측이 run의 결과·원 예외를 덮으면 안 된다
+        reason = f"{type(exc).__name__}: {exc}"
+        warnings.append(f"trace 집계 {key}를 못 셌다: {reason}")
+        failures[key] = reason
+        return None
+
+
 def run_pipeline(
     spec: RunSpec,
     *,
@@ -1095,6 +1122,45 @@ def run_pipeline(
     if location_overlap is not None:
         record = record.transition(location_overlap=location_overlap)
 
+    # trace에서 센 분모 전용 집계 셋(#613·#618·#619) — 행이 없으면 `None`이다(안 쟀다 - 0이 아니다).
+    # `unforeseen` 경로의 매니페스트도 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 리포트도 읽는다.
+    # 🔴 **집계가 던져도 `unforeseen`을 덮지 않는다** — 이 줄은 아래 `raise unforeseen` 앞이라 새는
+    # 예외가 원 예외와 매니페스트를 통째로 가린다(위 `finally`·아래 방어선 주석과 같은 이유).
+    # 못 센 키는 `None`(안 쟀다)이고 사유는 경고로 남는다 - 예상 밖 경로에서는 원 예외의 노트로도.
+    aggregate_warnings: list[str] = []
+    aggregate_failures: dict[str, str] = {}
+    schema_failure_runs = _count_trace(
+        "schema_failure_max_run_by_role",
+        schema_failure_max_run_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    schema_recovered = _count_trace(
+        "schema_recovered_calls_by_role",
+        schema_recovered_calls_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    pov_inspect_runs = _count_trace(
+        "pov_inspect_max_run_by_finding",
+        pov_inspect_max_run_by_finding,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    warnings.extend(aggregate_warnings)
+    if unforeseen is not None:
+        for note in aggregate_warnings:
+            unforeseen.add_note(note)
+    record = record.transition(
+        schema_failure_max_run_by_role=schema_failure_runs,
+        schema_recovered_calls_by_role=schema_recovered,
+        pov_inspect_max_run_by_finding=pov_inspect_runs,
+        trace_aggregate_failures=aggregate_failures or None,
+    )
+
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
         # HIGH 1).
@@ -1262,6 +1328,10 @@ def run_pipeline(
         ne_absorbed=state.ne_absorbed,
         pov_results=state.pov_results,
         location_overlap=location_overlap,
+        schema_failure_max_run=schema_failure_runs,
+        schema_recovered_calls=schema_recovered,
+        pov_inspect_max_run=pov_inspect_runs,
+        trace_aggregate_failures=record.trace_aggregate_failures,
     )
     finished = state_machine.finish_run(
         record,
