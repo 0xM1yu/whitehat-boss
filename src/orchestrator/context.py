@@ -70,8 +70,42 @@ def _trace_scalar(value: object) -> str:
     return ",".join(value) if isinstance(value, list) else str(value)
 
 
-def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
-    """시도별 출력 토큰·종료 사유를 `model_call`의 두 키로 (#550). 정본 설명은 `trace.py`다.
+# `finish_reason == "length"`로 끝난 시도의 응답 **꼬리** 몇 글자를 볼지 (#79). 공백 폭주는
+# 꼬리가 공백·탭·개행의 연속인 모양이다(2026-09-11 프로브: 꼬리 공백 12,849~13,199자 - 현재 로스터가
+# 아닌 `qwen3-coder-30b-a3b`). **정한 값이고 잰 값이 아니다 (CLAUDE.md §0)** - 현재 로스터의 꼬리는
+# 이 탐지기 이전에 본 적이 없다. 줄이면 정상 JSON의 들여쓰기 끝을 폭주로 읽는 쪽으로, 키우면 폭주가
+# 덜 자란 응답을 놓치는 쪽으로 움직인다.
+TAIL_WHITESPACE_CHARS = 64
+
+
+def _tail_whitespace_only(text: str) -> bool:
+    """응답 끝 `TAIL_WHITESPACE_CHARS`자가 전부 공백인가. **창을 못 채우는 짧은 응답은 거짓이다**
+    (빈 문자열 포함) - 63자 이하가 전부 공백인 응답(개행 둘)은 폭주가 아니고, 아무것도 안 낸
+    응답(추론 파서가 `content`를 비운 모양)도 아니다."""
+    return len(text) >= TAIL_WHITESPACE_CHARS and text[-TAIL_WHITESPACE_CHARS:].isspace()
+
+
+def _tail_whitespace_verdicts(
+    log: Sequence[AttemptRecord], texts: Sequence[str | None]
+) -> list[bool | None]:
+    """시도마다 꼬리 판정 한 칸 - `texts[i]`가 `log[i]`의 응답 원문이다(앞에서부터 정렬된다).
+
+    **`None`은 두 가지다 - 같은 이벤트의 `attempt_finish_reasons`로 가른다.** 그 칸이 `length`가
+    아니면 안 본 것이고(해당 없음), `length`인데 원문이 없으면(게이트웨이 거절·`content: null`·
+    원문을 안 든 구현체) 못 본 것이다(미측정 - 거짓으로 채우지 않는다).
+    """
+    return [
+        _tail_whitespace_only(texts[i])
+        if record.finish_reason == "length" and i < len(texts) and texts[i] is not None
+        else None
+        for i, record in enumerate(log)
+    ]
+
+
+def _attempt_fields(
+    log: Sequence[AttemptRecord], texts: Sequence[str | None] = ()
+) -> dict[str, TraceValue]:
+    """시도별 출력 토큰·종료 사유·꼬리 판정을 `model_call`의 세 키로 (#550·#79). 정본: `trace.py`.
 
     **값은 JSON 배열 문자열이다**(`TraceValue`가 스칼라라서). 쉼표로 잇지 않는 것은 미측정 칸
     (`null`)을 빈 칸이나 지어낸 문자열로 쓰지 않으려는 것이다 — `json.loads`로 읽으면 `None`이
@@ -83,11 +117,25 @@ def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
     행에서 같아야 한다.
     """
     if not log:
-        return {"attempt_output_tokens": None, "attempt_finish_reasons": None}
+        return {
+            "attempt_output_tokens": None,
+            "attempt_finish_reasons": None,
+            "attempt_tail_whitespace_only": None,
+        }
+    tails = _tail_whitespace_verdicts(log, texts)
     return {
         "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
         "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
+        "attempt_tail_whitespace_only": json.dumps(tails, separators=(",", ":")),
     }
+
+
+def _success_attempt_texts(result: ModelResult) -> tuple[str | None, ...]:
+    """성공 호출의 시도별 응답 원문 - 버려진 앞 시도들 + 마지막(성공) 시도. 칸 수가 시도 수와 안
+    맞으면 정렬을 믿을 수 없어 빈 튜플이다(구현체가 `failed_raw_texts`를 안 채운 경우 - 꼬리 판정은
+    `None`)."""
+    texts = (*result.failed_raw_texts, result.raw_text)
+    return texts if len(texts) == len(result.attempt_log) else ()
 
 
 def _unwired_read_source(_target: Location) -> str:
@@ -345,7 +393,9 @@ class RunContext:
                 "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
                 # 시도별 내역도 같은 규칙이다 — 안 실려 왔으면 `None`이고 지어낸 빈 목록이 아니다.
                 # 가르려는 호출(`SchemaParseError`로 버려진 Finding)이 전부 이 경로로 온다(#550).
-                **_attempt_fields(getattr(exc, "attempt_log", ())),
+                **_attempt_fields(
+                    getattr(exc, "attempt_log", ()), getattr(exc, "raw_texts", ())
+                ),
             }
             # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
             # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
@@ -455,7 +505,7 @@ class RunContext:
             gpu_ms_source=result.gpu_ms_source,
             attempts=result.attempts,
             # `output_tokens`는 위 시도들의 합이다. 시도별 내역과 종료 사유는 여기(#550).
-            **_attempt_fields(result.attempt_log),
+            **_attempt_fields(result.attempt_log, _success_attempt_texts(result)),
         )
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
