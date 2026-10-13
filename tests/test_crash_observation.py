@@ -507,10 +507,16 @@ def _record_only_regions(tree: ast.AST) -> list[ast.AST]:
     그 축으로 고르던 앞 판이 `nodes/validate.py`를 통째로 놓쳤다(CLAUDE.md §2.5).
     """
     regions: list[ast.AST] = []
-    scopes: list[ast.AST] = [tree]
-    scopes += [
+    # ⏵ 2026-10-14 (적대적 리뷰 HIGH) — **모듈 나무를 scope에 넣지 않는다.** 넣으면
+    # `splatted`가 **파일 전역 합집합**이 되고, 한 함수가 `emit(**observed)`를 쓰는 파일에서는
+    # **어느 함수에서든** `observed = <crashed를 읽는 식>`이 허용됐다. `context.py`가 바로
+    # 그런 파일이고(`observed`·`measured`·`data`·`fields`) 같은 파일에 `evaluate_gate`가 있다
+    # — 크래시로 등급을 가를 가장 자연스러운 자리다. 실측: `evaluate_gate`에
+    # `observed = any(ev.crashed for ev in evidences)`를 넣은 변이가 **통과했다**.
+    # 함수가 없는 모듈(상수만 든 파일)에서만 모듈 나무로 떨어진다.
+    scopes: list[ast.AST] = [
         n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-    ]
+    ] or [tree]
     for scope in scopes:
         splatted = _emit_payload_names(scope)
         for node in ast.walk(scope):
@@ -624,6 +630,47 @@ def test_the_decision_detector_passes_trace_payloads_and_catches_everything_else
         """
     )
     assert _decision_reads(branches) == [3]
+
+    # ⏵ 2026-10-14 (적대적 리뷰 HIGH) — ④ **세탁형**: 같은 파일의 **다른 함수**가
+    # `emit(**observed)`를 쓴다고 해서 이 함수의 `observed = <crashed 읽기>`가 허용되면 안 된다.
+    # 이것이 실측된 구멍이다 — `src/orchestrator/context.py`의 `evaluate_gate`에 그 두 줄을 넣은
+    # 변이가 **통과했다**(`_record_only_regions`가 모듈 나무를 scope로 넣고 있었다).
+    laundered = textwrap.dedent(
+        """
+        def call_tool(self):
+            observed = {"crashed": ev.crashed}
+            self.trace.emit(kind, **observed)
+
+        def evaluate_gate(self, evidences):
+            observed = any(ev.crashed for ev in evidences)
+            if observed:
+                return "E4"
+        """
+    )
+    assert _decision_reads(laundered) == [7], "세탁형 - 다른 함수의 splat 이름을 빌리면 안 된다"
+
+    # ⚠ **못 잡는 것 둘 — 참인 명제는 「읽기가 emit 페이로드 밖에 직접 나타나지 않는다」까지다.**
+    # 아래 둘은 읽기가 `emit` 호출 **안**에 있어 허용 영역 ①에 들어간다. 저장소에 실형태가
+    # 없고(검사가 막는 쪽이라 지어낸 샘플이다) 막으려면 emit 인자 안을 다시 훑어야 하는데
+    # 그러면 ①의 뜻이 사라진다. 그래서 **한계로 적는다**(CLAUDE.md §2.5 - 성질을 단언하려면
+    # 성질을 표현하는 형태를 찾고, 못 찾으면 그 한계를 적는다).
+    inside_emit = textwrap.dedent(
+        """
+        def validate(self):
+            self.trace.emit(kind, grade=self.promote(ev.crashed))
+        """
+    )
+    assert _decision_reads(inside_emit) == [], "한계 - emit 인자 안의 판정은 안 잡힌다"
+
+    walrus_in_emit = textwrap.dedent(
+        """
+        def validate(self):
+            self.trace.emit(kind, x=(c := ev.crashed))
+            if c:
+                grade = "E4"
+        """
+    )
+    assert _decision_reads(walrus_in_emit) == [], "한계 - emit 안 walrus로 뺀 값은 안 잡힌다"
 
 
 # --- trace ---------------------------------------------------------------------------------------
