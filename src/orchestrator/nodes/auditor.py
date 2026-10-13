@@ -156,6 +156,7 @@ from src.schemas.auditor import (
     AuditorProcedureAction,
     AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
+    AuditorProcedureProbeInputAction,
     AuditProcedure,
     AuditProcedureNullableCwe,
 )
@@ -200,17 +201,21 @@ OUTPUT_SCHEMA = Finding
 # 클래스라 아래 `isinstance(..., AuditProcedure)` 분기가 그대로 받는다.
 # ⏵ 2026-10-10 — 넷째 `AuditorProcedureAuditAlwaysAction`(v12)은 그 서브클래스
 # `AuditProcedureAuditAlways`를 싣는다 — `audit`가 어느 상태에서도 null이 아니다(이슈 #578).
+# ⏵ 2026-10-13 — 다섯째 `AuditorProcedureProbeInputAction`(v15)은 넷째의 서브클래스다 — 최종 답은
+# 같고 `probe`의 `spec` 설명만 다시 썼다(그 판이 `spec` 바이트를 `poc`에 싣는다 · 이슈 #419).
 _LoopEnvelope = (
     AuditorAction
     | AuditorProcedureAction
     | AuditorProcedureNullableCweAction
     | AuditorProcedureAuditAlwaysAction
+    | AuditorProcedureProbeInputAction
 )
 _LOOP_ENVELOPES: tuple[type[_LoopEnvelope], ...] = (
     AuditorAction,
     AuditorProcedureAction,
     AuditorProcedureNullableCweAction,
     AuditorProcedureAuditAlwaysAction,
+    AuditorProcedureProbeInputAction,
 )
 # 홉 하나가 든 값 — 루프 봉투(⏵ 2026-10-09부터 셋)는 `action`·`requests`·`tool`·`spec`을 공유하므로
 # (`schemas/auditor.py`의 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·
@@ -270,8 +275,13 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # 동일이다(`tests/test_auditor_v13_facts.py`가 v11과의 차이를 두 줄로 묶는다).
 # v14(2026-10-11 · 이슈 #67 · #578)는 v12에서 FACTS의 `source` 사본을 뺀 판이다 — 위 두 구절은 v12와
 # 바이트 동일이다(`tests/test_auditor_v14_facts.py`가 v12와의 차이를 두 줄로 묶는다).
+# v15(2026-10-13 · S19)는 v14에 계약 문장 여섯을 더한 판이다 — 그중 하나가 위 첫째 구절의
+# 첫 문장(「유계 발췌」)을 **뺀 것**이다(접힌 semgrep 로그는 발췌가 아니다). 그래서 첫째
+# 구절은 v15에서 **더는 바이트 동일이 아니다** — `## Evidence body completeness` 절의
+# 나머지(`FACTS.evidence[].body`·`truncated`를 읽는 규칙)와 `evidence_refs: only …` 줄은
+# 그대로라 본문 전제는 유지된다(`tests/test_auditor_v15.py`가 v14와의 차이를 묶는다).
 _CONTENT_AWARE_VERSIONS = frozenset(
-    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14"}
+    {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15"}
 )
 
 # 노드가 만드는 MissingEvidence의 문구. 모델이 자유 텍스트로 요청하게 두면 같은 요청이
@@ -330,7 +340,9 @@ CALLERS_SECTION = "callers"
 # `tests/test_auditor_prompt_v10.py`가 핀으로 든다 · ⏵ 2026-10-09 서빙 판 v11은 56,872자 —
 # `tests/test_nullable_cwe.py`가 핀으로 든다 · ⏵ 2026-10-10 서빙 판 v13은 v11에서 한 조각만 빠졌고
 # hop0 user 턴은 FACTS의 `source` 사본만큼 짧다 — `tests/test_auditor_v13_facts.py` · ⏵ 2026-10-11
-# 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py`) ↔
+# 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py` ·
+# ⏵ 2026-10-13 서빙 판 v15의 prefix는 v14 + 계약 문장 여섯이라 더 길다 — 글자 수는 안 쟀고 user
+# 턴(body)은 v14와 바이트 동일이다) ↔
 # v4
 # 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다.
 # hop0가 클수록 넘는 폭도 커진다).
@@ -789,7 +801,8 @@ def _render_hop0(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
-            # `facts_source: false` 판(v13·v14 · 이슈 #67)은 FACTS에 `source` 사본을 안 싣는다 —
+            # `facts_source: false` 판(v13·v14 · 이슈 #67 · ⏵ 2026-10-13 v15도)은 FACTS에
+            # `source` 사본을 안 싣는다 —
             # 원문은 아래 산문 `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
             include_source=template.facts_source,
             callers=caller_names(capsule),
@@ -889,7 +902,7 @@ def _run_hops(
                     role=ROLE, model=result.model, prompt_version=prompt.prompt_version
                 ),
             )
-        key = _request_key(action)
+        key = _input_aware_key(action)
         stop = _stop_without_finding(key, seen, hop=hop, limit=limit)
         if stop is not None:
             _emit_hop(
@@ -1112,6 +1125,39 @@ def _request_key(action: _Hop) -> Hashable:
     if action.action == "probe":
         return ("probe", action.tool)
     return ("lookup", frozenset((r.kind, r.target) for r in _served_requests(action)))
+
+
+def _input_aware_key(action: _Hop) -> Hashable:
+    """`_request_key`에 v15 봉투의 `poc` 입력 바이트 digest를 더한 키.
+
+    v15 봉투(`AuditorProcedureProbeInputAction`)의 산문은 `probe`의 `spec`을 도구에 싣는다고
+    적는다. 그중 입력을 **읽는** 도구는 `poc` 하나(ADR 0014)라 **`poc`만** 입력이 질문을 바꾼다 —
+    `spec`만 바꾼 `probe poc`는 다른 질문이므로 키가 다르고, 같은 바이트로 조립되는 `spec` 둘(또는
+    `spec` 없음 둘)은 같다. `spec` 없음은 **빈 바이트가 아니라** 그 자체로 하나의 입력이다(키의
+    꼬리가 `None`이다). `asan`·`gdb`·`build`는 `spec`을 받아도 안 읽으므로 키가 도구 이름
+    그대로다. 그 밖의 봉투(v8~v14)는 종전 키다 — 그 판들의 산문이 「`spec`만 바꿔도 같은
+    호출」이라 적는다(`_request_key`).
+
+    ⏵ **2026-10-13 — 이 함수가 적어 둔 한계 둘이 둘 다 해소됐다.** 적어 뒀던 것:
+    ① 쓰는 쪽이 직전 홉만 봐서 A,B,A가 안 걸린다 ② `spec` 바이트가 도구에 안 간다.
+    ①은 #514(PR #642)가 `_stop_without_finding(key, seen, …)`로 **앞선 모든 홉**과 견주게
+    해서 섰고, ②는 #419(PR #644)가 `_probe`를 `ToolArgs(argv=[tool, INPUT_PLACEHOLDER],
+    input_bytes=…)`로 바꿔 섰다. 그래서 v15 prefix의 *「a request identical to any earlier
+    call in this audit」*과 **싣는다**는 서술이 이제 코드와 맞고, 이 키가 가르는 것은 모델이
+    보낸 `spec`이면서 **도구가 실제로 받는 입력**이기도 하다.
+    ⚠ 남는 한계 — 입력을 **읽는** 도구는 `poc` 하나다(ADR 0014). `asan`·`gdb`·`build`는
+    `spec`을 받아도 안 읽으므로(이슈 #507) 그 셋의 키는 도구 이름 그대로다. 그리고 같은
+    바이트를 다시 돌린 관측이 같을지는 **안 쟀다**(`evidence_id`는 호출마다 새로 난다).
+    """
+    key = _request_key(action)
+    if (
+        isinstance(action, AuditorProcedureProbeInputAction)
+        and action.action == "probe"
+        and action.tool == "poc"
+    ):
+        poc = assemble_poc(action.spec) if action.spec is not None else None
+        return (*key, None if poc is None else hashlib.sha256(poc).hexdigest())
+    return key
 
 
 def _stop_without_finding(
