@@ -13,6 +13,7 @@
 import dataclasses
 import inspect
 import io
+import itertools
 import json
 import re
 import socket
@@ -23,6 +24,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from slicer_source import assemble
 from src import cli, console
@@ -42,11 +44,12 @@ from src.orchestrator.nodes import critic
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
+from src.schemas.auditor import AuditorProcedureAuditAlwaysAction
 from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
-from src.schemas.finding import Finding
+from src.schemas.finding import Finding, ReproSpec
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from src.schemas.scout_response import ScoutResponse
 from tests.conftest import ALL_PROFILES, SERVED_SCOUT_KEY, served_scout_config
@@ -2826,6 +2829,85 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave(
     assert result.record.is_complete
 
 
+def test_a_stage_8_tool_that_cannot_measure_holds_the_finding_through_the_whole_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#326 - 둘째 asan이 `ok=False`(종료 코드 있음)로 떨어지는 run. 그 Finding은 `queued`가 아니라
+    `validated`에 남고, 도구 검증 제거율의 분자(`repro_failed`)에 들지 않으며, PoV는 둘 다 돌고, run
+    경고에 오른다. 위 검사와 같은 심기다 - 거기서는 이 건이 `repro_failed`였다."""
+    real_repro = FakeToolRunner._run_repro
+    asan_calls: list[str] = []
+
+    def second_asan_fails(self, tool, kind, args, workdir):  # noqa: ANN001, ANN202
+        if tool == "asan":
+            asan_calls.append(tool)
+            if len(asan_calls) == 2:
+                return self.make_evidence(
+                    tool,
+                    kind,
+                    args,
+                    ok=False,
+                    exit_code=1,
+                    error="asan: 빌드 단계에서 끊겼다(검사가 심었다)",
+                )
+        return real_repro(self, tool, kind, args, workdir)
+
+    monkeypatch.setattr(FakeToolRunner, "_run_repro", second_asan_fails)
+
+    result, trace_path = _run(tmp_path, before=_with_index(), oracle=FakeOracle())
+
+    events = _events(trace_path)
+    (unmeasured,) = _of(events, "repro_not_measured", stage=Stage.VALIDATE)
+    assert unmeasured["subject_id"] == "find_0002"
+    states = {f.finding_id: f.state.value for f in result.findings}
+    assert states["find_0001"] == "proven" and states["find_0002"] == "validated"
+    reasons = [e["data"]["reason"] for e in _of(events, "transition", stage=Stage.VALIDATE)]
+    assert ReasonCode.REPRO_FAILED.value not in reasons
+    assert sorted(e["subject_id"] for e in _of(events, "pov_generated", stage=Stage.VALIDATE)) == [
+        "find_0001",
+        "find_0002",
+    ]
+    (warning,) = [w for w in result.warnings if "재현 결과를 내지 않은" in w]
+    assert "1건" in warning and "종료 코드별 1 1건" in warning
+
+
+def test_the_run_warning_reads_the_pov_seat_from_the_profile_at_the_call_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#326 - `poc` 문장이 가르는 「좌석이 있나」를 **호출부가** 프로필에서 읽는다.
+
+    `tests/test_nodes.py`의 두 검사는 `_repro_not_measured_warning(..., has_pov_seat=...)`에
+    bool을 **직접 넘기므로** `runner.py`의 호출부 배선(`Role.POV.value in
+    ctx.config.profile.roles`)을 뒤집어도 초록이다. 여기는 같은 run을 좌석 있는 프로필과
+    좌석을 뺀 프로필로 두 번 돌려 **문장이 갈리는지**를 본다 - 그 한 줄을 `not in`으로
+    뒤집거나 `True`/`False` 상수로 고정하면 두 단언 중 하나가 빨개진다.
+
+    ⚠ **이 핀이 무는 것은 그 한 줄이 프로필의 `pov` 좌석을 읽는다는 것까지다.** 경고 문구
+    자체는 위 두 검사가 문다. `pov` 좌석이 없는 run이 PoV를 실제로 안 도는지도 이 검사가
+    아니다(`runner.py:1376-1378`의 같은 술어 — 그쪽은 별도 자리다).
+    """
+
+    def poc_signal(_target, _sink):  # noqa: ANN001, ANN202
+        # `tool_for`가 `poc`를 고르게 한다(`validate._SIGNAL_TOOLS`) -> 8단계는 도구를 안 돌리고
+        # `repro_not_measured`의 `reason`이 `poc_runs_in_the_pov_loop`가 된다.
+        return ReproSpec(steps=["./build.sh", "./poc input"], expected_signal="PoC crash: segfault")
+
+    monkeypatch.setattr(fake_model, "_repro_spec", poc_signal)
+
+    def drop_pov(config):  # noqa: ANN001, ANN202
+        roles = {k: v for k, v in config.profile.roles.items() if k != Role.POV.value}
+        return config.transition(profile=config.profile.transition(roles=roles))
+
+    seated, _ = _run(tmp_path, "seated")
+    seatless, _ = _run(tmp_path, "seatless", configure=drop_pov)
+
+    with_seat = [w for w in seated.warnings if "재현 결과를 내지 않은" in w]
+    without_seat = [w for w in seatless.warnings if "재현 결과를 내지 않은" in w]
+    assert len(with_seat) == 1 and len(without_seat) == 1, (with_seat, without_seat)
+    assert "PoV 단계 이벤트" in with_seat[0] and "pov 좌석이 없어" not in with_seat[0]
+    assert "pov 좌석이 없어 어디서도 실행되지 않았다" in without_seat[0]
+
+
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
     tmp_path: Path,
 ) -> None:
@@ -3327,6 +3409,24 @@ def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
 
     assert len(seen) == len(GATE_STAGES)
     assert [grade for _, grade in seen] == sorted(grade for _, grade in seen)
+
+
+def test_cited_by_model_rides_only_on_the_stage_6_gate_eval(tmp_path: Path) -> None:
+    """이슈 #554 - 모델 인용 수는 6단계 `gate_eval`에만 있고 7·8단계 행에는 키가 없다.
+
+    7·8단계의 `evidence_refs`에는 6단계 하네스 부착분이 섞여 있어 「모델이」가 거짓이 된다.
+    """
+    _, trace_path = _run(tmp_path)
+    events = _events(trace_path)
+
+    at_gate = _of(events, "gate_eval", stage=Stage.GATE)
+    assert at_gate, "전제 - 6단계 판정이 있다"
+    assert all(isinstance(e["data"]["cited_by_model"], int) for e in at_gate)
+    later = [
+        e for stage in (Stage.CRITIC, Stage.VALIDATE) for e in _of(events, "gate_eval", stage=stage)
+    ]
+    assert later, "전제 - 7·8단계 판정이 있다"
+    assert all("cited_by_model" not in e["data"] for e in later)
 
 
 def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
@@ -4700,7 +4800,7 @@ def test_an_empty_pov_pool_reaches_the_run_warnings(
 def _critic_rebuts_every_finding(monkeypatch: pytest.MonkeyPatch) -> None:
     """Critic이 모든 Finding을 근거 있는 반박(F-6 -> `QUEUED`)으로 판정하게 한다."""
 
-    def rebut(ctx, *, decision_id, finding, evidences, source=None):  # noqa: ANN001, ANN202
+    def rebut(ctx, *, decision_id, finding, evidences, source=None, hop_observations=()):  # noqa: ANN001, ANN202
         return Decision(
             decision_id=decision_id,
             run_id=ctx.run_id,
@@ -4715,7 +4815,8 @@ def _critic_rebuts_every_finding(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 _EMPTY_POOL_WARNING = (
-    "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+    "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류(파서 폴백·정규화된 반박 포함) 0"
+    " · 판정 실패 0"
     " · Critic 미경유 0 · pov_attempt_top_n 8. 8단계 PoV는 한 건도 시도되지 않았다"
     "(validated 밖 후보도 Critic이 모두 밀어 냈거나 없다)"
 )
@@ -4981,6 +5082,90 @@ def test_a_schema_failure_drops_only_that_target(
     # 실패한 호출 자체는 `model_call ok=False`로 남는다. 잡았다고 분자가 사라지지 않는다.
     failed = [e for e in _of(_events(trace_path), "model_call") if not e["data"]["ok"]]
     assert len(failed) == 1
+
+
+def _schema_failure_from(**fields: object) -> SchemaParseError:
+    """재시도 소진 때 어댑터가 만드는 `SchemaParseError` 문구 - 사유는 **진짜 검증기 것**이다.
+
+    `openai_compat`의 raise: `"{role} 역할의 {model}이 N회 안에 {스키마}을 만들지 못했다: {오류}"`.
+    지어낸 문구는 우리가 잡는 문구만 고르게 되므로 검증기를 실제로 부른다(CLAUDE.md §2.5).
+    """
+    with pytest.raises(ValidationError) as caught:
+        AuditorProcedureAuditAlwaysAction(**fields)
+    return SchemaParseError(
+        "auditor 역할의 qwen3-coder-30b-a3b이 2회 안에 AuditorProcedureAuditAlwaysAction을 "
+        f"만들지 못했다: {caught.value}",
+        attempts=2,
+    )
+
+
+def _empty_answer_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "(#602)" in w]
+
+
+def test_an_auditor_call_rejected_for_an_empty_answer_is_counted_in_the_run_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#602 - 빈 `answer`(`procedure` 없음)로 두 시도가 다 거절된 호출은 경고에 1건으로 오른다.
+
+    **동작은 안 바뀐다**: 후보는 그대로 `schema_parse_failed`로 버려지고 나머지는 돈다.
+    """
+    failure = _schema_failure_from(action="answer", rationale="x")
+    assert "answer 액션은 비지 않은 procedure가 필요하다" in str(failure), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [failure], role_under_test=Role.AUDITOR)
+
+    result, trace_path = _run(tmp_path, name="empty-answer", before=_with_index())
+
+    (warning,) = _empty_answer_warnings(result)
+    assert "호출 1건(#602)" in warning
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["schema_parse_failed"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"])
+
+
+def test_other_schema_failures_do_not_reach_the_empty_answer_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 쌍 - 같은 검증기의 **다른 액션** 거절(`probe`에 `tool`이 없다)은 이 수에 안 든다.
+    그리고 같은 문구가 Scout 호출에 붙어도 안 든다(역할로 가른다)."""
+    # `probe`에 `tool`이 없는 거절 - 같은 검증기의 같은 접두(`… 액션은 비지 않은`)지만 answer 아님.
+    other = _schema_failure_from(action="probe", rationale="x")
+    assert "probe 액션은 비지 않은 tool" in str(other), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [other], role_under_test=Role.AUDITOR)
+    result, _ = _run(tmp_path, name="probe", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    empty = _schema_failure_from(action="answer", rationale="x")
+    _failing_model(monkeypatch, [empty], role_under_test=Role.SCOUT)
+    result, _ = _run(tmp_path, name="scout", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    clean, _ = _run(tmp_path, name="clean", before=_with_index())
+    assert _empty_answer_warnings(clean) == []
+
+
+def test_the_empty_answer_count_is_per_call_not_per_attempt() -> None:
+    """한 `model_call`이 `attempts: 2`로 소진돼도 1건이다. 성공 호출·다른 사유·다른 역할은 제외."""
+    log = trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    phrase = "1 validation error Value error, answer 액션은 비지 않은 procedure가 필요하다"
+
+    def call(**data: object) -> None:
+        base = {"role": "auditor", "ok": False, "error": "SchemaParseError", "error_detail": phrase}
+        log.emit(trace.EventKind.MODEL_CALL, stage=5, **{**base, **data})
+
+    call(attempts=2)  # 세는 것 - 한 호출
+    call(hop=3, attempts=2)  # 세는 것 - 홉 번호와 무관하다
+    call(ok=True, error=None, error_detail=None)  # 재시도로 살아난 호출
+    call(ok=True)  # 문구가 남아 있어도 ok면 안 센다 - `ok is False` 항을 문다
+    call(error_detail="answer 액션에 다른 액션의 필드가 실렸다: ['tool']")
+    call(error="ModelGatewayError")
+    call(role="critic")
+
+    warning = runner._auditor_empty_answer_warning(log)
+    assert warning is not None and "호출 2건(#602)" in warning
+    assert runner._auditor_empty_answer_warning(
+        trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    ) is None
 
 
 def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
@@ -6003,3 +6188,111 @@ def test_doctor_errors_on_an_undescribed_auditor_source_option(
     text = _doctor_text("dev_fake", tmp_path)
     lines = [line for line in text.splitlines() if "source_options" in line]
     assert lines and all(line.startswith("[ERROR") for line in lines)
+
+
+# --- 분모 전용 집계 셋 (#613·#618·#619 (d)) — 매니페스트와 report.md까지 가는 배선 -------------
+
+
+def test_trace_aggregates_reach_the_manifest_and_the_report(tmp_path: Path) -> None:
+    """dev_fake 완주 run: 집계가 trace에서 센 값 그대로 매니페스트·report.md에 실린다. Fake는 스키마
+    실패도 재시도도 없으므로 역할마다 잰 `0`이고 `None`이 아니다."""
+    result, trace_path = _run(tmp_path)
+
+    events = _events(trace_path)
+    roles = {e["data"]["role"] for e in _of(events, "model_call")}
+    assert roles, "model_call이 없으면 이 검사가 공허하다"
+    findings = {e["subject_id"] for e in _of(events, "pov_hop") if "action" in e["data"]}
+    assert findings, "PoV 홉이 없으면 이 검사가 공허하다"
+    expected = {
+        "schema_failure_max_run_by_role": {r: 0 for r in sorted(roles)},
+        "schema_recovered_calls_by_role": {r: 0 for r in sorted(roles)},
+        "pov_inspect_max_run_by_finding": {
+            f: max(
+                (
+                    sum(1 for _ in grp)
+                    for is_inspect, grp in itertools.groupby(
+                        e["data"]["action"] == "inspect"
+                        for e in _of(events, "pov_hop")
+                        if e["subject_id"] == f and "action" in e["data"]
+                    )
+                    if is_inspect
+                ),
+                default=0,
+            )
+            for f in sorted(findings)
+        },
+    }
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key, value in expected.items():
+        assert manifest[key] == value, key
+        assert getattr(result.record, key) == value, key
+    # 양성 핀: 집계 셋이 다 성공한 run은 이 키가 `None`이다 - `{}`가 아니다(`aggregate_failures or
+    # None`). `{}`가 실리면 「집계가 죽었는데 사유가 비었다」로 읽히고, 그것은 run.py의 「안
+    # 던졌으면 `None`」과 어긋난다. 음성 짝은 아래
+    # `test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured`다.
+    assert manifest["trace_aggregate_failures"] is None
+    assert result.record.trace_aggregate_failures is None
+    rendered = result.report.render()
+    assert "### 분모 전용 집계 (임계값 아님)" in rendered
+    assert "미측정" not in rendered, "잰 값이 있는데 미측정으로 찍혔다"
+    assert "집계 실패" not in rendered, "안 죽은 집계가 실패로 찍혔다"
+    schema_line = "연속 스키마 파싱 실패 최장(역할별, 분모만): " + " · ".join(
+        f"{r} 0" for r in sorted(roles)
+    )
+    assert schema_line in rendered
+    assert "스키마 재시도로 살아난 호출(역할별, 분모만): " in rendered
+    inspect_line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    # 규칙이 줄에 적혀 있다 - 최장 2 이상만 나열하고 나머지는 건수다. 그 건수가 분모를 맞춘다.
+    values = expected["pov_inspect_max_run_by_finding"]
+    listed = [f for f, n in values.items() if n >= 2]
+    assert "최장 2 이상인 Finding만 나열" in inspect_line
+    assert all(f in inspect_line for f in listed)
+    assert not any(f in inspect_line for f in values if f not in listed)
+    assert f"나열하지 않은 Finding {len(values) - len(listed)}건" in inspect_line
+
+
+def test_a_failing_trace_aggregate_on_the_normal_path_is_recorded_not_called_unmeasured(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정상 경로에서 집계 하나가 던지면: run은 끝나고, 그 키만 `None`이며, 사유가 매니페스트
+    (`trace_aggregate_failures`)와 report.md(「집계 실패」)에 남는다. 「미측정(행이 없다)」으로
+    찍히면 안 된다 - 같은 `None`이라도 원인이 다르다(CLAUDE.md §0). 나머지 둘은 평소처럼 센다."""
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("집계 결함")
+
+    monkeypatch.setattr(runner, "pov_inspect_max_run_by_finding", broken)
+    result, trace_path = _run(tmp_path)
+
+    key = "pov_inspect_max_run_by_finding"
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    assert manifest[key] is None and getattr(result.record, key) is None
+    assert manifest["trace_aggregate_failures"] == {key: "ValueError: 집계 결함"}
+    assert result.record.trace_aggregate_failures == {key: "ValueError: 집계 결함"}
+    assert manifest["schema_failure_max_run_by_role"], "다른 집계까지 잃었다"
+    assert manifest["schema_recovered_calls_by_role"], "다른 집계까지 잃었다"
+    assert any(key in w and "집계 결함" in w for w in result.warnings), result.warnings
+    inspect_line = next(
+        ln for ln in result.report.render().splitlines() if ln.startswith("PoV 연속 inspect")
+    )
+    assert "집계 실패: ValueError: 집계 결함" in inspect_line
+    assert "미측정" not in inspect_line
+    assert "미측정" not in result.report.render(), "잰 두 줄까지 미측정으로 찍혔다"
+
+
+def test_a_run_without_model_calls_leaves_the_aggregates_unmeasured(tmp_path: Path) -> None:
+    """모델을 한 번도 안 부른 run의 집계는 `None`이다 - `{}`도 `0`도 아니다 (CLAUDE.md §0).
+    report.md는 그 줄을 **빼지 않고** 「미측정」으로 찍는다 - 안 쟀다와 안 그렸다가 갈려야 한다."""
+    result, trace_path = _run(tmp_path, stop_after=int(Stage.RETRIEVAL))
+
+    manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
+    for key in (
+        "schema_failure_max_run_by_role",
+        "schema_recovered_calls_by_role",
+        "pov_inspect_max_run_by_finding",
+    ):
+        assert key in manifest and manifest[key] is None, key
+    lines = [ln for ln in result.report.render().splitlines() if "분모만" in ln]
+    assert len(lines) == 3 and all("미측정" in ln for ln in lines), lines
+    assert not any(re.search(r"0", ln) for ln in lines), "미측정 줄에 0이 찍혔다"
