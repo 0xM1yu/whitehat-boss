@@ -1927,6 +1927,11 @@ def test_a_probe_observation_carries_the_ambiguity_note_exactly_once(
     observation = auditor._probe_observation(ctx, 1, evidence, spec_ignored=False)
 
     assert observation.count(container_tools.POC_AMBIGUOUS_NOTE) == 1
+    # 위치 — 머리줄(`tool=…`) 바로 다음 줄이고 도구 출력 구간(`--- poc output`)보다 앞이다.
+    lines = observation.splitlines()
+    assert lines[2] == container_tools.POC_AMBIGUOUS_NOTE
+    output_at = next((i for i, ln in enumerate(lines) if ln.startswith("--- poc output")), None)
+    assert output_at is None or 2 < output_at
 
 
 def test_the_answer_hop_counts_the_probe_evidence_it_cites(
