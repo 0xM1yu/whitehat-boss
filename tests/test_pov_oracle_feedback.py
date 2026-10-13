@@ -180,8 +180,14 @@ def test_wired_pov_gets_source_and_feedback_separately(ctx):  # noqa: ANN001, F8
 def test_wired_prefix_explains_raw_observation_and_model_designation():
     version = load_config(profile="harness_pool").model_for("pov").prompt_template_version
     prefix = load_prompt(Role.POV, version).prefix
-    assert "## 채점기 vul 관측" in prefix
-    for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", "중간"):
+    # ⏵ 2026-10-13 — 서빙 판이 v6(영어)이라 절 머리와 「중간 gen」을 말하는 낱말이 판마다 다르다.
+    # 판이 또 올라가면 `KeyError`가 이 검사를 빨갛게 한다(새 판의 낱말을 읽고 표에 더한다).
+    heading, intermediate = {
+        "v5": ("## 채점기 vul 관측", "중간"),
+        "v6": ("## Scorer vul observation", "intermediate"),
+    }[version]
+    assert heading in prefix
+    for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", intermediate):
         assert text in prefix
     meta = Path(f"prompts/pov/{version}/meta.yaml").read_text(encoding="utf-8")
     assert "미배선(disk-only)" not in meta
@@ -462,9 +468,14 @@ def test_the_pov_prefix_does_not_contradict_the_oracle_line(version):
     # 재는 것은 「도구 관측을 **어떤 이름으로든** 말한다」이고, 그 이름이 정확한지는 그 판의
     # 한계 문단 핀이 본다(`tests/test_pov_prompt_v4.py`).
     assert "oracle_vul" in flat
-    assert "도구 관측" in flat or ("`poc` 관측" in flat and "`build` 관측" in flat), (
-        "prefix가 도구 관측을 어떤 이름으로도 말하지 않는다"
+    # ⏵ 2026-10-13 — v6(영어)은 「`poc` receives your PoC」/「do not receive your bytes」로
+    # 도구를 가른다.
+    names_the_tools = (
+        "도구 관측" in flat
+        or ("`poc` 관측" in flat and "`build` 관측" in flat)
+        or ("`poc` receives your PoC" in flat and "do not receive your bytes" in flat)
     )
+    assert names_the_tools, "prefix가 도구 관측을 어떤 이름으로도 말하지 않는다"
     assert "cached=true" in flat
 
 
