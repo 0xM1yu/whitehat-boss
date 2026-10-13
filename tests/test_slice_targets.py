@@ -25,7 +25,7 @@ from src.orchestrator.runner import _AUDITOR_SOURCE_CHARS, _AUDITOR_WINDOW_LINES
 from src.schemas.common import Location
 from src.schemas.enums import Role
 from src.tokens import estimate_tokens
-from tests.conftest import ALL_PROFILES
+from tests.conftest import ALL_PROFILES, declare_scout_input
 from tests.test_pipeline_e2e import (
     _FIXTURE_INDEX,
     CONDITION,
@@ -74,6 +74,20 @@ def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.Fixtu
         return config.transition(thresholds=off)
 
     monkeypatch.setattr(e2e, "load_config", load)
+
+
+@pytest.fixture(autouse=True)
+def _scout_reads_the_slice_render(
+    monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """이 파일은 Scout가 **슬라이스 렌더**를 `SOURCE`로 보는 쪽(`input: slice`, v3)을 잰다.
+
+    `dev_fake`의 Scout(`scout/v1`)는 meta에 `input` 키가 없어 기본값 `source`로 읽히고, 노드는
+    함수 본문을 보낸다(#529) -> 선언을 `slice`로 바꿔 돈다.
+    `test_source_*` 검사는 디스크 선언 그대로다.
+    """
+    if not request.node.name.startswith("test_source_"):
+        declare_scout_input(monkeypatch, "slice")
 
 
 _PARSER = split_source((TARGET / "parser.c").read_bytes())
@@ -332,6 +346,42 @@ def test_scout_sees_the_slice_render_and_the_end_it_was_given(tmp_path: Path) ->
         "degraded": False,
     }
     assert facts["target"]["symbol"] == "parse_header"
+
+
+def test_source_declaration_gets_the_function_body_through_the_whole_run(tmp_path: Path) -> None:
+    """#529 — `input: source`로 읽히는 Scout(배선된 v4는 그렇게 선언하고, `dev_fake`의 scout/v1은
+    키가 없어 기본값이 같은 쪽이다)는 `--slices` run에서도 **entry를 품는 함수 본문**을 받는다.
+    거터도 배너도 `slice_criterion`도 없이, 첫 줄이 `FACTS.target.line_start`다. 후보의 위치는
+    모델이 `FACTS.target`에서 복사하므로 그 함수 범위다.
+    """
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    result, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((body, facts),) = _prompts(trace_path, "scout")
+    assert facts["source"] == "\n".join(_PARSER[18:26])
+    assert "slice_criterion" not in facts
+    assert facts["target"] == {
+        "file": "parser.c", "symbol": "parse_header", "line_start": 19, "line_end": 26,
+    }
+    assert _CASE_B_RENDER not in body
+    assert [c.location for c in result.candidates] == [
+        Location(file="parser.c", line_start=19, line_end=26, symbol="parse_header")
+    ]
+
+
+def test_source_declaration_does_not_report_a_finished_target_as_unanalyzed(
+    tmp_path: Path,
+) -> None:
+    """#529 리뷰 HIGH — `source` 선언이면 `FACTS.target`이 함수 범위라 후보 `location`도 그 범위다.
+    dispatched 키는 entry 위치라 위치까지 비교하면 정상 완주 run이 「모든 Scout 자리 실패」(1)로
+    찍혔다. 슬라이스 run은 `slice_id`가 대상의 유일 키다."""
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    result, _ = _run(tmp_path, slices_path=path, before=_with_index())
+
+    assert [c.slice_id for c in result.candidates] == [_CASE_B[0]]
+    assert result.report.unanalyzed_targets == 0
 
 
 def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path) -> None:
@@ -791,6 +841,25 @@ def test_the_scout_graph_sections_describe_the_slice_it_shows(
     )
 
 
+def test_source_declaration_keeps_the_slice_graph_sections_on_a_function_body_prompt(
+    tmp_path: Path,
+) -> None:
+    """#529 — `source` 선언도 캡슐(callers/callees)은 슬라이스 집합의 간선이다. 바뀐 것은 `SOURCE`
+    뿐이다(캡슐 조립은 프롬프트 선언을 안 본다) — 함수 본문 프롬프트에 슬라이스 기준 섹션이 붙는
+    한계는 이 핀이 드러내 둔다(`retrieval.run`의 `slice_id`)."""
+    path = _slices_file(tmp_path, [_slice(*_CASE_B)])
+
+    _, trace_path = _run(tmp_path, slices_path=path, before=_with_index())
+
+    ((_, facts),) = _prompts(trace_path, "scout")
+    lines = {section["kind"]: section["lines"] for section in facts["capsule_sections"]}
+    assert (lines["callers"], lines["callees"]) == (
+        ["recv_request parser.c:30"],
+        ["memcpy parser.c:24"],
+    )
+    assert facts["source"] == chr(10).join(_PARSER[18:26])
+
+
 # --- 슬라이스는 Evidence가 아니다 (ADR 0012 결정 1 ③ · #220 ③) ----------------------
 
 
@@ -1008,6 +1077,26 @@ def test_a_failed_twin_slice_counts_as_unanalysed_even_when_its_twin_succeeds(
     result, _ = _run(tmp_path, slices_path=path)
 
     assert [c.slice_id for c in result.candidates] == ["slice_0003"]
+    assert result.report.unanalyzed_targets == 1
+
+
+def test_source_declaration_counts_a_failed_twin_slice_as_unanalysed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#529 리뷰 HIGH의 바로 그 경로 — `source` 선언이면 쌍둥이 둘의 후보 `location`이
+    같은 함수 범위다. 위치로 맞추면 살아남은 쪽이 죽은 쪽을 「분석됨」으로 덮어 0이 된다.
+    `slice_id`로 맞춰야 1이다."""
+    from src.interfaces.model_client import SchemaParseError
+    from tests.test_pipeline_e2e import _failing_model
+
+    twin = ("slice_0003", "B", ("parser.c", 24, "memcpy"), "parse_header", {24})
+    path = _slices_file(tmp_path, [_slice(*_CASE_B), _slice(*twin)])
+    _failing_model(monkeypatch, [SchemaParseError("첫 슬라이스만 실패(테스트)")])
+
+    result, _ = _run(tmp_path, slices_path=path, before=_with_index())
+
+    assert [c.slice_id for c in result.candidates] == ["slice_0003"]
+    assert result.candidates[0].location.line_start == 19  # 함수 범위 — 둘이 같은 위치다
     assert result.report.unanalyzed_targets == 1
 
 

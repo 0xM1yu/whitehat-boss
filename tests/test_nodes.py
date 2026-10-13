@@ -76,6 +76,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 from src.tokens import estimate_tokens
+from tests.conftest import declare_scout_input
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -1562,6 +1563,273 @@ def test_scout_v3_follow_up_hop_is_stamped_too(ctx: RunContext) -> None:
     assert override.data["written.state"] == "triaged"
 
 
+# --- 후보 `location.symbol` 도장 (이슈 #633) ----------------------------------
+
+
+def _with_symbol(location: Location, symbol: str | None, *, file: str | None = None) -> Location:
+    return Location(
+        file=file or location.file,
+        symbol=symbol,
+        line_start=location.line_start,
+        line_end=location.line_end,
+    )
+
+
+# 도장이 고르는 심볼 표. `ctx`의 기본 `symbols_for`는 `None`(= 인덱스 없음, `dev_fake`)이라 도장이
+# 아예 돌지 않는다 — 실서빙(`harness_pool`)은 인덱서 표를 들고 도장은 그 표에서 **후보 줄을 품는
+# 함수**를 고른다. `other_fn`은 `VULNERABLE_C`에 없는 **합성 심볼**이다: 「같은 파일 다른 함수」를
+# 세우는 것이 용도이고, 도장은 파일 내용이 아니라 이 표만 읽는다.
+_PARSER_SYMBOLS = (
+    Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6),
+    Location(file="parser.c", symbol="other_fn", line_start=20, line_end=40),
+    # ⏵ 2026-10-14 — **다른 파일의 심볼이 표에 있어야** 파일 가드 핀이 자명해지지 않는다.
+    # 이 줄이 없으면 `util.c` 후보는 품는 함수를 못 찾아 어차피 안 찍히므로
+    # `test_scout_does_not_stamp_a_candidate_in_another_file`이 가드를 지워도 통과했다
+    # (적대적 리뷰 실측: 378 passed로 생존).
+    Location(file="util.c", symbol="util_fn", line_start=1, line_end=99),
+)
+
+
+def _symbol_table(symbols: tuple[Location, ...]):  # noqa: ANN202
+    def _for(file: str) -> list[Location] | None:
+        found = [symbol for symbol in symbols if symbol.file == file]
+        return found or None
+
+    return _for
+
+
+def _triage_writing_location(  # noqa: ANN202
+    ctx: RunContext,
+    target: Location,
+    written: Location,
+    *,
+    symbols: tuple[Location, ...] = _PARSER_SYMBOLS,
+):
+    """모델이 후보 `location`을 `written`으로 낸 것처럼 Scout를 돌린다(심볼 표를 배선해서)."""
+    stub = _RewritingModelClient(ctx.models, lambda value: value.transition(location=written))
+    patched = dataclasses.replace(ctx, models=stub, symbols_for=_symbol_table(symbols))
+    return _triage(patched, target)
+
+
+def _stamped_symbols(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SYMBOL_STAMPED]
+
+
+def test_scout_stamps_the_enclosing_function_when_the_model_left_it_null(ctx: RunContext) -> None:
+    """모델이 `symbol`을 `null`로 낸 후보(s17 12/12)는 그 줄을 품는 함수 이름을 받는다.
+
+    `file`·`line_*`는 모델이 쓴 값 그대로이고(여기선 `line_end`를 일부러 다르게 냈다), 저장된 후보도
+    같은 값이다. 채운 홉은 `scout_symbol_stamped`로 남는다.
+    """
+    written = _with_symbol(VULN_TARGET, None)
+    written = Location(file=written.file, line_start=3, line_end=9)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location == Location(
+        file="parser.c", symbol="parse_header", line_start=3, line_end=9
+    )
+    assert ctx.store.get("candidate", candidate.candidate_id).location == candidate.location
+    (event,) = _stamped_symbols(ctx)
+    assert event.subject_id == candidate.candidate_id
+    assert (event.data["hop"], event.data["symbol"]) == (0, "parse_header")
+
+
+def test_scout_stamps_the_other_function_not_the_target_symbol(ctx: RunContext) -> None:
+    """같은 파일 **다른 함수**의 후보에는 대상 이름이 아니라 그 함수 이름이 찍힌다 (리뷰 MEDIUM 1).
+
+    전 판은 조건이 셋(파일 같음 · 모델 `null` · 대상에 이름 있음)뿐이라 대상 이름을 그대로 찍었다.
+    슬라이스 타깃의 `FACTS.target`은 entry 한 줄이고 `SOURCE`는 여러 함수에 걸치므로 이 경우가
+    실재한다 — `inflate.c:1200`(`inflate_fast` 안) 후보에 `inflate`가 붙어 `repro_spec`·`validate`
+    argv에 실렸다.
+    """
+    written = Location(file="parser.c", line_start=25, line_end=30)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.symbol == "other_fn"
+    (event,) = _stamped_symbols(ctx)
+    assert event.data["symbol"] == "other_fn"
+
+
+@pytest.mark.parametrize(
+    ("written", "why"),
+    [
+        (Location(file="parser.c", line_start=12, line_end=14), "표의 어느 심볼도 안 품는 줄이다"),
+        (Location(file="parser.c"), "줄이 없어 품는 함수를 고를 근거가 없다"),
+    ],
+)
+def test_scout_stamps_nothing_when_the_index_cannot_place_the_line(
+    ctx: RunContext, written: Location, why: str
+) -> None:
+    """품는 함수를 못 찾으면 안 찍는다 — 대상 이름으로 메우지 않는다(CLAUDE.md §0)."""
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.symbol is None, why
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_stamps_nothing_without_an_index(ctx: RunContext) -> None:
+    """인덱스가 없는 프로필(`dev_fake` 기본 `symbols_for` = `None`)에서는 도장이 안 돈다."""
+    written = _with_symbol(VULN_TARGET, None)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written, symbols=())
+
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_the_stamped_symbol_is_the_one_the_model_saw_in_facts(ctx: RunContext) -> None:
+    """찍힌 값이 모델이 hop0 `FACTS.target`에서 본 심볼과 같다 (리뷰 MEDIUM 2).
+
+    대상 함수 **안**의 후보에서는 품는 함수와 `FACTS.target`이 같은 심볼을 가리켜야 한다 —
+    `docs/agent-contracts.md`가 「후보 `location`은 모델이 사실 블록의 대상을 옮겨 적는 값」이라
+    적으므로, 하네스가 채운 값이 그 블록과 갈리면 그 서술이 거짓이 된다.
+    ⚠ **이 등식은 #641(= `fix/529-scout-source-declaration`)이 병합된 뒤에야 실질적으로 문다.**
+    이 브랜치 단독에서는 이 테스트의 `VULN_TARGET`이 `capsule.target`(Joern 표기)이자 FACTS
+    `target`이고 심볼 표(`_PARSER_SYMBOLS`)가 같은 이름을 들게 짜여 있어 자명하게 통과한다.
+    두 표기가 갈리는 입력(C++ 클래스 바깥 정의 `P::parse` 등)은 이 테스트에 없다 — 갈림은
+    `test_the_stamp_uses_the_index_spelling_not_the_target_spelling`이 물고 실서빙에서 났는지는
+    **미실측**이다. #641은 `input: source` 선언에서 hop0 FACTS `target`을
+    `enclosing_scope(ctx.symbols_for(...))`로 바꾸므로 그때 원천이 둘이 된다 — 둘 다 같은 심볼 표를
+    읽고 **후보 줄이 그 함수 안인 한** 이 등식이 유지된다 — 후보가 같은 파일 다른 함수에 앉으면
+    갈리고, 그것이 이 PR이 의도적으로 만든 동작이다.
+    """
+    written = Location(file="parser.c", line_start=4, line_end=5)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    facts = _facts_of(ctx.models.last_for(Role.SCOUT).body)
+    assert candidate.location.symbol == facts["target"]["symbol"]
+    (event,) = _stamped_symbols(ctx)
+    assert event.data["symbol"] == facts["target"]["symbol"]
+
+
+def test_the_stamp_uses_the_index_spelling_not_the_target_spelling(ctx: RunContext) -> None:
+    """대상(Joern 표기)과 인덱스 표기가 다르면 찍히는 것은 **인덱스 표기**다.
+
+    FACTS `target.symbol`(`capsule.target`)과 찍힌 값이 갈릴 수 있다는 사실의 핀이다 — 인덱서가 C++
+    클래스 바깥 정의를 `P::parse`로 내는 것(`tools/harness-tools/indexer.py`)을 본뜬 표다. 갈림이
+    실서빙에서 났는지는 **미실측**이다.
+    """
+    target = Location(file="parser.c", symbol="parse", line_start=3, line_end=6)
+    table = (Location(file="parser.c", symbol="P::parse", line_start=3, line_end=6),)
+    written = Location(file="parser.c", line_start=4, line_end=5)
+
+    candidate, _, _ = _triage_writing_location(ctx, target, written, symbols=table)
+
+    assert candidate.location.symbol == "P::parse" != target.symbol
+
+
+def test_the_session_carries_the_hop0_target_for_the_follow_up_hops(ctx: RunContext) -> None:
+    """`open_session`이 `capsule.target`을 세션에 싣는 **실제 배선**을 문다.
+
+    아래 되묻기 테스트는 세션을 손으로 짜(`_ne_session` + `dataclasses.replace`) `target`을 직접
+    넣으므로 그 배선을 안 본다 — `open_session`의 `target=capsule.target`을 `None`으로 바꿔도
+    초록이었다(생존 변이).
+    """
+    artifacts = preprocess.run(ctx, source_root=_root_of(ctx))
+    artifact = next(a for a in artifacts if a.path == VULN_TARGET.file)
+    capsule = retrieval.run(ctx, target=VULN_TARGET, level=CapsuleLevel.LIGHT)
+
+    session = scout.open_session(ctx, artifact=artifact, capsule=capsule)
+
+    assert session.target == capsule.target
+    assert session.target is not None and session.target.symbol == "parse_header"
+
+
+def test_scout_keeps_a_symbol_the_model_wrote(ctx: RunContext) -> None:
+    """모델이 쓴 `symbol`은 대상과 달라도 그대로다 — 도장은 `null`만 채운다. `""`도 쓴 값이다."""
+    for written_symbol in ("other_fn", ""):
+        written = _with_symbol(VULN_TARGET, written_symbol)
+
+        candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+        assert candidate.location.symbol == written_symbol
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_does_not_stamp_a_candidate_in_another_file(ctx: RunContext) -> None:
+    """대상 파일이 아닌 곳의 후보에 대상 함수 이름을 붙이지 않는다 — 슬라이스는 여러 파일을 본다."""
+    written = _with_symbol(VULN_TARGET, None, file="util.c")
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.file == "util.c"
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_stamps_nothing_when_the_target_has_no_symbol(ctx: RunContext) -> None:
+    """이름 없는 대상(`FACTS.target.symbol`이 `null`)에서는 지어내지 않는다."""
+    nameless = _with_symbol(VULN_TARGET, None)
+
+    candidate, _, _ = _triage_writing_location(ctx, nameless, nameless)
+
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_v3_follow_up_hop_stamps_the_symbol_from_the_hop0_target(ctx: RunContext) -> None:
+    """되묻기 홉의 후보도 `symbol`이 `null`이면 hop0의 target으로 가려 품는 함수를 채운다.
+
+    `finish()`가 마지막 홉의 후보를 저장하므로 hop0만 막으면 되묻기를 거친 후보는 도로 `null`이다.
+    """
+    session = dataclasses.replace(_ne_session(), target=VULN_TARGET)
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            written = session.candidate.transition(
+                location=_with_symbol(VULN_TARGET, None), reason_codes=["triage_review"]
+            )
+            value = ScoutResponse(candidate=written, analysis_summary=AnalysisSummary(claim="h1"))
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    next_session = scout.continue_session(
+        dataclasses.replace(ctx, models=_Stub(), symbols_for=_symbol_table(_PARSER_SYMBOLS)),
+        session,
+        "FOLLOWUP",
+    )
+
+    assert next_session.candidate.location.symbol == "parse_header"
+    assert next_session.target == VULN_TARGET, "다음 홉이 또 쓸 수 있게 이어 쥔다"
+    (event,) = _stamped_symbols(ctx)
+    assert (event.data["hop"], event.data["symbol"]) == (1, "parse_header")
+
+
+def test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt(ctx: RunContext) -> None:
+    """도장이 닿는 곳은 합성 `repro_spec` 문구 하나다 — Auditor·Critic 프롬프트 바이트는 안 변한다.
+
+    Auditor는 후보를 `_describe_candidate`(ID·CWE·신호)로만 렌더하고 FACTS의 `target`은
+    `capsule.target`이라 `Candidate.location`을 안 읽는다. Critic은 Finding만 읽는다. 이 핀이
+    깨지면(후보 위치를 프롬프트에 싣기 시작하면) 도장이 요청 바이트를 바꾸기 시작한 것이니
+    `docs/agent-contracts.md`의 ⏵ 2026-10-13 문단(Scout)을 같이 고친다.
+    """
+    stamped, capsule, evidences = _triage_writing_location(
+        ctx, VULN_TARGET, _with_symbol(VULN_TARGET, None)
+    )
+    assert stamped.location.symbol == "parse_header", "전제 — 도장이 찍혔다"
+    unstamped = stamped.transition(location=_with_symbol(VULN_TARGET, None))
+
+    assert auditor._synthesize_repro_spec(stamped).expected_signal == (
+        "sanitizer crash at parse_header"
+    )
+    assert auditor._synthesize_repro_spec(unstamped).expected_signal == (
+        "sanitizer crash at parser.c"
+    )
+    auditor.run(ctx, candidate=stamped, capsule=capsule, evidences=evidences)
+    auditor.run(ctx, candidate=unstamped, capsule=capsule, evidences=evidences)
+    prompt_a, prompt_b = [p for role, p in ctx.models.prompts if role is Role.AUDITOR][-2:]
+    issued = re.compile(r"(?:find|mev)_\d+")  # 호출마다 새로 발급되는 ID만 가린다
+    assert prompt_a.prefix == prompt_b.prefix
+    assert issued.sub("<id>", prompt_a.body) == issued.sub("<id>", prompt_b.body)
+
+
 def test_auditor_stamps_the_issued_ids_over_the_ones_the_model_wrote(ctx: RunContext) -> None:
     """D83 ② — Auditor가 **남의** `finding_id`·`candidate_id`, 다른 `run_id`를 써도 둘 다 남는다."""
     first_candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
@@ -2668,6 +2936,8 @@ def test_validate_evaluates_the_gate_before_deciding(ctx: RunContext) -> None:
     assert len(graded) == 1
     assert graded[0].data["p4"] is True
     assert graded[0].data["grade"] == "E4"
+    # 8단계 목록에는 6단계 하네스 부착분이 섞이므로 「모델 인용 수」를 싣지 않는다(이슈 #554).
+    assert "cited_by_model" not in graded[0].data
 
 
 def test_gate_refuses_stages_where_its_predicates_cannot_hold(ctx: RunContext) -> None:
@@ -2986,7 +3256,9 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     }
 
 
-def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
+def test_a_slice_target_sends_its_render_and_slice_criterion(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """슬라이스 타깃이면 `SOURCE`가 렌더이고 FACTS에 `slice_criterion`이 붙는다(ADR 0012 결정 1).
 
     `read_source`(심볼 본문)를 부르면 entry 한 줄만 간다 — 줄번호도 배너도 없이.
@@ -3019,6 +3291,139 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
         "degraded": False,
     }
     assert candidate.slice_id == "slice_0001"
+
+
+@pytest.fixture
+def scout_declares_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`input: slice`를 선언한 Scout — 슬라이스 렌더를 `SOURCE`로 읽는 쪽(v3)."""
+    declare_scout_input(monkeypatch, "slice")
+
+
+_GUTTER_LINE = re.compile(r"^\s*\d+[|:]", re.MULTILINE)
+_PARSE_HEADER = Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6)
+
+
+def _source_declared_slice_ref(ctx: RunContext, monkeypatch: pytest.MonkeyPatch) -> SliceRef:
+    """`input: source` 선언 + entry 한 줄(parser.c:5, `parse_header` 3~6 안)짜리 슬라이스 타깃.
+
+    `read_slice`는 부르면 터진다 — 선언이 source면 렌더를 읽지도 않는다는 핀이다."""
+    declare_scout_input(monkeypatch, "source")
+
+    def _must_not_read(slice_id: str) -> str:
+        raise AssertionError(f"input: source인데 슬라이스 렌더({slice_id})를 읽었다")
+
+    ctx.read_slice = _must_not_read
+    ctx.symbols_for = lambda file: [_PARSE_HEADER] if file == "parser.c" else None
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+
+def _slice_scout_session(ctx: RunContext, ref: SliceRef) -> scout.ScoutSession:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+    return scout.open_session(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+
+def _last_scout_facts(ctx: RunContext) -> dict:
+    body = ctx.models.last_for(Role.SCOUT).body
+    return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+
+
+def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#529 — 입력 모양을 고르는 기준은 슬라이스 유무가 아니라 **프롬프트 선언**(`meta.input`)이다.
+
+    v4 prefix는 `SOURCE`를 「함수 본문, 줄번호도 파일 배너도 없고 첫 줄이 `line_start`」라 단언한다.
+    entry는 한 줄이라 `read_source(entry)`가 아니라 entry를 품는 함수가 가야 한다.
+    """
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    body_lines = VULNERABLE_C.splitlines()[2:6]
+    assert facts["source"].splitlines() == body_lines  # entry 한 줄(5)이 아니라 함수(3~6)
+    assert len(facts["source"].splitlines()) > 1
+    assert not _GUTTER_LINE.search(facts["source"]) and "=====" not in facts["source"]
+    first_line = VULNERABLE_C.splitlines()[facts["target"]["line_start"] - 1]
+    assert facts["source"].splitlines()[0] == first_line
+    assert facts["target"]["line_start"] == 3  # 첫 줄 = FACTS.target.line_start (prefix의 단언)
+    # 본문의 「대상」 표기도 같은 범위다 — `describe_target(capsule.target)`이면 entry 한 줄
+    # (「줄 5-5」)이 가서 같은 프롬프트의 FACTS와 어긋난다.
+    body = ctx.models.last_for(Role.SCOUT).body
+    assert "`parser.c` 의 `parse_header` (줄 3-6)" in body and "(줄 5-5)" not in body
+    assert "slice_criterion" not in facts  # v4 산문이 그 키를 서술하지 않는다
+    assert session.slice is ref
+    # resolver의 `visible` — 모델이 본 줄은 함수 3~6이지 SliceRef.lines가 아니다.
+    assert session.shown_lines == tuple(("parser.c", n) for n in range(3, 7))
+
+
+def test_a_source_declaration_without_an_enclosing_symbol_reads_the_entry_window(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """심볼을 못 찾으면 **Auditor와 같은 창**(`entry_scope.ENTRY_WINDOW_LINES`)이다 — 슬라이스
+    렌더로 조용히 되돌아가지도(`read_slice`가 터진다), entry 한 줄로 가지도 않는다."""
+    from src.orchestrator import entry_scope
+
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    ctx.symbols_for = lambda _file: []
+    monkeypatch.setattr(entry_scope, "ENTRY_WINDOW_LINES", 1)
+
+    _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"].splitlines() == VULNERABLE_C.splitlines()[3:6]  # entry 5 ± 1 = 4~6
+    assert facts["target"]["line_start"] == 4 and facts["target"]["line_end"] == 6
+    # 창 폴백은 심볼이 없다 — 노드가 `capsule.target`(슬라이스가 든 심볼)의 이름을 채운다. 그 복사를
+    # 지우면 여기서 죽는다(`_ask_model`의 `if target.symbol is None` 두 줄). FACTS symbol 자체의
+    # 출처는 #633이 따로 든다 — 이 핀은 **창 폴백**만 본다.
+    assert facts["target"]["symbol"] == "parse_header"
+
+
+def test_a_slice_declaration_keeps_the_slice_render_and_criterion(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`input: slice`는 지금 그대로 — 렌더가 `SOURCE`이고 `slice_criterion`이 붙는다."""
+    declare_scout_input(monkeypatch, "slice")
+    render = "/* ===== parser.c ===== */\n4|     char buf[64];\n5|     memcpy(buf, src, len);"
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    ctx.symbols_for = lambda _file: [_PARSE_HEADER]  # 심볼이 있어도 선언이 slice면 안 쓴다
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == render
+    assert "slice_criterion" in facts
+    assert session.shown_lines is None
+
+
+def test_without_a_slice_the_declaration_does_not_matter(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`slice is None`이면 선언과 무관하게 그대로다 — 타깃 심볼 본문, `slice_criterion` 없음."""
+    declare_scout_input(monkeypatch, "slice")
+    ctx.read_slice = lambda slice_id: pytest.fail(f"슬라이스가 없는데 렌더({slice_id})를 읽었다")
+
+    _triage(ctx, VULN_TARGET)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == ctx.read_source(VULN_TARGET)
+    assert "slice_criterion" not in facts
 
 
 def _big_slice(ctx: RunContext, *, trim: int, context_limit: int | None = None) -> SliceRef:
@@ -3064,6 +3469,7 @@ def _gutter_lines(source: str) -> list[int]:
 
 def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     ctx: RunContext,
+    scout_declares_slice: None,
 ) -> None:
     """#353 (b) — 렌더가 창을 넘으면 entry에 가까운 줄부터 남겨 창 안에 든다.
 
@@ -3097,7 +3503,7 @@ def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     assert facts["source"] in prompt.body.split("```json")[0]  # SOURCE도 같은 렌더
 
 
-def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
+def test_slice_trim_off_sends_the_whole_render(ctx: RunContext, scout_declares_slice: None) -> None:
     """기본(0)이면 지금처럼 통째로 — 넘어도 줄이지 않고 이벤트도 없다(크기 거절은 서빙 몫)."""
     ref = _big_slice(ctx, trim=0)
 
@@ -3107,7 +3513,7 @@ def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
+def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext, scout_declares_slice: None) -> None:
     """창이 넉넉하면 켜져 있어도 그대로 — 이벤트 부재 = 안 잘림."""
     ref = _big_slice(ctx, trim=1, context_limit=400_000)
 
@@ -3117,7 +3523,9 @@ def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(ctx: RunContext) -> None:
+def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """프롬프트 고정분만으로 창을 넘으면 entry 한 줄로 보내고 `fit=false` — 크기 거절은 서빙 몫."""
     output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
     ref = _big_slice(ctx, trim=1, context_limit=output_max + 600)
@@ -3195,7 +3603,9 @@ _PROV_K5 = {
 }
 
 
-def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: RunContext) -> None:
+def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 HIGH-2/M-4 — anchor > dependency > context 순으로 남기고, 몫은 정확히 식대로다.
 
     주입 카운터로 몫을 2*K=10 토큰에 고정한다. 남는 다섯은 우선순위 상위 다섯:
@@ -3228,7 +3638,9 @@ def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: Run
     assert 97 not in _gutter_lines(facts["source"])  # 가까운 context보다 먼 anchor가 우선
 
 
-def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> None:
+def test_trim_breaks_distance_ties_toward_the_earlier_line(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 같은 순위·같은 거리면 렌더 순서(앞 줄)를 남긴다. 반대로 깨면 101이 남는다.
 
     99·101 둘 다 entry 100에서 거리 1, provenance 없음(같은 순위). 몫 2*1=2라 하나만 남는다."""
@@ -3245,7 +3657,9 @@ def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> N
     assert _gutter_lines(facts["source"]) == [99]  # 앞 줄(작은 i)을 남긴다
 
 
-def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> None:
+def test_trim_keeps_a_render_that_exactly_fills_the_budget(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 전체 크기가 몫과 **같으면** 자르지 않는다(`<=`). `<`로 바꾸면 자른다."""
     ref = _counter_slice(
         ctx, parser_lines=[10, 11], util_lines=[], provenance={}, entry_line=10, keep_k=2
@@ -3258,7 +3672,9 @@ def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> N
     assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
 
 
-def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
+def test_trim_visible_reflects_only_the_kept_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-2 — 잘린 좌석의 세션은 **모델이 본 줄**만 싣고, resolver `visible`이 그것을 쓴다.
 
     자르기 전 `SliceRef.lines` 전체를 쓰면 모델이 못 본 줄을 "이미 SOURCE에 있다"로 답해 버린다."""
@@ -3291,7 +3707,9 @@ def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
     assert runner._ne_visible(ref, None)["parser.c"] == frozenset(range(95, 106))
 
 
-def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: RunContext) -> None:
+def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 손 f-string이 아니라 `adapters.slices.render()` 출력으로 라운드트립한다.
 
     듬성한 줄(5·8·20)이라 `_parse_render`가 건너뛴 번호를 그대로 들어야 한다."""

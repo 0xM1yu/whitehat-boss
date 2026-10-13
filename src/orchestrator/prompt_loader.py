@@ -122,8 +122,8 @@ FACTS_TOKEN = "FACTS"
 #
 # **opt-in은 셋이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
 # ⏵ 2026-10-13 셋째 `auditor_hops`):
-#   - `slice_criterion` — 슬라이스 타깃의 Scout 프롬프트에만(ADR 0012 결정 1, v3 prefix의
-#     「Slice criterion」 절).
+#   - `slice_criterion` — 슬라이스 타깃이고 `input: slice`를 선언한 Scout 프롬프트에만(ADR 0012
+#     결정 1, Scout v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `source`는 안 받는다 — #529).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
 #   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
 #     (아래 그 항목의 주석 · #600 H2ⓐ).
