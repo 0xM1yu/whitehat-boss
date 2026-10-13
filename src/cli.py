@@ -549,7 +549,8 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
 
     내용 인식 집합의 정본은 각 노드다. Scout·Single에는 그 집합이 없어 대상이 아니다.
     Fake 여부는 `ModelEntry.is_fake`로 가른다 — 공유 엔트리의 한 역할만 범프하면 다른 역할의
-    파일이 없어질 수 있다(#172). Fake는 정해진 답을 내므로 낡은 판도 ERROR로 막지 않는다.
+    파일이 없어질 수 있다(#172, 2026-10-12 닫음). Fake는 정해진 답을 내므로 낡은 판도
+    ERROR로 막지 않는다.
     디스크의 순서는 정수 `vN`만 비교한다. `v4_t1` 같은 실험 이름의 우열은 추측하지 않는다.
     """
     versions = {
@@ -576,7 +577,7 @@ def _check_prompt_version(config: HarnessConfig, role: str, version: str) -> lis
             checks.append(Check(
                 Severity.WARN,
                 f"{role} 프롬프트는 {version}에 배선됐지만 디스크에 새 판 v{newer[-1]}이 있다 — "
-                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (#172)",
+                "공유 모델 엔트리와 역할별 계약을 확인한 뒤 배선을 정한다 (근거: 닫힌 이슈 #172)",
             ))
     return checks
 
@@ -742,7 +743,8 @@ def _check_thresholds() -> Check:
         Severity.WARN,
         f"실측 전 초기값 임계값: {list(PROVISIONAL_THRESHOLDS)} "
         "— 조건 간 비교 전에 확정한다 (근거: config/budgets.yaml 각 키 주석 — "
-        "이슈 #91·#92·#511은 닫혔고 값은 안 잰 초기값 그대로다)",
+        "이슈 #91·#92·#511은 닫혔다 — #91·#92의 값은 안 잰 초기값 그대로고 "
+        "`pov_tool_hops`(16)는 사용자 결정이나 효과가 미실측이다)",
     )
 
 
