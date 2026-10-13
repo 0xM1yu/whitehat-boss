@@ -583,6 +583,7 @@ class CapsuleBudgets(HarnessModel):
 # 동일, 이슈 #67).
 # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와 바이트
 # 동일, 이슈 #67).
+# ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술은 v14와 같다).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -810,6 +811,8 @@ class Thresholds(HarnessModel):
     # `audit`를 채운다, 이슈 #578)을 낸다.
     # ⏵ 같은 날 — 서빙 판은 v13으로 올라갔고 그 봉투는 v11의 셋째와 같다(이슈 #67 — FACTS만 다르다).
     # ⏵ 2026-10-11 — 서빙 판은 v14이고 그 봉투는 v12의 넷째와 같다(이슈 #67 — FACTS만 다르다).
+    # ⏵ 2026-10-13 — 서빙 판은 v15이고 봉투는 다섯째 `AuditorProcedureProbeInputAction`이다(v12
+    # 봉투의 서브클래스 — `probe`의 `spec` 설명만 다르다). 허용집합은 여섯이다.
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -824,7 +827,8 @@ class Thresholds(HarnessModel):
     # hop0가 이보다 크다. ⏵ 2026-10-07부터 v10 — prefix 56,906자(v9는 35,501자 ·
     # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
     # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 ·
-    # ⏵ 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다)을
+    # ⏵ 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
+    # 더해져 더 길다, 글자 수는 안 쟀다)을
     # 넣으면 167,775가
     # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
     # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
@@ -853,6 +857,7 @@ class Thresholds(HarnessModel):
     # #525).
     # ⏵ 2026-10-10 — v12는 `AuditorProcedureAuditAlwaysAction`을 선언해 허용집합은 다섯이다(이슈
     # #578).
+    # ⏵ 2026-10-13 — v15는 `AuditorProcedureProbeInputAction`을 선언해 허용집합은 여섯이다.
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:

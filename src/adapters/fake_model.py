@@ -9,7 +9,7 @@
 
 프롬프트 본문의 마지막 ```json 펜스가 모델이 읽는 사실이다(`FakeContext`). 실제 모델도
 같은 블록을 읽으므로 이 계약은 Fake 전용 우회로가 아니다. ⏵ 2026-10-10 — 단 `facts_source: false` 판
-(Auditor v13·v14)은 `source`가 펜스에 없고 Fake가 산문 원문 블록에서 읽는다.
+(Auditor v13·v14 · ⏵ 2026-10-13 v15도)은 `source`가 펜스에 없고 Fake가 산문 원문 블록에서 읽는다.
 
 아래 가중치는 **정책 임계값이 아니라 테스트 대역의 휴리스틱**이라 config가 아니라 여기 있다.
 실제 판정 임계값(`scout_threshold`)은 config에서 오고 이 어댑터는 그것을 모른다.
@@ -27,6 +27,7 @@ from src.schemas.auditor import (
     AuditorProcedureAction,
     AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
+    AuditorProcedureProbeInputAction,
     AuditProcedure,
     AuditProcedureAuditAlways,
     AuditProcedureNullableCwe,
@@ -221,9 +222,10 @@ class FakeModelClient:
         )
 
 
-# FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13·v14, 이슈 #67)의 원문 자리.
-# 그 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`·`v14/body.md`의 이 머리와
-# 다음 `### Facts` 사이).
+# FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13·v14, 이슈 #67 ·
+# ⏵ 2026-10-13 v15도 — 서빙 판)의 원문 자리.
+# 그 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`·`v14/body.md`·
+# `v15/body.md`의 이 머리와 다음 `### Facts` 사이).
 _PROSE_SOURCE = re.compile(
     r"^### Target under analysis — original source code\n\n(?P<source>.*)\n\n### Facts\n",
     re.DOTALL | re.MULTILINE,
@@ -637,6 +639,26 @@ def _build_auditor_procedure_audit_always_action(
     )
 
 
+def _build_auditor_procedure_probe_input_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> AuditorProcedureProbeInputAction:
+    """v15 봉투(⏵ 2026-10-13)의 fake 액션 — v12와 **같은 판정**이다(최종 답 클래스도
+    `AuditProcedureAuditAlways`). 달라진 것은 봉투의 `spec` 설명뿐이라 fake의 홉 열은 안 바뀐다 —
+    `probe`에 `spec`을 안 싣는 것은 그대로다(`_auditor_investigation`).
+
+    **이 항목이 빌더 표에 없으면** Fake가 v15를 고르는 run이 `FakeModelError`로 죽는다.
+    """
+    hop = _auditor_investigation(context, history)
+    if hop is not None:
+        return AuditorProcedureProbeInputAction(**hop)
+    procedure = _build_audit_procedure(context, produced_by, history)
+    return AuditorProcedureProbeInputAction(
+        action="answer",
+        procedure=AuditProcedureAuditAlways.model_validate(procedure.model_dump()),
+        rationale=_AUDITOR_ANSWER_RATIONALE,
+    )
+
+
 def _build_pov_action_named(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovActionNamed:
@@ -649,8 +671,8 @@ def _build_pov_action_named(
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
 # fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).
-# Auditor 루프 봉투는 **넷이고 넷 다 든다**(⏵ 2026-10-09 — v11 봉투가 더해져 셋 · ⏵ 2026-10-10 —
-# v12 봉투가 더해져 넷. 그 전은 둘)
+# Auditor 루프 봉투는 **다섯이고 다섯 다 든다**(⏵ 2026-10-09 — v11 봉투가 더해져 셋 · ⏵ 2026-10-10 —
+# v12 봉투가 더해져 넷 · ⏵ 2026-10-13 — v15 봉투가 더해져 다섯. 그 전은 둘)
 # — 빠지면 그 봉투를 고르는 판의 Fake run이 죽는다
 # (`tests/test_auditor_loop.py`가 `nodes/auditor`의 루프 봉투 집합과 대조한다).
 _BUILDERS = {
@@ -665,4 +687,5 @@ _BUILDERS = {
     AuditorProcedureAction: _build_auditor_procedure_action,
     AuditorProcedureNullableCweAction: _build_auditor_procedure_nullable_cwe_action,
     AuditorProcedureAuditAlwaysAction: _build_auditor_procedure_audit_always_action,
+    AuditorProcedureProbeInputAction: _build_auditor_procedure_probe_input_action,
 }
