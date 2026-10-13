@@ -577,6 +577,9 @@ def test_the_procedure_envelope_tells_the_model_the_truth_about_spec() -> None:
 
     ⏵ **2026-10-09 (ADR 0014)** — 무는 철자를 「받지 않는다」에서 **「안 싣는다」**로 옮겼다.
     컨테이너 `poc`는 받을 수 있고, 참인 문장은 이 경로가 안 싣는다는 것이다.
+
+    ⏵ 2026-10-13(#419) — 노드는 이제 싣는다. 이 검사는 **동결된 판(v10~v14)의 요청 바이트**를 묻는
+    것이라 그대로 서고, 그 설명이 낡았다는 사실은 다음 프롬프트 판(auditor v15)이 고친다.
     """
     schema = AuditorProcedureAction.model_json_schema()
 
