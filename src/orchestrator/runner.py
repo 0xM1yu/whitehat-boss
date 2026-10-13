@@ -1286,8 +1286,9 @@ def run_pipeline(
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
-    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
-    # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
+    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이고
+    # (⏵ 2026-10-13 — `null`이면 하네스가 후보 줄을 품는 함수로 채운다, 이슈 #633) 그 도장이
+    # 못 도는 경우가 있어 여전히 `null`일 수 있다 — dedupe 키에는 파일만 쓴다.
     by_cand = {c.candidate_id: c.location for c in state.candidates}
     files = {
         f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
@@ -2260,7 +2261,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
     # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다.
     # 적대적 리뷰가 설정만으로 닿는 둘을 재현했다 — pov 좌석 `prompt_template_version` 오타의
-    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부르던 때의 사례다 —
+    # ⏵ 2026-10-13 #600 H3: 이제 `run()`도 시작 전에 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
     # ⏵ 2026-10-10 도구 호출 둘레의 `except BudgetExhausted`(#394)는 홉 이벤트를 낸 뒤 그대로
     # 올리므로 사유 0건은 여전하고 이 `finally`가 메운다.
@@ -2789,8 +2791,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5는 형제 `PovActionNamed`)을 내고
-    도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6은 형제
+    `PovActionNamed`)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -2819,7 +2821,8 @@ def _run_pov_hops(
     게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
-    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트).
+    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
+    v6이다**(`config/models.yaml` · S19 Phase 6-2) — 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
@@ -2984,7 +2987,8 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                named = getattr(action, "poc_sha256", None)  # v5 봉투(`PovActionNamed`)만 든다
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6(서빙 판)이 그것을 선언한다.
+                named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
@@ -3074,6 +3078,12 @@ def _run_pov_hops(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
+            # `evidence is None` ⟺ `no_poc`다 — 아래 두 자리가 `no_poc` 대신 `evidence`를
+            # 보는 것이 같은 축인 이유는 타입이다: `pov.run_tool`의 반환형이
+            # `Evidence`(옵셔널 아님)이고 `prior[1]`도 Evidence라, 위 삼항에서 `None`이
+            # 나오는 갈래는 `no_poc` 하나뿐이다. **`run_tool`을 옵셔널로 바꾸면 이 두 자리를
+            # `no_poc`로 바꿔야 한다** — 안 바꾸면 도구가 Evidence를 못 낸 홉이 「PoC 없음」
+            # 관측을 받는다.
             if prior is None and evidence is not None:
                 if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
                     ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
