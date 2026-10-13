@@ -87,7 +87,7 @@ agent:
 > **`input_max`는 아직 강제되지 않는다 (2026-08-25).** 이 값은 `expanded` 캡슐 예산을 비추는
 > 선언이고, `grep -rn input_max src/`는 0건이다 — 아래 표의 "`input_max` 초과 → Retrieval
 > 단계로 되돌려 capsule 축소"를 수행하는 코드가 없다. 더구나 **캡슐 예산은 프롬프트 크기의
-> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로(슬라이스 타깃의 Scout는 `ctx.read_slice()`로) 따로 실려 예산 밖에서 프롬프트를 키운다
+> 상한이 아니다**: 대상 원문이 `ctx.read_source()`로(`input: slice` 프롬프트의 슬라이스 타깃 Scout는 `ctx.read_slice()`로) 따로 실려 예산 밖에서 프롬프트를 키운다
 > (`config/budgets.yaml`의 주석, [open-questions.md](open-questions.md) D21·D17). 그래서 이
 > 숫자를 "프롬프트가 이 안에 들어온다"로 읽으면 안 된다.
 
@@ -118,6 +118,8 @@ agent:
   ⏵ **2026-10-07 — 서빙 판이 v4다**(PR #524 배선). v4 meta가 `input: source`라 위 슬라이스 서술은
   서빙 경로가 아니고, `--slices` 없는 run을 막던 가드는 **더 이상 차지 않는다**(`cli._slice_input_prompts`).
   ⚠ 어긋남이 뒤집혔다 — `--slices` run에서는 노드가 렌더를 싣는데 v4는 함수 본문이라 적는다.
+  ⏵ 2026-10-13 — 고쳤다(#529): 노드가 `SOURCE`의 모양을 meta `input`으로 고른다. `source`면 슬라이스 타깃도
+  entry를 품는 함수 본문(Auditor와 같은 `entry_scope` 규칙·창 폭)이고 FACTS에 `slice_criterion`이 없다.
   아래 NE 루프도 v4에서는 신호가 둘이라 서빙 경로에서 돌지 않는다.
 - 출력: `Candidate[]`. v3는 판정(`candidate`)과 근거(`analysis_summary`)를 한 호출에서 내는 `ScoutResponse`
   (`src/schemas/scout_response.py`)이고 하네스는 `.candidate`만 흘린다. ⚠ **ADR 0012 결정 2 —
@@ -239,6 +241,11 @@ agent:
   `_CONTENT_AWARE_VERSIONS`), v10 prefix도 `FACTS.evidence[].body`를 이름으로 불러 「a bounded excerpt of a tool log,
   not a generated summary」로 적는다. v9로 돈 run은 0건이고 v10으로 돈 run은 1건이다([10-08 run](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md) — `checksum` 0이라 비교표 밖 · `docs/experiments/` grep, 2026-10-08).
   지금 판은 이 사슬이 아니라 `config/models.yaml` `qwen3.8-27b`의 `prompt_template_version`이 정본이다.
+
+  ⏵ 2026-10-13(#563) - 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다(6단계 `gate_eval`에서 센 정수). #248 뒤 읽힌 6단계
+  `location_ok`는 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0) · 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖,
+  [D106](open-questions/D/D106.md) ⏵ 2026-10-13)이고 과제가 다르다. `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(D106의 오프라인
+  재등급 5/5 거짓은 run 실측이 아니다). 통제 대조 0건.
 - 출력: `Finding`(draft) + `MissingEvidence[]`
   ⏵ 2026-10-03 — 노드 `run()`의 반환은 이 모양 그대로다. 도구 루프를 켠 판(아래 「도구 루프」)에서는 **모델이 홉마다
   내는 것이 봉투(`AuditorAction` — v8·v9)**이고 `Finding`은 그 `answer` 액션이 싣는다 — 모델 호출 하나의 출력과 5단계 산출이 갈린다.
@@ -326,6 +333,14 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    (`is_size_rejection` — 413, 또는 `maximum context length`가 실린 400)당하는 것만 다르다: 후보는 C-6이
    아니라 C-5로 `queued`에 남고 그 홉에 `auditor_hop`(`stop_reason=context_overflow`)이 남는다. 그 예외도
    **흡수하지 않고 올라온다**(아래 6항 「`CONTEXT_OVERFLOW`」).
+   ⏵ 2026-10-13(#602) — **비어 있는 `answer`(`procedure`·`finding` 없음)도 이 길이다.** 어댑터의 재시도는 이미
+   거절 사유를 모델에게 돌려준다(`openai_compat`이 재시도 본문 끝에 `[스키마 오류] <pydantic 오류>`를 붙인다) -
+   그런데도 적어도 마지막 시도는 같은 거절이었다(첫 시도의 원문은 그 run에 없다 - 2026-10-11 run
+   `run_20261011_0001`, [보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md), 25k 토큰 · 18분). 동작은 안 바꾼다
+   (재시도 횟수·후보 처리 그대로). 대신 **세는 것을 더했다**: `model_call`(`role=auditor` · `ok=false` ·
+   `SchemaParseError`)의 `error_detail`이 `answer 액션은 비지 않은`을 담은 호출 수를 run 경고
+   (`runner._auditor_empty_answer_warning`)로 올린다. 호출 단위이고 마지막 시도의 사유만 보므로 하한이다.
+   프롬프트 쪽 문장은 auditor v15가 넣었다(`prompts/auditor/v15/meta.yaml` 5번 · #662) - 이 수가 그 효과를 판가름한다(v15로 돈 run은 아직 0건).
    5단계 산출 `Finding`은 `answer`에서만 나온다(v10은 `procedure`를 옮겨서 — §3 「AuditProcedure」).
 
 2. **`lookup` 요청 형식.** `requests`의 항목은 Scout 되묻기와 같은 `RequestedContext`다 — `kind`·`target`·
@@ -440,7 +455,9 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    실린다 — 이 절을 쓴 시점에 `runner.py`의 그 대입은 2단계가 모은 근거 그대로다. 연결은 별 결정이다
    ([D99](open-questions/D/D99.md) 「E4 경계」). 연결을 넣는 PR은 이 문장을 같이 고친다. 모델이 `probe`의 `evidence_id`를 인용했는지는
    `answer` 홉 이벤트의 `cited_probe_evidence`(그 홉이 `probe`로 만든 ID를 `evidence_refs`로 인용한 수)가 세므로
-   「인용했는데 게이트가 조용히 버렸다」가 trace에 남는다.
+   「인용했는데 게이트가 조용히 버렸다」가 trace에 남는다. ⏵ 2026-10-13(#554) — **`probe` 한정이 아닌** 모델의 `evidence_refs`
+   인용 수는 6단계 `gate_eval`의 `cited_by_model`이 센다(하네스 부착 **전**의 ID 개수 - 6단계를 거쳐 관측 Evidence가 붙은 Finding은 부착이 `state.db`의 목록을 덮어 거기서는 못 센다.
+   7·8단계 행에는 키가 없다 · 키 부재 = 안 쟀다. 정본은 `trace.py` 모듈 docstring의 「모델 인용 수」).
 
 6. **홉 예산.** 조사 홉은 `thresholds.auditor_tool_hops`번까지이고, hop 0..N-1이 `lookup`·`probe`를 내도 되며
    **hop N은 `answer`여야 한다**(모델 호출은 최대 N+1회). 다음 홉이 마지막 허용 홉이면 하네스가 관측 뒤에
@@ -644,7 +661,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 도구를 `inspect`가 또
   요청하면 도구를 안 돌리고(`tool_call` 없음) 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 인프라
-  실패(124~127)는 기억하지 않는다 · `v5` prefix는 이 거절을 아직 서술하지 않는다) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
+  실패(124~127)는 기억하지 않는다 · `v5` prefix는 이 거절을 아직 서술하지 않는다 ·
+  ⏵ 2026-10-13 — 돌릴 PoC가 없는 `inspect poc`(첫 `gen` 전 — 0바이트 gen 뒤는 `poc`가 `b""`로
+  이미 돌았으니 위 반복이다)도 도구를 안 돌리고 `tool_call` 없이 「먼저 `gen`을 내라」는 관측을
+  되먹인다. 홉은 소비되고 `pov_hop`은 `inspect_without_poc: true`를 단다, #572) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
@@ -807,9 +827,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "observed_at": "2026-09-01T10:22:31Z",
   "ok": true,
   "exit_code": 1,
-  "error": null
+  "error": null,
+  "harness_note": null
 }
 ```
+
+`harness_note`는 하네스가 만든 관측 머리줄이다 — 지금은 `poc` `exit=1` 모호성 줄만이고 없으면 `null`이다. 도구 출력이 아니라 로그를 거치지 않으며 `ok`를 바꾸지 않는다.
 
 `kind` 열거형: `static` | `sanitizer` | `crash` | `fuzz_coverage` | `build` | `poc_run` | `diff` | `graph`
 
@@ -1239,6 +1262,20 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **머지 순서: #642 → #644 → #648 → #660 → 이 PR.** `models.yaml`이 이미 v15를 서빙하므로 이 PR이 먼저 들어가면 안 된다. 이 PR은 `tests/test_auditor_v15.py`의 의존 PR 핀(켜짐 표지의 OR + 동작 단언)이 각 PR이 들어올 때 켜지게 해 두었다.
 > 텍스트 충돌(`git merge-tree` 스크래치 병합, 2026-10-13): **이 PR과** — #642는 `nodes/auditor._run_hops`의 `key = _request_key(action)` · `_stop_without_finding(key, previous, …)` 두 줄에서 충돌한다(이 PR은 `key = _input_aware_key(action)`; 해소는 `key = _input_aware_key(action)` + `_stop_without_finding(key, seen, …)`이다 - #642가 `previous`를 `seen`으로 바꾼다). #648은 `src/orchestrator/trace.py`의 **주석만 바뀐 hunk**에서 충돌한다(코드 충돌이 아니다). #660은 `prompt_loader.py`의 `FACT_KEYS` 주석(이 PR이 `facts_source: false` 판 목록에 v15를 더한 줄)과 같은 자리를 건드려 충돌한다 - 이 PR이 마지막이므로 거기서 푼다(목록에 v15를 유지). #644는 이 PR과 충돌하지 않는다. **의존 PR끼리도 충돌한다** — #642↔#644는 네 파일(`docs/agent-contracts.md` · `nodes/auditor.py` · `schemas/auditor.py` · `tests/test_auditor_loop.py`)에서, #642↔#660은 `runner.py`에서만(2026-10-13 재검 — `nodes/auditor.py`는 아님), #644↔#648은 `nodes/auditor.py` 모듈 docstring의 `probe`의 `spec` 불릿과 `docs/agent-contracts.md`에서, #648↔#660은 `run`·`_run_hops`의 `hop0_note`·`observations` 인자에서 충돌한다. 그래서 **#642 → #644 → #648 → #660 → 이 PR 사슬은 뒤 PR마다 앞 PR이 main에 들어온 뒤 main을 다시 병합해야 선다**(CLAUDE.md §4.3).
 > v15로 돈 run은 0건이다. 모델이 `spec`을 보내는지·`probe`를 `triggerable` 앞에 두는지는 미실측이다.
+
+> ⏵ **2026-10-13 — Scout v4의 요청 바이트가 판 번호 없이 바뀌었다**(#529). 노드가 `SOURCE`의 모양을 meta
+> `input` 선언으로 고르게 돼서, `--slices` run의 v4(`input: source`)는 슬라이스 렌더가 아니라 entry를 품는
+> 함수 본문을 받고 FACTS에서 `slice_criterion`이 빠진다. **prefix·body는 한 바이트도 안 바뀌었고**(meta 머리
+> 주석만) `prompt_versions.scout_*`도 `v4` 그대로다 — 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4도
+> **버전 문자열이 바뀌는 것을 발화 조건으로 삼으므로 자동으로는 안 걸린다**(위 critic v1·v2 문단과 같은
+> 종류). 이 문단이 그 자리를 대신한다: **#529 전후의 v4 `--slices` run은 직접 비교하지 않는다.** 판 번호를
+> 올릴지는 소유자 판단이라 올리지 않았다. **잃는 측정** — Scout v4로 돈 커밋된 run은 셋이고(10-08 · 10-11 ·
+> 10-12) 그중 보고서 자신이 슬라이스 입력을 적는 것은 둘이다([10-08](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)
+> `arvo-4.json` 4조각 · [10-12](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 같은 4건).
+> [10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md)에는 슬라이스 줄이 없으나
+> 10-12 보고서 「타깃 넷은 10-11과 같다」(`slice_0001`·`0002`·`0003`·`0006`)가 10-11도 같은 슬라이스 타깃이었다고
+> 적으므로 **영향받은 run은 셋일 수 있다**(10-11 쪽은 10-12 보고서의 서술이고 10-11 원천 `s14-results`는
+> 저장소 밖이라 미확인). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는 이번에도 돌지 않았다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

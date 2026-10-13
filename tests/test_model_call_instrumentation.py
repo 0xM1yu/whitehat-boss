@@ -62,6 +62,7 @@ from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
     AttemptRecord,
     ModelGatewayError,
+    ModelResult,
     Prompt,
     SchemaParseError,
     Usage,
@@ -70,7 +71,12 @@ from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.policy import FixedThresholdPolicy
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceWriter,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas import Candidate, Location, Role
 from src.schemas.run import Budget
 
@@ -977,3 +983,273 @@ def test_the_fake_can_script_a_truncated_multi_attempt_call_through_routing() ->
     outcome, data = _run(routed, schema=Candidate, prompt=_fake_prompt())  # call_model 경로
     assert outcome.attempt_log == script
     assert _breakdown(data) == ([8192, 12], ["length", "stop"])
+
+
+# --- 15. 응답 꼬리가 공백뿐인 `length` 시도 (D46 / #79) -----------------------------------------
+#
+# `attempt_tail_whitespace_only`: `finish_reason == "length"`이고 원문이 있는 시도만 판정한다.
+# 해당 없음(length 아님)과 미측정(length인데 원문 없음)은 둘 다 `null`이고
+# `attempt_finish_reasons`로 가른다.
+
+# 꼬리가 공백·탭·개행의 연속이다(64자를 넘는다).
+RUNAWAY = '{\n "finding_id": "find' + "\n \t\t\t\t\n \t" * 40
+
+
+def _tails(data: dict) -> list:
+    return json.loads(data["attempt_tail_whitespace_only"])
+
+
+def test_a_length_attempt_with_a_whitespace_tail_is_flagged_on_both_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """소진(실패 경로)과 재시도로 살아난 성공(성공 경로)이 같은 칸 규칙이다 - 칸은 시도 번호와
+    정렬된다."""
+    runaway = _completion(RUNAWAY, 4096, "length")
+    _serve(monkeypatch, [runaway, runaway])
+    outcome, data = _run(_client(retries=1))
+    assert isinstance(outcome, SchemaParseError)
+    assert _tails(data) == [True, True]
+
+    _serve(monkeypatch, [_completion(RUNAWAY, 4096, "length"), _completion(GOOD, 12, "stop")])
+    outcome, data = _run(_client(retries=1))
+    assert outcome.value == Tiny(ok=True)
+    # 마지막(성공) 시도는 `stop`이라 판정 대상이 아니다 -> `null`이다. `false`가 아니다.
+    assert _tails(data) == [True, None]
+
+
+def test_a_length_attempt_that_ends_in_json_is_not_flagged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """음성: 상한에서 잘렸어도 꼬리가 JSON이면 공백 폭주가 아니다(`false`)."""
+    _serve(monkeypatch, [_completion(TRUNCATED, 4096, "length"), _completion(GOOD, 12, "stop")])
+
+    _, data = _run(_client(retries=1))
+
+    assert _tails(data) == [False, None]
+
+
+def test_non_length_attempts_are_not_evaluated_even_with_a_whitespace_tail(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`stop`으로 끝난 응답의 공백 꼬리는 절단이 아니다 - 판정하지 않는다(`null`)."""
+    _serve(monkeypatch, [_completion(BAD + " " * 200, 30, "stop"), _completion(GOOD, 12, "stop")])
+
+    _, data = _run(_client(retries=1))
+
+    assert json.loads(data["attempt_finish_reasons"]) == ["stop", "stop"]
+    assert _tails(data) == [None, None]
+
+
+def test_a_length_attempt_without_text_is_null_not_false(monkeypatch: pytest.MonkeyPatch) -> None:
+    """미측정: `length`인데 받은 문자열이 없다(`content: null`) -> `null`. 그리고 뒤 시도가
+    게이트웨이 거절이어도 앞 시도의 판정은 제 칸에 남는다(원문은 앞에서부터 정렬된다)."""
+    _serve(monkeypatch, [_completion(None, 4096, "length"), _completion(GOOD, 12, "stop")])
+    _, data = _run(_client(retries=1))
+    assert json.loads(data["attempt_finish_reasons"]) == ["length", "stop"]
+    assert _tails(data) == [None, None]
+
+    _serve(monkeypatch, [_completion(RUNAWAY, 4096, "length"), _http_400()])
+    outcome, data = _run(_client(retries=1))
+    assert isinstance(outcome, ModelGatewayError)
+    assert _tails(data) == [True, None]
+
+
+def test_the_tail_window_is_the_last_64_characters(monkeypatch: pytest.MonkeyPatch) -> None:
+    """경계 핀: 끝 64자가 전부 공백이면 참, 그 안에 공백 아닌 글자가 하나 있으면(63자 공백 + 앞
+    글자) 거짓이다. 64는 정한 값이다(`TAIL_WHITESPACE_CHARS`) - 바꾸면 이 핀이 같이 움직인다."""
+    from src.orchestrator.context import TAIL_WHITESPACE_CHARS
+
+    assert TAIL_WHITESPACE_CHARS == 64
+    cases = ['{"a":"x"' + " " * 64, '{"a":"x"' + " " * 63, "\n" * 64]
+    _serve(monkeypatch, [_completion(text, 4096, "length") for text in cases])
+    _, data = _run(_client(retries=len(cases) - 1))
+    assert _tails(data) == [True, False, True]
+
+
+def test_a_response_shorter_than_the_window_is_never_flagged() -> None:
+    """경계 핀: 창(64자)을 못 채우는 짧은 응답은 전부 공백이어도 거짓이다 - 63자 공백뿐은 거짓,
+    64자는 참. 개행 둘 같은 짧은 응답이 공백 폭주 재개봉을 켜지 않는다."""
+    from src.orchestrator.context import _tail_whitespace_only
+
+    assert _tail_whitespace_only("\n\n") is False
+    assert _tail_whitespace_only(" " * 63) is False
+    assert _tail_whitespace_only(" " * 64) is True
+    assert _tail_whitespace_only("") is False
+
+
+def test_the_run_warning_fires_once_per_run_and_only_for_whitespace_tails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.orchestrator.runner import _whitespace_tail_warning
+
+    def warning_for(replies: list[object]) -> str | None:
+        _serve(monkeypatch, replies)
+        ctx = _ctx(_client(retries=1))
+        try:
+            ctx.call_model(role=Role.SCOUT, prompt=PROMPT, schema=Tiny, stage=Stage.SCOUT)
+        except SchemaParseError:
+            pass
+        return _whitespace_tail_warning(ctx.trace)
+
+    hit = warning_for([_completion(RUNAWAY, 4096, "length"), _completion(RUNAWAY, 4096, "length")])
+    assert hit is not None and "scout 2시도" in hit
+    json_tail = [_completion(TRUNCATED, 4096, "length"), _completion(GOOD, 12, "stop")]
+    not_length = [_completion(BAD + " " * 200, 30, "stop"), _completion(GOOD, 12, "stop")]
+    assert warning_for(json_tail) is None
+    assert warning_for(not_length) is None
+
+
+def test_a_call_without_a_breakdown_has_a_null_tail_key() -> None:
+    """어댑터가 시도별 내역을 안 실은 호출(Fake)은 세 키가 모두 `None`이다 - 키 집합이 균질하다."""
+    result = FakeModelClient().complete(role=Role.SCOUT, prompt=_fake_prompt(), schema=Candidate)
+    assert result.attempt_log == ()
+
+    routed = RoutingModelClient({"scout": FakeModelClient()})
+    _, data = _run(routed, schema=Candidate, prompt=_fake_prompt())
+
+    assert data["attempt_tail_whitespace_only"] is None
+
+
+def test_texts_that_do_not_line_up_with_the_attempts_are_null_not_misattributed() -> None:
+    """핀: `_success_attempt_texts`의 길이 가드. 칸 수가 시도 수와 안 맞으면 빈 튜플이라 모든
+    칸이 `null`이고, 가드를 빼면 **성공 시도의 원문이 0번 칸(버려진 시도)의 판정으로 읽힌다.**
+
+    이 모양은 지어낸 것이 아니다 - `ModelResult`는 `len(attempt_log) == attempts`도
+    `failed_raw_texts`의 칸 수도 **불변식으로 강제하지 않는다**(`src/interfaces/model_client.py`의
+    두 필드 주석: 「구현체가 안 채우면 빈 튜플」·「어댑터가 짓는 시점의 관례이지 강제되는
+    불변식이 아니다」). 꼬리가 공백인 원문을 넣어 **가드가 없으면 `true`가 나오는** 자리로 잡았다.
+    """
+    from src.orchestrator.context import _attempt_fields, _success_attempt_texts
+
+    log = (
+        AttemptRecord(output_tokens=4096, finish_reason="length"),
+        AttemptRecord(output_tokens=4096, finish_reason="length"),
+    )
+    skewed = ModelResult(
+        value=Tiny(ok=True),
+        usage=Usage(input_tokens=10, output_tokens=8192, cached_tokens=0),
+        model="m",
+        attempts=2,
+        raw_text=RUNAWAY,  # 꼬리가 공백뿐이다
+        attempt_log=log,  # `failed_raw_texts`는 기본값 `()`이라 칸이 하나 모자란다
+    )
+
+    assert _success_attempt_texts(skewed) == ()
+    tails = _attempt_fields(log, _success_attempt_texts(skewed))["attempt_tail_whitespace_only"]
+    assert json.loads(str(tails)) == [None, None]
+    # 칸이 맞으면 같은 원문이 제 칸에서 `true`로 읽힌다 - 위 `null`이 「원문이 없다」가 아니라
+    # 「정렬을 못 믿는다」임을 가른다.
+    lined_up = skewed.model_copy(update={"failed_raw_texts": (RUNAWAY,)})
+    assert _success_attempt_texts(lined_up) == (RUNAWAY, RUNAWAY)
+    lined = _attempt_fields(log, _success_attempt_texts(lined_up))["attempt_tail_whitespace_only"]
+    assert json.loads(str(lined)) == [True, True]
+
+
+# --- 16. run 끝 집계 둘 (#613·#618) — 분모만, 행이 없으면 `None` -------------------------
+#
+# 아래는 `call_model`이 **실제로 남기는** `model_call` 행에서 센다(필드 이름을 손으로 짓지 않는다).
+# 빈 경우의 `None`을 `0`·`{}`로 바꾸면 `is None` 단언들이 빨개진다.
+
+
+class _Script:
+    """호출마다 대본 한 칸 — 예외면 던지고, 정수면 그 시도 수로 성공한다."""
+
+    def __init__(self, *steps: object) -> None:
+        self._steps = list(steps)
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201, ARG002
+        step = self._steps.pop(0)
+        if isinstance(step, Exception):
+            raise step
+        return ModelResult(
+            value=Tiny(ok=True), usage=_SPENT, model="m", attempts=step, gpu_ms=1,
+            gpu_ms_source="request_wall_clock",
+        )
+
+
+def _drive_calls(*calls: tuple[Role, str, object]) -> list:
+    """(역할, 대상, 대본 칸)을 차례로 `call_model`에 태우고 trace 이벤트를 돌려준다."""
+    ctx = _ctx(_Script(*(step for _, _, step in calls)))
+    for role, subject, _ in calls:
+        try:
+            ctx.call_model(
+                role=role, prompt=PROMPT, schema=Tiny, stage=Stage.SCOUT,
+                subject_kind="finding", subject_id=subject,
+            )
+        except Exception:  # noqa: BLE001 - 실패 행이 이 테스트의 입력이다
+            pass
+    return ctx.trace.events
+
+
+def _bad(attempts: int = 1) -> SchemaParseError:
+    return SchemaParseError("스키마 소진", usage=_SPENT, attempts=attempts)
+
+
+def _refused() -> ModelGatewayError:
+    return ModelGatewayError("거절", status=400, usage=_SPENT)
+
+
+def test_no_model_call_rows_means_unmeasured_not_zero() -> None:
+    assert schema_failure_max_run_by_role([]) is None
+    assert schema_recovered_calls_by_role([]) is None
+    other = TraceWriter(RUN_ID, clock=lambda: NOW)
+    other.emit(EventKind.STAGE_START, stage=Stage.SCOUT)  # model_call이 아닌 행만 있다
+    assert schema_failure_max_run_by_role(other.events) is None
+    assert schema_recovered_calls_by_role(other.events) is None
+
+
+def test_the_longest_run_of_schema_failures_is_counted_per_role_and_subject() -> None:
+    a, s = Role.AUDITOR, Role.SCOUT
+    events = _drive_calls(
+        (a, "f1", _bad()), (a, "f1", _bad()), (a, "f1", _bad()), (a, "f1", 1), (a, "f1", _bad()),
+        (s, "c1", 1),
+    )
+
+    # 3연속이 성공에 끊기고 1이 뒤따른다 -> 최장 3. 실패가 없던 역할은 잰 0이다.
+    assert schema_failure_max_run_by_role(events) == {"auditor": 3, "scout": 0}
+
+
+def test_a_gateway_refusal_or_a_success_breaks_the_run() -> None:
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad()), (a, "f1", _refused()), (a, "f1", _bad()))
+
+    assert schema_failure_max_run_by_role(events) == {"auditor": 1}
+
+
+def test_failures_of_different_subjects_are_not_chained() -> None:
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad()), (a, "f2", _bad()), (a, "f1", _bad()))
+
+    # f1 두 번(사이에 f2) -> 2, f2는 1. 대상 둘의 실패를 이어 3으로 세지 않는다.
+    assert schema_failure_max_run_by_role(events) == {"auditor": 2}
+    separate = _drive_calls((a, "f1", _bad()), (a, "f2", _bad()))
+    assert schema_failure_max_run_by_role(separate) == {"auditor": 1}
+
+
+def test_recovered_calls_count_only_successes_that_needed_a_retry() -> None:
+    a, c = Role.AUDITOR, Role.CRITIC
+    events = _drive_calls(
+        (a, "f1", 2), (a, "f2", 1), (a, "f3", 3), (a, "f4", _bad()), (c, "f1", 1)
+    )
+
+    # 소진으로 끝난 실패 행은 회복이 아니다. 회복이 없던 역할은 잰 0이다.
+    assert schema_recovered_calls_by_role(events) == {"auditor": 2, "critic": 0}
+
+
+def test_an_exhausted_call_that_used_several_attempts_is_not_recovered() -> None:
+    """실제 소진은 `attempts`가 2 이상이다(`SchemaParseError`의 기본 1이 아니다). `ok`를 안 보고
+    `attempts>1`만 세면 소진된 실패 행이 「재시도로 살아난 호출」로 들어간다."""
+    a = Role.AUDITOR
+    events = _drive_calls((a, "f1", _bad(attempts=2)), (a, "f2", 2))
+
+    failed = [e for e in events if e.kind is EventKind.MODEL_CALL and e.data["ok"] is False]
+    assert [e.data["attempts"] for e in failed] == [2], "소진 행이 attempts=2를 싣지 않았다"
+    assert schema_recovered_calls_by_role(events) == {"auditor": 1}
+
+
+def test_two_roles_on_the_same_subject_are_counted_apart() -> None:
+    """Auditor와 Critic은 같은 `finding_id`를 `subject_id`로 쓴다. 연속은 (역할, 대상)별이라 한
+    역할의 실패가 다른 역할의 연속에 섞이거나 그것을 끊지 않는다 - 대상만 키로 쓰면 critic이 2,
+    auditor가 3으로 읽힌다."""
+    a, c = Role.AUDITOR, Role.CRITIC
+    events = _drive_calls((a, "f1", _bad()), (c, "f1", _bad()), (a, "f1", _bad()))
+
+    assert schema_failure_max_run_by_role(events) == {"auditor": 2, "critic": 1}
