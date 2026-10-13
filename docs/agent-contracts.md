@@ -137,6 +137,37 @@ agent:
   (`call_model`·`_call_hop`)와 `slice_id`(`scout.finish`)도 하네스가 덮지만 **기록 없이** 덮는다 — 그 둘의 이탈은
   `issued_override`가 없으니 「모델이 맞게 썼다」가 아니라 「안 쟀다」다. `location`은 덮지 않는다 — 모델이
   사실 블록의 대상을 옮겨 적는 값이다.
+
+  ⏵ 2026-10-13 — 위 `location`은 덮지 않는다는 말에 **예외 하나**가 생겼다: 후보의 `location.symbol`이
+  `null`이면 하네스가 **그 줄을 품는 함수**의 이름을 채운다(이슈 #633 선택지 (a)+(b) —
+  `nodes/scout._stamp_target_symbol`, 발급값 도장 **뒤**의 별도 도장). 네 조건이 다 맞을 때만이다 —
+  모델이 `symbol`을 안 썼다(`null`; `""`·틀린 이름은 쓴 값이라 그대로) · 후보 `location.file`이 대상
+  `file`과 같다(다른 파일 후보는 안 건드린다) · 대상이 `symbol`을 든다(찍는 값의 근거는 아니고, 이름
+  없는 대상은 인덱스가 그 줄의 함수를 알아도 안 찍는 보수적 가드다) · 인덱스(`ctx.symbols_for`)가 후보 `line_start`를 품는 함수를 안다(모르면 안 찍는다 —
+  줄이 없는 후보·인덱스 없는 프로필(`dev_fake`)이 그렇다).
+  ⚠ **찍는 값은 `FACTS.target.symbol`이 아니다.** 슬라이스 타깃의 `FACTS.target`은 entry 한 줄이고
+  `SOURCE`는 여러 함수에 걸치므로, 대상 이름을 그대로 찍으면 **같은 파일 다른 함수**의 후보에 대상
+  함수 이름이 붙어 `repro_spec`·`validate` argv에 실린다. 그래서 인덱스가 아는 품는 함수를 찍는다.
+  **이 브랜치 단독에서는 두 값이 같다고 단언하지 않는다:** 찍는 값은 인덱서(tree-sitter) 표의 이름이고
+  (`_enclosing_symbol`), `FACTS.target.symbol`은 `capsule.target`, 곧 Joern `scopes[0].symbol`이다
+  (`src/adapters/slices.py` 로더). 표기가 갈릴 수 있다 — 인덱서는 C++ 클래스 바깥 정의를 `P::parse`로
+  낸다(`tools/harness-tools/indexer.py` `_NAME_NODES`의 `qualified_identifier`). **미실측**이다.
+  슬라이스 타깃의 hop0 `FACTS.target`을 같은 인덱스 표(`entry_scope.enclosing_scope`)에서 읽는 별도 PR
+  #641이 병합되면 그 경로(`input: source`이고 인덱스가 entry를 품는 함수를 아는 hop0)에서는 같은 표를
+  읽는다 — **후보 줄이 그 함수 안일 때** 같은 값이고, 후보가 같은 파일 **다른 함수**에 앉으면
+  다르다(바로 위 ⚠가 그 동작이다 — 도장은 `candidate.location.line_start`를, FACTS `target`은
+  `slice.entry.line_start`를 품는 함수를 읽는다). 그 PR에서도 창 폴백(인덱스가 entry를 품는 함수를 모를 때)의 `FACTS.target.symbol`은
+  `capsule.target`의 것이고, 되묻기 홉은 FACTS를 다시 싣지 않는다(도장 가드가 보는 `target`은 세션이 이어
+  쥔 `capsule.target`이다).
+  `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
+  `scout_symbol_stamped`(`hop`·`symbol`)가 남는다 — **이벤트 부재 = 채우지 않았다**이고 `issued_override`와는
+  섞지 않는다. **한계:** 이것은 후보 객체의 빈 칸을 채울 뿐 모델이 `symbol`을 옮겼다는 뜻이 아니다 — 모델의
+  복사 실패율(s17 12/12 `null`)은 그대로이고 도장은 그 실패를 가린다. **모델 요청 바이트는 안 변한다** —
+  Auditor는 후보를 ID·CWE·신호로만 렌더하고 FACTS `target`은 `capsule.target`이며 Critic은 Finding만 읽는다
+  (`tests/test_nodes.py::test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt`). 값이 닿는 곳은
+  저장된 후보, 합성 `repro_spec`의 문구(`nodes/auditor._synthesize_repro_spec`이 `symbol or file`을 쓴다 —
+  `sanitizer crash at <file>`이 `<symbol>`로 바뀐다)와 러너의 「분석 안 된 대상」 비교 키
+  (`_target_key`에 `symbol`이 든다)다.
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
@@ -569,7 +600,7 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
 - 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). **2026-10-05 — 서빙 Critic은 v6으로 본문·위치·SOURCE를 받는다**(#497). `dev_*`의 공유 fake v1은 metadata 계약을 유지한다. SOURCE는 Auditor의 최초 읽기 캐시이며 원문 블록과 FACTS에 함께 실린다. v3 확인 run 선행은 유지하지 않는다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v6 · 근거 본문·SOURCE」).
   ⏵ **2026-10-13 (#600 H2ⓐ, 저자 결정 2026-10-10) — Auditor 도구 루프의 홉 *관측*은 전달한다.** 가려지는 것은 Auditor의 *추론*(모델 응답 턴·`rca_draft`)이고, **하네스가 렌더한 조회·도구의 출력**(`lookup`이 푼 코드, `probe`의 도구 로그)은 다른 범주다. 안 주던 동안 Critic은 Auditor가 도구로 확인한 것을 모른 채 반박했다(오반박 쪽). 정확히는 **「하네스가 렌더한 관측에서 모델이 고른 식별자를 가린 것」**이다 - resolver 줄은 모델이 보낸 `kind`·`target`·거절 사유의 `got '…'`를 그대로 되울리는데(`Not resolved: <kind>:<target> (…)` · `Already in SOURCE: <kind>:<name> …` · 라벨 `type of <target>`) 그대로 주면 모델의 문장이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서 Critic용 사본(`auditor.critic_safe_observation` - `_observe`가 만드는 **유일한 자리**, 단 `observations`를 받은 run에서만 만든다)은 `kind`를 요청 어휘 여덟 (`variable`·`type`·`macro`·`function`·`caller`·`allocation`·`guard`·`context`) 안일 때만, `target`을 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고 아니면 `<non-vocabulary>`·`<non-identifier>`로 바꾸며 `got '…'` 상세는 버린다(사유는 `reason: not_found` 같은 enum 값). **줄을 렌더된 글에서 되읽지 않고 resolver가 준 구조값에서 다시 쓴다** - `Not resolved`는 `Resolution.unfilled`, `Already in SOURCE`는 `Resolution.already_entries`(`kind`·`name`·`file`·줄 - resolver가 그 줄을 렌더한 바로 그 값, 글자 상한에 못 실린 줄은 없다)에서 쓴다(렌더된 `Already` 줄을 정규식으로 되읽던 첫 판은 `kind`에 든 콜론·` at `이 경계를 속여 모델 글이 위치 칸으로 샜다 - 실제 `resolve()`로 독립 리뷰의 스크래치 퍼즈(미커밋)에서 재현). `kind`는 어휘 여덟 중 하나와 **정확히 같을 때만** 남는다. 구조값이 없거나(`None`이고 `already`가 비지 않음) 렌더된 줄이 구조값과 다르면 `PromptError`다. **바꿀 자리는 글을 찾아서 정하지 않고 렌더 구조의 위치로 정한다** - 알림 줄은 `Resolution.alert_lines`를 이은 글을 상태 줄(마지막 `\n\nlookup requested=`) 바로 앞에서 통째로 맞춰 떼고, 조각 머리는 `blocks` 순서대로 앞 머리가 끝난 자리부터 찾는다(줄마다 `replace`하면 한 요청의 `target`이 다른 요청의 렌더 줄을 품을 때 먼저 바꾼 쪽이 뒤 줄을 깨뜨려 그 줄의 모델 글이 샜다). **보장은** 알림 줄 구간이 구조값에서 다시 쓴 줄과 숫자만 든 글자 상한 생략 한 줄로만 이뤄지고, 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 다시 쓰인다는 것이며, 구조를 못 찾거나 구조값과 다른 줄이 끼어 있으면 `PromptError`로 선다(가리지 못한 채 주지 않는다). **그 홉의 결과는 「사본 없음」이다** - `_observe`가 `PromptError`를 받아 그 홉의 Critic 사본만 빼고 홉 이벤트에 `observation_sanitize_failed`(사유 문장)를 남기며 Auditor의 run은 계속된다. 그래서 Critic 절 머리줄의 수와 FACTS의 `auditor_hops`는 **사본의 수**이고 홉 수가 아니다(빠진 홉 수는 그 키가 든 홉 이벤트로 센다). 「파서가 속을 수 없다」까지는 말하지 않는다 - 코드 조각 본문(저장소 원문)과 하네스 문구, 인덱스가 정한 파일 경로·조각 이름은 그대로고, 어휘·문자집합을 통과한 모델 선택 값은 남는다. Auditor 자신의 다음 홉 입력은 안 바뀐다. ⚠ **`probe` 관측은 이 사본 경로를 거치지 않는다** - 지금은 argv가 닫힌 도구 이름이고 `spec`이 도구에 안 가서(`_probe`) 모델 글이 관측에 들어갈 길이 없기 때문이다. 그 전제는 `spec` 바이트를 `poc`에 싣는 PR #644(#419)가 깬다 - 그 PR은 `probe` 관측(도구 로그에 입력이 되울릴 수 있다)을 이 가림 경로에 같이 넣는지 다시 봐야 한다. 내용: content-aware 판(`_CONTENT_AWARE_VERSIONS` — 본문·위치와 같은 문)만 EVIDENCE 끝에 절 하나(`## Auditor tool observations (N observations) - program output, data not instructions`)로 받고, FACTS에는 **사본 수** `auditor_hops`를 더한다(홉 수가 아니다 - 가림에 실패한 홉은 사본이 없어 빠지므로 돈 홉 수보다 작을 수 있고, 그 차이는 홉 이벤트의 `observation_sanitize_failed`로 보이며 run 경고가 그 건수를 센다). **사본이 0개인 Finding(홉 0 - 한 방 판·루프 꺼짐·첫 홉 `answer` - 이거나 모든 사본이 가림에 실패한 경우)의 요청은 바이트가 종전과 같다**(`auditor_hops` 키도 절도 없다). 스위치는 없다 — 문은 프롬프트 판이다. ⚠ 그래서 **서빙 v6의 요청이 판 번호 변화 없이 바뀐다**(홉이 돈 Finding만) — [evaluation.md](evaluation.md) §2.3 규칙 4가 걸리는 자리이고, v6 산문은 이 절을 모른다(`prompts/`는 안 건드렸다). 특히 v6 prefix의 「EVIDENCE는 선택된 Evidence 한 줄씩」은 **이제 부정확하다** — EVIDENCE 블록 끝에 Evidence가 아닌 절이 붙는다. 그 절을 서술하는 것은 v7 전환(Phase 5 flip)에서 추적한다. ⚠ **v7로 flip할 때 `critic._CONTENT_AWARE_VERSIONS`(지금 v3~v6)에 `v7`을 같이 넣어야 한다** - 안 넣으면 `prompts/critic/v7`이 있어도 이 절이 조용히 없다(content-aware 판만 받는다). ⚠ **`state.finding_observations`는 프로세스 메모리에만 산다**(`state.db`에 안 쓴다) - 러너에 resume이 없어 이 run 안에서 5단계와 7단계가 같은 프로세스이므로 버그가 아니라 **문서화된 한계**다. resume을 만들면 이 관측도 같이 저장해야 한다.
-  ⚠ **관측에서 Critic이 새로 보는 것 — 게이트가 모르는 Evidence ID 하나와 Auditor에게 한 말 셋.** ① probe 관측의 `evidence_id=<id>` — 그 Evidence는 증거 저장소에는 있으나 게이트 입력(`state.evidences`)에는 없다. ⚠ **그 ID를 Critic이 인용하면 게이트가 버리는 것이 아니다** — `gate.evidences_for`는 **Finding**의 `evidence_refs`만 거르고(`src/orchestrator/gate.py`) `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는 `bool(evidence_refs)`라, 관측에만 있는 ID를 인용한 `rebut`은 `gate.normalize`를 비껴가 그대로 `rebut`으로 남고 F-6 `queued`로 간다(독립 리뷰가 실행으로 확인 — `was_normalized`가 False). 즉 **게이트가 못 보는 Evidence 하나로 「근거 있는 반박」이 된다.** 이 PR 전에는 Critic이 그런 실제 ID를 볼 길이 없었다(이슈 #419의 E4 경계 — 이 변경이 안 닫는다). **거르기는 판정 변경이라 하지 않았다** — 모르는 인용이 오면 trace `critic_unknown_evidence_refs`(`cited`·`unknown`·`all_unknown`·`verdict`·`grounded`)에 남겨 사후에 셀 수 있게만 했다(`critic._record_unknown_refs`). ② Auditor에게 한 말이 사본에 남는다 — 세어 보면 **셋**이고, Critic이 읽으면 대상이 어긋난다: `lookup` 관측 머리의 *"The host resolved the requests from **your previous turn** …"*(`src/adapters/symbol_render.py`의 `render_followup`) · 요청 상한을 넘겨 안 본 요청이 있을 때의 *"… **Ask for them in a separate lookup.**"*(`auditor._lookup_observation`의 `ignored` 꼬리) · `probe`의 *"note: **the spec you sent** was recorded but NOT given to the tool"*(`auditor._probe_observation`). 마지막 줄은 PR #644가 main에서 곧 없앤다(없어지면 그 몫을 지우고 수를 둘로 줄인다). ⚠ 셋은 **2인칭으로 Auditor를 부르는 문장**을 센 것이다 — 조회 실패 사유의 *"name the symbol you need"*는 `_safe_unfilled`가 줄을 사유 enum으로 다시 써서 사본에 안 남고, Scout 전용 꼬리(*"in front of you"*)는 `_lookup_observation`이 자른다.
+  ⚠ **관측에서 Critic이 새로 보는 것 — 게이트가 모르는 Evidence ID 하나와 Auditor에게 한 말 셋.** ① probe 관측의 `evidence_id=<id>` — 그 Evidence는 증거 저장소에는 있으나 게이트 입력(`state.evidences`)에는 없다. ⚠ **그 ID를 Critic이 인용하면 게이트가 버리는 것이 아니다** — `gate.evidences_for`는 **Finding**의 `evidence_refs`만 거르고(`src/orchestrator/gate.py`) `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는 `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고 **ID 갈래만으로도 참**이라, 관측에만 있는 ID를 인용한 `rebut`은 `gate.normalize`를 비껴가 그대로 `rebut`으로 남고 F-6 `queued`로 간다(독립 리뷰가 실행으로 확인 — `was_normalized`가 False). 즉 **게이트가 못 보는 Evidence 하나로 「근거 있는 반박」이 된다.** 이 PR 전에는 Critic이 그런 실제 ID를 볼 길이 없었다(이슈 #419의 E4 경계 — 이 변경이 안 닫는다). **거르기는 판정 변경이라 하지 않았다** — 모르는 인용이 오면 trace `critic_unknown_evidence_refs`(`cited`·`unknown`·`all_unknown`·`verdict`·`grounded`)에 남겨 사후에 셀 수 있게만 했다(`critic._record_unknown_refs`). ② Auditor에게 한 말이 사본에 남는다 — 세어 보면 **셋**이고, Critic이 읽으면 대상이 어긋난다: `lookup` 관측 머리의 *"The host resolved the requests from **your previous turn** …"*(`src/adapters/symbol_render.py`의 `render_followup`) · 요청 상한을 넘겨 안 본 요청이 있을 때의 *"… **Ask for them in a separate lookup.**"*(`auditor._lookup_observation`의 `ignored` 꼬리) · `probe`의 *"note: **the spec you sent** was recorded but NOT given to the tool"*(`auditor._probe_observation`). 마지막 줄은 PR #644가 main에서 곧 없앤다(없어지면 그 몫을 지우고 수를 둘로 줄인다). ⚠ 셋은 **2인칭으로 Auditor를 부르는 문장**을 센 것이다 — 조회 실패 사유의 *"name the symbol you need"*는 `_safe_unfilled`가 줄을 사유 enum으로 다시 써서 사본에 안 남고, Scout 전용 꼬리(*"in front of you"*)는 `_lookup_observation`이 자른다.
   ⚠ **자르지 않는다**: 더한 글자가 이 좌석의 입력 몫(`context_limit` − `output_max_by_role.critic`)을 넘을 수 있으면 그 사실만 trace `critic_hop_observations`(`est_input_tokens`·`input_share_tokens`·`over_input_share`)와 `RunResult.warnings` 한 줄로 남긴다. 그 수는 글자 수 ÷ 최악 비 1.22의 **계산값**이다 - 1.22는 Auditor 좌석의 147호출 실측(1.22~3.32, [슬라이스 스모크](experiments/harness/2026-09-26-slice-smoke-atom.md))의 하한을 이 좌석에 빌린 보수적 근사다. 이 좌석의 비는 2026-10-11 실서빙 run `run_20261011_0001`의 Critic 호출 여섯에서 3.10(69,788자 ↔ 22,514토큰)·3.10·3.10·4.04·3.76·3.75로 쟀다(계산값 - 저장된 프롬프트 글자 수 ÷ 서버가 센 `input_tokens`, `artifacts/`는 gitignore). 홉 관측을 실은 요청에서 잰 것은 아니다. 홉 관측을 실은 Critic 요청을 낸 run이 아직 없어 실제로 넘는지는 미실측이다.
   ⚠ **크기 거절 폴백.** 관측 절이 붙은 요청이 서버에서 크기로 거절되면(400 컨텍스트 초과·413 — `model_client.is_size_rejection`, 러너와 같은 판정) 폴백이 없을 때 그 Finding은 `critic_failed`로 버려져 판정 없이 `HYPOTHESIZED`에 남고, 고른 Finding 전부가 그러면 7단계에서 run이 선다 — 이 변경 이전에는 판정했을 Finding이다. 그래서 `critic.run`은 **절을 통째로 빼고 한 번만** 다시 묻는다(홉 0 Finding과 같은 요청 — 반쪽으로 자르는 것이 아니다). 기록: `critic_hop_observations` 이벤트에 `observations_dropped: true`·`rejected_status`, run 경고가 건수를 센다. 크기 거절이 아니거나 관측을 안 실었으면 종전대로 올라가고, 재시도도 거절되면 그 예외가 올라간다. `over_input_share`는 기록 전용으로 남는다(폴백을 일으키지 않는다 — 계산값이라서다). 통로: `auditor.run(observations=...)` → `runner._Accumulator.finding_observations` → `critic.run(hop_observations=...)`. 관측은 8단계 PoV에 가지 않는다.
 - 출력: `Decision`
@@ -597,6 +628,7 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
     등록된 ID를 인용하라고 적고, v7은 rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
     「코드 위치」는 ②에서 rationale 속 인용이고, **하네스는 축 어휘만 본다** - 인용한 코드가 SOURCE에 실재하는지는
     안 본다(ADR 0015의 P0b, 보류). 어휘 안인 축은 근거의 **자격**이고 근거의 참이 아니다.
+  - ⚠ 사유는 **ID가 없을 때만** 선다 — `evidence_refs`가 비어 있지 않으면 `ungrounded_reason`이 즉시 `None`이라 **어휘 밖 축이 있어도** `invalid_axis`가 안 서고 `critic_normalized`도 `invalid_axes`도 안 남는다. 그래서 **ID와 축을 둘 다 요구하는 서빙 v6에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 0으로 보인다.**
   - **사유 둘.** `empty_axis`(ID도 축도 없다) · `invalid_axis`(축이 어휘 밖이다 - `GUARD`·`guard-check`·`무근거`).
     `critic_normalized` trace의 `reason`과 `invalid_axes`(어휘 밖 원문)가 싣는다.
 
@@ -653,6 +685,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
   최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
   `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
+
+  ⏵ 2026-10-13 — v6도 형제 봉투 `PovActionNamed`를 요청한다(서빙 판 — meta `output_schema`).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고(⏵ 2026-10-11 — **스키마 파싱 실패는 홉 하나를 쓰고
@@ -721,6 +755,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
   접었다(2026-10-02 결정, 아래 한계로 남긴다).
+
+  ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
+  서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1191,7 +1228,10 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-> ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+
+> ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
+> ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)
 >
 > **본문이 바뀌었는데 `version`이 안 바뀌었다.** 그래서 `prompt_version: "v1"`이 **서로 다른
 > 두 텍스트**를 가리킨다. 위 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4("프롬프트

@@ -45,9 +45,26 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 시도.**
 (회복된 실패를 세려면 키 유무가 아니라 `attempts>1`을 쓴다 - 스위치가 깨끗한 성공에도 키를
 붙인다.) **키 부재 = 깨끗한 성공(스위치 밖) · PromptLog 없음 · 원문을 못 실은 호출 —
-키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
-`ModelGatewayError`가 된 시도의 원문은 안 남는다
-(`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
+키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 `choices[0].message`조차 못 읽어
+`ModelGatewayError`가 된 시도는 원문이 없다. `message`를 읽을 수 있던 200(`usage`만 깨진 경우 등)은
+`ModelGatewayError`가 돼도 **원문이나 추론을 읽었으면** 그 시도를 마지막 칸으로 싣는다(`_post`의
+「응답 모양이 계약과 다르다」 분기). ⚠ 그 200의 `content`가 비문자열이고 추론 키도 없으면 **칸이
+아예 안 생긴다** — 같은 `content: null`이 스키마 실패 경로로 가면 `null` 칸이 생기므로 두 경로의
+칸 규칙이 다르고, 그 갈래에선 읽을 수 있었던 `finish_reason`도 `null`로 남는다.** 쓰기 실패는
+`response_record_error` (#603) |
+| 추론 채널 (#280) | `model_call`의 `reasoning_refs`·`reasoning_sha256`·`reasoning_field` | 위
+`response_refs`와 **같은 칸·같은 조건**(실패·버려진 시도는 항상, 성공 최종은
+`--keep-responses` 역할만). 파일은 `prompts/…_reasoning[_retryK].txt`. 칸이 `null`이면 그
+시도는 서버가 추론 키를 안 줬다(`message.reasoning`·`message.reasoning_content` 둘 다
+없거나 문자열이 아님) — **빈 문자열이 아니고 파일도 없다.** 칸이 있는데 파일이 0바이트면
+서버가 키는 줬고 비었다. `reasoning_field`는 칸마다 서버가 쓴 키 이름(`"reasoning"` 또는
+`"reasoning_content"`)이라 vast 서빙에서 어느 이름인지가 이 값에서 처음
+측정된다. **세 키는 어느 칸에도 추론이 없으면 통째로 안 실린다** — Fake·추론 파서 없는 서버 ·
+`--keep-responses` 밖의 깨끗한 성공은 같은 모양이다. 응답 원문이 `null`인 칸(`content: null`)에도
+추론은 있을 수 있다. 추론 파일 쓰기가 실패하면 **세 키 대신** `reasoning_record_error`가 실리고
+`response_refs`·`response_sha256`은 그대로 남는다 — 응답 쪽 쓰기 실패(`response_record_error`)와
+다른 키다. 그 실패가 칸 도중이면 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조 없는 고아로
+남는다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
 | 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
 | 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
 | PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |
@@ -60,13 +77,19 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
+| 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
 `reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
-`count(reason=invalid_axis) / count(rebut)`. ⚠ **그 분모는 trace에 없다** — `rebut` 총수는
+`count(reason=invalid_axis) / count(rebut)`.
+⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
+`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는 서빙 v6에서
+규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** — ADR 0015가 예측한 실패 양상
+(2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가 이 지표라서 그 한계를 같이 적는다.
+⚠ **그 분모는 trace에 없다** — `rebut` 총수는
 `state.db`의 `decision` 표(`decision.verdict = rebut`)로 센다(ADR 0015 「첫 v7 run이 셀 것」 표).
 정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —
 그래서 이 사건은 F-5가 아니라 F-7로 이어진다.
@@ -91,6 +114,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
 6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
 전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
+⏵ 2026-10-14 - **셋째 경우: 6단계 행이 있어도 부착이 0건이면 그 행은 원본 그대로다.**
+`attach_observed`가 더할 ID가 없으면(`new_refs`가 빈다) `store.put`을 **안 한다** - 그래서
+「6단계 행이 있는 Finding은 못 센다」는 **관측 Evidence가 붙은** 경우까지만 참이다. 이 키는
+그 경우에도 실린다(부착 전에 읽으므로) - 못 세는 쪽이 `state.db`다.
 ⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
@@ -361,6 +388,10 @@ class EventKind(StrEnum):
     # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
     # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
     # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    # ⏵ 2026-10-14 (#633) — 「`Candidate.location`은 모델이 쓴 값」은 그 run의 서술이다. 지금은
+    # 모델이 `symbol`을 안 쓰면(`None`) Scout가 **후보 줄을 품는 함수**를 찍고
+    # `scout_symbol_stamped`를 남긴다 — 모델이 쓴 `""`·틀린 이름은 그대로 두고, 인덱스가
+    # 그 줄을 품는 함수를 모르면 안 찍는다.
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
@@ -535,7 +566,9 @@ class EventKind(StrEnum):
     # 전부 게이트 입력 안이었다(또는 인용이 없었다).
     # ⚠ **`gate.evidences_for`는 이 인용을 안 본다** — 그 함수는 **Finding**의 `evidence_refs`만
     # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
-    # `bool(evidence_refs)`라 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
+    # `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
+    # ID 갈래만으로도 참이라 이 경로는 그대로다.
+    # 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
     # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
     # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).
     # 싣는 값: `decision_id` · `cited`(인용 수) · `unknown`(그중 게이트 입력에 없는 수) ·
@@ -763,6 +796,17 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # Scout 후보의 `location.symbol`을 하네스가 **그 줄을 품는 함수** 이름으로 채웠다 (이슈 #633).
+    # 내는 곳은 `nodes/scout._stamp_target_symbol`이고 **채운 홉마다 1행**이다 —
+    # `subject_id`는 후보, `hop`은 그 홉 번호(되묻기 홉도 모델이 다시 `null`을 쓰면 다시 채운다),
+    # `symbol`은 채운 값이다. ⏵ 2026-10-13 — 그 값은 `FACTS.target.symbol`이 아니라 인덱스가 아는
+    # 품는 함수다(`ctx.symbols_for`). 둘이 갈리는 자리가 슬라이스 타깃이다 — entry 한 줄짜리 대상에
+    # 여러 함수에 걸친 `SOURCE`가 가므로 후보가 대상 밖 함수에 앉을 수 있다.
+    # **이벤트 부재 = 채우지 않았다** — 모델이 `symbol`을 썼거나, 후보가 대상 파일 밖이거나, 대상이
+    # `symbol`을 안 들었거나, 인덱스가 후보 줄을 품는 함수를 모른다(`dev_fake`처럼 인덱스가 없는
+    # run이 그렇다). `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
+    # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
+    SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #
@@ -878,7 +922,11 @@ def pov_inspect_max_run_by_finding(events: Sequence[TraceEvent]) -> dict[str, in
     행동을 고르지 않았으므로 세지도 끊지도 않는다. 도구 호출이 예산에서 끊긴 홉(#394)은 응답이
     있어 `action`을 싣고 `error`도 실리므로 **센다**. `gen`·`submit`이 연속을 끊는다. 이미 돌린
     도구를 다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라
-    센다. 반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
+    센다. ⏵ 2026-10-14 — **도구를 안 돌린 홉은 그것 하나가 아니다**: 돌릴 PoC가 없어 러너가
+    도구 전에 거절한 홉(`inspect_without_poc`, #572 · PR #639)도 `action="inspect"`를 실으므로
+    같은 몫으로 센다(`runner._run_pov_hops`). 둘 다 「모델이 `inspect`를 골랐다」가 기준이고
+    도구가 실제로 돌았는지는 이 집계가 안 본다.
+    반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
     `0`으로 든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
     행동을 실은 홉이 없는 Finding(루프가 첫 홉 전에 던졌다 등)은 dict에 **없다**.
     """
