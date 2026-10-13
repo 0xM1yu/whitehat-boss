@@ -29,7 +29,12 @@ from src.adapters.fake_tools import TOOL_KINDS
 from src.adapters.symbol_render import render_followup
 from src.bench import ROLE_SPEC
 from src.config import CONFIG_DIR, load_config
-from src.interfaces.model_client import ModelResult, SchemaParseError, Usage
+from src.interfaces.model_client import (
+    ModelGatewayError,
+    ModelResult,
+    SchemaParseError,
+    Usage,
+)
 from src.interfaces.tool_runner import INPUT_PLACEHOLDER
 from src.orchestrator import gate
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
@@ -68,7 +73,13 @@ from src.schemas.finding import (
 from src.schemas.need_evidence import Resolution, RetrievedBlock, Unfilled
 from src.schemas.pov import PovAction, PovSegment, PovSpec
 from src.schemas.scout_response import RequestedContext, ScoutResponse
-from tests.test_pipeline_e2e import _per_stage, _run
+from tests.test_pipeline_e2e import (
+    _context_overflow,
+    _failing_model,
+    _per_stage,
+    _run,
+    _with_index,
+)
 
 
 def _finding_payload(evidence_refs: tuple[str, ...] = ()) -> dict:
@@ -1502,23 +1513,240 @@ def test_asking_the_same_thing_twice_in_a_row_stops_as_repeat_request(
     assert _queue_transitions(ctx, candidate) == [("C-5", "capsule_expansion_exhausted")]
 
 
-def test_asking_the_same_thing_again_after_something_else_is_not_a_repeat(
-    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("actions", "tool_calls"),
+    [
+        pytest.param(
+            [_lookup_action("A"), _lookup_action("B"), _lookup_action("A", rationale="되짚는다")],
+            0,
+            id="lookup-A-B-A",
+        ),
+        pytest.param(
+            [_probe_action("semgrep"), _lookup_action("X"), _probe_action("semgrep")],
+            1,
+            id="probe-lookup-probe",
+        ),
+    ],
+)
+def test_asking_the_same_thing_again_after_something_else_is_a_repeat(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    actions: list[AuditorAction],
+    tool_calls: int,
 ) -> None:
-    """A → B → A는 반복이 아니다 — 비교 대상은 **직전 홉 하나**뿐이다.
+    """A → B → A도 반복이다 — 비교 대상은 **지금까지의 모든 홉**이다(#514).
 
-    모든 이전 홉과 비교하면 조사를 되짚는 정당한 경로(이름을 하나 보고, 다른 걸 보고, 처음 걸
-    다시 본다)가 막힌다. 마지막 요청 C까지 가서 상한(`MAX_HOP`)으로 서야 한다."""
-    limit = 3
+    직전 홉 하나만 보던 판은 A → B → A → B로 번갈아 내면 서지 않았다 - 상한(`MAX_HOP`)까지 같은
+    관측을 되풀이해 사 간다. PoV는 모든 gen 바이트를 `seen`과 견준다(`_run_pov_hops`)."""
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
-    _arm(ctx, monkeypatch, tmp_path, hops=limit)
-    ctx.models = _ScriptedModel([_lookup_action(name) for name in ("A", "B", "A", "C")])
+    _arm(ctx, monkeypatch, tmp_path, hops=6)
+    ctx.models = _ScriptedModel(actions)
+    before = len(_events(ctx, EventKind.TOOL_CALL))
 
     with pytest.raises(auditor.AuditorHopLimit) as stopped:
         auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
 
-    assert stopped.value.stop is AuditorStopReason.MAX_HOP
-    assert [h.data["hop"] for h in _hops(ctx)] == [0, 1, 2, 3]
+    assert stopped.value.stop is AuditorStopReason.REPEAT_REQUEST
+    hops = _hops(ctx)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]
+    assert hops[-1].data["stop_reason"] == "repeat_request"
+    assert len(_events(ctx, EventKind.TOOL_CALL)) - before == tool_calls, "반복 홉의 조사는 안 돈다"
+    assert _queue_transitions(ctx, candidate) == [("C-5", "capsule_expansion_exhausted")]
+
+
+@pytest.mark.parametrize(
+    "actions",
+    [
+        pytest.param(
+            [_lookup_action("A"), _lookup_action("B"), _lookup_action("C"), _answer_action()],
+            id="three-different-lookups",
+        ),
+        pytest.param(
+            [_lookup_action("A"), _lookup_many(["A", "B"]), _probe_action("semgrep"),
+             _lookup_action("B"), _answer_action()],
+            id="other-request-set-is-not-the-same-question",
+        ),
+    ],
+)
+def test_a_trail_of_different_requests_is_not_a_repeat(
+    ctx: RunContext,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    actions: list[AuditorAction],
+) -> None:
+    """음성 쌍 - 요청 **집합**이 다르면(`{A}` ↔ `{A,B}` ↔ `{B}`) 이름이 겹쳐도 반복이 아니다.
+    전 홉 비교가 키를 이름 하나로 쪼개면 이 검사가 빨개진다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=6)
+    ctx.models = _ScriptedModel(actions)
+
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert isinstance(finding, Finding)
+    hops = _hops(ctx)
+    assert len(hops) == len(actions)
+    assert hops[-1].data["stop_reason"] == "answered"
+    assert all("stop_reason" not in h.data for h in hops[:-1])
+
+
+# --- 크기 거절 - 홉 이벤트와 사유가 말한다 (#514) ------------------------------------
+
+
+@pytest.mark.parametrize(
+    "rejection",
+    [
+        pytest.param(_context_overflow(), id="400-with-the-overflow-phrase"),
+        pytest.param(ModelGatewayError("HTTP 413", status=413), id="413"),
+    ],
+)
+def test_a_size_rejection_in_the_loop_is_named_by_the_hop_event_and_the_queue_reason(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, rejection: Exception
+) -> None:
+    """홉 1의 호출이 크기 거절이면 **그 홉의 이벤트**가 `context_overflow`로 남고 후보는
+    C-5로 `queued`다.
+
+    예전에는 이벤트가 0건이고(이벤트는 호출 성공 뒤에만 났다) 후보에 `schema_parse_failed`(C-6)가
+    달렸다 - 모델이 스키마를 못 맞춘 것이 아닌데 파싱 실패율의 분자가 늘었다. 예외는 **그대로
+    올라간다** - 받는 것은 러너의 `_drop`이고 거기서 연속 폐기 카운터·성공 0 백스톱이 돈다
+    (아래 러너 검사). 노드가 삼키면 모든 후보가 크기 거절인 run이 완주로 읽힌다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    ctx.models = _ScriptedModel([_lookup_action("X"), _answer_action()], fail_at=(1, rejection))
+
+    with pytest.raises(ModelGatewayError) as raised:
+        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert raised.value is rejection
+    hops = _hops(ctx)
+    assert [h.data["hop"] for h in hops] == [0, 1]
+    assert hops[-1].data["stop_reason"] == AuditorStopReason.CONTEXT_OVERFLOW.value
+    assert hops[-1].data["stop_reason"] == "context_overflow"
+    assert hops[-1].data["error"] == "ModelGatewayError"
+    assert "stop_reason" not in hops[0].data
+    assert _queue_transitions(ctx, candidate) == [("C-5", "capsule_expansion_exhausted")]
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(ModelGatewayError("HTTP 503", status=503), id="server-error"),
+        pytest.param(
+            ModelGatewayError("HTTP 400", status=400, detail="invalid request body"),
+            id="400-without-the-overflow-phrase",
+        ),
+        pytest.param(SchemaParseError("스키마를 못 맞춘다"), id="schema-parse-failure"),
+    ],
+)
+def test_any_other_model_call_failure_keeps_the_old_label_and_gets_no_overflow_event(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, failure: Exception
+) -> None:
+    """음성 쌍 - 크기 거절이 아닌 실패(서버 오류 · 문구 없는 400 · 파싱 실패)는 홉 이벤트를 안 내고
+    후보에 C-6을 단다. 400은 **다음 요청도 같은 거절**이라(`runner._rejects_every_request`) 크기로
+    읽으면 run이 서야 할 자리에서 후보만 버리게 된다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    ctx.models = _ScriptedModel([_lookup_action("X"), _answer_action()], fail_at=(1, failure))
+
+    with pytest.raises(type(failure)):
+        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert [h.data["hop"] for h in _hops(ctx)] == [0]
+    assert all("stop_reason" not in h.data for h in _hops(ctx))
+    assert _queue_transitions(ctx, candidate) == [("C-6", "schema_parse_failed")]
+
+
+def _overflow_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "크기 거절 — 후보를 버렸다(#514)" in w]
+
+
+def test_a_candidate_the_server_refuses_for_size_is_dropped_loudly_and_the_next_one_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """후보 둘 - 첫 후보의 홉 2에서 크기 거절 -> 둘째 후보는 Finding까지 가고 run은 끝난다.
+
+    **조용히 버리지 않는다**: `RunResult.warnings`에 후보 id와 홉이 든 한 줄이 오른다(#617의
+    probe 0 경고와 같은 자리). 러너의 `_drop`이 받는 경로(`target_skipped`)는 그대로다 - 연속
+    폐기 카운터가 크기 거절을 안 세므로 run은 안 선다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    _failing_model(monkeypatch, [None, None, _context_overflow()], role_under_test=Role.AUDITOR)
+
+    result, trace_path = _run(
+        tmp_path, before=_with_index(), configure=lambda c: _loop_config(c, hops=4)
+    )
+
+    events = [json.loads(line) for line in trace_path.read_text(encoding="utf-8").splitlines()]
+    hops = [e for e in events if e["kind"] == "auditor_hop"]
+    overflow = [e for e in hops if e["data"].get("stop_reason") == "context_overflow"]
+    assert [(e["subject_id"], e["data"]["hop"]) for e in overflow] == [("cand_0001", 2)]
+    answered = [e["subject_id"] for e in hops if e["data"].get("stop_reason") == "answered"]
+    assert answered == ["cand_0002"], "둘째 후보가 처리되지 않았다"
+    assert result.record.stopped_after is None, "크기 거절 하나가 run을 멈췄다"
+    assert len(result.findings) == 1
+    assert [e["data"]["reason"] for e in events if e["kind"] == "target_skipped"] == [
+        "gateway_error"
+    ]
+    (warning,) = _overflow_warnings(result)
+    assert "cand_0001" in warning and "홉 2" in warning and "#514" in warning
+
+
+def test_the_one_shot_path_keeps_c6_and_emits_no_hop_event_on_a_size_rejection(
+    ctx: RunContext,
+) -> None:
+    """한 방 경로는 종전 그대로다(C-6 · 홉 이벤트 없음).
+
+    루프의 크기 거절만 C-5+`context_overflow`다(#514).
+
+    한 방 호출은 홉 번호도 `AuditorStopReason`도 없다. 여기까지 C-5로 읽으면 꺼진 run의 사유
+    분포가 이전 run과 달라져 비교가 깨진다(evaluation §2.3)."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    ctx.config = ctx.config.transition(
+        thresholds=ctx.config.thresholds.transition(auditor_tool_hops=0)
+    )
+    ctx.models = _ScriptedModel([], fail_at=(0, _context_overflow()))
+
+    with pytest.raises(ModelGatewayError):
+        auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert _hops(ctx) == []
+    assert _queue_transitions(ctx, candidate) == [("C-6", "schema_parse_failed")]
+
+
+def test_every_candidate_refused_for_size_in_the_loop_stops_the_run_via_the_success_zero_backstop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """모든 후보가 루프에서 크기 거절이면 run은 완주로 안 읽힌다 - #296 백스톱이 선다.
+
+    노드가 크기 거절을 삼키지 않으므로 러너의 `_drop`이 받고, 5단계에서 한 번도 성공하지 못한
+    자리가 끝에서 `_stop_if_a_caller_saw_nothing`에 걸린다. 후보마다 #514 경고 한 줄이 남는다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    _failing_model(monkeypatch, [_context_overflow()] * 16, role_under_test=Role.AUDITOR)
+
+    result, _ = _run(tmp_path, before=_with_index(), configure=lambda c: _loop_config(c, hops=4))
+
+    assert result.record.stopped_after == 4, "5단계에서 서야 한다 - 4단계까지만 끝난 run"
+    assert not result.findings
+    assert any("5단계" in w and "한 번도 성공하지 못했다" in w for w in result.warnings)
+    assert len(_overflow_warnings(result)) >= 1
+
+
+def test_a_rejection_that_is_not_about_size_still_stops_the_run_and_raises_no_overflow_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 - 크기가 아닌 400(요청 모양·서버 설정 거절)은 다음 요청도 같으므로 첫 건에서 run을
+    세운다(`_rejects_every_request` - #296). 이 경로는 **그대로**다 - 크기 거절 흡수가 이것까지
+    삼키면 같은 거절을 후보 수만큼 태운다."""
+    _patch_prompts(monkeypatch, tmp_path)
+    systematic = ModelGatewayError("HTTP 400", status=400, detail="thinking budget needs a parser")
+    _failing_model(monkeypatch, [None, None, systematic], role_under_test=Role.AUDITOR)
+
+    result, trace_path = _run(
+        tmp_path, before=_with_index(), configure=lambda c: _loop_config(c, hops=4)
+    )
+
+    assert result.record.stopped_after is not None
+    assert _overflow_warnings(result) == []
+    assert "context_overflow" not in trace_path.read_text(encoding="utf-8")
 
 
 # --- 러너 — Finding 없이 선 후보는 그 후보만 멈춘다 ---------------------------------
