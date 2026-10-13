@@ -18,5 +18,6 @@ python tools/slicer_v2/slicer_target.py --repo /path/to/repo --spec spec.json \
 
 `run_gt.py` · `subset.py` · `name_outputs.py`(정답 파일로 표본을 고르고 돌리는 데이터셋 벤치마크 도구)는 PR #638의 첫 판에 있었으나 **지웠다** —
 이 저장소는 하네스 개발 전용이고 실험·벤치마크 도구는 실험팀 몫이다(ADR 0012 결정 5). 되살리려면
-`git checkout origin/feat/slicer_v2 -- tools/slicer_v2/run_gt.py tools/slicer_v2/subset.py tools/slicer_v2/name_outputs.py`
+`git checkout 8175f5ef -- tools/slicer_v2/run_gt.py tools/slicer_v2/subset.py tools/slicer_v2/name_outputs.py`
+(브랜치 이름이 아니라 커밋이다 — 브랜치는 머지 뒤 지워진다)
 (`attach/`에 기대므로 그대로는 안 돈다).

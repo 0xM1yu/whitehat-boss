@@ -347,7 +347,8 @@ class EventKind(StrEnum):
     # 수(0이면 맞춰 본 이름을 적은 한 줄을 실었다)고 `guards_dropped`는 행 상한에 걸려 뺀 행 —
     # `파일:줄 | 조건`을 줄바꿈으로 이은 문자열, 50행까지 싣고 넘치면 끝에 `... +N more`, 안 뺐으면
     # 빈 문자열 — 이다(블록에도 `... +N more rows omitted`가 든다). `guards_skipped`는 안 훑은
-    # 사유다: `case_a`(sink를 하네스가 모른다) · `window`(품는 함수를 모르는 창 앵커 — 다른
+    # 사유다: `given_source`(쥐여 준 끝이 source라 sink를 하네스가 모른다 — Case A·F) ·
+    # `window`(품는 함수를 모르는 창 앵커 — 다른
     # 함수의 조건이 든다) · `formfeed`(`splitlines()`만 끊는 글자가 함수 앞·안에 있어 원문 줄이
     # 어긋날 수 있다) · `bare_cr`(원본 바이트에 `\n`을 안 단 `\r`이 함수 앞·안에 있다 — 텍스트
     # 읽기가 `\r`을 `\n`으로 접어 인덱서와 줄 번호가 어긋난다) · `no_sink`(sink 줄이 원문 밖이거나

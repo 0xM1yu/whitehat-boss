@@ -8,7 +8,10 @@
 
 `slices[]`의 한 항목이 러너 타깃 하나가 된다(배선은 러너 쪽). `case`가 v3 프롬프트의
 `FACTS.slice_criterion.given_end`를 정한다 — Case A는 진입점에서 앞으로 자른 것(`source`),
-Case B는 위험 연산에서 뒤로 자른 것(`sink`)이다.
+Case B는 위험 연산에서 뒤로 자른 것(`sink`), Case F는 대상 지정 모드
+(`tools/slicer_v2/slicer_target.py`)가 source에서 앞으로 자른 것(`source` — A와 같은 끝)이다.
+`case`에서 읽는 것은 `given_end`뿐이라 A와 F는 이 아래 어디서도 안 갈린다 — 가드 스캔이 안
+훑는 사유를 `given_source`로 적는 것이 그 때문이다(`orchestrator/source_guards.py`).
 
 ## 로드에서 죽는다 — `index_graph`와 반대다
 
