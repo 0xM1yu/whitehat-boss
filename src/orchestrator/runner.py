@@ -1260,6 +1260,13 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **8단계가 재현을 시도하지 못한 `validated` Finding도 같은 자리에 올린다 (#326).** 상태를 안
+    # 바꾸므로(`validate.run`) 보고서에서는 멀쩡한 `validated`로 보이고 사유는 trace에만 있다.
+    not_measured_warning = _repro_not_measured_warning(
+        trace, has_pov_seat=Role.POV.value in ctx.config.profile.roles
+    )
+    if not_measured_warning is not None:
+        warnings.append(not_measured_warning)
     # **공백 폭주 꼬리도 같은 자리다 (#79).** 이 키가 `true`인 것은 닫힌 #79의 재개 조건이라
     # trace를 열지 않고도 run 결과에서 보여야 한다.
     tail_warning = _whitespace_tail_warning(trace)
@@ -1673,6 +1680,42 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     return (
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
+    )
+
+
+def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> str | None:
+    """8단계 `validate.run`이 재현 결과를 내지 않은 Finding이 있으면 run 경고, 없으면 `None`(#326).
+
+    `repro_not_measured`의 `reason`으로 둘을 가른다. **`poc` 신호**는 이 노드가 안 돌리는 것이고,
+    그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 루프의 몫이고 없으면 **어디서도 안 돈다.**
+    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)와 컴파일·링크 실패(#507)는
+    원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수 없다."""
+    events = [e for e in trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
+    if not events:
+        return None
+    poc = sum(1 for e in events if e.data.get("reason") == validate.NOT_MEASURED_POC)
+    codes = Counter(
+        e.data.get("exit_code")
+        for e in events
+        if e.data.get("reason") == validate.NOT_MEASURED_TOOL
+    )
+    parts: list[str] = []
+    if poc:
+        where = (
+            "PoV 풀에 들었는지는 PoV 단계 이벤트가 든다"
+            if has_pov_seat
+            else "이 프로필엔 pov 좌석이 없어 어디서도 실행되지 않았다"
+        )
+        parts.append(f"poc 신호 {poc}건 - 8단계는 poc를 실행하지 않는다, {where}")
+    if codes:
+        by_code = " · ".join(
+            f"{code}{'(시간 초과)' if code == validate.TIMEOUT_EXIT else ''} {count}건"
+            for code, count in sorted(codes.items())
+        )
+        parts.append(f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code})")
+    return (
+        f"8단계가 재현 결과를 내지 않은 validated Finding {len(events)}건 - {' / '.join(parts)}. "
+        f"상태는 그대로이고 도구 검증 제거율에 안 든다 (#326)"
     )
 
 

@@ -732,11 +732,14 @@ def test_a_poc_call_without_input_is_failed_evidence(tmp_path: Path, spy: _Spy) 
 
     **이 경로는 실제로 돈다** — 모델이 `spec`을 안 보낸 Auditor `probe(poc)`는 `ToolArgs`에
     `input_bytes`를 안 싣는다(`nodes/auditor._probe`).
-    ⚠ **「입력 없는 `poc` 호출은 그것뿐」은 아니다** — 8단계 `nodes/validate.run`도 모델의
+    ⚠ **「입력 없는 `poc` 호출은 그것뿐」이 아니었다** — 8단계 `nodes/validate.run`도 모델의
     `repro_spec.expected_signal`이 `tool_for`의 poc 묶음에 걸리면 `poc`를 골라
     `_call(…, [tool, *spec.steps], …)`로 부르고, 그 `_call`은 `ToolArgs(argv=…, workdir=…)`
-    뿐 `input_bytes`를 안 싣는다(`validate.py:151`). 열린 PR #658이 그 분기를 PoV 루프에
-    맡기려는 중이라 지금 main에서는 살아 있다.
+    뿐 `input_bytes`를 안 실었다. 그 사실을 2026-10-13에 여기 적었다(#639 5라운드 리뷰).
+    ⏵ **2026-10-14 (#326) — 그 경로가 없어졌다.** `validate.run`이 `poc` 신호에서 도구를
+    **안 돌린다**(`nodes/validate.py`의 `if tool is not None and tool != POC_TOOL` — `poc`는
+    8단계 PoV 루프의 몫이다). 그래서 입력 없는 `poc` 호출은 **다시 `spec` 없는
+    `probe(poc)` 그것뿐**이다. 위 문단을 지우지 않는 것은 그 발견이 #639의 기록이라서다.
     ⏵ 2026-10-13(#419) — `probe`는 이제 `spec`이 있으면 `input_bytes`를 싣는다. **`spec` 없는
     `probe(poc)`는 여전히 입력이 없다** — 이 테스트가 서는 이유는 그대로다.
     ⏵ 2026-10-13 (#572) — PoV 홉의 `inspect(poc)`는 PoC가 없으면 러너가 도구 전에 거절한다
