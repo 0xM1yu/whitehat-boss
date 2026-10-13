@@ -49,7 +49,7 @@ from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.stages import Stage
-from src.orchestrator.trace import EventKind
+from src.orchestrator.trace import EventKind, pov_inspect_max_run_by_finding
 from src.schemas.candidate import SliceRef
 from src.schemas.common import Location, ProducedBy
 from src.schemas.enums import PovStopReason, Role
@@ -3415,6 +3415,106 @@ def test_infra_failure_exits_match_the_container_adapter() -> None:
 
     adapter = {container_tools._TIMEOUT_EXIT, *container_tools._EXEC_FAILED}
     assert pov_node.INFRA_FAILURE_EXITS == adapter
+
+
+# --- 연속 `inspect` 최장 길이 (#619 (d)) — 분모만, 행동 행이 없으면 `None` --------------------
+
+
+def _inspect_runs(scripted: RunContext) -> dict[str, int] | None:  # noqa: F811
+    return pov_inspect_max_run_by_finding(scripted.trace.events)
+
+
+def test_the_longest_run_of_consecutive_inspect_hops_is_counted_per_finding(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """gen이 연속을 끊는다 — inspect 3연속 -> gen -> inspect 1 이면 최장은 3이다. 이미 돌린 도구를
+    다시 요청한 홉(#619)도 모델이 inspect를 고른 홉이라 센다(셋째가 asan 반복이다)."""
+    actions = [
+        _gen(count=1), _inspect("asan"), _inspect("gdb"), _inspect("asan"),
+        _gen(count=2), _inspect("asan"), _SUBMIT,
+    ]
+    scripted, (_, reason) = _pov_run(ctx, actions)
+
+    assert reason is PovStopReason.SUBMITTED
+    (finding_id,) = {h.subject_id for h in _hops(scripted)}
+    assert _inspect_runs(scripted) == {finding_id: 3}
+    assert any("inspect_repeat_of_hop" in h.data for h in _hops(scripted))  # 반복 홉이 실재한다
+
+
+def test_an_inspect_without_a_poc_to_run_counts_in_the_same_run(ctx: RunContext) -> None:  # noqa: F811
+    """⏵ 2026-10-14 — **도구를 안 돌린 홉은 `inspect_repeat_of_hop` 하나가 아니다.**
+
+    돌릴 PoC가 없어 러너가 도구 **전에** 거절한 홉(`inspect_without_poc`, 이슈 #572 · PR #639)도
+    `action="inspect"`를 실으므로 이 집계가 같은 몫으로 센다. 위 테스트가 #619 반복 홉만 들고
+    있어 열거가 반쪽이었다(적대적 리뷰) — 그 두 종류가 **같은 열에 든다**는 것을 여기서 문다.
+
+    기준은 「모델이 `inspect`를 골랐다」이고 도구가 실제로 돌았는지는 이 집계가 안 본다.
+    """
+    # 첫 홉이 `inspect poc`인데 앞선 `gen`이 없다 -> 러너가 도구를 안 돌리고 관측으로 되먹인다.
+    actions = [_inspect("poc"), _inspect("asan"), _gen(count=1), _SUBMIT]
+    scripted, _ = _pov_run(ctx, actions)
+
+    hops = _hops(scripted)
+    assert [h.data.get("action") for h in hops][:2] == ["inspect", "inspect"]
+    assert any(h.data.get("inspect_without_poc") for h in hops), (
+        "전제 - 돌릴 PoC 없는 inspect 홉이 실재한다(#572)"
+    )
+    (finding_id,) = {h.subject_id for h in hops}
+    assert _inspect_runs(scripted) == {finding_id: 2}, "그 홉도 연속 열에 든다"
+
+
+def test_a_finding_that_never_inspected_has_a_measured_zero(ctx: RunContext) -> None:  # noqa: F811
+    scripted, _ = _pov_run(ctx, [_gen(count=1), _SUBMIT])
+
+    (finding_id,) = {h.subject_id for h in _hops(scripted)}
+    assert _inspect_runs(scripted) == {finding_id: 0}
+
+
+def test_a_failed_hop_neither_counts_nor_breaks_the_inspect_run(ctx: RunContext) -> None:  # noqa: F811
+    """호출이 실패한 홉(`action` 없음)은 모델이 행동을 고르지 않았다 — inspect 사이에 끼어도 연속은
+    이어진다."""
+    actions = [_inspect("asan"), SchemaParseError("bad"), _inspect("gdb"), _SUBMIT]
+    scripted, _ = _parse_run(ctx, actions)
+
+    assert [h.data.get("action") for h in _hops(scripted)] == ["inspect", None, "inspect", "submit"]
+    (finding_id,) = {h.subject_id for h in _hops(scripted)}
+    assert _inspect_runs(scripted) == {finding_id: 2}
+
+
+def test_no_action_rows_means_unmeasured_not_zero(ctx: RunContext) -> None:  # noqa: F811
+    assert pov_inspect_max_run_by_finding([]) is None
+    # PoV 루프가 한 홉도 행동을 못 고르고 끝났다 - 실패 홉만 있다.
+    scripted, _ = _parse_run(ctx, [SchemaParseError("bad")], pov_hops=0)
+    assert [h.data.get("action") for h in _hops(scripted)] == [None]
+    assert _inspect_runs(scripted) is None
+
+
+def test_the_inspect_run_does_not_carry_over_from_one_finding_to_the_next(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """A가 `inspect`로 끝나고 B가 `inspect`로 열어도 두 Finding의 연속은 이어지지 않는다 - 세는
+    칸이 Finding마다 따로다. 칸 하나를 같이 쓰면 B가 1이 아니라 3으로 읽힌다."""
+    state, finding_a = _pov_state(ctx)
+    capsule = state.finding_capsules[finding_a.finding_id]
+    finding_b = finding_a.model_copy(update={"finding_id": finding_a.finding_id + "-b"})
+    def _loop(actions: list[object], finding):  # noqa: ANN202, ANN001
+        # Finding마다 대본·울타리가 따로고 trace는 `ctx`의 것을 같이 쓴다.
+        scripted = _scripted(ctx, actions)
+        scripted.config = scripted.config.transition(
+            thresholds=scripted.config.thresholds.transition(pov_tool_hops=2)
+        )
+        return runner._run_pov_hops(scripted, state, finding, capsule)[1]
+
+    # A: 홉 상한(2)에서 inspect로 끝난다. B: inspect로 열고 gen이 끊는다.
+    reason_a = _loop([_gen(count=1), _inspect("asan"), _inspect("gdb")], finding_a)
+    reason_b = _loop([_inspect("asan"), _gen(count=2), _SUBMIT], finding_b)
+
+    assert (reason_a, reason_b) == (PovStopReason.MAX_HOP, PovStopReason.SUBMITTED)
+    ends = {fid: [h.data["action"] for h in _hops(ctx) if h.subject_id == fid]
+            for fid in (finding_a.finding_id, finding_b.finding_id)}
+    assert ends[finding_a.finding_id][-1] == "inspect"
+    assert ends[finding_b.finding_id][0] == "inspect"
+    assert _inspect_runs(ctx) == {finding_a.finding_id: 2, finding_b.finding_id: 1}
 
 
 # --- #572 — 첫 gen 전의 `inspect poc`는 도구를 돌리지 않는다 --------------------------------

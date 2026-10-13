@@ -121,8 +121,12 @@ def test_report_calls_a_zero_denominator_unmeasured_not_a_counted_zero() -> None
         duplicates=0,
         location_overlap={"gated": 3, "static_ok": 3, "location_ok": 0},
     )
-    assert "3건 중 후보 줄과 겹침 0건" in measured.render()
-    assert "미측정" not in measured.render()
+    # 줄 단위로 본다 - 분모 전용 집계 절(#613)이 자기 「미측정」 줄을 따로 찍는다(다른 명제).
+    measured_line = next(
+        row for row in measured.render().splitlines() if row.startswith("정적 신호 위치 겹침")
+    )
+    assert "3건 중 후보 줄과 겹침 0건" in measured_line
+    assert "미측정" not in measured_line
 
 
 def test_a_manifest_written_before_the_field_loads_with_no_block() -> None:
