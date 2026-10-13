@@ -163,8 +163,13 @@ def _refuse(
     ctx: RunContext, tool: str, argv: list[str], workdir: str, finding: Finding
 ) -> Evidence:
     """예약 자리표와 같은 단계가 있는 요청을 도구에 보내지 않고 `ok=False`로 남긴다. 도구 실패와
-    같은 모양이다 — Evidence를 저장하고 `tool_call`을 내며(키 집합도 같다), 실행한 적이 없으므로
-    `exit_code`는 `None`(미측정)이다."""
+    같은 모양이다 — Evidence를 저장하고 `tool_call`을 내며(키 집합도 같다), 실행한 적이
+    없으므로 `exit_code`는 `None`(미측정)이다.
+
+    ⏵ 2026-10-14 — 「키 집합도 같다」가 참인 이유는 하나다: `_refuse`는 도구를 안 돌리므로
+    그 Evidence에 `harness_note`가 **구조상 없다**(`context.call_tool`은 노트가 있을 때만
+    그 키를 더한다 — 핀 `tests/test_pov_loop.py`). 죽은 `extra` 분기를 지운 근거가 그것이고,
+    그 분기가 다시 들어올 자리라 여기 적는다."""
     evidence_id = ctx.ids.next("evidence")
     error = (
         f"repro_spec.steps에 예약된 자리표 {INPUT_PLACEHOLDER!r}와 같은 단계가 있다 — "

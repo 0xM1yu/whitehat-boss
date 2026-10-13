@@ -1,6 +1,8 @@
 # 배선됨(2026-10-07 — PR #524): qwen3-14b·seccoderx-8b가 함께 v4를 고른다(풀 세 자리가 한 버전).
-# ⚠ input: source인데 노드는 SOURCE를 슬라이스 유무로 고른다(nodes/scout.py) — --slices run에서는
-# 슬라이스 렌더가 가고 아래 prefix의 입력 서술과 어긋난다. 그 어긋남은 이 배선 밖이고 이슈 #529가 든다.
+# ⏵ 2026-10-13(#529): 노드는 SOURCE를 이 meta의 input 선언으로 고른다(nodes/scout.py) — input: source라
+# --slices run에서도 entry를 품는 함수 본문이 간다(슬라이스 렌더 아님). 트림은 안 돈다.
+# ⚠ 인덱스가 entry를 품는 함수를 모르면(프로토타입·전역·매크로 줄) 함수 본문이 아니라
+#   entry 앞뒤 고정 창이고 FACTS `target`도 그 창이다 — `entry_scope.enclosing_scope`.
 role: scout_memory
 version: v4
 output_schema: ScoutResponse
