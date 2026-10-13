@@ -908,6 +908,48 @@ def test_the_rebut_rule_is_stated_the_same_way_by_adr_0015_and_the_contract() ->
         assert f"`{axis}`" in contract.split("반박 체크리스트:")[1].split("- 규칙:")[0], axis
 
 
+def test_no_live_source_states_the_old_rebut_rule_in_the_present_tense() -> None:
+    """ADR 0015의 옛 규칙(근거 없는 반박 -> `uphold`)이 `src`의 살아 있는 산문에 **현재형으로**
+    남지 않는다.
+
+    **왜 `src`까지 보나.** 위 검사는 `docs/agent-contracts.md`만 본다 - 그런데 같은 명제를
+    현재형으로
+    들고 있던 자리는 `src/schemas/decision.py`의 `Decision` docstring이었고, 그 PR은 **같은
+    docstring의 네 줄 아래**만 고쳤다(CLAUDE.md §2.3 - 같은 파일 바로 위를 놓친 사고). 계약 문서만
+    무는 핀은 그것을 영영 못 잡는다.
+
+    ⚠ **무는 것은 「`uphold`가 목적지라고 현재형으로 적는가」까지다.** 과거형·철회 표지(`전엔` ·
+    `전에는` · `그전` · `~~`)가 같은 줄에 있으면 통과다 - `runner.py`·`decision.py`의 ⏵ 문장이
+    그 형태다. 인용한 코드가 실제로 `need_evidence`를 내는지는 `tests/test_gate.py`·
+    `tests/test_nodes.py`가 문다.
+    """
+    claims = ("`uphold`로 처리", "`uphold`로 정규화", "uphold로 정규화", "`uphold`로 바꾼")
+    excuses = ("전엔", "전에는", "그전", "~~")
+
+    def states_the_old_rule(line: str) -> bool:
+        return any(c in line for c in claims) and not any(e in line for e in excuses)
+
+    # 양성 핀 - `src/schemas/decision.py:22`가 이 PR 전에 들고 있던 실형태.
+    assert states_the_old_rule(
+        '    반박은 `uphold`로 처리하되 **지표에 기록한다**"고 정한다. Critic의 구조화 출력은'
+    ), "검출기가 이 파일이 실제로 들고 있던 형태를 못 잡는다"
+    # 음성 핀 - `src/orchestrator/runner.py:1438`의 실형태(과거형 ⏵). 막아서는 안 되는 문장이다.
+    assert not states_the_old_rule(
+        "    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는"
+    ), "철회를 적은 ⏵ 문장을 검출기가 막는다"
+
+    offenders = [
+        f"{path.relative_to(REPO_ROOT).as_posix()}:{lineno}: {line.strip()[:90]}"
+        for path in sorted((REPO_ROOT / "src").rglob("*.py"))
+        for lineno, line in enumerate(_read(path).splitlines(), 1)
+        if states_the_old_rule(line)
+    ]
+    assert offenders == [], (
+        "`src`가 옛 규칙(근거 없는 반박 -> `uphold`)을 현재형으로 적는다 — 살아 있는 규칙은 "
+        "`need_evidence`다(ADR 0015):\n" + "\n".join(offenders)
+    )
+
+
 # --- 정본 선언(PROJECT-CONTEXT.md) ↔ 모델 registry ------------------------------------
 #
 # PROJECT-CONTEXT.md는 스스로를 로스터의 **정본**이라고 선언한다. 선언만으로는 아무것도 강제되지

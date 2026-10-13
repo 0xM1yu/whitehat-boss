@@ -18,8 +18,9 @@ INVALID_AXIS = "invalid_axis"
 class Decision(HarnessModel):
     """Critic의 반박 판정.
 
-    **근거 없는 반박을 스키마에서 막지 않는다.** agent-contracts.md §2.3은 "근거 없는
-    반박은 `uphold`로 처리하되 **지표에 기록한다**"고 정한다. Critic의 구조화 출력은
+    **근거 없는 반박을 스키마에서 막지 않는다.** agent-contracts.md §2.3은 근거 없는 반박을
+    **`need_evidence`로 처리하되 사유와 함께 지표에 기록한다**고 정한다(ADR 0015 - 그 문서의 옛
+    규칙은 취소선이 됐다). Critic의 구조화 출력은
     이 객체로 직접 파싱되므로, 여기서 ValidationError를 던지면 "근거 없는 반박"이
     "스키마 파싱 실패"로 뭉개져 지표를 잃는다. 두 실패는 모델 비교에서 다른 의미다.
 
