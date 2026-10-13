@@ -52,6 +52,7 @@ from src.orchestrator import gate
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor, signals
 from src.orchestrator.nodes import critic as critic_node
+from src.orchestrator.poc_assembly import assemble_poc
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.schemas import auditor as schemas
 from src.schemas.auditor import (
@@ -553,6 +554,13 @@ def test_the_v15_repeat_key_sees_the_input_bytes_for_poc_only() -> None:
     assert key(poc_a) != key(poc_b), "spec만 바꾼 probe poc는 다른 질문이다"
     assert key(poc_a) != key(_probe("poc")), "입력 없음은 그 자체로 하나의 입력이다"
     assert key(_probe("poc")) == key(_probe("poc"))
+    # 산문(prefix:213) 「no `spec` is an input of its own: none」 — **없음은 빈 바이트가 아니다.**
+    # 0바이트로 조립되는 `spec`(`count: 0`은 스키마가 받는다 — `PovSegment.count` ge=0)과 `spec`
+    # 없음은 **다른 질문**이다. 이 줄이 없으면 `spec is None`을 `b""`로 접는 한 줄 변이가 위
+    # 셋을 전부 통과한다(`sha256(b"")`가 어느 실제 바이트와도 다르므로).
+    empty = PovSpec(segments=[PovSegment(kind="repeat", byte=0x41, count=0)], rationale="zero")
+    assert assemble_poc(empty) == b"", "핀의 전제 — 이 spec은 0바이트로 조립된다"
+    assert key(_probe("poc", empty)) != key(_probe("poc")), "0바이트 입력 ≠ 입력 없음"
     # 다른 rationale·다른 spec.rationale이어도 조립되는 바이트가 같으면 같다.
     assert key(poc_a) == key(_probe("poc", _spec(0x41, rationale="another reason")))
     two_segments = PovSpec(

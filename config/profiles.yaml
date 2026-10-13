@@ -150,7 +150,9 @@ profiles:
     #   최종 답이 `AuditProcedure` — v10도 그 집합에 든다. v10으로 돈 run은 0건이다 — ⏵ 2026-10-08 1건이 됐다, `checksum` 0이라 비교표 밖).
     #   ⏵ 2026-10-09 — **v11로 올렸다**(`config/models.yaml`의 `qwen3.8-27b` · 이슈 #525). ⏵ 2026-10-10 —
     #   **v13으로 올렸다**(이슈 #67 — v11 + FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 —
-    #   **v14로 올렸다**(v12 + FACTS `source` 제거 — v12 봉투, 이슈 #67 · #578). critic gpt-oss와
+    #   **v14로 올렸다**(v12 + FACTS `source` 제거 — v12 봉투, 이슈 #67 · #578). ⏵ 2026-10-13 —
+    #   **v15로 올렸다**(v14 + 계약 문장 여섯 · 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction` ·
+    #   `facts_source: false`는 그대로다 — S19). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.

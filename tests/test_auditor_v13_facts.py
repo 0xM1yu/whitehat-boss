@@ -11,8 +11,9 @@ v11까지는 같은 SOURCE 문자열이 산문 블록과 FACTS JSON(`source`) �
    죽는다(`test_nullable_cwe.py` H4와 같은 장치).
 3. **노드 렌더** — v13 hop0의 FACTS에 `source` 키가 **없고**(null·빈 문자열이 아니다) 나머지 키는
    v11과 같다. 원문은 산문 블록에 한 번만 실린다.
-4. **선언** — FACTS에서 `source`를 빼는 판은 디스크 전체에서 auditor/v13·v14 둘이다
-   (⏵ 2026-10-11 v14). 다른 역할·판의 FACTS는 바이트 그대로다(`build_facts` 기본값).
+4. **선언** — FACTS에서 `source`를 빼는 판은 디스크 전체에서 auditor/v13·v14·v15 **셋**이다
+   (⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 — 서빙 판). 다른 역할·판의 FACTS는 바이트
+   그대로다(`build_facts` 기본값).
 5. **곁가지** — Fake가 산문 블록에서 원문을 읽어 v11과 같은 판정을 내고, bench가 노드와 같은 FACTS를
    싣는다.
 
