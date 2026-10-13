@@ -180,7 +180,7 @@ Auditor는 슬라이스가 걸친 함수들의 원본을 본다 — entry를 감
 run의 시작 전 거부(결정 1)와 need_evidence 루프(Phase 5)는 이 세 PR에 없다.)
 (⏵ 2026-10-13 #529 — 위 「Scout의 `SOURCE`는 슬라이스 렌더 … FACTS에 `slice_criterion`이 붙고」는
 프롬프트 meta가 `input: slice`를 선언했을 때만이다(`scout._ask_model`이 `prompt_loader`가 읽은 선언으로 고른다).
-서빙 v4(`input: source`)는 `--slices` run에서도 entry를 품는 함수 본문을 받고 FACTS `target`이 그 함수 범위이며
+서빙 v4(`input: source`)는 `--slices` run에서도 entry를 품는 함수 본문을 받고 FACTS `target`이 그 함수 범위이며(품는 함수를 모르면 §5 Auditor 행과 같이 entry 앞뒤 고정 창이고 그때 `target`은 그 창이다 — `entry_scope.enclosing_scope`)
 `slice_criterion`이 없다.)
 (⏵ 2026-09-26 — need_evidence 루프가 배선됐다(별도 변경, Phase 5): `src/orchestrator/runner.py`의
 `_run_ne_hops`가 (슬라이스, 좌석) 세션마다 `max_hops`까지 되묻고, `policy._scout_triage`가 그 신호를
