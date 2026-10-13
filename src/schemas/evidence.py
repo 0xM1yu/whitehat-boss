@@ -39,6 +39,11 @@ class Evidence(UtcModel):
     ok: bool = True
     exit_code: int | None = None
     error: str | None = None
+    # 하네스가 **로그 밖에서** 모델 관측의 머리에 붙이는 한 줄(지금은 `poc`의 `exit=1` 모호성뿐 —
+    # `container_tools.POC_AMBIGUOUS_NOTE`). 도구 출력이 아니라 하네스가 만든 줄이라 로그에 두면
+    # 읽기 상한(`PAYLOAD_READ_CAP`)·꼬리 상한에 잘려 관측에 안 닿는다(이슈 #573). `error`와 달리
+    # `ok=True`에도 붙는다 — 판정(`ok`)은 안 바꾸는 주석이다.
+    harness_note: str | None = None
     # ⏵ 2026-10-13(#232) — 런타임 도구(asan·gdb·poc)가 낸 로그에서 **크래시 흔적을 관측했는가**.
     # `True` = 로그에 sanitizer 배너나 신호 정지가 있었다 · `False` = 로그를 읽었고 없었다 ·
     # `None` = **안 쟀다**(런타임 도구가 아니거나, 대상이 안 떴거나, 로그가 없다 — CLAUDE.md §0).
