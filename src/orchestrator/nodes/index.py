@@ -6,9 +6,11 @@ Evidence이고, 이것이 Evidence Gate E2의 조건 중 하나(`any(e.kind == G
 않도록 실패도 `Evidence(ok=False)`로 남는다.
 
 ⏵ **2026-10-13 (#576)** — 이 Evidence는 **run 전역 하나**이고 개별 Finding의 경로를 확인하지
-않는다. `ok=True`는 「인덱서가 돌았고 심볼이 1개 이상이었다」까지다. **심볼 0개는 `ok=False`다**
-(어댑터 `container_tools.judge()` — 인덱서 stdout의 요약 줄에서 읽는다). `FakeToolRunner`는 심볼을
-세지 않으므로 `dev_fake`의 GRAPH는 대상 소스 존재만 말한다.
+않는다. `ok=True`는 「인덱서가 돌았고 **심볼 0개로 보고되지 않았다**」까지다 —
+「심볼이 1개 이상이었다」가 아니다. **심볼 0개는 `ok=False`지만**(어댑터
+`container_tools.judge()` — stdout의 요약 줄에서 읽는다) `judge()`는 그 줄이 없거나
+못 읽으면 `ok`를 **그대로 둔다**(안 잰 것을 0으로 읽지 않는다 — CLAUDE.md §0).
+`FakeToolRunner`는 심볼을 세지 않으므로 `dev_fake`의 GRAPH는 대상 소스 존재만 말한다.
 
 빈 그래프가 `ok=False`가 되면 **보이는 곳이 셋 늘어난다** (코드로 확인):
 - `tool_call` trace 이벤트가 `ok=False`와 `error`(「index: 심볼 0개 …」)를 싣는다
