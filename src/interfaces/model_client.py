@@ -158,6 +158,28 @@ class ModelGatewayError(RuntimeError):
         self.reasoning_field = reasoning_field
 
 
+# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만
+# 「이 후보가 크다」다**(`is_size_rejection`). 400은 크기만의 값이 아니다(#296) - vLLM 0.27.1은
+# 요청 모양(본문 검증)·서버 설정(`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이
+# 모르는 `reasoning_effort`, 출력 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같다. 이 문구는
+# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
+# 400은 크기로 읽지 않는다** - 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
+CONTEXT_OVERFLOW_PHRASE = "maximum context length"
+
+
+def is_size_rejection(exc: Exception) -> bool:
+    """이 실패가 **이 후보가 크다**인가 - 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
+
+    413(본문 초과)과 컨텍스트 초과 문구(`CONTEXT_OVERFLOW_PHRASE`)가 실린 400뿐이다. 게이트웨이
+    오류가 아니면(스키마 실패) 크기가 아니다. 러너(`runner._is_size_rejection`)와 Auditor 노드,
+    그리고 Critic 노드(`critic.run`의 홉 관측 폴백 - #600 H2ⓐ)가 같은 판정을 쓴다 - 노드는
+    러너를 import할 수 없어 여기에 둔다(러너가 노드를 import한다).
+    """
+    if not isinstance(exc, ModelGatewayError):
+        return False
+    return exc.status == 413 or (exc.status == 400 and CONTEXT_OVERFLOW_PHRASE in exc.detail)
+
+
 class ModelSwapError(ModelGatewayError):
     """단계 경계 교대가 모델을 못 띄웠다 — 교대 명령 실패·마감 초과·준비 확인의 창 불일치.
 

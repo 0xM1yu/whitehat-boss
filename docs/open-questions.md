@@ -73,11 +73,11 @@
 | D14 | ~~재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다~~ (확장 안 함 · 바이트 동일은 Fake 경로) | 닫힘 | [본문](open-questions/D/D14.md) |
 | D15 | ~~`Budget.tool_seconds`의 값에 실대상 근거가 없다~~ (정한 상한 18,000 s · 서빙 도구 시간 7~16 s로 안 걸린다 · 실대상 규모는 미실측) | 닫힘 | [본문](open-questions/D/D15.md) |
 | D16 | ~~확장자로 대상을 고르는 도구가 `.inc`를 조용히 건너뛴다~~ | 닫힘 | [본문](open-questions/D/D16.md) |
-| D17 | ~~프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다~~ (서빙 Auditor v14가 중복을 걷음 · 남은 건 입력 토큰 비용) | 닫힘 | [본문](open-questions/D/D17.md) |
+| D17 | ~~프롬프트의 "사실 블록이 전부다"가 산문 자리표시자를 전부 장식으로 만든다~~ (서빙 Auditor v14가 중복을 걷음 · 남은 건 입력 토큰 비용 · PoV FINDING 잔여 #649) | 닫힘 | [본문](open-questions/D/D17.md) |
 | D18 | ~~8단계 정책이 게이트 등급을 읽지 않는다~~ (2026-09-20 선택지 (a) — F-10b) | 닫힘 | [본문](open-questions/D/D18.md) |
 | D19 | **프롬프트 본문이 실행 산출물에 남지 않아 W1을 실행에서 검증할 수 없다** | 부분 | [본문](open-questions/D/D19.md) |
 | D20 | ~~Scout이 캡슐로 호출 그래프를 받지 못한다~~ (잔여는 need_evidence 루프의 조회가 대신 채운다) | 닫힘 | [본문](open-questions/D/D20.md) |
-| D21 | ~~토큰 계상이 실서빙 실측보다 1.8배 과소다~~ (서빙 로컬 카운터는 `approx`지만 묶는 자리가 모두 여유 · 실 토크나이저 PR #31은 ATOM 증명뿐 · 미실측 병기) | 닫힘 | [본문](open-questions/D/D21.md) |
+| D21 | ~~토큰 계상이 실서빙 실측보다 1.8배 과소다~~ (서빙 로컬 카운터는 `approx`지만 묶는 자리가 모두 여유 · 실 토크나이저 PR #31은 ATOM 증명뿐 · 미실측 병기 · 캡슐 예산은 그 여유 밖) | 닫힘 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | ~~`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다~~ (등급 영향 0 · 잔여는 순서 해상도뿐 · 위치 불일치는 #563) | 닫힘 | [본문](open-questions/D/D23.md) |
 | D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 256은 정한 값) | 닫힘 | [본문](open-questions/D/D24.md) |
@@ -137,7 +137,7 @@
 | D79 | ~~조건 `B1'`(바이너리·펌웨어 포함)가 실인덱스 프로필에서 후보를 0건 낸다~~ (선택지 (b) — evaluation.md §2.2에 명시) | 닫힘 | [본문](open-questions/D/D79.md) |
 | D80 | **`Evidence.ok`가 「재현됐다」를 뜻하지 않는데 E4가 그것만 보고 `proven`을 찍는다** (⏵ 2026-10-02 절반만 — exit 0·미측정은 E4가 아니다) | 열림 | [본문](open-questions/D/D80.md) |
 | D81 | **장비가 둘이 됐다 — ATOM과 vast.ai 중 무엇을 비교 셀로 삼나** (⏵ 2026-09-29 ATOM 종료 — vast 박스 고정 문제로 좁혀짐) | 열림 | [본문](open-questions/D/D81.md) |
-| D82 | ~~Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다~~ (①~⑤ 고쳐졌고 서빙은 v4 · v4 SOURCE 어긋남은 #529 · ⑥ location.symbol 탈락은 #633) | 닫힘 | [본문](open-questions/D/D82.md) |
+| D82 | ~~Scout v3 프롬프트 계약과 하네스 입력·스키마가 어긋난다~~ (①~④ 고쳐지고 ⑤는 절반 · 서빙은 v4 · v4 SOURCE 어긋남은 #529 · ⑥ location.symbol 탈락은 #633) | 닫힘 | [본문](open-questions/D/D82.md) |
 | D83 | ~~모델이 쓴 `state`·ID를 하네스가 대조하지 않는다~~ (하네스가 발급값을 도장 찍어 해소 — `location`은 D82 ⑥으로) | 닫힘 | [본문](open-questions/D/D83.md) |
 | D84 | ~~모델 응답의 원문(실패한 시도·단발 호출·루프 마지막 홉)을 보존하지 않는다~~ (닫힘 · (요청, 원 응답, `finish_reason`) 보존으로 좁혀 닫음 · 성공 최종 원문은 `--keep-responses` 옵트인 · 추론 몫은 D109) | 닫힘 | [본문](open-questions/D/D84.md) |
 | D85 | ~~슬라이서가 UTF-8 아닌 소스 파일 하나에 run 전체를 실패시킨다~~ (무효 바이트만 latin-1로 해소) | 닫힘 | [본문](open-questions/D/D85.md) |
@@ -155,9 +155,9 @@
 | D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
 | D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
-| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97·D96) | 닫힘 | [본문](open-questions/D/D100.md) |
+| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97, D96은 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
 | D101 | **로더가 슬라이스의 `analysis`를 버리고 `degraded`는 Scout에만 실어, 절단·역추적 경계 신호가 Auditor 입력에 안 닿는다** | 열림 | [본문](open-questions/D/D101.md) |
-| D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 후속 D103) | 닫힘 | [본문](open-questions/D/D102.md) |
+| D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 정의 오염 잔여는 추적 없음) | 닫힘 | [본문](open-questions/D/D102.md) |
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |
 | D104 | ~~Auditor 입력이 피호출 함수를 1단만 붙여, 래퍼·이름만 바꾸는 매크로 뒤의 실제 구현이 빠진다~~ | 닫힘 | [본문](open-questions/D/D104.md) |
 | D105 | **Auditor 입력에 함수 포인터 간접 호출 대상(C6)과 버퍼·길이 쓰기 지점(C5(a))이 없다** | 열림 | [본문](open-questions/D/D105.md) |
