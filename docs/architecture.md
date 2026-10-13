@@ -44,6 +44,11 @@ graph LR
 > 코드가 0인 재현이 간다, 2026-10-02부터 · 이슈 #232).
 > 등급이 언제 성립하고
 > 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
+>
+> ⏵ 2026-10-13(#554) — 6단계는 판정 전에 타깃 관측 Evidence를
+> `evidence_refs`에 붙여 저장하므로(`gate_node.attach_observed`) **6단계를 거쳐 관측 Evidence가 붙은 Finding의** 모델 원본 인용 수는
+> 6단계 `gate_eval`의 `cited_by_model`에 남는다(7·8단계 행에는 없다). 6단계 행이 없는 Finding(5단계 도중
+> 예산 소진 등)의 `state.db` 행은 부착 전 원본이다.
 
 ## 3. 단계별 책임과 통과 조건
 
@@ -204,9 +209,21 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | --- | --- | --- |
 | E0 | 모델 주장만 존재 | 6 |
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
-| E2 | 경로 단계가 선언되고(`path_ok` — **모델이 쓴 `finding.path`**) GRAPH Evidence가 풀에 있고(`graph_ok`) 차단 결여 없음 · ⚠ **「call graph로 확인」이 아니다 — 이슈 #576** | 6 |
+| E2 | 모델이 쓴 `finding.path`에 source·sink 단계가 둘 다 있고(`path_ok`) **∧** 인덱서의 GRAPH Evidence가 `ok`이고(`graph_ok` — **심볼 0개로 보고되지 않았다**까지다. `judge()`는 요약 줄이 없으면 `ok`를 그대로 두고 `FakeToolRunner`는 심볼을 안 센다. **run 전역 Evidence 하나라 이 Finding의 경로를 확인한 것이 아니다**) **∧** blocking `MissingEvidence`가 없다(`unblocked`) | 6 |
 | E3 | **E2의 조건 전부** + Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
 | E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **「실행됐고 비-0으로 끝났다」까지만 보증한다**(크래시의 대용 지표다 — D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
+
+> ⏵ **2026-10-13 (#576) — E2의 옛 정의는 코드보다 셌다.** 이 행은 「source→sink 경로가 call graph로 확인되고
+> guard 부재가 코드로 확인」이라 적었는데, `gate.py`의 `p2 = path_ok and graph_ok and unblocked`는 그것을
+> 하지 않는다. `path_ok`는 **모델이 쓴 값**이고, `graph_ok`가 보는 GRAPH Evidence는 러너가 1단계에서 **한 번**
+> 만들어 모든 타깃의 풀에 넣은 것이라(`runner._artifact_signals`의 `return (graph, *found)`) **개별 Finding과
+> 무관하다.** guard 부재를 코드로 확인하는 항은 술어에 없다. 그래서 인덱서가 서는 동안 **E2 ≡ `path_ok ∧
+> unblocked`**, 즉 모델의 자기 신고에 「인덱서가 돌았다」가 붙은 것이고, 인덱서가 실패하면 전 타깃이 **동시에**
+> E2를 잃는다 — 등급이 근거 품질이 아니라 **인덱서 가동률**을 섞어 잰다. 같은 날 한 가지를 고쳤다: 인덱서가
+> **심볼 0개**를 내면 `ok=False`다(`container_tools.judge()`) — 전에는 빈 그래프도 `ok=True`라 E2가 열렸다.
+> 둘 다 코드 읽기에서 나온 결함이고 **확인된 관측은 0건이다**(커밋된 실서빙 run 셋(10-08·10-11·10-12) 중 심볼 수가 기록된 것은 [10-12 보고서](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 하나이고 그 값은 321이다 — 10-08·10-11 보고서에는 그 수가 없다. 미기록은 0이 아니다). 「Finding별로
+> 경로를 확인하는 E2」는 이 표가 약속하지 않는다 — 그것은 인덱서가 호출 간선을 Finding 단위로 내는 도구가 생긴
+> 뒤의 설계 결정이다(#576 선택지 (b)~(d)).
 
 > **E3가 E2를 포함하는 것은 2026-09-23 제안이다**(조민규 결정, 손수민 리뷰는 이 변경의 PR에서 → 2026-09-24 #251로 머지(`c301342`)했고 그 PR에
 > 손수민(`sumin0218`)의 리뷰 기록은 없다 — 리뷰는 작성자 `danielcho02`의 COMMENTED 1건뿐, `gh pr view 251`
