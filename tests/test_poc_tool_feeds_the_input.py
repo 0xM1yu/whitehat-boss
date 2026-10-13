@@ -730,11 +730,17 @@ def test_a_poc_call_without_input_is_failed_evidence(tmp_path: Path, spy: _Spy) 
     CLAUDE.md §2.1이 막는 「문서가 없는 코드를 가리킨다」다. 그리고 리뷰어가 `_execute`의
     `except ValueError → _fail`을 `ZeroDivisionError`로 바꿔도 154건이 통과하는 것을 보였다.
 
-    **이 경로는 실제로 돈다** — Auditor `probe(poc)`는 `ToolArgs`에 `input_bytes`를 안 싣고
-    (`nodes/auditor._probe`), hop0의 `inspect(poc)`도 직전 `gen`이 없어 입력이 없다.
-    ⏵ 2026-10-13(#419) — 앞의 것은 낡았다: `probe`는 이제 `spec`이 있으면 싣는다.
-    **`spec` 없는 `probe(poc)`는 여전히 입력이 없다**(모델이 `spec`을 안 보낸 경우) — 이 테스트가
-    서는 이유는 그대로다.
+    **이 경로는 실제로 돈다** — 모델이 `spec`을 안 보낸 Auditor `probe(poc)`는 `ToolArgs`에
+    `input_bytes`를 안 싣는다(`nodes/auditor._probe`).
+    ⚠ **「입력 없는 `poc` 호출은 그것뿐」은 아니다** — 8단계 `nodes/validate.run`도 모델의
+    `repro_spec.expected_signal`이 `tool_for`의 poc 묶음에 걸리면 `poc`를 골라
+    `_call(…, [tool, *spec.steps], …)`로 부르고, 그 `_call`은 `ToolArgs(argv=…, workdir=…)`
+    뿐 `input_bytes`를 안 싣는다(`validate.py:151`). 열린 PR #658이 그 분기를 PoV 루프에
+    맡기려는 중이라 지금 main에서는 살아 있다.
+    ⏵ 2026-10-13(#419) — `probe`는 이제 `spec`이 있으면 `input_bytes`를 싣는다. **`spec` 없는
+    `probe(poc)`는 여전히 입력이 없다** — 이 테스트가 서는 이유는 그대로다.
+    ⏵ 2026-10-13 (#572) — PoV 홉의 `inspect(poc)`는 PoC가 없으면 러너가 도구 전에 거절한다
+    (`runner._POV_INSPECT_WITHOUT_POC`) — 그쪽은 더 이 경로로 오지 않는다.
     """
     evidence = _runner(tmp_path, poc_target=ARVO).run(
         "poc", ToolArgs(argv=["poc"], workdir="."), SANDBOX
