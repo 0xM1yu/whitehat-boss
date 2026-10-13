@@ -13,6 +13,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
+| 모델 인용 수 | `gate_eval`(stage=6) | `cited_by_model` = 부착 전 ID 수, 중복 포함 (#554) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
@@ -55,6 +56,27 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
 타깃에서 관측한 Evidence를 직접 붙이므로(`gate_node.attach_observed`) E0는 「관측이 0건인
 타깃」을 센다. **그 날 앞뒤 run의 이 값을 한 열에 놓지 않는다.** 새 임계는 미실측이다.
+
+「모델 인용 수」(#554): `gate_node.attach_observed`가 `evidence_refs`에 하네스 관측 Evidence를
+덧붙여 같은 `(kind, obj_id)`로 저장하므로
+**부착 뒤 `state.db`로는 모델이 몇 건 인용했는지 셀 수 없다**
+(결함 본문이 `state.db`를 세어 낸 옛 「`evidence_refs` 0개」 수가 그 방법이었다). 대체가
+`gate_eval.cited_by_model`이다 - **6단계 행의 값만이 모델 자신의 인용 수**다(5단계가 옮긴 목록의
+길이, 부착 전에 읽는다). 세는 것은 **ID 개수**다 - 맨 `len()`이라
+**중복도 센다**(중복 제거 없음). FACTS 안 ID인지·지어낸 ID인지·`Evidence`로 풀리는지는
+**가리지 못한다**: 지어낸 ID도 1건으로 센다.
+`0`은 「쟀더니 0건」이다. 7·8단계 `gate_eval`에는 이 키가 **없다** - 그 시점의 목록에는 6단계
+부착분이 섞여 있어 「모델이」라는 이름이 거짓이 되기 때문이다. 같은 Finding의 모델 인용 수는
+`subject_id`로 6단계 행에서 읽는다. 이 키가 생기기 전 run에는 6단계 행에도 없다.
+**모집단은 6단계 행이 있는 Finding이다.** 서빙(`per_stage`)에서 5단계 도중 예산이 소진되면
+`BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
+6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
+전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
+⏵ 2026-10-14 - **셋째 경우: 6단계 행이 있어도 부착이 0건이면 그 행은 원본 그대로다.**
+`attach_observed`가 더할 ID가 없으면(`new_refs`가 빈다) `store.put`을 **안 한다** - 그래서
+「6단계 행이 있는 Finding은 못 센다」는 **관측 Evidence가 붙은** 경우까지만 참이다. 이 키는
+그 경우에도 실린다(부착 전에 읽으므로) - 못 세는 쪽이 `state.db`다.
+⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
 `artifact_id`·초기 `state`·`missing_evidence`)뿐이다. 하네스가 덮는 `produced_by`·
@@ -195,6 +217,9 @@ class EventKind(StrEnum):
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
     TOOL_CALL = "tool_call"
+    # Evidence Gate 판정 하나(Finding·단계당 1행). 키: `grade` · 술어들(`p0`~`p4` 등) ·
+    # `cited_by_model`(**6단계 행에만**, 부착 전 모델 인용 ID 수 - 이슈 #554). 키 부재 = 안 쟀다.
+    # 7·8단계 행에 없는 이유와 읽는 법은 모듈 docstring의 「모델 인용 수」 단락.
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
     CACHE = "cache"
