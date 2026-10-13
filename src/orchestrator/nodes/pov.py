@@ -85,6 +85,7 @@ def _render_prompt(
     source: Callable[[], str] | None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     retry_note: str | None = None,
+    compile_note: str | None = None,
 ) -> Prompt:
     """hop0 프롬프트를 렌더한다 — 사실 블록(FACTS)이 여기 실린다.
 
@@ -119,12 +120,17 @@ def _render_prompt(
         target=describe_target(capsule.target),
         source=text,
     )
-    if retry_note is None:
+    # 본문 **끝**에 붙는 것은 둘이고 둘 다 `None`이면 바이트 그대로다. ① `compile_note` — 2단계가
+    # 잰 컴파일 실패를 알리는 하네스 노트(이슈 #507 · `signals.compile_note`). 하네스 사실이라
+    # FACTS 뒤에 따로 둔다(프롬프트 body는 불변이다). ② `retry_note` — hop0 파싱 실패 뒤 다시 물을
+    # 때만의 오류 노트. 받은 그대로 쓴다(`source`와 같다) — **어느 판에 싣는가는 러너가
+    # 정한다**(`_WIDE_INPUT_VERSIONS`).
+    tails = [note for note in (compile_note, retry_note) if note is not None]
+    if not tails:
         return prompt
-    # hop0 파싱 실패 뒤 다시 물을 때만 — 본문 끝에 오류 노트를 붙인다(`None`이면 바이트 그대로).
     return Prompt(
         prefix=prompt.prefix,
-        body=f"{prompt.body}\n\n{retry_note}",
+        body="\n\n".join([prompt.body, *tails]),
         prompt_version=prompt.prompt_version,
     )
 
@@ -154,6 +160,7 @@ def open_hop(
     source: Callable[[], str] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     retry_note: str | None = None,
+    compile_note: str | None = None,
     hop: int = 0,
 ) -> PovHop:
     """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다.
@@ -173,6 +180,12 @@ def open_hop(
     ⏵ 2026-10-11 (#550) — `retry_note`·`hop`은 **hop0 호출이 스키마 파싱에 실패해 다시 열 때만**
     준다. 실패한 호출도 홉 하나를 쓴 것이라(`runner._run_pov_hops`) 다시 여는 호출은 `hop`번 홉이고,
     노트는 본문 끝에 붙는다. 둘 다 기본값이면 첫 호출과 바이트가 같다.
+
+    ⏵ **2026-10-13 (이슈 #507) — `compile_note`는 2단계가 이미 잰 컴파일 실패를 hop0 본문 끝에
+    싣는다** (`signals.compile_note` — 없으면 `None`이고 바이트가 종전과 같다). 러너가
+    `_WIDE_INPUT_VERSIONS` 판에만 준다(v2는 이 PR 전과 바이트가 같아야 한다). 도구를 거절하지
+    않는다 — 모델이 그 뒤에도 `inspect build`를 고르면 종전처럼 돈다. hop0 파싱 실패 뒤 다시 열
+    때도 같은 노트가 실린다.
     """
     prompt = _render_prompt(
         ctx,
@@ -181,6 +194,7 @@ def open_hop(
         source=source,
         fuzz_entrypoint=fuzz_entrypoint,
         retry_note=retry_note,
+        compile_note=compile_note,
     )
     return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=hop)
 
@@ -251,6 +265,11 @@ def run_tool(
     빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은 러너가
     관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
     안 간다 — `call_tool`이 크기와 digest만 싣는다.
+    ⏵ **2026-10-13 (#507) — 대신 모델에게 알린다, 거절하지 않는다**: 2단계 `build`·`clang-tidy`가
+    컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)과, `build`가 실패했을 때만
+    「`build`·`asan`·`gdb`는 같은 컴파일 명령이라 같은 오류가 예상된다」를 하네스 노트로
+    싣는다(`open_hop(compile_note=)`). 이 함수는 그 뒤에도 요청받은 도구를 종전 그대로(argv 불변)
+    돌린다 — 실패 관측이 `compile_failure_reason`을 머리줄에 단다.
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
