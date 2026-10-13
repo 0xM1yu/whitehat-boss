@@ -45,9 +45,26 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 시도.**
 (회복된 실패를 세려면 키 유무가 아니라 `attempts>1`을 쓴다 - 스위치가 깨끗한 성공에도 키를
 붙인다.) **키 부재 = 깨끗한 성공(스위치 밖) · PromptLog 없음 · 원문을 못 실은 호출 —
-키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
-`ModelGatewayError`가 된 시도의 원문은 안 남는다
-(`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
+키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 `choices[0].message`조차 못 읽어
+`ModelGatewayError`가 된 시도는 원문이 없다. `message`를 읽을 수 있던 200(`usage`만 깨진 경우 등)은
+`ModelGatewayError`가 돼도 **원문이나 추론을 읽었으면** 그 시도를 마지막 칸으로 싣는다(`_post`의
+「응답 모양이 계약과 다르다」 분기). ⚠ 그 200의 `content`가 비문자열이고 추론 키도 없으면 **칸이
+아예 안 생긴다** — 같은 `content: null`이 스키마 실패 경로로 가면 `null` 칸이 생기므로 두 경로의
+칸 규칙이 다르고, 그 갈래에선 읽을 수 있었던 `finish_reason`도 `null`로 남는다.** 쓰기 실패는
+`response_record_error` (#603) |
+| 추론 채널 (#280) | `model_call`의 `reasoning_refs`·`reasoning_sha256`·`reasoning_field` | 위
+`response_refs`와 **같은 칸·같은 조건**(실패·버려진 시도는 항상, 성공 최종은
+`--keep-responses` 역할만). 파일은 `prompts/…_reasoning[_retryK].txt`. 칸이 `null`이면 그
+시도는 서버가 추론 키를 안 줬다(`message.reasoning`·`message.reasoning_content` 둘 다
+없거나 문자열이 아님) — **빈 문자열이 아니고 파일도 없다.** 칸이 있는데 파일이 0바이트면
+서버가 키는 줬고 비었다. `reasoning_field`는 칸마다 서버가 쓴 키 이름(`"reasoning"` 또는
+`"reasoning_content"`)이라 vast 서빙에서 어느 이름인지가 이 값에서 처음
+측정된다. **세 키는 어느 칸에도 추론이 없으면 통째로 안 실린다** — Fake·추론 파서 없는 서버 ·
+`--keep-responses` 밖의 깨끗한 성공은 같은 모양이다. 응답 원문이 `null`인 칸(`content: null`)에도
+추론은 있을 수 있다. 추론 파일 쓰기가 실패하면 **세 키 대신** `reasoning_record_error`가 실리고
+`response_refs`·`response_sha256`은 그대로 남는다 — 응답 쪽 쓰기 실패(`response_record_error`)와
+다른 키다. 그 실패가 칸 도중이면 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조 없는 고아로
+남는다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
 | 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
 | 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
 | PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |

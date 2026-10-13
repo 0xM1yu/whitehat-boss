@@ -2173,9 +2173,10 @@ def build_parser() -> argparse.ArgumentParser:
         choices=PROMPTED_ROLES,
         default=(),
         metavar="ROLE",
-        help="이 역할들의 성공한 호출도 응답 원문을 prompts/에 남긴다(#612). 안 주면 스키마 실패 "
-        "시도의 원문만 남는다. Auditor 응답은 수십만 자일 수 있다. --dry-run에서는 prompts/가 "
-        "없어 조용히 무효다",
+        help="이 역할들의 성공한 호출도 응답 원문을 prompts/에 남긴다(#612). 서버가 추론을 따로 "
+        "주면 그 추론도 *_reasoning*.txt로 남는다. 안 주면 스키마 실패 "
+        "시도의 원문(과 추론)만 남는다. Auditor 응답은 수십만 자일 수 있다. "
+        "--dry-run에서는 prompts/가 없어 조용히 무효다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
