@@ -56,6 +56,11 @@ from src.schemas.run import RunRecord
 # 도구 실행은 토큰을 쓰지 않는다. 매번 만들지 않도록 상수로 둔다.
 _NO_TOKENS = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
 
+# `critic_normalized`의 `invalid_axes`가 싣는 상한. **설계 상수이고 잰 값이 아니다** - 모델이 낸
+# 자유 문자열이 trace 한 줄을 부풀리지 않게 하는 폭이다. 어휘 변형이 어떤 모양인지 보기엔 충분하다.
+_INVALID_AXES_KEPT = 5
+_INVALID_AXIS_CHARS = 40
+
 
 def _default_monotonic_ms() -> int:
     return int(perf_counter() * 1000)
@@ -864,10 +869,16 @@ class RunContext:
         return result
 
     def record_critic_normalized(self, decision: Decision, *, stage: Stage) -> None:
-        """근거 없는 `rebut` → `uphold` 정규화를 지표에 남긴다 (agent-contracts.md §2.3).
+        """근거 없는 `rebut` → `need_evidence` 정규화를 사유와 함께 지표에 남긴다
+        (agent-contracts.md §2.3 · ADR 0015).
 
-        분모가 `model_call(role=critic)`이므로 판정과 별개의 이벤트로 남긴다.
+        분모가 `model_call(role=critic)`이므로 판정과 별개의 이벤트로 남긴다. 키:
+        `original_verdict`(= `rebut`) · `reason`(`empty_axis` | `invalid_axis`) ·
+        `invalid_axes`(어휘 밖 원문의 JSON 배열 문자열 - `TraceValue`가 스칼라라서다.
+        최대 `_INVALID_AXES_KEPT`개, 값마다 `_INVALID_AXIS_CHARS`자. `empty_axis`면 `"[]"`).
         """
+        offending = decision.invalid_axes[:_INVALID_AXES_KEPT]
+        invalid = [axis[:_INVALID_AXIS_CHARS] for axis in offending]
         self.trace.emit(
             EventKind.CRITIC_NORMALIZED,
             stage=stage,
@@ -875,6 +886,8 @@ class RunContext:
             subject_id=decision.decision_id,
             finding_id=decision.finding_id,
             original_verdict=decision.verdict.value,
+            reason=decision.ungrounded_reason,
+            invalid_axes=json.dumps(invalid, ensure_ascii=False),
         )
 
     def record_critic_verdict_unmapped(
