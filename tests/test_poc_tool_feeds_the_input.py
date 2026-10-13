@@ -732,6 +732,9 @@ def test_a_poc_call_without_input_is_failed_evidence(tmp_path: Path, spy: _Spy) 
 
     **이 경로는 실제로 돈다** — Auditor `probe(poc)`는 `ToolArgs`에 `input_bytes`를 안 싣고
     (`nodes/auditor._probe`), hop0의 `inspect(poc)`도 직전 `gen`이 없어 입력이 없다.
+    ⏵ 2026-10-13(#419) — 앞의 것은 낡았다: `probe`는 이제 `spec`이 있으면 싣는다.
+    **`spec` 없는 `probe(poc)`는 여전히 입력이 없다**(모델이 `spec`을 안 보낸 경우) — 이 테스트가
+    서는 이유는 그대로다.
     """
     evidence = _runner(tmp_path, poc_target=ARVO).run(
         "poc", ToolArgs(argv=["poc"], workdir="."), SANDBOX

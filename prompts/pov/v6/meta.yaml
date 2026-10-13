@@ -1,6 +1,10 @@
 # 2026-10-12 — v5를 잇는 새 판. 영어로 다시 썼다(PR #636). 2026-10-13 리뷰 수정(1~3라운드)을 같은 PR에서 반영했다.
 # 🔴 **배선 상태: `config/models.yaml`에 아직 배선되지 않았다 · 이 판으로 돈 run 0건.** 효과는 전부 미실측이다.
 #    서빙 판 배선은 별 PR이다.
+# ⏵ 2026-10-13 — **배선됐다** — 그 「별 PR」이 이 PR이다(`config/models.yaml` pov 좌석
+#    `prompt_template_version: "v6"` · S19 Phase 6-2). 윗줄의 「돈 run 0건 · 효과 미실측」은 **그대로 참이다** —
+#    배선만 들어갔고 이 판으로 돈 run은 없다. 이 머리 주석은 요청 바이트가 아니다(`prompt_loader.render()`가
+#    `Prompt(prefix, body)`만 낸다) — 그래서 판이 불변이어도 제자리에서 적는다(`prompts/pov/v5/meta.yaml`의 ⏵들과 같다).
 # `hop_header: true`·`output_schema: PovActionNamed`는 v5와 같다 — 하네스 쪽 짝(`runner._pov_hop_line`·
 # `_resolve_submit_digest`)이 그대로 맞물린다. prefix의 「Hop budget」이 홉 줄을 서술하므로 둘은 같이 움직인다.
 # 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다(2026-10-13) — 없으면 `oracle_vul` 줄·출력 꼬리·
