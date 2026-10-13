@@ -594,6 +594,10 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 (#619) — **이미 돌린 도구를 다시 요청한 `inspect` 홉은 도구를 안 돌린다**:
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
+    # ⏵ 2026-10-13 (#572) — **돌릴 PoC가 없는 `inspect poc` 홉**(첫 `gen` 전 - 0바이트 gen 뒤는
+    # #619 반복이다)도 도구를 안 돌린다: `tool`(요청한 도구 - 반복 홉과 같은 뜻)과
+    # `inspect_without_poc: true`만 싣고 `tool_ok`·`exit_code`·`evidence_kind`는 없다.
+    # `tool_call` 이벤트도 없고 홉은 소비된다.
     # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
     # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"`)를 싣는다: 2단계
     # `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
