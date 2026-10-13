@@ -45,8 +45,10 @@ class Evidence(UtcModel):
     # ⚠ **기록뿐이다 — 게이트·정책·최종 지정 어느 것도 읽지 않는다.** E4의 `p4`는 여전히
     # `exit_code`만 본다. 이 필드를 `p4`가 읽게 하는 일은 실제 크래시 녹음이 쌓인 뒤로 미뤘다(#232).
     # ⚠ **`True`는 「배너가 찍혔다」이지 「죽었다」·「오라클이 크래시라 할 것」이 아니다.**
-    # LeakSanitizer(종료 시점 보고)와 UBSan `runtime error:`는 `exit_code=0`과 함께 올 수 있다 —
-    # oss-fuzz 재생 5/5가 그랬다. 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `banner`를 같이
+    # LeakSanitizer(종료 시점 보고)는 `exit_code=0`과 함께 왔다 — oss-fuzz 재생 5/5가 그 배너에
+    # exit 0이다(이슈 #232의 재생 표). UBSan `runtime error:`도 프로그램을 계속 돌리므로 같은
+    # 모양일 수 있는데 **그쪽은 아직 한 건도 관측되지 않았다**(그 5/5는 LSan뿐이다 — §0).
+    # 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `banner`를 같이
     # 싣는다: 읽는 쪽이 배너로 가른다. 반대로 **배너 없이 신호로 죽은 대상**(exit 139, 셸의
     # `Segmentation fault` 한 줄뿐)은 철자 목록(`container_tools._CRASH_BANNER`)의 셸 신호
     # 묶음이 맞춘다.
