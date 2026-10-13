@@ -32,6 +32,8 @@ def attach_observed(ctx: RunContext, finding: Finding, evidences: Sequence[Evide
     **⚠ 같은 `(kind, obj_id)`로 upsert하므로 5단계가 저장한 `evidence_refs`가 여기서 덮인다**
     (이슈 #554). 부착 뒤 `state.db`에서는 모델이 몇 건 인용했는지 셀 수 없다. 그 수는 **부착 전에**
     `run()`이 세어 `gate_eval.cited_by_model`로 남긴다 - 6단계 행이 있는 Finding에 한해서다.
+    ⏵ 2026-10-14 - 덮이는 것은 **더할 ID가 있었을 때**다. 아래 `new_refs`가 비면 `store.put`을
+    안 하므로 그 Finding의 행은 부착 전 원본이고 거기서는 셀 수 있다.
     6단계에 못 간 Finding(예산 소진 등)의 `state.db` 행은 부착 전 원본이다(`trace.py`).
     모델의 ID 자체를 Finding에 따로 보존하는 안(이슈 #554 선택지 c)은 **일부러 안 골랐다**:
     결함 본문이 잰 것이 수라서 수로 충분하고, #552가 「Finding에 새 필드 안 만든다」로 정했다.

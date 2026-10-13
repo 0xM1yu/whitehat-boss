@@ -57,6 +57,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
+| 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
@@ -79,6 +80,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
 6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
 전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
+⏵ 2026-10-14 - **셋째 경우: 6단계 행이 있어도 부착이 0건이면 그 행은 원본 그대로다.**
+`attach_observed`가 더할 ID가 없으면(`new_refs`가 빈다) `store.put`을 **안 한다** - 그래서
+「6단계 행이 있는 Finding은 못 센다」는 **관측 Evidence가 붙은** 경우까지만 참이다. 이 키는
+그 경우에도 실린다(부착 전에 읽으므로) - 못 세는 쪽이 `state.db`다.
 ⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
@@ -346,6 +351,10 @@ class EventKind(StrEnum):
     # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
     # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
     # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    # ⏵ 2026-10-14 (#633) — 「`Candidate.location`은 모델이 쓴 값」은 그 run의 서술이다. 지금은
+    # 모델이 `symbol`을 안 쓰면(`None`) Scout가 **후보 줄을 품는 함수**를 찍고
+    # `scout_symbol_stamped`를 남긴다 — 모델이 쓴 `""`·틀린 이름은 그대로 두고, 인덱스가
+    # 그 줄을 품는 함수를 모르면 안 찍는다.
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
@@ -746,6 +755,17 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # Scout 후보의 `location.symbol`을 하네스가 **그 줄을 품는 함수** 이름으로 채웠다 (이슈 #633).
+    # 내는 곳은 `nodes/scout._stamp_target_symbol`이고 **채운 홉마다 1행**이다 —
+    # `subject_id`는 후보, `hop`은 그 홉 번호(되묻기 홉도 모델이 다시 `null`을 쓰면 다시 채운다),
+    # `symbol`은 채운 값이다. ⏵ 2026-10-13 — 그 값은 `FACTS.target.symbol`이 아니라 인덱스가 아는
+    # 품는 함수다(`ctx.symbols_for`). 둘이 갈리는 자리가 슬라이스 타깃이다 — entry 한 줄짜리 대상에
+    # 여러 함수에 걸친 `SOURCE`가 가므로 후보가 대상 밖 함수에 앉을 수 있다.
+    # **이벤트 부재 = 채우지 않았다** — 모델이 `symbol`을 썼거나, 후보가 대상 파일 밖이거나, 대상이
+    # `symbol`을 안 들었거나, 인덱스가 후보 줄을 품는 함수를 모른다(`dev_fake`처럼 인덱스가 없는
+    # run이 그렇다). `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
+    # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
+    SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #
@@ -852,7 +872,11 @@ def pov_inspect_max_run_by_finding(events: Sequence[TraceEvent]) -> dict[str, in
     행동을 고르지 않았으므로 세지도 끊지도 않는다. 도구 호출이 예산에서 끊긴 홉(#394)은 응답이
     있어 `action`을 싣고 `error`도 실리므로 **센다**. `gen`·`submit`이 연속을 끊는다. 이미 돌린
     도구를 다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라
-    센다. 반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
+    센다. ⏵ 2026-10-14 — **도구를 안 돌린 홉은 그것 하나가 아니다**: 돌릴 PoC가 없어 러너가
+    도구 전에 거절한 홉(`inspect_without_poc`, #572 · PR #639)도 `action="inspect"`를 실으므로
+    같은 몫으로 센다(`runner._run_pov_hops`). 둘 다 「모델이 `inspect`를 골랐다」가 기준이고
+    도구가 실제로 돌았는지는 이 집계가 안 본다.
+    반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
     `0`으로 든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
     행동을 실은 홉이 없는 Finding(루프가 첫 홉 전에 던졌다 등)은 dict에 **없다**.
     """
