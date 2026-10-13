@@ -3329,6 +3329,24 @@ def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
     assert [grade for _, grade in seen] == sorted(grade for _, grade in seen)
 
 
+def test_cited_by_model_rides_only_on_the_stage_6_gate_eval(tmp_path: Path) -> None:
+    """이슈 #554 - 모델 인용 수는 6단계 `gate_eval`에만 있고 7·8단계 행에는 키가 없다.
+
+    7·8단계의 `evidence_refs`에는 6단계 하네스 부착분이 섞여 있어 「모델이」가 거짓이 된다.
+    """
+    _, trace_path = _run(tmp_path)
+    events = _events(trace_path)
+
+    at_gate = _of(events, "gate_eval", stage=Stage.GATE)
+    assert at_gate, "전제 - 6단계 판정이 있다"
+    assert all(isinstance(e["data"]["cited_by_model"], int) for e in at_gate)
+    later = [
+        e for stage in (Stage.CRITIC, Stage.VALIDATE) for e in _of(events, "gate_eval", stage=stage)
+    ]
+    assert later, "전제 - 7·8단계 판정이 있다"
+    assert all("cited_by_model" not in e["data"] for e in later)
+
+
 def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
     """계획 §6 대응표 1~4행. 분모가 0이면 산출 자체가 불가능하므로 그것부터 본다."""
     _, trace_path = _run(tmp_path)
@@ -5280,6 +5298,8 @@ def test_the_symbols_actually_analysed_are_named_in_the_trace(tmp_path: Path) ->
     싣고, 이름이 남는 곳은 `target_skipped`뿐인데 그 run은 `deferred: 0`이라 0건이었다.
     `Candidate.location`도 못 메운다 — 그것은 모델이 쓴 값이고 그 run에서는 `symbol`이 전부
     `null`이었다. 인덱서는 이름을 알고 있는데 그 값이 실행 기록으로 안 건너왔다.
+    ⏵ 2026-10-14 (#633) — 「모델이 쓴 값」은 그 run의 서술이다. 지금은 모델이 `symbol`을 안
+    쓰면 Scout가 후보 줄을 품는 함수를 찍는다(`nodes/scout._stamp_target_symbol`).
     """
     _, trace_path = _run(tmp_path, name="planned", before=_with_index())
 
@@ -5920,14 +5940,20 @@ def _with_definitions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     엔트리로 바꾼다(#351 리뷰 MEDIUM-2). Fake Auditor는 가드 밖이라
     (`cli._undescribed_source_options` — Fake 클라이언트는 프롬프트 문장을 안 읽는다) 그대로
     두면 가드를 못 본다. 엔드포인트는 닿지 않는 주소다 -> run은 `execute` 전에 서고, doctor는
-    접속 줄만 더 낸다."""
+    접속 줄만 더 낸다.
+
+    ⏵ 2026-10-13 (#600 H3) — 판은 v6이다. v1은 내용 인식 집합 밖이라(`nodes/auditor.
+    _CONTENT_AWARE_VERSIONS`) run의 프롬프트 가드가 SOURCE 옵션 가드보다 **먼저** 서서 이 검사가
+    묻는 문구에 닿지 못한다. v6은 집합 안이고 `source_options`를 선언하지 않는다."""
     real = cli.load_config
 
     def load(profile: str, **kwargs: object):  # noqa: ANN202
         config = real(profile, **kwargs)
         key = config.model_key_for("auditor")
         served = config.models[key].transition(
-            endpoint="http://127.0.0.1:9/v1", family="not-fake-auditor"
+            endpoint="http://127.0.0.1:9/v1",
+            family="not-fake-auditor",
+            prompt_template_version="v6",
         )
         return config.transition(
             thresholds=config.thresholds.transition(auditor_definitions=1),

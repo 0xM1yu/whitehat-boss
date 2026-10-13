@@ -1,6 +1,7 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(v5는 `PovActionNamed`) — gen/inspect/submit 하나를 낸다. `gen`은
+매 홉 모델이 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`) — gen/inspect/submit 하나를
+낸다. `gen`은
 `PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
 대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
 `validate.run`과 나란히 `_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형).
@@ -28,7 +29,7 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5는
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6은
 # `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
 # (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
@@ -37,7 +38,7 @@ OUTPUT_SCHEMA = PovAction
 # `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
-# 값(`PovAction`)으로 남는다.
+# 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6(서빙 판)도 `PovActionNamed`를 선언한다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
@@ -54,8 +55,9 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가 `config/models.yaml`의 실 PoV 좌석이라 이
-# 넓은 입력을 받는다. v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
+# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가, 2026-10-09부터 v5가,
+# 2026-10-13부터 v6이 `config/models.yaml`의 실 PoV 좌석이라 이 넓은 입력을 받는다.
+# v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
 # 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
 # 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
 # 관측이 함께 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
@@ -253,7 +255,8 @@ def run_tool(
     (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓴다(컨테이너는 로그 머리의
     자리표만 그 경로로 바꾼다) — 이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한
     PoC를, `inspect` 홉은 **직전 gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]`
-    하나). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
+    하나). ⏵ 2026-10-13 (#572) — 이는 비-`poc` 도구에 한한다: 러너가 `poc`는 그 전에 거절한다(PoC가
+    없으면 도구를 안 돌린다). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
 
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너의 `poc`는 그 바이트를 먹인다.** 과제 `-vul` 이미지의
     `/tmp/poc`로 바인드하므로 **그 도구의 관측은 PoC의 함수다**. ⚠ **나머지는 아니다** — fake는
