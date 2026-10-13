@@ -23,6 +23,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
 from slicer_source import assemble
 from src import cli, console
@@ -42,6 +43,7 @@ from src.orchestrator.nodes import critic
 from src.orchestrator.runner import RunSpec
 from src.orchestrator.stages import GATE_STAGES, Stage
 from src.orchestrator.trace import VOLATILE_FIELDS
+from src.schemas.auditor import AuditorProcedureAuditAlwaysAction
 from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location, ProducedBy
 from src.schemas.decision import Decision
@@ -3329,6 +3331,24 @@ def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
     assert [grade for _, grade in seen] == sorted(grade for _, grade in seen)
 
 
+def test_cited_by_model_rides_only_on_the_stage_6_gate_eval(tmp_path: Path) -> None:
+    """이슈 #554 - 모델 인용 수는 6단계 `gate_eval`에만 있고 7·8단계 행에는 키가 없다.
+
+    7·8단계의 `evidence_refs`에는 6단계 하네스 부착분이 섞여 있어 「모델이」가 거짓이 된다.
+    """
+    _, trace_path = _run(tmp_path)
+    events = _events(trace_path)
+
+    at_gate = _of(events, "gate_eval", stage=Stage.GATE)
+    assert at_gate, "전제 - 6단계 판정이 있다"
+    assert all(isinstance(e["data"]["cited_by_model"], int) for e in at_gate)
+    later = [
+        e for stage in (Stage.CRITIC, Stage.VALIDATE) for e in _of(events, "gate_eval", stage=stage)
+    ]
+    assert later, "전제 - 7·8단계 판정이 있다"
+    assert all("cited_by_model" not in e["data"] for e in later)
+
+
 def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
     """계획 §6 대응표 1~4행. 분모가 0이면 산출 자체가 불가능하므로 그것부터 본다."""
     _, trace_path = _run(tmp_path)
@@ -4983,6 +5003,90 @@ def test_a_schema_failure_drops_only_that_target(
     assert len(failed) == 1
 
 
+def _schema_failure_from(**fields: object) -> SchemaParseError:
+    """재시도 소진 때 어댑터가 만드는 `SchemaParseError` 문구 - 사유는 **진짜 검증기 것**이다.
+
+    `openai_compat`의 raise: `"{role} 역할의 {model}이 N회 안에 {스키마}을 만들지 못했다: {오류}"`.
+    지어낸 문구는 우리가 잡는 문구만 고르게 되므로 검증기를 실제로 부른다(CLAUDE.md §2.5).
+    """
+    with pytest.raises(ValidationError) as caught:
+        AuditorProcedureAuditAlwaysAction(**fields)
+    return SchemaParseError(
+        "auditor 역할의 qwen3-coder-30b-a3b이 2회 안에 AuditorProcedureAuditAlwaysAction을 "
+        f"만들지 못했다: {caught.value}",
+        attempts=2,
+    )
+
+
+def _empty_answer_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "(#602)" in w]
+
+
+def test_an_auditor_call_rejected_for_an_empty_answer_is_counted_in_the_run_warnings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#602 - 빈 `answer`(`procedure` 없음)로 두 시도가 다 거절된 호출은 경고에 1건으로 오른다.
+
+    **동작은 안 바뀐다**: 후보는 그대로 `schema_parse_failed`로 버려지고 나머지는 돈다.
+    """
+    failure = _schema_failure_from(action="answer", rationale="x")
+    assert "answer 액션은 비지 않은 procedure가 필요하다" in str(failure), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [failure], role_under_test=Role.AUDITOR)
+
+    result, trace_path = _run(tmp_path, name="empty-answer", before=_with_index())
+
+    (warning,) = _empty_answer_warnings(result)
+    assert "호출 1건(#602)" in warning
+    skipped = _of(_events(trace_path), "target_skipped")
+    assert [e["data"]["reason"] for e in skipped] == ["schema_parse_failed"]
+    assert len(result.candidates) == len(_FIXTURE_INDEX["symbols"])
+
+
+def test_other_schema_failures_do_not_reach_the_empty_answer_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 쌍 - 같은 검증기의 **다른 액션** 거절(`probe`에 `tool`이 없다)은 이 수에 안 든다.
+    그리고 같은 문구가 Scout 호출에 붙어도 안 든다(역할로 가른다)."""
+    # `probe`에 `tool`이 없는 거절 - 같은 검증기의 같은 접두(`… 액션은 비지 않은`)지만 answer 아님.
+    other = _schema_failure_from(action="probe", rationale="x")
+    assert "probe 액션은 비지 않은 tool" in str(other), "전제 - 진짜 검증기 문구"
+    _failing_model(monkeypatch, [other], role_under_test=Role.AUDITOR)
+    result, _ = _run(tmp_path, name="probe", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    empty = _schema_failure_from(action="answer", rationale="x")
+    _failing_model(monkeypatch, [empty], role_under_test=Role.SCOUT)
+    result, _ = _run(tmp_path, name="scout", before=_with_index())
+    assert _empty_answer_warnings(result) == []
+
+    clean, _ = _run(tmp_path, name="clean", before=_with_index())
+    assert _empty_answer_warnings(clean) == []
+
+
+def test_the_empty_answer_count_is_per_call_not_per_attempt() -> None:
+    """한 `model_call`이 `attempts: 2`로 소진돼도 1건이다. 성공 호출·다른 사유·다른 역할은 제외."""
+    log = trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    phrase = "1 validation error Value error, answer 액션은 비지 않은 procedure가 필요하다"
+
+    def call(**data: object) -> None:
+        base = {"role": "auditor", "ok": False, "error": "SchemaParseError", "error_detail": phrase}
+        log.emit(trace.EventKind.MODEL_CALL, stage=5, **{**base, **data})
+
+    call(attempts=2)  # 세는 것 - 한 호출
+    call(hop=3, attempts=2)  # 세는 것 - 홉 번호와 무관하다
+    call(ok=True, error=None, error_detail=None)  # 재시도로 살아난 호출
+    call(ok=True)  # 문구가 남아 있어도 ok면 안 센다 - `ok is False` 항을 문다
+    call(error_detail="answer 액션에 다른 액션의 필드가 실렸다: ['tool']")
+    call(error="ModelGatewayError")
+    call(role="critic")
+
+    warning = runner._auditor_empty_answer_warning(log)
+    assert warning is not None and "호출 2건(#602)" in warning
+    assert runner._auditor_empty_answer_warning(
+        trace.TraceWriter("run_20260901_0001", clock=lambda: STARTED_AT)
+    ) is None
+
+
 def test_three_oversized_targets_in_a_row_do_not_stop_the_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -5280,6 +5384,8 @@ def test_the_symbols_actually_analysed_are_named_in_the_trace(tmp_path: Path) ->
     싣고, 이름이 남는 곳은 `target_skipped`뿐인데 그 run은 `deferred: 0`이라 0건이었다.
     `Candidate.location`도 못 메운다 — 그것은 모델이 쓴 값이고 그 run에서는 `symbol`이 전부
     `null`이었다. 인덱서는 이름을 알고 있는데 그 값이 실행 기록으로 안 건너왔다.
+    ⏵ 2026-10-14 (#633) — 「모델이 쓴 값」은 그 run의 서술이다. 지금은 모델이 `symbol`을 안
+    쓰면 Scout가 후보 줄을 품는 함수를 찍는다(`nodes/scout._stamp_target_symbol`).
     """
     _, trace_path = _run(tmp_path, name="planned", before=_with_index())
 
@@ -5920,14 +6026,20 @@ def _with_definitions_on(monkeypatch: pytest.MonkeyPatch) -> None:
     엔트리로 바꾼다(#351 리뷰 MEDIUM-2). Fake Auditor는 가드 밖이라
     (`cli._undescribed_source_options` — Fake 클라이언트는 프롬프트 문장을 안 읽는다) 그대로
     두면 가드를 못 본다. 엔드포인트는 닿지 않는 주소다 -> run은 `execute` 전에 서고, doctor는
-    접속 줄만 더 낸다."""
+    접속 줄만 더 낸다.
+
+    ⏵ 2026-10-13 (#600 H3) — 판은 v6이다. v1은 내용 인식 집합 밖이라(`nodes/auditor.
+    _CONTENT_AWARE_VERSIONS`) run의 프롬프트 가드가 SOURCE 옵션 가드보다 **먼저** 서서 이 검사가
+    묻는 문구에 닿지 못한다. v6은 집합 안이고 `source_options`를 선언하지 않는다."""
     real = cli.load_config
 
     def load(profile: str, **kwargs: object):  # noqa: ANN202
         config = real(profile, **kwargs)
         key = config.model_key_for("auditor")
         served = config.models[key].transition(
-            endpoint="http://127.0.0.1:9/v1", family="not-fake-auditor"
+            endpoint="http://127.0.0.1:9/v1",
+            family="not-fake-auditor",
+            prompt_template_version="v6",
         )
         return config.transition(
             thresholds=config.thresholds.transition(auditor_definitions=1),
