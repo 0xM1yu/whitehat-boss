@@ -121,6 +121,7 @@ from src.interfaces.model_client import (
     ModelSwapError,
     SchemaParseError,
     error_detail,
+    is_size_rejection,
     truncate_detail,
 )
 from src.interfaces.oracle import Oracle
@@ -167,6 +168,7 @@ from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
+    AuditorStopReason,
     CapsuleLevel,
     EvidenceGrade,
     EvidenceKind,
@@ -280,16 +282,11 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만 「이 후보가
-# 크다」다** — 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
-# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다(`_is_size_rejection`).
-#
-# **400은 크기만의 값이 아니다(#296).** vLLM 0.27.1은 요청 모양(본문 검증)·서버 설정
-# (`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이 모르는 `reasoning_effort`, 출력
-# 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
-# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
-# 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
-_CONTEXT_OVERFLOW = "maximum context length"
+# 크기 거절의 판정(`_is_size_rejection`)과 그 문구는 `interfaces.model_client`에 있다 - Auditor
+# 노드가 같은 판정을 써야 하는데 노드는 러너를 import할 수 없다(#514). **413과 컨텍스트 초과 문구가
+# 실린 400만 「이 후보가 크다」다** - 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
+# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다. 크기가 아닌 400(#296)은 `_rejects_every_request`가 받는다.
+_is_size_rejection = is_size_rejection
 
 # 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
 # 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
@@ -350,17 +347,6 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     if exc.generating is True:
         return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
-
-
-def _is_size_rejection(exc: Exception) -> bool:
-    """이 실패가 **이 후보가 크다**인가 — 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
-
-    413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
-    게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
-    """
-    if not isinstance(exc, ModelGatewayError):
-        return False
-    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
 
 
 def _rejects_every_request(exc: Exception) -> bool:
@@ -1183,6 +1169,9 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **그리고 크기 거절로 버린 후보도 (#514).** 러너가 그 후보를 `_drop`으로 받아 run은 가므로
+    # 조용히 넘어가기 쉽다.
+    warnings.extend(_auditor_overflow_warnings(trace))
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1540,12 +1529,14 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     아니면 `None`(#617).
 
     홉 이벤트가 1건도 없으면 말할 것이 없다 — 루프가 꺼졌거나, 켰어도 첫 모델 호출이
-    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석). 못 가른다.
+    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석. 크기 거절만
+    예외라 첫 호출이 전부 크기 거절이면 `context_overflow` 홉만 남는데 그것은 `action`이 없는
+    홉이라 아래에서 뺀다 - 도구가 안 돈 것이 아니라 모델이 한 번도 못 답한 것이다). 못 가른다.
 
     `stop_reason`이 달린 `probe` 홉(`MAX_HOP`·`REPEAT_REQUEST`)은 세지 않는다 - 그 홉의 조사는
     안 돌았다(`_run_hops`). 도구 실패(`observation_error`)로 끝난 probe 홉은 세고, 왜 안 골랐는지는
     이 run이 가르지 못한다."""
-    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP]
+    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP and "action" in e.data]
     ran = sum(1 for d in hops if d.get("action") == "probe" and "stop_reason" not in d)
     if not hops or ran:
         return None
@@ -1555,6 +1546,22 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
     )
+
+
+def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
+    """크기 거절당한 Auditor 도구 루프 홉마다 run 경고 한 줄(#514) - 후보 id와 홉.
+
+    그 후보는 버려졌고(`queued` + `target_skipped`) run은 갔다. 연속 폐기 카운터가 크기 거절을
+    안 세므로(`_drop`) 이 줄이 없으면 호출 실패 총계 한 줄 말고는 어느 후보가 몇 번째 홉에서
+    잘렸는지 `trace.jsonl`을 열어야 안다. 홉이 많을수록 잘릴 확률이 오르는 상한
+    `auditor_tool_hops`의 근거가 이 줄들이다.
+    """
+    return [
+        f"후보 {e.subject_id}의 Auditor 홉 {e.data['hop']}에서 크기 거절 — 후보를 버렸다(#514)"
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP
+        and e.data.get("stop_reason") == AuditorStopReason.CONTEXT_OVERFLOW.value
+    ]
 
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
@@ -3888,6 +3895,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
 
     도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
     `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
+    ⏵ 2026-10-13(#514) 루프 안의 모델 호출이 크기 거절당하면(`context_overflow`) 노드가 그 홉
+    이벤트와 C-5를 단 뒤 **게이트웨이 예외를 그대로 올린다** - 이 함수는 받지 않고 호출자의
+    `_drop`이 그 후보만 버린다(`target_skipped`).
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
