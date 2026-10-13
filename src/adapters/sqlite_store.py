@@ -31,6 +31,13 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
 파일을 여는 것은 여전히 막지 못한다.
+
+판 2 = `RunRecord`에 아래 둘이 더 붙은 모양이다. 둘 다 기본값이 있어도 올리는 쪽이다 —
+`extra="forbid"`라 판 1 코드가 이 행을 못 읽는다.
+
+- `keep_responses`(#618·#612) — main `f0cdba76`가 더하면서 판을 **안 올렸다.** 그 선례를
+  여기서 같이 닫는다. 판 1이라 적힌 파일에 이 필드가 든 행이 섞여 있을 수 있다.
+- `location_overlap`(#563) — 이 PR이 더한다.
 """
 
 import json
@@ -52,7 +59,7 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 """
 
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
-STATE_DB_SCHEMA_VERSION = 1
+STATE_DB_SCHEMA_VERSION = 2
 
 
 class StateDbVersionError(RuntimeError):
