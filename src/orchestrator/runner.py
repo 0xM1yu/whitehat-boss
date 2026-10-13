@@ -2577,6 +2577,11 @@ def _run_pov_hops(
     `inspect_repeat …` 줄을 달아 되먹이고 루프는 안 선다 — 모델 홉은 쓴다(`MAX_HOP` 유효). 인프라
     실패(`pov.INFRA_FAILURE_EXITS`)는 기억하지 않아 재시도를 막지 않는다.
 
+    ⏵ **2026-10-13 (#507) — 2단계 컴파일 실패는 hop0 본문 끝의 하네스 노트로 알린다**
+    (`compile_note` — 코드를 읽는 판만 · 실패 Evidence가 없으면 `None`이고 바이트가 종전과 같다).
+    `inspect build`·`asan`·`gdb`를 거절하지는 않는다. hop 0의 `pov_hop`이 `compile_note`·
+    `compile_note_tools`를 싣는다.
+
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
     `/tmp/poc`)라 그 도구의 관측은 **PoC의 함수**다. ⚠ **나머지는 아니다** — dev_fake는 대상 소스
@@ -2633,6 +2638,18 @@ def _run_pov_hops(
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
         )
+        # ⏵ 2026-10-13 (이슈 #507) — 2단계가 이미 잰 컴파일 실패를 hop0 본문에 알리는 노트. 코드를
+        # 읽는 판(`pov_wide`)에만 싣는다(v2는 이 PR 전과 바이트가 같다 — `fuzz_entrypoint`와 같은
+        # 경계). 실패 Evidence가 없으면 `None`이라 본문도 trace도 종전 그대로다. 도구는 거절하지
+        # 않는다.
+        compile_failures = ctx.compile_failures.get(workdir, ()) if pov_wide else ()
+        compile_note = signals.compile_note(compile_failures, workdir)
+        # hop0 `pov_hop` 이벤트에만 싣는 계측 — 노트를 붙인 호출이 있었다는 사실과 그것이 짚은
+        # 도구들(`build`가 실패했을 때만 `build,asan,gdb`). 이 키가 있는 run에서
+        # hop ≥ 0의 `tool`이 그 도구들인 비율이 「노트 뒤 재선택률」이다.
+        note_trace = (
+            signals.compile_note_trace(compile_failures) if compile_note is not None else None
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
@@ -2662,6 +2679,7 @@ def _run_pov_hops(
                         source=wide_source,
                         fuzz_entrypoint=entrypoint,
                         retry_note=retry_note,
+                        compile_note=compile_note,
                         hop=hop,
                     )
                 else:
@@ -2681,6 +2699,7 @@ def _run_pov_hops(
                     _emit_pov_hop(
                         ctx, finding, hop=hop, failed=(exc, latency_s),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     hop += 1
                     version = (
@@ -2701,6 +2720,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     parse_truncated=truncated,
                 )
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
@@ -2713,6 +2733,7 @@ def _run_pov_hops(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
                     fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     submit_digest=submit_digest,
                 )
                 return _pov_finish_and_record(
@@ -2733,6 +2754,7 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
@@ -2777,6 +2799,7 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action=action.action, poc=hop_poc,
                         failed=(exc, None), wall_ms=max(0, ctx.monotonic_ms() - started),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                 except Exception as emit_exc:
                     exc.add_note(
@@ -2796,6 +2819,7 @@ def _run_pov_hops(
                     ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
                     fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
                     ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
@@ -2804,6 +2828,7 @@ def _run_pov_hops(
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                 inspect_repeat_of=repeat_of, fuzz=fuzz if hop == 0 else None,
+                hop0_note=note_trace if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = _pov_observation(
@@ -3031,6 +3056,7 @@ def _emit_pov_hop(
     failed: tuple[Exception, float | None] | None = None,
     wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
+    hop0_note: Mapping[str, TraceValue] | None = None,
     submit_digest: str | None = None,
     parse_truncated: bool = False,
     inspect_repeat_of: tuple[str, int] | None = None,
@@ -3051,6 +3077,9 @@ def _emit_pov_hop(
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
     이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
 
+    `hop0_note`도 **hop0에만** 준다 — hop0 본문에 컴파일 실패 노트를 붙인 호출이었다는 계측이다
+    (`compile_note`·`compile_note_tools` — 이슈 #507). 키가 없으면 노트가 없었다.
+
     `submit_digest`는 `submit` 홉에만 준다 — `poc_sha256` 지명의 결과(`absent`·`matched`·`unknown`).
 
     `inspect_repeat_of`는 `(도구, 옛 홉)`이다 — 같은 (도구, 입력)을 이미 돌려 **이번엔 안 돌린**
@@ -3061,6 +3090,8 @@ def _emit_pov_hop(
         data["fuzz_found"] = bool(fuzz["found"])
         data["fuzz_file"] = str(fuzz["file"])
         data["fuzz_reason"] = str(fuzz["reason"])
+    if hop0_note is not None:
+        data.update(hop0_note)
     if action is not None:
         data["action"] = action
     if evidence is not None:
