@@ -3071,6 +3071,10 @@ def test_a_source_declaration_without_an_enclosing_symbol_reads_the_entry_window
     facts = _last_scout_facts(ctx)
     assert facts["source"].splitlines() == VULNERABLE_C.splitlines()[3:6]  # entry 5 ± 1 = 4~6
     assert facts["target"]["line_start"] == 4 and facts["target"]["line_end"] == 6
+    # 창 폴백은 심볼이 없다 — 노드가 `capsule.target`(슬라이스가 든 심볼)의 이름을 채운다. 그 복사를
+    # 지우면 여기서 죽는다(`_ask_model`의 `if target.symbol is None` 두 줄). FACTS symbol 자체의
+    # 출처는 #633이 따로 든다 — 이 핀은 **창 폴백**만 본다.
+    assert facts["target"]["symbol"] == "parse_header"
 
 
 def test_a_slice_declaration_keeps_the_slice_render_and_criterion(

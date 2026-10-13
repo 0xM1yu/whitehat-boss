@@ -1151,6 +1151,18 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > ⏵ **2026-10-11 — v13 → v14.** v13은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_signal`이면 `audit` null)이었다. FT 정답은
 > v12 계약(#580 머지)이라 **v14 = v12 + FACTS `source` 제거**를 새 판으로 세웠다 — v13의 요청 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 규칙 1).
 > v14 body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`tests/test_auditor_v14_facts.py`). v14로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-11).
+>
+> ⏵ **2026-10-13 — Scout v4의 요청 바이트가 판 번호 없이 바뀌었다**(#529). 노드가 `SOURCE`의 모양을 meta
+> `input` 선언으로 고르게 돼서, `--slices` run의 v4(`input: source`)는 슬라이스 렌더가 아니라 entry를 품는
+> 함수 본문을 받고 FACTS에서 `slice_criterion`이 빠진다. **prefix·body는 한 바이트도 안 바뀌었고**(meta 머리
+> 주석만) `prompt_versions.scout_*`도 `v4` 그대로다 — 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4도
+> **버전 문자열이 바뀌는 것을 발화 조건으로 삼으므로 자동으로는 안 걸린다**(위 critic v1·v2 문단과 같은
+> 종류). 이 문단이 그 자리를 대신한다: **#529 전후의 v4 `--slices` run은 직접 비교하지 않는다.** 판 번호를
+> 올릴지는 소유자 판단이라 올리지 않았다. **잃는 측정** — Scout v4로 돈 커밋된 run은 셋이고(10-08 · 10-11 ·
+> 10-12) 그중 보고서가 `--slices`를 적는 것은 둘이다([10-08](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)
+> `arvo-4.json` 4조각 · [10-12](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 같은 4건 ·
+> 10-11 보고서에는 슬라이스 줄이 없다). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는
+> 이번에도 돌지 않았다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지
