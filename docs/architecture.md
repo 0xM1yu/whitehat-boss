@@ -62,7 +62,7 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(슬라이스 타깃이면 걸친 함수들 — 아래 ⚠ ADR 0012 결정 1-b) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4) |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4). ⏵ 2026-10-13(#232) 여기서 「재현 성공」은 **도구가 떴다**이고 E4는 **비-0 종료의 대용 지표**다 — 재현 확정이 아니며 판정은 오라클이 한다(ADR 0013·0014, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -211,7 +211,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
 | E2 | 모델이 쓴 `finding.path`에 source·sink 단계가 둘 다 있고(`path_ok`) **∧** 인덱서의 GRAPH Evidence가 `ok`이고(`graph_ok` — **심볼 0개로 보고되지 않았다**까지다. `judge()`는 요약 줄이 없으면 `ok`를 그대로 두고 `FakeToolRunner`는 심볼을 안 센다. **run 전역 Evidence 하나라 이 Finding의 경로를 확인한 것이 아니다**) **∧** blocking `MissingEvidence`가 없다(`unblocked`) | 6 |
 | E3 | **E2의 조건 전부** + Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
-| E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **「실행됐고 비-0으로 끝났다」까지만 보증한다**(크래시의 대용 지표다 — D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **E4 = 「실행됐고 비-0으로 끝났다」 — 대용 지표다. 재현 확정이 아니다. 판정은 오라클(ADR 0013·0014)** ⏵ 2026-10-13(#232) (D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
 
 > ⏵ **2026-10-13 (#576) — E2의 옛 정의는 코드보다 셌다.** 이 행은 「source→sink 경로가 call graph로 확인되고
 > guard 부재가 코드로 확인」이라 적었는데, `gate.py`의 `p2 = path_ok and graph_ok and unblocked`는 그것을
@@ -285,10 +285,18 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > **그것이 크래시 판정은 아니다.** 비-0은 크래시의 **대용 지표**일 뿐이다 — asan·poc는 대상 바이너리의
 > 값이라 대상이 스스로 비-0을 돌려줘도 같고, gdb는 gdb 프로세스의 값이라 정상 종료인데 비-0인 건이
 > 있다(수치와 출처는 [D80 본문](open-questions/D/D80.md) 마지막 절). 「크래시했다」를 표현하는 필드는
-> `Evidence`에 없다. **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드도 없다** — 살아 있는
+> `Evidence`에 없다. ⏵ 2026-10-13(#232) — **관측을 *기록하는* 필드는 생겼다**: 컨테이너 러너가 대상 로그의
+> sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **기록뿐이다 — `p4`·정책·최종 지정은 읽지
+> 않는다**(철자가 문서에서 왔고 실제 로그로 대조한 것은 재생 14건뿐이라 대부분 미검증이다).
+> `crashed=True`는 exit 0과 함께 올 수 있다(LeakSanitizer·UBSan). `trace.jsonl`의 `tool_call`에
+> `crashed`(부재 = 안 쟀다)로도 실린다. **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드도 없다** — 살아 있는
 > 사용처는 `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
-> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐고 비-0으로 끝났다」까지만 보증한다.**
-> 나머지는 아직 안 정했다 — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
+> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐고 비-0으로 끝났다」까지만 보증한다.
+> 대용 지표이고 재현 확정이 아니다. 판정은 오라클이 한다(ADR 0013·0014).**
+> ⏵ 2026-10-13(#232) — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
+> `expected_signal`을 대조하는 (a)는 **기각**됐다(합성 명세가 켜진 run에서는 하네스가 그 신호를 직접
+> 써서 대조가 순환한다). 산문을 바로잡는 것과 관측을 기록만 하는 것은 했고, `p4`가 관측을 읽게 하는
+> 전환은 실제 `poc_run` 크래시 녹음이 쌓인 뒤로 미뤘다.
 > → [open-questions.md](open-questions.md) D80(열림)
 
 `scout_threshold`는 첫 reason code가 세 신호 밖인 응답의 폴백 경로값이다(서빙 Scout는 신호로 판정 — ADR 0012 결정 2 · [open-questions.md](open-questions.md) D2 닫힘 2026-10-12).

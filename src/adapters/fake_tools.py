@@ -239,6 +239,10 @@ class FakeToolRunner:
         없다. **그래서 `dev_fake` e2e는 그 사실을 재지 못한다** — 재는 것은
         `tests/test_poc_tool_feeds_the_input.py`이고, 이 비대칭 자체를 무는 것은 그 파일의
         `test_the_fake_runner_makes_the_same_claim_as_the_container`다.
+
+        ⏵ 2026-10-13(#232) — **`Evidence.crashed`는 `None`(안 쟀다)으로 둔다.** 돌린 로그가 없으니
+        배너를 찾을 수 없고, 상수 `exit_code=1`에서 「크래시했다」를 지어내면 안 잰 값이 잰 값처럼
+        보인다(CLAUDE.md §0).
         """
         if not sources(workdir):
             return self.make_evidence(
