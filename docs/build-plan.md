@@ -278,6 +278,9 @@ location_ok`이고 위치가 붙는 것이 STATIC Evidence뿐이라 `static_ok`�
 `location_ok`·`static_ok` 모두 36/36 참이라 등급은 안 바뀐다([보고서](experiments/harness/2026-09-24-roster-smoke-atom.md)
 §3 실험 3, `checksum` 0 스모크라 비교표 밖).
 
+⏵ 2026-10-13 (#563) — 6단계 `location_ok`를 run마다 세게 됐다(`RunRecord.location_overlap`). 그 뒤 값이 하나 더 있다: 2026-10-12 보고서 run 6/6 거짓(trace 재계수 - 저장소 밖,
+semgrep 히트가 후보 줄과 안 겹쳤다). `run_20261007_0001`은 `p0` 지름길이라 이 지표로는 미측정이다(그 run의 오프라인 재등급은 run 실측이 아니다).
+
 **7 · Critic (모델 자리 ⑦).** Auditor와 **다른 계열**. 같은 계열이면 같은 실수를 승인한다 —
 크기보다 *다르게 틀리는 것*이 중요하다. 고도화는 GRPO이고 보상이 8단계에서 결정론적으로
 나온다.
