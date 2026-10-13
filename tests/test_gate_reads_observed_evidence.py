@@ -519,3 +519,58 @@ def test_cited_by_model_is_absent_when_the_caller_does_not_measure(ctx: RunConte
 
     (row,) = _gate_evals(ctx)
     assert "cited_by_model" not in row.data
+
+
+def test_an_attachment_that_adds_nothing_does_not_store_the_finding(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """부착이 더할 ID가 없으면 `attach_observed`가 **저장하지 않는다** - 그 Finding의
+    `state.db` 행은 모델 원본 그대로다.
+
+    이 한 줄이 셋을 받치고 있다(⏵ 2026-10-14 적대적 리뷰): `trace.py` 모듈 docstring의 셋째
+    경우 · `gate_node.attach_observed` docstring의 ⏵ · `docs/open-questions/D/D67.md`의 좁힘.
+    셋 다 「6단계 행이 있어도 부착이 0건이면 `state.db`에서 셀 수 있다」를 적는데, 그 전제는
+    **early return이 `store.put`을 건너뛴다**는 것뿐이다. 그 줄에 `store.put`을 더하는 한 줄짜리
+    변이가 등급·refs 핀 전부를 통과했다(리뷰어 실측: 259 passed) - 그러면 세 문서가 한꺼번에
+    거짓이 되고 `state.db`를 세는 쪽이 조용히 부착값을 센다(§0 - 과대 계수).
+
+    ⚠ 무는 것은 **저장 호출이 안 났다**까지다 - 부착 뒤 행이 어떤 값이어야 하는가는
+    `test_only_the_handed_evidence_lands_in_evidence_refs`가 든다.
+    """
+    handed = (_static_signal(),)
+    original = _finding(refs=[ev.evidence_id for ev in handed])  # 모델이 이미 다 인용했다
+    stored_kinds: list[str] = []
+    real_put = ctx.store.put
+
+    def spy(obj: object) -> object:
+        stored_kinds.append(type(obj).__name__)
+        return real_put(obj)
+
+    monkeypatch.setattr(ctx.store, "put", spy)
+
+    graded = gate_node.attach_observed(ctx, finding=original, evidences=handed)
+
+    assert graded is original, "더할 것이 없으면 새 Finding을 만들지 않는다"
+    assert stored_kinds == [], f"저장이 났다 - 위 세 문서의 좁힘이 거짓이 된다: {stored_kinds}"
+
+
+def test_an_attachment_that_adds_something_does_store_the_finding(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 짝 - 더할 ID가 있으면 저장한다. 위 핀이 「언제나 안 저장한다」로 읽히지 않게 둔다."""
+    handed = (_static_signal(),)
+    original = _finding(refs=[])
+    stored_kinds: list[str] = []
+    real_put = ctx.store.put
+
+    def spy(obj: object) -> object:
+        stored_kinds.append(type(obj).__name__)
+        return real_put(obj)
+
+    monkeypatch.setattr(ctx.store, "put", spy)
+
+    graded = gate_node.attach_observed(ctx, finding=original, evidences=handed)
+
+    assert graded is not original
+    assert stored_kinds == ["Finding"]
+    assert list(graded.evidence_refs) == ["ev_static"]
