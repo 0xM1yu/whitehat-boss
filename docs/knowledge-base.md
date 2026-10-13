@@ -89,7 +89,9 @@ Auditor는 슬라이스가 아니라 원본 소스를 받는다(결정 1-b = 넓
 `target_function`이 그 렌더를 센다(Phase 3c). Auditor의 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry를
 감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창)가 먼저이고 나머지는 문자 수 상한 안에서 함수째 붙는다. EXPANDED
 캡슐의 `target_function`은 entry 함수만 센다 — 상한이 뺀 함수와 못 본 줄은 trace `auditor_source`가 든다.
-`--slices` 없는 run은 앞 문장 그대로다.)
+`--slices` 없는 run은 앞 문장 그대로다.
+⏵ 2026-10-13 #529 — 앞 문장의 「Scout는 슬라이스 렌더를 받고」는 프롬프트가 `input: slice`를 선언했을 때만이다. 서빙 v4
+(`input: source`)는 `--slices` run에서도 entry를 품는 함수 본문을 받는다.)
 
 ```json
 {
