@@ -30,7 +30,8 @@ from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import critic, gate_node
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.trace import TraceWriter
+from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import (
     Evidence,
     EvidenceGrade,
@@ -494,3 +495,81 @@ def test_an_empty_graph_does_not_open_e2_but_a_populated_one_still_does() -> Non
     assert on_empty.grade is EvidenceGrade.E1, "빈 그래프로 E2가 열렸다 — 이슈 #576"
     assert on_full.predicates["graph_ok"] is True
     assert on_full.grade is EvidenceGrade.E2
+
+
+# --- 핀 ③ 계측: 부착 전 모델 인용 수가 `gate_eval`에 남는다 (이슈 #554) ---------------------
+
+
+def _gate_evals(ctx: RunContext, stage: Stage = Stage.GATE) -> list:
+    return [
+        e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL and e.stage == int(stage)
+    ]
+
+
+def test_cited_by_model_counts_the_refs_before_the_harness_attaches(ctx: RunContext) -> None:
+    """모델 인용 2건 + 하네스 관측 3건 → 저장된 Finding은 5건이고 `gate_eval`은 **2**다.
+
+    부착이 `state.db`의 목록을 덮으므로 저장소로는 이 2를 못 되찾는다 - 그게 이 키의 존재 이유다.
+    """
+    pool = (
+        _evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),
+        _evidence("ev_b", EvidenceKind.STATIC, source="clang-tidy"),
+        _evidence("ev_c", EvidenceKind.STATIC, source="cppcheck"),
+        _evidence("ev_d", EvidenceKind.STATIC, source="flawfinder"),
+        _evidence("ev_e", EvidenceKind.STATIC, source="infer"),
+    )
+    finding = _finding(refs=["ev_a", "ev_b"])
+
+    graded, _ = gate_node.run(
+        ctx, finding=finding, evidences=pool, candidate_location=CANDIDATE_LOCATION
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 2
+    assert len(graded.evidence_refs) == 5
+    stored = ctx.store.get("finding", finding.finding_id)
+    assert len(stored.evidence_refs) == 5, "전제 - 저장소 행은 덮였다(그래서 이 키가 필요하다)"
+
+
+def test_cited_by_model_zero_is_a_measured_zero(ctx: RunContext) -> None:
+    """인용 0건이면 키가 있고 값이 0이다 - 「안 쟀다」(키 부재)와 갈린다."""
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=[]),
+        evidences=(_static_signal(),),
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" in row.data
+    assert row.data["cited_by_model"] == 0
+
+
+def test_cited_by_model_is_a_bare_len_that_counts_duplicates_and_invented_ids(
+    ctx: RunContext,
+) -> None:
+    """정의를 문다: 세는 것은 **ID 개수**다 - 중복도, 풀에 없는 지어낸 ID도 센다 (`trace.py`).
+
+    이 값은 run 사이 비교(D67 「판을 올려 인용이 늘었나」)에 쓰인다. `len(set(...))`이나 「풀로
+    풀리는 것만」으로 바꾸면 앞뒤 run의 값이 **다른 정의로** 한 열에 섞이므로, 바꾸려면 이 핀과
+    `trace.py`의 「모델 인용 수」를 같이 고친다.
+    """
+    pool = (_evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),)
+
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=["ev_a", "ev_a", "ev_zz"]),
+        evidences=pool,
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 3, "중복 1 + 풀에 없는 ID 1 - 둘 다 세는 것이 정의다"
+
+
+def test_cited_by_model_is_absent_when_the_caller_does_not_measure(ctx: RunContext) -> None:
+    """`evaluate_gate`를 인자 없이 부르면 키가 없다 - `None`·`0`으로 채우지 않는다(CLAUDE.md §0)."""
+    ctx.evaluate_gate(_finding(refs=["ev_a"]), (_static_signal(),), stage=Stage.GATE)
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" not in row.data
