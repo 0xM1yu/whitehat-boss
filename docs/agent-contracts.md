@@ -320,6 +320,10 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    필수 필드가 비었거나 **다른 액션의 필드가 실리면 스키마가 거절한다**(`answer`에 `tool`을 같이 싣는 식 —
    `extra="forbid"`는 없는 이름만 막지 선언된 필드를 엉뚱한 액션에 채운 것은 못 잡아 검증기가 따로 본다).
    거절은 파싱 실패로 올라가 후보가 `queued`(C-6 `schema_parse_failed`)에 남는다 — 루프가 흡수하지 않는다.
+   ⏵ 2026-10-13(#514) 이것은 **스키마 거절**의 서술이고 그대로 참이다. 루프 안의 모델 호출이 **크기 거절**
+   (`is_size_rejection` — 413, 또는 `maximum context length`가 실린 400)당하는 것만 다르다: 후보는 C-6이
+   아니라 C-5로 `queued`에 남고 그 홉에 `auditor_hop`(`stop_reason=context_overflow`)이 남는다. 그 예외도
+   **흡수하지 않고 올라온다**(아래 6항 「`CONTEXT_OVERFLOW`」).
    5단계 산출 `Finding`은 `answer`에서만 나온다(v10은 `procedure`를 옮겨서 — §3 「AuditProcedure」).
 
 2. **`lookup` 요청 형식.** `requests`의 항목은 Scout 되묻기와 같은 `RequestedContext`다 — `kind`·`target`·
@@ -410,26 +414,34 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    *"This is the last hop the host allows: do not request another lookup or probe. Output an `answer` action with
    your final Finding."*을 붙인다. ⏵ 2026-10-06 — 그 문구는 루프 봉투(⏵ 2026-10-09부터 셋)가 같이 쓰는 한 문장이라 v10에서도 *final Finding*이라 적는다(`_LAST_HOP_NOTE`) —
    그 홉의 `answer`가 싣는 것은 `procedure`다. v10 prefix가 「Tool use」에서 그 Finding을 `procedure`로 읽으라고 직접 메운다. 문구를 봉투별로
-   가르는 것은 이 변경이 안 했다. 정지는 셋이다.
+   가르는 것은 이 변경이 안 했다. ~~정지는 셋이다.~~ ⏵ 2026-10-13(#514) 정지는 **넷이다** - 아래 목록의
+   마지막 항목과 목록 뒤 ⏵ 단락이 이 항의 현재 상태다(앞의 셋은 그 앞의 판).
    - `answer` → `ANSWERED`. 최종 답을 `Finding`으로 돌려준다 — `Finding`을 싣는 봉투(`AuditorAction`)면 그대로, v10이면 `procedure`를 옮긴 것이다.
-   - **직전 홉과 같은 요청**을 또 냄 → `REPEAT_REQUEST`. `lookup`은 `(kind, target)` 집합이 같으면, `probe`는
+   - ~~**직전 홉과 같은 요청**~~ ⏵ 2026-10-13(#514) **앞선 어느 홉과든 같은 요청**을 또 냄 → `REPEAT_REQUEST`. `lookup`은 `(kind, target)` 집합이 같으면, `probe`는
      **도구 이름이 같으면** 같은 요청이다(`spec`만 바꿔도 도구가 그 값을 안 받는다 — ⏵ 2026-10-07 「그래서 같은 관측이 온다」는 **과장이라 뺐다**: 나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다). 직전
-     홉하고만 비교한다 — A,B,A는 안 잡히고 상한이 막는다.
+     ~~홉하고만 비교한다 — A,B,A는 안 잡히고 상한이 막는다.~~ ⏵ 2026-10-13(#514) 지금은 **지나온 모든 홉의 키**와 비교한다(`nodes/auditor._run_hops`의 `seen`) - A,B,A는 `repeat_request`로
+     선다(종전 판은 직전 홉하고만 비교해 A→B→A→B가 상한까지 갔다).
    - 상한까지 조사만 함(hop N이 `answer`가 아님) → `MAX_HOP`.
+   - ⏵ 2026-10-13(#514) 홉의 **모델 호출이 크기 거절**당함 → `CONTEXT_OVERFLOW`. 응답이 없으므로 이 홉의
+     `auditor_hop` 이벤트(`stop_reason=context_overflow`)에는 `action`·토큰이 없고 `error`·`error_detail`이
+     대신 든다. 후보는 C-5로 `queued`에 남는다. 이 정지만은 `AuditorHopLimit`이 아니라 **게이트웨이 예외가
+     그대로 올라가** `runner._drop`이 그 후보만 버린다(`target_skipped` · `reason=gateway_error`) -
+     run은 가고 `RunResult.warnings`에 홉마다 한 줄이 선다. 연속 폐기 카운터는 크기 거절을 안 센다.
 
-   뒤 둘은 `Finding`이 없다 — **그 홉의 조사는 돌리지 않고** `AuditorHopLimit`을 올리며 후보는 `queued`에 둔다
+   ~~뒤 둘은~~ ⏵ 2026-10-13(#514) `REPEAT_REQUEST`·`MAX_HOP` 둘은 `Finding`이 없다 — **그 홉의 조사는 돌리지 않고** `AuditorHopLimit`을 올리며 후보는 `queued`에 둔다
    (사유는 C-5 `capsule_expansion_exhausted` — 딱 맞는 전이가 표에 없어 「조사가 상한까지 갔는데 끝을 못
    냈다」에 가장 가까운 것을 쓴 것이고 같은 뜻은 아니다. 둘은 trace `auditor_hop.stop_reason`으로 갈린다).
    🔴 **이 선택은 [ADR 0012](decisions/0012-harness-canon-v2.md) 결정 6과 충돌한다** — 그 결정은 C-5(캡슐 확장
    길)를 폐기하고 코드 삭제를 따로 하기로 했다. 삭제 PR이 C-5를 지우면 이 정지의 `queued` 전이가
-   `IllegalTransition`이 되므로, 그때 전용 사유(전이 표 행 포함)로 옮긴다 — `tests/test_auditor_loop.py`가 지금
+   `IllegalTransition`이 된다(⏵ 2026-10-13(#514) 소비자가 `REPEAT_REQUEST`·`MAX_HOP`·`CONTEXT_OVERFLOW` 셋이다). 그때 전용 사유(전이 표 행 포함)로 옮긴다 — `tests/test_auditor_loop.py`가 지금
    이 사유로 전이가 일어난다는 사실을 문다.
    **러너가 `AuditorHopLimit`을 후보 단위로 받는다** — `runner._step_auditor`가 잡아 `False`를 돌려 그 후보만
    멈추고(게이트로 안 간다) run은 간다. 모델이 같은 요청을 두 번 내거나 조사만 하는 것은 정상적인 모델 행동이라,
    받지 않으면 `run_pipeline`의 최후 방어선이 `UNFORESEEN_FAILURE`로 run을 멈춰 그 한 번이 실험 전체를 끝낸다.
    `ModelGatewayError`·`SchemaParseError`와 달리 연속 폐기 카운터에 안 센다 — 사건은 모델 호출의 실패가 아니라
    모델의 답이다.
-   **후보에 사유를 다는 범위:** 모델 호출 실패(파싱·게이트웨이)는 C-6, 예산 소진은 C-7이다. 조회·도구 쪽
+   **후보에 사유를 다는 범위:** 모델 호출 실패(파싱·게이트웨이)는 C-6, 예산 소진은 C-7이다(⏵ 2026-10-13 #514
+   루프의 크기 거절만 C-5). 조회·도구 쪽
    하네스 실패는 C-6을 안 단다(모델이 스키마를 못 맞춘 것이 아니라 파싱 실패율을 부풀린다) — 홉 이벤트의
    `observation_error`로 남기고 예외는 그대로 올라간다. **프롬프트에는 숫자를 박지 않는 편이 안전하다** —
    상한은 임계값이고 바뀌며, 숫자를 적으면 어긋나는 순간 거짓 서술이 된다. 대신 「호스트가 마지막 홉을
