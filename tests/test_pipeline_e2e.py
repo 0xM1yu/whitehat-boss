@@ -4736,7 +4736,8 @@ def _critic_rebuts_every_finding(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 _EMPTY_POOL_WARNING = (
-    "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+    "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류(파서 폴백·정규화된 반박 포함) 0"
+    " · 판정 실패 0"
     " · Critic 미경유 0 · pov_attempt_top_n 8. 8단계 PoV는 한 건도 시도되지 않았다"
     "(validated 밖 후보도 Critic이 모두 밀어 냈거나 없다)"
 )

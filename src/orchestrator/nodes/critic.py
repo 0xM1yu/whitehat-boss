@@ -23,9 +23,10 @@ content-aware 판만 EVIDENCE 끝에 절 하나로 받고(`_describe_hop_observa
 남긴다(`_record_hop_observations`;
 값은 글자/토큰 최악 비 1.22로 나눈 **계산값**이고 잰 값이 아니다).
 
-**정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `uphold`로 바꾸는 판단이 두 곳에
+**정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `need_evidence`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
-`gate.was_normalized()`면 `critic_normalized`를 남긴 뒤 **정규화된 값**을 정책에 넘긴다.
+`gate.was_normalized()`면 사유(`empty_axis` · `invalid_axis`)와 함께 `critic_normalized`를 남긴 뒤
+**정규화된 값**을 정책에 넘긴다. ⏵ 2026-10-13 (ADR 0015) — 목적지가 `uphold`였다.
 """
 
 import math
