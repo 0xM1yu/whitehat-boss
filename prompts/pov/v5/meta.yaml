@@ -33,6 +33,29 @@
 #   아래 description은 그날의 서술이다 — 「`submit`은 마지막 gen을 지정」은 `poc_sha256`을 안 적었을 때의 기본이고,
 #   「마지막 홉에서 (제외 코드) 안이면 내지 않는다」·「변형이 셋 안이면 submit하지 않고」는 앞선 gen이 셋 밖을 받은 적이
 #   없을 때만이다(받은 적이 있으면 그 gen을 지명해 `submit` — 위 ②·④).
+# ⏵ 2026-10-13 — **제자리 변경 셋째: 이 판의 요청 바이트가 한 자리 움직였다. prefix·body는 안 바뀌었다.**
+#   무엇이: 이 판이 선언하는 형제 봉투 `PovActionNamed`의 **클래스 docstring 머리**가 `(v5 — …)`에서
+#   `(v5·v6 — …)`로 바뀌었다(`src/schemas/pov.py` · v6을 서빙 pov 좌석에 배선한 PR). 그 docstring은
+#   `response_format.json_schema.schema.description`으로 요청 payload에 실린다
+#   (`src/adapters/openai_compat.py`의 `response_format` 조립 · 같은 파일의 ⚠ 주석) — 그래서 **판은 안 고쳤는데
+#   이 판의 요청이 바뀌었다.**
+#   `PovActionNamed.model_json_schema()` sha256 — 전 `df3a73d4e8a3725a41f5b7d6c4a098de99a100222e37f11b4792a961fbbfdeed`
+#   · 후 `faa3ade61a2ea26274e411514a2b00719bec98b42e5f0f326d7a339634198a9b`. 부모 `PovAction`은
+#   `a61a7097011509c14c582f9b972ca382ce41a06fd969f1d1848259d307a70066`로 **안 움직였다**(v2~v4의 요청은 그대로다).
+#   재는 방법은 `tests/test_pov_loop.py`의 핀과 같다(`json.dumps(schema, ensure_ascii=False)`의 sha256).
+#   ⚠ 잰 환경: 2026-10-13 · 이 저장소 · Python 3.11.0 · pydantic 2.12.4. 다른 pydantic 판에서 재면 값이 다를 수 있다.
+# 🔴 ⏵ 2026-10-13 — **위 두 ⏵가 든 「v5로 돈 run 0건」 근거는 더 이상 서지 않는다.** 그 둘이 본 범위는
+#   2026-10-10·10-11 시점이고(`docs/experiments` grep · 이 장비 로컬 run 다섯), 그 뒤에 v5로 모델 호출이 난 run이
+#   있다 — `run_20261011_0001`(`docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md`:
+#   프롬프트 판 pov `v5` · PoV 홉 8개 · 「봉투 `PovActionNamed`가 실 run에서 처음 쓰였다」).
+#   그 run의 `repo_commit` `1b9d14cad69baa4e674da2fc87bd945d1141d751`에서 이 판의 prefix.md sha256은
+#   `9e0e3b1134903e64a1e419742d8d261b8547614626190c01cbb0aae682332d08`(위 ⏵의 「후」 값 = 현재 값)이고
+#   `src/schemas/pov.py`는 main과 **바이트 동일**이다(2026-10-13 `git cat-file`·`git diff`로 대조). 그래서 그 run이
+#   받은 요청 스키마는 위 「전」 값(`df3a73d4…`)이고, 이 변경 뒤의 v5 run은 **그 run과 요청 바이트가 다르다** —
+#   직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4). ⚠ 앞 두 ⏵는 창을 「`prompt_sha256`으로 가른다」고 적었는데
+#   그 해시는 머리줄·prefix·history·body만 덮고 `response_format`의 스키마는 안 덮는다(`prompt_log.render`) —
+#   **이 셋째 변경은 `prompt_sha256`으로 갈리지 않는다.** 가르는 것은 run의 `repo_commit`이다.
+#   본 범위: `docs/experiments/` 안의 pov 판 표기를 `git grep`으로 봤다. 다른 장비·이 저장소 밖 실행은 보지 못했다.
 role: pov
 version: v5
 output_schema: PovActionNamed
