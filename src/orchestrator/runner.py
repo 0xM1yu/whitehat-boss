@@ -2568,10 +2568,12 @@ def _run_pov_hops(
     `inspect`는 늘 직전 gen의 바이트를 싣고 gen이 `poc` 키를 덮는다). 옛 결과에
     `inspect_repeat …` 줄을 달아 되먹이고 루프는 안 선다 — 모델 홉은 쓴다(`MAX_HOP` 유효). 인프라
     실패(`pov.INFRA_FAILURE_EXITS`)는 기억하지 않아 재시도를 막지 않는다.
-    ⏵ **2026-10-13 (#572) — 돌릴 PoC가 없는 `inspect poc`도 도구를 안 돌린다**(첫 `gen` 전이거나
-    마지막 gen이 0바이트): `_POV_INSPECT_WITHOUT_POC` 관측을 되먹이고 홉을 소비하며(`MAX_HOP` 유효)
-    `ran`에 넣지 않는다. 홉 이벤트는 `inspect_without_poc: true`로 가른다. `v5` prefix는 이 거절을
-    아직 서술하지 않는다(프롬프트는 후속 판의 몫).
+    ⏵ **2026-10-13 (#572) — 첫 `gen` 전의 `inspect poc`도 도구를 안 돌린다**(돌릴 PoC가 없다):
+    `_POV_INSPECT_WITHOUT_POC` 관측을 되먹이고 홉을 소비하며(`MAX_HOP` 유효) `ran`에 넣지 않는다.
+    홉 이벤트는 `inspect_without_poc: true`로 가른다. **0바이트 gen 뒤의 `inspect poc`는 이 분기가
+    아니다** — `poc`는 `b""`로 이미 돌았으니 #619 반복이다(`is None`으로 가른다 — 아래 분기 주석).
+    `v6` prefix는 이 거절의 첫 gen 전 몫을 서술하고 0바이트 몫은 서술하지 않는다(그쪽이 반복이라
+    `inspect_repeat`로 답한다). `v5` prefix는 둘 다 서술하지 않는다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2748,35 +2750,21 @@ def _run_pov_hops(
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
             # ⏵ 2026-10-13 (#572) — `poc`는 PoC 바이트를 입력으로 **요구**하는 도구라(ADR 0014) 첫
-            # `gen` 전(또는 마지막 gen이 0바이트)의 `inspect poc`는 돌릴 것이 없다. 도구를 안 돌리고
-            # (`tool_call` 없음) 모델에게 알려 홉만 소비한다 — `ran`에 넣지 않는다(안 돌았다).
+            # `gen` 전의 `inspect poc`는 돌릴 것이 없다. 도구를 안 돌리고(`tool_call` 없음) 모델에게
+            # 알려 홉만 소비한다 — `ran`에 넣지 않는다(안 돌았다). 아래 꼬리(이벤트 · MAX_HOP ·
+            # 관측 · 홉 줄)는 평소와 같은 코드를 `evidence=None`으로 쓴다.
             # `asan`·`gdb`·`build`는 입력을 안 받으니 이 분기 밖이다.
-            # `not tool_poc`는 `b""`도 거른다 — gen의 0바이트는 도구가 돌지만(그 관측이 「무해
-            # 입력」임을 모델이 본다) 뒤따른 inspect poc는 돌릴 PoC가 아니다: 0바이트는 채점기에
-            # 가지 않는다(`_submit_vul_to_oracle`의 `if not poc` → `vul_empty`).
-            # ⚠ 사이드카는 `b""`를 「PoC 있음」으로 적는다.
-            if action.action == "inspect" and tool == "poc" and not tool_poc:
-                _emit_pov_hop(
-                    ctx, finding, hop=hop, action="inspect", inspect_without_poc=True,
-                    stop_reason=PovStopReason.MAX_HOP.value if hop >= pov_hops else None,
-                    fuzz=fuzz if hop == 0 else None,
-                )
-                if hop >= pov_hops:
-                    return _pov_finish_and_record(
-                        ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
-                        terminal=_terminal_fields(pov_wide, gen_codes),
-                    )
-                observation = followup = _POV_INSPECT_WITHOUT_POC
-                if load_prompt(Role.POV, current.version).hop_header:
-                    followup = f"{_pov_hop_line(hop + 1, pov_hops)}\n{followup}"
-                prev = current
-                hop += 1
-                continue
+            # 🔴 `is None`으로 가른다 — `not tool_poc`가 아니다. 0바이트(`b""`) gen은 `poc`를 빈
+            # 입력으로 실제로 돌렸고 관측이 `last_gen_bytes=0`을 말한다: 뒤따른 `inspect poc`는
+            # 「없음」이 아니라 #619 반복이다(사이드카도 `b""`를 「PoC 있음」으로 적는다).
+            no_poc = action.action == "inspect" and tool == "poc" and tool_poc is None
             # ⚠ `asan`·`gdb`·`build`가 PoC를 받게 바뀌면 키에 바이트를 넣어라(container_tools 핀).
             prior = ran.get(tool) if action.action == "inspect" else None
             try:
                 evidence = (
-                    prior[1]
+                    None
+                    if no_poc
+                    else prior[1]
                     if prior is not None
                     else pov.run_tool(
                         ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
@@ -2804,7 +2792,7 @@ def _run_pov_hops(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
-            if prior is None:
+            if prior is None and evidence is not None:
                 if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
                     ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
                 else:
@@ -2816,7 +2804,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
-                    fuzz=fuzz if hop == 0 else None,
+                    inspect_without_poc=no_poc, fuzz=fuzz if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
                     ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
@@ -2824,15 +2812,20 @@ def _run_pov_hops(
                 )
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
-                inspect_repeat_of=repeat_of, fuzz=fuzz if hop == 0 else None,
+                inspect_repeat_of=repeat_of, inspect_without_poc=no_poc,
+                fuzz=fuzz if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
-            followup = _pov_observation(
-                action.action,
-                evidence,
-                read_payload=ctx.read_payload,
-                wide=pov_wide,
-                poc=last_poc,
+            followup = (
+                _POV_INSPECT_WITHOUT_POC
+                if evidence is None
+                else _pov_observation(
+                    action.action,
+                    evidence,
+                    read_payload=ctx.read_payload,
+                    wide=pov_wide,
+                    poc=last_poc,
+                )
             )
             if prior is not None:
                 why = (
@@ -2863,8 +2856,7 @@ def _run_pov_hops(
 # 돌릴 PoC가 없는 `inspect poc`에 도구 대신 되먹이는 관측(#572). 운영 문구라 철자를 핀한다.
 _POV_INSPECT_WITHOUT_POC = (
     "inspect_without_poc tool=poc ran=false — poc는 당신의 PoC를 돌리는 도구인데 돌릴 "
-    "바이트가 없다(gen을 낸 적이 없거나 마지막 gen이 0바이트다) — 이 홉에서 도구는 돌지 "
-    "않았다. 먼저 gen을 내라."
+    "바이트가 없다(gen을 낸 적이 없다) — 이 홉에서 도구는 돌지 않았다. 먼저 gen을 내라."
 )
 
 # 접두 지명의 최소 길이 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 가리키는 것을 막는다.
@@ -3086,8 +3078,8 @@ def _emit_pov_hop(
     `inspect` 홉(#619)이라 `tool`·`inspect_repeat_of_hop`만 싣고 도구 결과 키(`tool_ok`…)는 없다.
 
     `inspect_without_poc`는 돌릴 PoC가 없어 `poc` 도구를 **안 돌린** `inspect` 홉(#572)이라
-    `inspect_without_poc: true`만 싣는다 — `tool`·`tool_ok`·`exit_code`·`evidence_kind`는 이 홉에서
-    잰 값이 아니라 없다.
+    `tool`(요청한 도구 - `inspect_repeat_of`와 같은 뜻)과 `inspect_without_poc: true`만 싣는다 —
+    `tool_ok`·`exit_code`·`evidence_kind`는 이 홉에서 잰 값이 아니라 없다.
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
@@ -3104,7 +3096,7 @@ def _emit_pov_hop(
     if inspect_repeat_of is not None:
         data["tool"], data["inspect_repeat_of_hop"] = inspect_repeat_of
     if inspect_without_poc:
-        data["inspect_without_poc"] = True
+        data["tool"], data["inspect_without_poc"] = "poc", True
     if poc is not None:
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
