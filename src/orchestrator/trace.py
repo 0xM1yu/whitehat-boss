@@ -68,13 +68,24 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
 | 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
 | PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |
-| 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
+| 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
+⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
+`evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
+이 값을 한 열에 놓지 않는다.** |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
+
+⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
+`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
+`count(reason=invalid_axis) / count(rebut)`. ⚠ **그 분모는 trace에 없다** — `rebut` 총수는
+`state.db`의 `decision` 표(`decision.verdict = rebut`)로 센다(ADR 0015 「첫 v7 run이 셀 것」 표).
+정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —
+그래서 이 사건은 F-5가 아니라 F-7로 이어진다.
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
@@ -502,6 +513,8 @@ class EventKind(StrEnum):
     # 경로는 `Path.home()`을 지난다. 대신 `{role}_source`(리비전이 박힌 `models.yaml` 값)를
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
+    # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
