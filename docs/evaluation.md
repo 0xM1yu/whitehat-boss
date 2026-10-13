@@ -112,7 +112,7 @@
 | Precision | `proven` + `validated` 중 사람 검토에서 참으로 확인된 비율 |
 | False Positive Rate | benign 샘플에서 취약점으로 판정한 비율 |
 | AI-Human 일치도 | AI 판정과 사람 판정의 일치율 |
-| 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율. ⏵ **2026-10-08 — Evidence Gate 축은 그 날 앞뒤가 같은 지표가 아니다**(이슈 #552): 6단계가 모델 인용 대신 타깃 관측 Evidence로 등급을 매기게 되어 그전 값에는 **인용 순응률**이 섞여 있었다. 한 열에 이어 쓰지 않는다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
+| 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율. ⏵ **2026-10-08 — Evidence Gate 축은 그 날 앞뒤가 같은 지표가 아니다**(이슈 #552): 6단계가 모델 인용 대신 타깃 관측 Evidence로 등급을 매기게 되어 그전 값에는 **인용 순응률**이 섞여 있었다. 한 열에 이어 쓰지 않는다. ⏵ **2026-10-13 — Tool Validation 축도 그 날 앞뒤가 같은 지표가 아니다**(이슈 #326): 도구 층이 측정을 못 낸 건과 `poc` 신호 건이 종전 F-11(`queued`)에서 `validated`로 옮겨 분자(`repro_failed`)와 분모 양쪽에서 **함께** 빠진다(`repro_not_measured`). 한 열에 이어 쓰지 않는다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
 > ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
@@ -138,6 +138,13 @@
 > Precision의 분모는 `proven`과 `validated`의 합이라 이 이동만으로는 안 변한다. 컨테이너 run에서 이
 > 변경이 `proven`을 얼마나 줄였는지는 **미실측(0)**이다 — 사유: asan이 exit 0으로 끝난 run이 없다.
 > → [architecture.md](architecture.md) §4 · [open-questions.md](open-questions.md) D80(열림)
+>
+> **2026-10-13에 Precision의 분모가 움직였다(이슈 #326) — 그 날 앞뒤를 한 열에 놓지 않는다.**
+> 도구 층이 측정을 못 낸 건과 `poc` 신호 건은 종전 F-11로 `queued`였고 지금은 `validated`에
+> 그대로 남으므로 **분모(`proven` + `validated`)에 들어온다.** 위 2026-10-02 문단의 「이
+> 이동만으로는 안 변한다」와 방향이 다르다 — 그쪽은 `proven` ↔ `validated` 사이의 이동이라
+> 합이 같았다. 분자(사람 검토)는 이 변경으로 움직이지 않는다. 들어오는 건수는 **미실측**이다
+> — 산출식 정본은 `trace.py`의 `repro_not_measured` 행.
 
 ### 5.2 비용·효율
 

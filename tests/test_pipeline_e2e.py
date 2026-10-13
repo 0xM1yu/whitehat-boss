@@ -46,7 +46,7 @@ from src.schemas.candidate import Candidate
 from src.schemas.common import PLACEHOLDER_DIGEST, Location, ProducedBy
 from src.schemas.decision import Decision
 from src.schemas.enums import FindingState, ReasonCode, Role, Verdict
-from src.schemas.finding import Finding
+from src.schemas.finding import Finding, ReproSpec
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord
 from src.schemas.scout_response import ScoutResponse
 from tests.conftest import ALL_PROFILES, SERVED_SCOUT_KEY, served_scout_config
@@ -2866,6 +2866,43 @@ def test_a_stage_8_tool_that_cannot_measure_holds_the_finding_through_the_whole_
     ]
     (warning,) = [w for w in result.warnings if "재현 결과를 내지 않은" in w]
     assert "1건" in warning and "종료 코드별 1 1건" in warning
+
+
+def test_the_run_warning_reads_the_pov_seat_from_the_profile_at_the_call_site(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#326 - `poc` 문장이 가르는 「좌석이 있나」를 **호출부가** 프로필에서 읽는다.
+
+    `tests/test_nodes.py`의 두 검사는 `_repro_not_measured_warning(..., has_pov_seat=...)`에
+    bool을 **직접 넘기므로** `runner.py`의 호출부 배선(`Role.POV.value in
+    ctx.config.profile.roles`)을 뒤집어도 초록이다. 여기는 같은 run을 좌석 있는 프로필과
+    좌석을 뺀 프로필로 두 번 돌려 **문장이 갈리는지**를 본다 - 그 한 줄을 `not in`으로
+    뒤집거나 `True`/`False` 상수로 고정하면 두 단언 중 하나가 빨개진다.
+
+    ⚠ **이 핀이 무는 것은 그 한 줄이 프로필의 `pov` 좌석을 읽는다는 것까지다.** 경고 문구
+    자체는 위 두 검사가 문다. `pov` 좌석이 없는 run이 PoV를 실제로 안 도는지도 이 검사가
+    아니다(`runner.py:1376-1378`의 같은 술어 — 그쪽은 별도 자리다).
+    """
+
+    def poc_signal(_target, _sink):  # noqa: ANN001, ANN202
+        # `tool_for`가 `poc`를 고르게 한다(`validate._SIGNAL_TOOLS`) -> 8단계는 도구를 안 돌리고
+        # `repro_not_measured`의 `reason`이 `poc_runs_in_the_pov_loop`가 된다.
+        return ReproSpec(steps=["./build.sh", "./poc input"], expected_signal="PoC crash: segfault")
+
+    monkeypatch.setattr(fake_model, "_repro_spec", poc_signal)
+
+    def drop_pov(config):  # noqa: ANN001, ANN202
+        roles = {k: v for k, v in config.profile.roles.items() if k != Role.POV.value}
+        return config.transition(profile=config.profile.transition(roles=roles))
+
+    seated, _ = _run(tmp_path, "seated")
+    seatless, _ = _run(tmp_path, "seatless", configure=drop_pov)
+
+    with_seat = [w for w in seated.warnings if "재현 결과를 내지 않은" in w]
+    without_seat = [w for w in seatless.warnings if "재현 결과를 내지 않은" in w]
+    assert len(with_seat) == 1 and len(without_seat) == 1, (with_seat, without_seat)
+    assert "PoV 단계 이벤트" in with_seat[0] and "pov 좌석이 없어" not in with_seat[0]
+    assert "pov 좌석이 없어 어디서도 실행되지 않았다" in without_seat[0]
 
 
 def test_one_candidate_is_the_final_and_the_fix_leg_runs_once_through_the_production_wiring(
