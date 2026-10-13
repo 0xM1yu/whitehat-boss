@@ -1,3 +1,6 @@
+# ⏵ 2026-10-13(이슈 #232) `STATE_DB_SCHEMA_VERSION`이 1에서 2로 올랐다. 아래
+# `SqliteStateStore(state_db)`는 10-11·10-12 run 산출물의 `state.db`(v1)를 이 코드로 거절한다 —
+# 이 프로브는 범프 전 체크아웃에서 돌려야 한다.
 """Critic 출력 상한 실측 — `run_20260912_0001`의 Finding에서 7단계 프롬프트를 **재구성**해 잰다.
 
 `config/budgets.yaml`의 `output_max` 주석이 이 측정을 약속해 뒀다 — *"절단이 실제로 나는지는

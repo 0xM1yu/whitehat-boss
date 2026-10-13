@@ -11,6 +11,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | --- | --- | --- |
 | 제거율 — Scout | `transition`(stage=4) | `1 − count(scout_promoted) / count(생성)` |
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
+| 정적 신호 위치 겹침 (#563) | `gate_eval`(stage=6) | `count(location_ok)`·`count(static_ok)`를
+`location_ok` 키가 있는 행 수로 센다 — **횟수이고 비율이 아니다**. 6단계만(7·8단계는 후보 위치를
+안 넘겨 `location_ok`가 구조상 거짓). `RunRecord.location_overlap`이 같은 세 수를 싣는다 |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
@@ -43,6 +46,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
 `ModelGatewayError`가 된 시도의 원문은 안 남는다
 (`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
+| 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
+| 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
+| PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
 ⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
 `evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
@@ -74,6 +80,21 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 「스키마 파싱 실패율」 산식: 분자 `Σ(attempts−1 if ok else attempts) −
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다(#83).
+
+「run 끝 집계 셋」(#613·#618·#619 (d)): `RunRecord`의 `schema_failure_max_run_by_role`·
+`schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`과 report.md의 같은 줄이 위 세 행의
+출처다(함수는 이 모듈의 같은 이름). **분모만 세운다 — 하네스는 이 값으로 동작을 바꾸지 않고
+임계값(연속 실패 상한 등)은 이 집계를 본 실험팀이 정한다.** 첫째는 `error="SchemaParseError"`인
+실패 `model_call`이 같은 (역할, `subject_id`)에서 이어진 길이이고 성공이나 다른 사유의 실패가
+끊는다. 둘째는 소진되지 않고 재시도로 살아난 호출 수이며 그 응답 원문은 위 「실패 응답 원문」 행이
+싣는다. 셋째는 이슈 #619 선택지 (d) 「계측만 한다」의 것이다 - `action`을 실은 `pov_hop`만 열로
+보고 `gen`·`submit`이 연속을 끊는다. **`action`이 없는 홉**(모델 호출 자체가 실패한 홉)만 세지도
+끊지도 않고, 도구 호출이 예산에서 끊긴 홉(#394)은 응답이 있어 `action`을 실으므로 **센다**.
+**해당 종류의 행이 하나도 없으면 값은 `None`이다 — 안 쟀다이지 0이 아니다.** 집계 함수가 **던져서**
+`None`이 된 키는 `RunRecord.trace_aggregate_failures`(키 → 사유)에도 들고, report.md가 그 줄에
+「집계 실패: <사유>」를 적는다 - 값만 보면 「행이 없다」와 갈리지 않는다. 행이 있으면 그
+역할·Finding은 잰 `0`으로도 들고, 행동을 실은 홉이 없는 Finding(PoV 루프가 첫 홉 전에 던졌다 등)은
+dict에 **없다**.
 
 「시도별 출력 토큰·종료 사유」(#550): `model_call.output_tokens`는 **재시도를 합친 값**이다. 합이
 **이미** 주는 것이 있다 — 상한이 32,768일 때 두 시도의 합 65,536은 산술로 둘 다 정확히 32,768이고,
@@ -166,7 +187,7 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TextIO
@@ -205,6 +226,18 @@ class EventKind(StrEnum):
     # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # ⏵ 2026-10-13 (#573) `harness_note`(하네스가 만든 관측 머리줄 — 지금은 `poc` `exit=1` 모호성)도
+    # `Evidence.harness_note`가 있을 때만 실린다. **키 부재 = 노트 없음.**
+    # ⏵ 2026-10-13(#232) — `crashed`·`crash_banner`는 도구가 **크래시 관측을 쟀을 때만** 실린다
+    # (`Evidence.crashed`가 `None`이 아닐 때 — 컨테이너 러너의 asan·gdb·poc 중 대상이 뜬 호출).
+    # `crashed`는 `true`(로그에 sanitizer 배너나 gdb 신호 정지가 있었다) 또는 `false`(로그를 읽었고
+    # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
+    # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
+    # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 로그 대조가 재생 14건뿐이라
+    # 미검증이다.
+    # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
+    # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
@@ -574,6 +607,10 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 (#619) — **이미 돌린 도구를 다시 요청한 `inspect` 홉은 도구를 안 돌린다**:
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
+    # ⏵ 2026-10-13 (#572) — **돌릴 PoC가 없는 `inspect poc` 홉**(첫 `gen` 전 - 0바이트 gen 뒤는
+    # #619 반복이다)도 도구를 안 돌린다: `tool`(요청한 도구 - 반복 홉과 같은 뜻)과
+    # `inspect_without_poc: true`만 싣고 `tool_ok`·`exit_code`·`evidence_kind`는 없다.
+    # `tool_call` 이벤트도 없고 홉은 소비된다.
     # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
     # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"`)를 싣는다: 2단계
     # `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
@@ -738,6 +775,81 @@ def canonical_line(event: TraceEvent) -> str:
     """재현성 비교용 표현. `VOLATILE_FIELDS`를 뺀 JSON 한 줄."""
     payload = event.model_dump(mode="json", exclude=set(VOLATILE_FIELDS))
     return json.dumps(payload, ensure_ascii=False, sort_keys=False)
+
+
+def schema_failure_max_run_by_role(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """역할별 **연속 스키마 파싱 실패의 최장 길이** — 분모 전용 계측이다(#613).
+
+    한 줄은 `model_call` 호출 하나다(그 안의 재시도 `attempts`가 아니다). 길이를 세는 줄은
+    `ok=False`이고 `error="SchemaParseError"`인 행이고, **같은 (역할, `subject_id`)의 앞뒤 행**이
+    이어져야 연속이다 — 성공 행이나 다른 사유의 실패(`ModelGatewayError` 등)는 연속을 끊는다.
+    다른 Finding·후보의 실패를 이어 붙이지 않는다. 반환은 역할 → 최장 길이이고 `model_call`을 한
+    역할은 실패가 없었어도 `0`으로 든다(잰 0). **`model_call` 행이 하나도 없으면 `None`이다**(안 잰
+    것이지 0이 아니다 — CLAUDE.md §0). 임계값이 아니다: 연속 실패 상한의 값은 실험팀 몫이다(#613).
+    """
+    rows = [e for e in events if e.kind is EventKind.MODEL_CALL]
+    if not rows:
+        return None
+    longest: dict[str, int] = {}
+    current: dict[tuple[str, str | None], int] = {}
+    for e in rows:
+        role = str(e.data.get("role"))
+        key = (role, e.subject_id)
+        longest.setdefault(role, 0)
+        if e.data.get("ok") is False and e.data.get("error") == "SchemaParseError":
+            current[key] = current.get(key, 0) + 1
+            longest[role] = max(longest[role], current[key])
+        else:
+            current[key] = 0
+    return dict(sorted(longest.items()))
+
+
+def schema_recovered_calls_by_role(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """역할별 **스키마 재시도로 살아난 호출 수** — `ok=True`·`attempts > 1`인 `model_call`(#618).
+
+    분모 전용이다. 소진·게이트웨이로 끝난 실패 행은 세지 않는다(그쪽은 `error`가 말한다).
+    `attempts`는 어댑터의 시도 수이고 이 저장소의 모델 호출에는 전송 재시도가 없어(2026-10-11
+    보고서 §1) 1보다 크면 스키마 재시도다. 반환은 역할 → 수이고 `model_call`을 한 역할은 `0`으로도
+    든다. **`model_call` 행이 하나도 없으면 `None`이다**(안 잰 것).
+    """
+    rows = [e for e in events if e.kind is EventKind.MODEL_CALL]
+    if not rows:
+        return None
+    counts: dict[str, int] = {}
+    for e in rows:
+        role = str(e.data.get("role"))
+        counts.setdefault(role, 0)
+        attempts = e.data.get("attempts")
+        if e.data.get("ok") is True and isinstance(attempts, int) and attempts > 1:
+            counts[role] += 1
+    return dict(sorted(counts.items()))
+
+
+def pov_inspect_max_run_by_finding(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """Finding별 **연속 `inspect` 홉의 최장 길이** — 분모 전용 계측이다(#619 선택지 (d)).
+
+    `pov_hop` 중 `action`을 실은 행만 홉 열이다 — 호출 자체가 실패한 홉(`action` 없음)은 모델이
+    행동을 고르지 않았으므로 세지도 끊지도 않는다. 도구 호출이 예산에서 끊긴 홉(#394)은 응답이
+    있어 `action`을 싣고 `error`도 실리므로 **센다**. `gen`·`submit`이 연속을 끊는다. 이미 돌린
+    도구를 다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라
+    센다. 반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
+    `0`으로 든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
+    행동을 실은 홉이 없는 Finding(루프가 첫 홉 전에 던졌다 등)은 dict에 **없다**.
+    """
+    rows = [e for e in events if e.kind is EventKind.POV_HOP and "action" in e.data]
+    if not rows:
+        return None
+    longest: dict[str, int] = {}
+    current: dict[str, int] = {}
+    for e in rows:
+        finding = str(e.subject_id)
+        longest.setdefault(finding, 0)
+        if e.data["action"] == "inspect":
+            current[finding] = current.get(finding, 0) + 1
+            longest[finding] = max(longest[finding], current[finding])
+        else:
+            current[finding] = 0
+    return dict(sorted(longest.items()))
 
 
 class TraceWriter:
