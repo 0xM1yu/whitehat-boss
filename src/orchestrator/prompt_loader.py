@@ -121,7 +121,7 @@ FACTS_TOKEN = "FACTS"
 #
 # **opt-in은 둘이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다):
 #   - `slice_criterion` — 슬라이스 타깃이고 `input: slice`를 선언한 Scout 프롬프트에만(ADR 0012
-#     결정 1, v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `input: source`는 안 받는다 — #529).
+#     결정 1, Scout v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `source`는 안 받는다 — #529).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판(v13·v14)이 뺀다.
 # 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기 전과 **글자가 같다** — 그래서
