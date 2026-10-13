@@ -3230,14 +3230,14 @@ def test_inspect_build_twice_is_a_repeat_even_without_a_new_gen(ctx: RunContext)
 
 
 def test_inspect_on_a_different_input_or_tool_still_runs(ctx: RunContext) -> None:  # noqa: F811
-    """음성 핀 — 입력(바이트)이 다르거나 도구가 다르면 돌린다: hop0 `poc`(입력 없음) ≠ gen 뒤 `poc`,
-    둘째 gen 뒤 `poc`는 둘째 바이트에 대해 처음이다."""
+    """음성 핀 — 입력(바이트)이 다르거나 도구가 다르면 돌린다: 둘째 gen의 `poc`는 둘째 바이트에
+    대해 처음이고, 다른 도구(`asan`)는 gen 뒤에도 처음이다. (hop0 `inspect poc`는 #572부터 돌지
+    않는다 — 아래 #572 절.)"""
     scripted, recorded, _ = _drive(
-        ctx, [_inspect("poc"), _gen(count=8), _gen(count=9), _inspect("asan"), _SUBMIT]
+        ctx, [_gen(count=8), _gen(count=9), _inspect("asan"), _SUBMIT]
     )
 
     assert [(tool, args.input_bytes) for tool, args in recorded] == [
-        ("poc", None),
         ("poc", b"A" * 8),
         ("poc", b"A" * 9),
         ("asan", b"A" * 9),
@@ -3309,26 +3309,27 @@ def test_a_deterministic_failure_is_remembered(ctx: RunContext) -> None:  # noqa
     assert rep.data["inspect_repeat_of_hop"] == 0
 
 
-def test_a_failed_gen_run_forgets_the_pre_gen_inspect(ctx: RunContext) -> None:  # noqa: F811
-    """hop0 `inspect poc`(입력 없음)를 기억한 채 gen의 `poc`가 인프라 실패하면 그 낡은 기억을 지워,
-    gen 뒤 `inspect poc`가 돈다(입력 없던 옛 결과를 반복이라 부르지 않는다)."""
+def test_a_failed_gen_run_leaves_nothing_to_repeat_after_a_skipped_pre_gen_inspect(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop0 `inspect poc`는 #572부터 안 돌고 `ran`에 안 든다. gen의 `poc`가 인프라 실패하면 기억할
+    것이 없어, gen 뒤 `inspect poc`가 입력 = gen 바이트로 돈다(반복이라 부르지 않는다)."""
     scripted, recorded = _drive_flaky(
-        ctx, [_inspect("poc"), _gen(), _inspect("poc"), _SUBMIT], 125, nth=1
+        ctx, [_inspect("poc"), _gen(), _inspect("poc"), _SUBMIT], 125, nth=0
     )
 
-    assert [(t, a.input_bytes) for t, a in recorded] == [
-        ("poc", None), ("poc", b"A" * 8), ("poc", b"A" * 8),
-    ]
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", b"A" * 8), ("poc", b"A" * 8)]
     assert _repeat_hops(scripted) == []
 
 
 def test_repeat_points_at_the_gen_hop_not_the_pre_gen_inspect(ctx: RunContext) -> None:  # noqa: F811
-    """`[inspect poc, gen, inspect poc]` — 반복은 hop 0(입력 없음)이 아니라 gen 홉(1)을 가리킨다."""
+    """`[inspect poc, gen, inspect poc]` — hop 0은 도구를 안 돌렸으니(#572) 반복은 그것이 아니라 gen
+    홉(1)을 가리킨다."""
     scripted, recorded, _ = _drive(
         ctx, [_inspect("poc"), _gen(), _inspect("poc"), _SUBMIT], version="v3"
     )
 
-    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", None), ("poc", b"A" * 8)]
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", b"A" * 8)]
     [rep] = _repeat_hops(scripted)
     assert (rep.data["hop"], rep.data["inspect_repeat_of_hop"]) == (2, 1)
 
@@ -3427,3 +3428,154 @@ def test_the_inspect_run_does_not_carry_over_from_one_finding_to_the_next(
     assert ends[finding_a.finding_id][-1] == "inspect"
     assert ends[finding_b.finding_id][0] == "inspect"
     assert _inspect_runs(ctx) == {finding_a.finding_id: 2, finding_b.finding_id: 1}
+
+
+# --- #572 — 첫 gen 전의 `inspect poc`는 도구를 돌리지 않는다 --------------------------------
+
+
+def _tool_calls(scripted: RunContext) -> list[object]:  # noqa: F811
+    # 8단계(VALIDATE)의 것만 — ctx 픽스처가 앞 단계에서 이미 낸 tool_call은 센 대상이 아니다.
+    return [
+        e for e in scripted.trace.events
+        if e.kind is EventKind.TOOL_CALL and e.stage == Stage.VALIDATE
+    ]
+
+
+def _no_poc_hops(scripted: RunContext) -> list[object]:  # noqa: F811
+    return [h for h in _hops(scripted) if h.data.get("inspect_without_poc")]
+
+
+def test_inspect_poc_before_any_gen_runs_no_tool_and_says_to_gen_first(ctx: RunContext) -> None:  # noqa: F811
+    """`poc`는 PoC 바이트를 먹는 도구라(ADR 0014) 첫 gen 전엔 돌릴 것이 없다. 도구를 안 돌리고
+    (`tool_call` 0건, 기록 0건) 모델에게 gen을 먼저 내라 알린다. 홉은 소비되고 루프는 선다."""
+    scripted, recorded, bodies = _drive(
+        ctx, [_inspect("poc"), _gen(), _SUBMIT], version="v3"
+    )
+
+    assert [tool for tool, _ in recorded] == ["poc"]  # gen의 poc 한 번뿐 — hop0 inspect는 0
+    assert len(_tool_calls(scripted)) == 1
+    [skip] = _no_poc_hops(scripted)
+    assert (skip.data["hop"], skip.data["action"]) == (0, "inspect")
+    assert not {"tool_ok", "exit_code", "evidence_kind", "stop_reason"} & set(skip.data)
+    assert skip.data["tool"] == "poc"  # 요청한 도구 — #619 반복 홉의 `tool`과 같은 뜻
+    assert bodies[1] == runner._POV_INSPECT_WITHOUT_POC
+    assert "gen" in bodies[1].splitlines()[0]
+    assert [h.data["hop"] for h in _hops(scripted)] == [0, 1, 2]  # 홉 소비 +1
+    assert _stop_reasons_of(scripted)[-1] == PovStopReason.SUBMITTED.value
+
+
+def test_the_no_poc_observation_follows_the_hop_line_on_a_hop_header_version(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """`hop_header`를 선언한 판(v5)은 followup 첫 줄이 홉 줄이다 — 관측 문구는 그 다음 줄이다.
+    v3로만 돌면 이 결합이 지워져도 안 빨개진다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    _, _, bodies = _drive(ctx, [_inspect("poc"), _gen(), _SUBMIT], version="v5")
+
+    assert load_prompt(Role.POV, "v5").hop_header
+    assert bodies[1].splitlines()[0] == f"hop=1 last_hop={pov_hops} remaining={pov_hops - 1}"
+    assert bodies[1].splitlines()[1:] == [runner._POV_INSPECT_WITHOUT_POC]
+
+
+def test_the_no_poc_observation_wording_is_pinned() -> None:
+    """문구 상수의 철자 핀 — 모델이 읽는 운영 문구라 바뀌면 여기서 보인다."""
+    assert runner._POV_INSPECT_WITHOUT_POC == (
+        "inspect_without_poc tool=poc ran=false — poc는 당신의 PoC를 돌리는 도구인데 돌릴 "
+        "바이트가 없다(gen을 낸 적이 없다) — 이 홉에서 도구는 돌지 않았다. 먼저 gen을 내라."
+    )
+
+
+def test_inspect_poc_after_a_zero_byte_gen_is_a_repeat_not_a_no_poc_skip(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """0바이트 PoC는 「있음」이다(`poc is None`으로 가른다 — `not poc`가 아니다). gen(count=0)이
+    `poc`를 빈 입력으로 이미 돌렸고 관측이 `last_gen_bytes=0`을 말하니, 뒤따른 `inspect poc`는
+    「돌릴 바이트가 없다」가 아니라 #619 반복이다(`inspect_repeat … same_as_hop=0`). 같은 관측이
+    서로 모순되면 안 된다."""
+    scripted, recorded, bodies = _drive(
+        ctx, [_gen(count=0), _inspect("poc"), _SUBMIT], version="v3"
+    )
+
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", b"")]  # gen 홉 하나, 재실행 0
+    assert _no_poc_hops(scripted) == []
+    [rep] = _repeat_hops(scripted)
+    assert (rep.data["hop"], rep.data["inspect_repeat_of_hop"]) == (1, 0)
+    assert "inspect_repeat tool=poc same_as_hop=0 rerun=false" in bodies[2]
+    assert runner._POV_INSPECT_WITHOUT_POC not in bodies[2]
+    assert " last_gen_bytes=0 " in bodies[2]  # 반복 홉의 관측이 여전히 0바이트 gen을 말한다
+
+
+def test_the_no_poc_hop_is_not_remembered_in_ran(ctx: RunContext) -> None:  # noqa: F811
+    """도구가 안 돌았으니 `ran`에 안 든다 — 둘째 `inspect poc`도 반복(#619)이 아니라 같은 분기다."""
+    scripted, recorded, _ = _drive(ctx, [_inspect("poc"), _inspect("poc"), _SUBMIT], version="v3")
+
+    assert recorded == []
+    assert [h.data["hop"] for h in _no_poc_hops(scripted)] == [0, 1]
+    assert _repeat_hops(scripted) == []
+
+
+def test_the_no_poc_hop_counts_toward_the_hop_limit(ctx: RunContext) -> None:  # noqa: F811
+    """홉은 소비된다 — 끝없이 `inspect poc`만 내도 `MAX_HOP`에서 서고 도구는 한 번도 안 돈다."""
+    pov_hops = ctx.config.thresholds.pov_tool_hops
+    scripted, recorded, _ = _drive(ctx, [_inspect("poc")], version="v3")
+
+    assert recorded == []
+    hops = _hops(scripted)
+    assert len(hops) == pov_hops + 1
+    assert hops[-1].data["stop_reason"] == PovStopReason.MAX_HOP.value
+    assert hops[-1].data["inspect_without_poc"] is True
+    assert "tool_ok" not in hops[-1].data
+
+
+def test_the_no_poc_hop_shares_the_loop_tail_with_the_ordinary_hop(ctx: RunContext) -> None:  # noqa: F811
+    """안 돌린 홉도 평소 꼬리(이벤트 · MAX_HOP · 관측)를 `evidence=None`으로 쓴다 — 아래 셋은 그
+    꼬리의 성질이다. ① hop0의 skip 이벤트가 진입점 조회 결과(`fuzz_*`)를 싣는다 ② 파싱 실패 뒤
+    재질문이 낡은 관측이 아니라 skip 관측을 되싣는다 ③ MAX_HOP 출구가 코드를 읽는 판의 종단 계측을
+    싣는다."""
+    scripted, _, _ = _drive(ctx, [_inspect("poc"), _gen(), _SUBMIT], version="v3")
+    [skip] = _no_poc_hops(scripted)
+    assert skip.data["hop"] == 0 and "fuzz_found" in skip.data
+
+    scripted, _ = _parse_run(ctx, [_inspect("poc"), _parse_err("bad"), _gen(), _SUBMIT])
+    bodies = _pov_user_bodies(scripted)
+    assert runner._POV_INSPECT_WITHOUT_POC in bodies[2]  # 실패한 홉 1이 답할 관측 = skip 관측
+    assert bodies[2].index("[스키마 오류]") < bodies[2].index(runner._POV_INSPECT_WITHOUT_POC)
+
+    scripted, _ = _parse_run(ctx, [_inspect("poc")] * 40, pov_hops=2)
+    ends = [
+        e for e in scripted.trace.events
+        if e.kind in (EventKind.POV_GENERATED, EventKind.POV_SKIPPED)
+    ]
+    assert ends[-1].data["last_gen_excluded_while_earlier_not"] is False  # 앞 run의 것은 건너뛴다
+
+
+def test_inspect_poc_after_a_zero_byte_gen_whose_run_was_infra_failure_reruns(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """0바이트는 「PoC 있음」이라 gen의 `poc`가 인프라 실패(125)였다면 기억이 없어 `inspect poc`가
+    같은 빈 입력으로 다시 돈다 — 「돌릴 바이트가 없다」로 거절하지 않는다."""
+    scripted, recorded = _drive_flaky(ctx, [_gen(count=0), _inspect("poc"), _SUBMIT], 125)
+
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", b""), ("poc", b"")]
+    assert _no_poc_hops(scripted) == []
+
+
+def test_inspect_of_a_tool_that_takes_no_input_runs_without_a_poc(ctx: RunContext) -> None:  # noqa: F811
+    """음성 핀 — `asan`·`gdb`·`build`는 입력을 안 받으니 PoC가 없어도 돈다."""
+    scripted, recorded, _ = _drive(
+        ctx, [_inspect("build"), _inspect("asan"), _inspect("gdb"), _SUBMIT], version="v3"
+    )
+
+    assert [tool for tool, _ in recorded] == ["build", "asan", "gdb"]
+    assert len(_tool_calls(scripted)) == 3
+    assert _no_poc_hops(scripted) == []
+
+
+def test_inspect_poc_after_a_gen_still_runs_or_repeats_not_skips(ctx: RunContext) -> None:  # noqa: F811
+    """음성 핀 — PoC가 있으면 이 분기가 아니다: gen 뒤 `inspect poc`는 #619 반복이다(gen이 이미 그
+    바이트로 돌렸다). gen이 인프라 실패였다면 도구가 돈다(입력 = gen 바이트)."""
+    scripted, recorded = _drive_flaky(ctx, [_gen(), _inspect("poc"), _SUBMIT], 125)
+
+    assert [(t, a.input_bytes) for t, a in recorded] == [("poc", b"A" * 8), ("poc", b"A" * 8)]
+    assert len(_tool_calls(scripted)) == 2
+    assert _no_poc_hops(scripted) == []
