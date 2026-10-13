@@ -3,6 +3,9 @@
 ⏵ 2026-10-09 — **셋이다**: v11이 `AuditorProcedureNullableCweAction`을 낸다(이슈 #525).
 ⏵ 2026-10-10 — **넷이다**: v12가 `AuditorProcedureAuditAlwaysAction`을 낸다(이슈 #578 — 이 파일 맨
 아래).
+⏵ 2026-10-13 — **다섯이다**: v15가 `AuditorProcedureProbeInputAction`을 낸다(v12 봉투의
+서브클래스 — `probe`의 `spec` 설명만 다시 쓴다, 이 파일 맨 아래). 아래 본문의 「Auditor 경로는
+그 바이트를 도구에 안 싣는다」는 v8~v14 봉투의 서술이다.
 액션 셋과 조사 필드는 공통 베이스가 들고 최종 답의 필드만 갈린다(`finding` ↔ `procedure`).
 
 한 방 경로(`nodes/auditor.py`의 `OUTPUT_SCHEMA = Finding`)는 그대로 남는다. 이 봉투는
@@ -424,3 +427,47 @@ class AuditorProcedureAuditAlwaysAction(_AuditorEnvelope):
 
     procedure: AuditProcedureAuditAlways | None = None
     rationale: NonEmptyStr
+
+
+# === v15: `probe`가 입력 바이트를 싣는 봉투 (S19 · 이슈 #419 #572 #602) ==================
+#
+# ⏵ 2026-10-13 — v8~v14 봉투의 `spec` 설명(「지금은 쓰지 않는다 … 싣지 않는다」)과 클래스
+# 설명의 `probe` 줄(「이 경로는 입력 바이트를 안 싣는다」)은 노드가 `spec`을 싣게 된 뒤
+# (PR #644) **거짓이 됐다** — 모델이 그 문구를 믿으면 `spec`을 안 보낸다(`probe poc` 0회의
+# 한 원인, 이슈 #617). 그러나 그 문구는 v8~v14의 요청 payload라 한 글자도 못 고친다
+# (evaluation §2.3). 그래서 v12 봉투의 **서브클래스**를 새로 세워 `spec` 설명과 클래스 설명만
+# 다시 쓴다. 최종 답(`AuditProcedureAuditAlways`)·필드 순서(pydantic은 재선언한 필드를 부모
+# 자리에 둔다)·검증기는 v12 그대로다 — 읽는 쪽(`isinstance(..., AuditProcedure)`)이 v12와
+# 같은 최종 답으로 다룬다. `answer`의 `procedure`가 비면 거절하는 규칙(`_check_action`)도
+# 같고, 클래스 설명이 그 사실을 적는다(이슈 #602).
+#
+# ⚠ docstring과 `spec` 설명은 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다.
+class AuditorProcedureProbeInputAction(AuditorProcedureAuditAlwaysAction):
+    """감사 좌석이 매 홉 내는 제어 액션.
+
+    `action`이 어느 필드를 쓰는지 정한다.
+
+    - `lookup`: `requests`에 필요한 코드를 **이름으로** 적어 조회한다. 각 요청은 종류
+      (변수·타입·매크로·함수·호출자 등)와 **이름**이고, 경로나 검색 패턴이 아니다. 찾은 원문이
+      다음 홉의 관측으로 들어온다.
+    - `probe`: `tool`로 진단을 한 번 돌린다. `spec`을 실으면 하네스가 그것을 입력 바이트로 조립해
+      도구에 싣는다 — 그 바이트를 읽는 도구는 `poc` 하나이고 `asan`·`gdb`·`build`는 읽지 않는다.
+      같은 도구를 다시 부르는 것(`poc`는 같은 입력 바이트로 다시 부르는 것)은 같은 질문을 다시 하는
+      것이고, 이 감사의 앞선 어느 호출과든 같으면(바로 앞 호출만이 아니다) 반복으로 감사가 선다.
+      나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다.
+    - `answer`: `procedure`에 최종 감사 결과를 실어 감사를 끝낸다. `procedure`가 없거나 null이면
+      거절한다.
+
+    새 근거 ID는 관측을 받은 뒤에만 인용할 수 있다. 홉 상한에 닿으면 마지막 홉은 `answer`여야
+    한다 — 조사만 하고 끝나면 그 후보는 결과 없이 사유와 함께 대기로 남는다.
+
+    그 액션이 쓰지 않는 필드가 실리면 거절한다.
+    """
+
+    spec: PovSpec | None = Field(
+        default=None,
+        description=(
+            "`probe`에서만 쓴다. 도구에 먹일 입력 바이트를 조각(segments)으로 서술한다 — 하네스가 "
+            "조립해 도구에 싣는다. 읽는 도구는 `poc` 하나다. 생략하면 도구는 입력 없이 돈다."
+        ),
+    )

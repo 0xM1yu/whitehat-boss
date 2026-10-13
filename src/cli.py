@@ -1718,6 +1718,7 @@ def run(args: argparse.Namespace) -> int:
     # 같다, 이슈 #67).
     # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와
     # 같다, 이슈 #67).
+    # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술·body는 v14와 같다, S19).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:

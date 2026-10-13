@@ -534,6 +534,8 @@ class EventKind(StrEnum):
     # 없었거나 한 방 판). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `probe` 홉 `tool`이
     # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노트가 도구를
     # 거절하지 않아 모델이 골라도 도구는 돈다.
+    # ⏵ 2026-10-13 — v15는 다섯째 봉투 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 —
+    # `spec` 설명만 다르다).
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
