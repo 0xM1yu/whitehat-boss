@@ -50,6 +50,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
+| 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
@@ -305,6 +306,10 @@ class EventKind(StrEnum):
     # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
     # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
     # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    # ⏵ 2026-10-14 (#633) — 「`Candidate.location`은 모델이 쓴 값」은 그 run의 서술이다. 지금은
+    # 모델이 `symbol`을 안 쓰면(`None`) Scout가 **후보 줄을 품는 함수**를 찍고
+    # `scout_symbol_stamped`를 남긴다 — 모델이 쓴 `""`·틀린 이름은 그대로 두고, 인덱스가
+    # 그 줄을 품는 함수를 모르면 안 찍는다.
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
@@ -701,6 +706,17 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # Scout 후보의 `location.symbol`을 하네스가 **그 줄을 품는 함수** 이름으로 채웠다 (이슈 #633).
+    # 내는 곳은 `nodes/scout._stamp_target_symbol`이고 **채운 홉마다 1행**이다 —
+    # `subject_id`는 후보, `hop`은 그 홉 번호(되묻기 홉도 모델이 다시 `null`을 쓰면 다시 채운다),
+    # `symbol`은 채운 값이다. ⏵ 2026-10-13 — 그 값은 `FACTS.target.symbol`이 아니라 인덱스가 아는
+    # 품는 함수다(`ctx.symbols_for`). 둘이 갈리는 자리가 슬라이스 타깃이다 — entry 한 줄짜리 대상에
+    # 여러 함수에 걸친 `SOURCE`가 가므로 후보가 대상 밖 함수에 앉을 수 있다.
+    # **이벤트 부재 = 채우지 않았다** — 모델이 `symbol`을 썼거나, 후보가 대상 파일 밖이거나, 대상이
+    # `symbol`을 안 들었거나, 인덱스가 후보 줄을 품는 함수를 모른다(`dev_fake`처럼 인덱스가 없는
+    # run이 그렇다). `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
+    # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
+    SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #
