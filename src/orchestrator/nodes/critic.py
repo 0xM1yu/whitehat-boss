@@ -169,6 +169,7 @@ def run(
                 hop_observations=(),
             )
         ctx.store.put(decision)
+        _record_unknown_refs(ctx, finding=finding, decision=decision, evidences=evidences)
         if gate.was_normalized(decision):
             ctx.record_critic_normalized(decision, stage=Stage.CRITIC)
         verdict = gate.normalize(decision)
@@ -188,6 +189,39 @@ def run(
             )
         )
         return ctx.apply_action(finding, action, stage=Stage.CRITIC), decision
+
+
+def _record_unknown_refs(
+    ctx: RunContext, *, finding: Finding, decision: Decision, evidences: Sequence[Evidence]
+) -> None:
+    """Critic이 **게이트 입력에 없는** Evidence ID를 인용했으면 그 수를 trace에 남긴다.
+
+    **판정은 안 바꾼다.** `gate.evidences_for`는 **Finding**의 `evidence_refs`만 거르고
+    `Decision.evidence_refs`를 검증하는 자리는 없다 — `Decision.is_grounded`는
+    `bool(evidence_refs)`다. 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이
+    되어 `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 홉 관측이 `probe` Evidence의
+    `evidence_id`를 Critic에 보이게 한 뒤로 그런 ID를 인용할 길이 생겼다(#600 H2ⓐ · 이슈 #419의
+    「E4 경계」). 거르기는 설계 판단이라 여기서 하지 않고 **사후에 셀 수 있게** 수만 남긴다.
+    `evidences`는 러너가 이 Finding에 넘긴 게이트 입력(`state.evidences[finding_id]`)이다.
+    """
+    if not decision.evidence_refs:
+        return
+    known = {evidence.evidence_id for evidence in evidences}
+    unknown = [ref for ref in decision.evidence_refs if ref not in known]
+    if not unknown:
+        return
+    ctx.trace.emit(
+        EventKind.CRITIC_UNKNOWN_EVIDENCE_REFS,
+        stage=Stage.CRITIC,
+        subject_kind="finding",
+        subject_id=finding.finding_id,
+        decision_id=decision.decision_id,
+        cited=len(decision.evidence_refs),
+        unknown=len(unknown),
+        all_unknown=len(unknown) == len(decision.evidence_refs),
+        verdict=decision.verdict.value,
+        grounded=decision.is_grounded,
+    )
 
 
 def _carries_observations(ctx: RunContext, hop_observations: Sequence[str]) -> bool:
@@ -309,7 +343,9 @@ def _record_hop_observations(
     입력 몫 = 이 좌석 모델의 `context_limit` − 이 역할의 `output_max`(vLLM은 `입력 + max_tokens`가
     창을 넘으면 400이다 — `config._check_role_output_caps_fit_context`). 추정 토큰 = 글자 수 ÷
     최악 비 1.22(`_WORST_CHARS_PER_TOKEN`). ⚠ **둘 다 계산값이다** — 서버가 센 `input_tokens`가
-    아니고, 이 좌석의 글자/토큰 비는 안 쟀다. `over_input_share`가 참이면 「최악 비에서 입력 몫을
+    아니고, 쓰는 비 1.22는 **Auditor 좌석**의 것이다. 이 좌석의 비는 홉 관측 **없는** 요청에서
+    3.10~4.04로 쟀고(`_WORST_CHARS_PER_TOKEN` 주석의 run `run_20261011_0001` 여섯 호출),
+    **홉 관측을 실은 요청에서는 미실측**이다. `over_input_share`가 참이면 「최악 비에서 입력 몫을
     넘을 수 있다」이지 넘었다가 아니다. `over_without_observations`는 같은 셈에서 관측 절을 뺀
     프롬프트도 넘는지 — 참이면 원인이 관측이 아니다. `added_chars`는 절과 구분 줄바꿈이다(FACTS의
     `auditor_hops` 한 줄은 안 셌다). Fake 좌석은 창이 없어 `window_checked=False`만 싣는다.
