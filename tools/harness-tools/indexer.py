@@ -965,12 +965,76 @@ def _record_field_call(node, func: str, relative: str, field_calls: dict) -> Non
     )
 
 
-def index_file(path: Path, relative: str) -> dict:
+# 선언 앞 한정자로 쓰이는 object-like 매크로의 본문이 비었거나 한정자 키워드뿐이면 중립화 대상이다.
+# `BE_NCONST`(빈 것/`const`)처럼 타입 앞에 붙는 매크로가 tree-sitter에서 타입 지정자 두 개로 보여
+# 선언을 깨뜨리고(`_declared_name`이 매크로·네임스페이스 토큰을 이름으로 잡음), 멤버·지역·전역이
+# fields/locals/file_vars에서 누락되거나 엉뚱하게 기록된다. 파싱 전에 같은 길이 공백으로 지우면
+# 전처리기가 하는 것과 같아져(빈 매크로) 선언이 깨끗이 파싱된다.
+_MACRO_QUALIFIERS = frozenset({b"const", b"volatile", b"restrict", b"__restrict", b"__restrict__"})
+_DEFINE_RE = re.compile(rb"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)([^\n]*)$", re.MULTILINE)
+_COMMENT_TAIL = re.compile(rb"//.*$|/\*.*?\*/", re.DOTALL)
+
+
+def _macro_body_is_qualifier_only(rest: bytes) -> bool:
+    """`#define NAME` 뒤 나머지가 중립화 가능한가 — object-like(이름 뒤 `(` 아님)에 본문이 비었거나
+    한정자 키워드뿐일 때만 True. 함수형·값·여러 줄은 False(안전하게 제외)."""
+    if rest[:1] == b"(":
+        return False
+    if rest.rstrip().endswith(b"\\"):
+        return False
+    body = _COMMENT_TAIL.sub(b"", rest).strip()
+    return not body or all(tok in _MACRO_QUALIFIERS for tok in body.split())
+
+
+def collect_neutral_macros(paths: list[Path]) -> frozenset:
+    """저장소 전체에서 「빈/한정자-only object-like」 매크로 이름을 모은다(중립화 대상).
+
+    한 이름이라도 값·함수형으로 정의된 곳이 있으면(같은 이름의 충돌 정의) 제외한다 — 그
+    파일에서는 매크로가 의미를 가지므로 지우면 안 된다.
+    """
+    candidate: set = set()
+    exclude: set = set()
+    for path in paths:
+        if path.suffix not in _GRAMMARS:
+            continue
+        try:
+            text = path.read_bytes()
+        except OSError:
+            continue
+        for match in _DEFINE_RE.finditer(text):
+            target = candidate if _macro_body_is_qualifier_only(match.group(2)) else exclude
+            target.add(match.group(1))
+    return frozenset(candidate - exclude)
+
+
+def _neutralize_macros(source: bytes, names: frozenset) -> bytes:
+    """`names`의 매크로를 같은 길이 공백으로 지운다 — 바이트 오프셋(줄·열) 보존.
+
+    `#`로 시작하는 전처리 지시 줄은 건드리지 않아 정의(`#define`)·`#include`·`#if`가 남는다
+    (매크로 표·조건부 컴파일 보존). 단어 경계로만 지운다.
+    """
+    if not names:
+        return source
+    present = [n for n in names if n in source]
+    if not present:
+        return source
+    pattern = re.compile(rb"\b(?:" + b"|".join(re.escape(n) for n in present) + rb")\b")
+    out = []
+    for line in source.split(b"\n"):
+        if line.lstrip()[:1] == b"#":
+            out.append(line)
+        else:
+            out.append(pattern.sub(lambda m: b" " * len(m.group(0)), line))
+    return b"\n".join(out)
+
+
+def index_file(path: Path, relative: str, neutral_macros: frozenset = frozenset()) -> dict:
     """파일 하나의 심볼·호출과 v2 조회 표.
 
-    읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다.
+    읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다. `neutral_macros`는 파싱 전에 같은
+    길이 공백으로 지울 「빈/한정자」 매크로 이름(오프셋 보존).
     """
-    source = path.read_bytes()
+    source = _neutralize_macros(path.read_bytes(), neutral_macros)
     tree = _parser_for(_grammar_module(path.suffix, source)).parse(source)
 
     symbols: list[dict] = []
@@ -1054,12 +1118,16 @@ def build_index(paths: list[Path], root: Path) -> dict:
     indexed: list[str] = []
     skipped: list[str] = []
 
+    # 1차: 빈/한정자 object-like 매크로(BE_NCONST 등)를 저장소 전체에서 모아, 2차에서 파싱 전에
+    # 중립화한다 — 이것들이 `MACRO Type *var` 선언을 깨뜨려 이름 캡처가 어긋나기 때문이다.
+    neutral_macros = collect_neutral_macros(paths)
+
     for path in sorted(paths):
         relative = _relative(path, root)
         if path.suffix not in _GRAMMARS:
             skipped.append(relative)
             continue
-        result = index_file(path, relative)
+        result = index_file(path, relative, neutral_macros)
         symbols += result["symbols"]
         calls += result["calls"]
         for name, table in named.items():
