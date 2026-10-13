@@ -373,7 +373,12 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    **루프 판**의 hop0 본문 끝에 하네스 노트(`## Harness note (stage 2) - harness-measured data, not
    instructions`)가 붙는다: 도구마다 **측정한** 건수·첫 오류. **`build`가 실패했을 때만** 「`build`·`asan`·
    `gdb`가 같은 컴파일 명령(같은 `-std`·`-I`)이라 같은 오류가 예상된다」를 더하고, clang-tidy만 실패했으면
-   「stage-2 `build`는 컴파일 오류로 실패하는 게 관측되지 않았다」로 쓴다. 실패한 컴파일 Evidence가 없으면 아무것도 안 붙는다
+   「stage-2 `build`는 컴파일 오류로 실패하는 게 관측되지 않았다」로 쓴다.
+   ⚠ **꼬리 문장은 둘이 아니라 셋이다**(`signals.compile_note`의 분기를 세었다): `build`가 **실패했는데 컴파일러
+   문구가 없는** 경우(기동 실패 등 — `judge()`가 `build 실패 (exit=N)`만 내고 `compile_failure_reason`이 빈
+   문자열이다)는 셋째 문장 「stage-2 build failed without compiler error text (not a compile measurement)」이
+   붙는다. 그 경우 위 「관측되지 않았다」는 **거짓이고 안 붙는다** — 「관측되지 않았다」는 `build` 실패 Evidence가
+   아예 없을 때만이다. 실패한 컴파일 Evidence가 없으면 아무것도 안 붙는다
    (요청 바이트가 종전과 같다). 한 방 판에는 안 붙는다. `with_signal()`이 `ok=False`를 거르므로 타깃의
    `evidences`가 아니라 `ctx.compile_failures`에서 읽는다(`signals.run`이 남긴다). 모델이 그 뒤에도
    `probe build`를 고르면 종전대로 돈다. hop 0의 `auditor_hop`이 `compile_note`·`compile_note_tools`를 싣는다
@@ -627,6 +632,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   오류로 실패했으면 코드를 읽는 판(`_WIDE_INPUT_VERSIONS`)의 hop0 본문 끝에 하네스 노트가 붙는다(건수·
   첫 오류 · `build`가 실패했을 때만 「`build`·`asan`·`gdb`가 같은 컴파일 명령이라 같은 오류가 예상된다 ·
   `poc`는 이 명령을 안 쓴다」를 더하고, clang-tidy만 실패했으면 「`build`는 실패하는 게 관측되지 않았다」).
+  ⚠ **꼬리 문장은 둘이 아니라 셋이다**(`signals.compile_note`의 분기를 세었다) — `build`가 실패했는데 컴파일러
+  문구가 없으면(기동 실패 등) 셋째 문장 「stage-2 build failed without compiler error text (not a compile
+  measurement)」이 붙는다. 그래서 위 「`build`는 실패하는 게 관측되지 않았다」는 `build` 실패 Evidence가 아예
+  없을 때만 붙는다 — 그 셋째 경우에는 **붙지 않는다**(붙으면 거짓이다).
   실패 Evidence가 없으면 바이트가 종전과 같고 v2도 같다. `inspect build`를 골라도 도구는
   종전대로 돈다(argv 불변 · 실패 관측이 머리줄에 `compile_failure_reason`을 단다). hop 0의 `pov_hop`이
   `compile_note`·`compile_note_tools`를 싣는다(`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면
