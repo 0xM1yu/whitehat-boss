@@ -72,6 +72,8 @@
 3. 같은 조건은 seed를 바꿔 최소 3회 반복하고 분산을 함께 보고한다.
 4. 프롬프트 버전이 바뀌면 이전 결과와 직접 비교하지 않고 재측정한다.
 5. **장비가 다른 run은 같은 비교 셀에 넣지 않는다.** 두 장비 모두 지원 대상이므로([portability.md](portability.md)) 같은 프로필·같은 조건의 run이 다른 하드웨어의 결과일 수 있다. 실제로 쓰인 장비는 `RunRecord.device`에 남는다([decisions/0006](decisions/0006-record-the-device-a-run-happened-on.md)). `--device`는 규칙 2의 **예외가 아니다** — 설정을 한 글자도 바꾸지 않고 기록만 남기므로 `--tool-runner`와 성격이 다르다.
+6. **Evidence 등급(E2 이상)을 run 사이에 나란히 놓을 때는 인덱서 상태를 같은 칸에 적는다.** E2의 `graph_ok`는 1단계 `index` Evidence **하나**(run 전역)의 `ok`라, 인덱서가 실패한 run은 전 Finding이 E2·E3를 **동시에** 잃고(E4는 `p2`에 안 기댄다) 서는 run과 등급이 갈린다 — 등급이 근거 품질이 아니라 인덱서 가동률을 섞어 잰다. 인덱서 상태는 trace의 `tool_call`(`tool=index`)의 `ok`·`error`가 답한다(심볼 0개는 `ok=False`). 이 열 없이는 등급 비교를 하지 않는다 (이슈 #576 · [architecture.md](architecture.md) §4 E2 행).
+   ⏵ **그 `ok=False`에는 날짜 경계가 있다 — 2026-10-13 전 run은 심볼 0개도 `ok=True`였다**(`judge()`의 `index` 갈래가 그 날 들어왔다). 그래서 그 날 앞뒤 run의 `graph_ok`·E2는 같은 값이 아니고, 가르는 값은 `RunRecord`의 하네스 commit이다(§6). **다만 영향은 작다** — 심볼 0개가 기록된 커밋된 run은 **확인된 것이 0건**이다: 커밋된 실서빙 run 셋 중 심볼 수가 보고서에 남은 것은 [2026-10-12 run](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 하나이고 그 값은 **심볼 321**이며(그 보고서 §3 retrieval 행의 `graph_index`), 나머지 둘(10-08·10-11)의 보고서에는 그 수가 없다. **「0건」은 전수가 아니라 그 기록이 없다는 뜻이다**(CLAUDE.md §0 — 안 잰 것을 0으로 읽지 않는다).
 
 ## 3. 평가 데이터셋
 
@@ -113,6 +115,7 @@
 | False Positive Rate | benign 샘플에서 취약점으로 판정한 비율 |
 | AI-Human 일치도 | AI 판정과 사람 판정의 일치율 |
 | 단계별 후보 제거율 | Scout / Evidence Gate / Critic / Tool Validation 각 단계 통과율. ⏵ **2026-10-08 — Evidence Gate 축은 그 날 앞뒤가 같은 지표가 아니다**(이슈 #552): 6단계가 모델 인용 대신 타깃 관측 Evidence로 등급을 매기게 되어 그전 값에는 **인용 순응률**이 섞여 있었다. 한 열에 이어 쓰지 않는다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
+| 정적 신호 위치 겹침 (이슈 #563) | 6단계 게이트가 Evidence 위치와 후보 위치를 겹쳐 본 **횟수** - `RunRecord.location_overlap = {gated, static_ok, location_ok}`(`run_manifest.json`)와 `report.md`의 한 줄. 셋 다 `gate_eval`(stage=6) 행에서 센 정수다: `gated` = `location_ok` 키가 있는 행(관측이 비어 `p0`으로 단락한 행은 뺀다), `static_ok`·`location_ok` = 그중 참인 행. **run 단위 값이고 비율을 저장하지 않는다** - 둘을 나누면 그 run의 겹침률이다. 6단계 행이 0건이면 키 자체가 없다(`null` - 0이 아니라 「안 쟀다」). `gated`가 0인데 키가 있으면(6단계 행은 있으나 전부 `p0` 지름길) 겹침은 **미측정**이다 - 잰 0이 아니다. run·과제 사이에서 합산하지 않는다(§2.3의 비교 규칙대로 같은 프로필·같은 과제의 반복 run끼리만). ⚠ `location_ok` 거짓은 「안 겹쳤다」·「위치를 실은 Evidence가 없다」·「후보 위치가 없다」를 못 가른다 - `static_ok`가 참인데 `location_ok`가 거짓인 행이 #563의 모양이다. 7·8단계 행은 세지 않는다(후보 위치를 안 넘긴다). **이 필드 이전 run의 값은 보고서에서 손으로 읽은 것뿐이다** - #248 뒤 6단계 `location_ok`는 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0 · [보고서](experiments/harness/2026-09-24-roster-smoke-atom.md) §3) · 2026-10-12 보고서 run(`run_20261011_0001`, 16:48Z 시작) 6/6 거짓(`static_ok` 6/6 참 - stage-6 `gate_eval` 6행을 `C:\w\s17-artifacts\run_20261011_0001\trace.jsonl`에서 재계수, 저장소 밖이라 안 커밋됐다)이고 과제가 다르다. `run_20261007_0001`은 6단계 행이 전부 `p0`만 참인 지름길이라 이 지표로는 **미측정**이다(D106의 오프라인 재등급 5/5 거짓은 재구성한 풀의 계산값이고 run 실측이 아니다). 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 | 스키마 파싱 실패율 | 모델·역할별 구조화 출력 실패 비율. **분자는 "일어난 실패"(시도 단위)** — 분자 `Σ(attempts−1 if ok else attempts) − count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`, 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다. 산출식 정본은 `trace.py`의 이벤트→지표 표 |
 
 > ⚠ **`proven`은 「크래시가 재현됐다」가 아니다.** 그 상태를 여는 등급(E4)이 요구하는 것은
@@ -124,7 +127,9 @@
 > `expected_signal`과 대조하는 코드는 없다.
 >
 > 그래서 Precision의 **분모**(`proven` + `validated`)에서 `proven`이 세는 것은 「재현된
-> 건수」가 아니라 **「도구가 돌았고 비-0으로 끝난 건수」**다. 그 차이를 가르는 것은 같은 행의
+> 건수」가 아니라 **「도구가 돌았고 비-0으로 끝난 건수」**다. ⏵ 2026-10-13(#232) **이 열을 누가
+> 쓰든 `proven`의 뜻은 하나다 — 「실행됐고 비-0으로 끝났다」.** 재현 확정이 아니고(판정은 오라클 —
+> ADR 0013·0014) 크래시 관측(`Evidence.crashed`)도 아직 이 열을 가르지 않는다(기록뿐이다). 「실행됐고 비-0으로 끝났다」와 실제 재현의 차이를 가르는 것은 같은 행의
 > **사람 검토**이고 그쪽이 분자다. **§5.2의 `proven finding당 GPU-hour`도 `proven`이 분모다.**
 >
 > **2026-10-02에 `proven`의 정의가 좁아졌다(이슈 #232) — 그 날 앞뒤 run의 `proven`은 같은 값이
@@ -165,6 +170,20 @@
 역할 이름과 함께 경고해 **비교표에서 제외**한다(2026-08-17까지 모델 호출이 GPU 시간을 아예
 청구하지 못했으므로 그 이전 run은 전부 이 상태다).
 
+**스키마 실패·PoV `inspect` 반복은 분모만 세운다 (#613·#618·#619 (d)).** (2026-10-13) 이슈 #613이 첫째를,
+#618이 둘째를, #619 선택지 (d) 「계측만 한다」가 셋째를 요구했다. run 끝에 trace에서 센 집계 셋이
+`run_manifest.json`과 `report.md`에 남는다 - `schema_failure_max_run_by_role`(역할별 연속
+`SchemaParseError` `model_call`의 최장 길이 - (역할, 대상)별 연속의 역할별 최댓값),
+`schema_recovered_calls_by_role`(역할별 `ok`이고 `attempts>1`인 호출 수 - 재시도로 살아난 호출),
+`pov_inspect_max_run_by_finding`(Finding별 연속 `inspect` 홉의 최장 길이 - `action`을 실은 홉만
+세므로 도구 호출이 예산에서 끊긴 홉도 든다. 행동을 실은 홉이 하나도 없는 Finding - PoV 루프가
+첫 홉 전에 던졌거나 모든 홉의 호출이 실패한 Finding - 은 dict에 **없다**(`0`이 아니다)). 산식은
+`src/orchestrator/trace.py`의 같은 이름 함수다. **하네스는 이 값으로 동작하지 않는다** - 연속 실패
+상한 같은 임계값은 이 집계를 본 **실험팀이** 정한다(ADR 0012 결정 5). 해당 종류의 trace 행이 하나도
+없으면 값은 `None`이다(안 쟀다 - `0`이 아니다). 집계 함수가 던져서 `None`이 된 키는 `run_manifest.json`의
+`trace_aggregate_failures`(키 → 사유)에도 들고 report.md가 그 줄에 「집계 실패: 사유」를 적는다 - 「행이
+없다」와 「집계가 죽었다」를 `None` 하나로는 못 가른다.
+
 ### 5.3 Frontier 대비 비교표
 
 최종 산출물의 모든 칸을 **실측**으로 채운다.
@@ -203,6 +222,12 @@ Finding만 빠지고 run은 정상 종료하므로 `RunRecord.is_complete`가 �
 루프는 끝에서 run을 멈춰 `stopped_after`를 채운다 — 그 run은 비교표에서 빠진다. 시도 수에
 바닥이 없다 — 자리당 시도가 한 건이면 그 한 건의 실패로 빠진다. 일부만 실패한 run은 위 문단
 그대로다.
+
+**샘플링은 보낸 값·선언값·의도한 기동 인자까지 기록되고 서버의 실효값은 안 기록된다 (D29).** 보낸 값은
+`sampling`·`model_request_params`, 모델 파일이 선언한 값은 `model_sampling`, 장비 파일이 의도한 기동 인자는
+`serving_launch_intended`(교대 run만 — **의도지 실제 argv의 증거가 아니다**; 교대 명령이 보고한 실제 argv는
+trace `model_swap`의 `report.server.<key>.args`)다. 서버가 실제로 적용한 기본 샘플링은 서버에 묻지 않아 **미측정**이다
+— `--generation-config vllm` 여부는 인자에 적혔을 때만 위 두 곳에서 읽힌다.
 
 ## 7. MVP 성공 기준
 

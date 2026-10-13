@@ -108,6 +108,7 @@ def _run(
     rig: _Rig | None = None,
     target: Path = TARGET,
     wire: bool = True,
+    deps_fields: dict[str, object] | None = None,
     **spec_fields: object,
 ) -> tuple[runner.RunResult, list[dict], _Rig]:
     """`run_pipeline`을 한 번 돌리고 (결과, trace 이벤트, 기록기)를 돌려준다."""
@@ -118,7 +119,9 @@ def _run(
         artifacts_root=tmp_path / "artifacts",
     )
     rig = rig or _Rig(config, deps.models)
-    deps = dataclasses.replace(deps, models=rig, swap_to=rig.swap_to if wire else None)
+    deps = dataclasses.replace(
+        deps, models=rig, swap_to=rig.swap_to if wire else None, **(deps_fields or {})
+    )
     run_dir = tmp_path / "artifacts" / RUN_ID
     trace = TraceWriter(RUN_ID)
     result = run_pipeline(
@@ -166,6 +169,21 @@ def test_swaps_follow_the_stages_that_call_models_and_end_with_a_teardown(
         (None, "", True),
     ]
     assert swaps[0]["report.models"] == SCOUT, "교대 명령의 보고가 report.* 로 실리지 않는다"
+
+
+def test_the_run_record_keeps_the_intended_launch_args_of_a_swap_run(tmp_path: Path) -> None:
+    """교대 run의 manifest에 장비 파일이 의도한 기동 인자가 역할별로 남는다(#99). 교대 없는 run은
+    `None`이다 - `{}`(「장비 행이 있는 역할이 없었다」)와 다른 말이다."""
+    intended = {"auditor": ["--gpu-memory-utilization", "0.3", "--max-num-seqs", "8"]}
+
+    swapped, _, _ = _run(
+        tmp_path / "a", _config(), deps_fields={"serving_launch_intended": intended}
+    )
+    plain, _, _ = _run(tmp_path / "b", _config())
+
+    assert swapped.record.serving_launch_intended == intended
+    assert json.loads(swapped.record.model_dump_json())["serving_launch_intended"] == intended
+    assert plain.record.serving_launch_intended is None
 
 
 def test_pov_swaps_in_at_the_validate_stage_when_declared_swappable(tmp_path: Path) -> None:
@@ -526,6 +544,36 @@ def test_a_failed_manifest_write_after_an_unforeseen_exception_keeps_the_origina
     assert caught.value is original, "매니페스트 쓰기 실패가 원 예외를 덮었다"
     notes = getattr(caught.value, "__notes__", [])
     assert any("No space left on device" in note for note in notes), notes
+
+
+def test_a_failing_trace_aggregate_does_not_hide_an_unforeseen_exception(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """run 끝 집계(#613·#618·#619)는 `raise unforeseen` 앞에서 돈다 - 집계가 던지면 원 예외와
+    매니페스트를 덮는다. 원 예외가 그대로 올라가고, 매니페스트가 남고, 못 센 키만 `None`
+    (안 쟀다)이며 사유는 원 예외의 노트로 붙는다. 나머지 둘은 평소처럼 센다."""
+    original = _Defect("원 예외")
+
+    def explode(*_args: object, **_kwargs: object) -> None:
+        raise original
+
+    def broken(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("집계 결함")
+
+    monkeypatch.setattr(runner.critic, "run", explode)
+    monkeypatch.setattr(runner, "schema_failure_max_run_by_role", broken)
+
+    with pytest.raises(_Defect) as caught:
+        _run_bare(tmp_path, TraceWriter(RUN_ID))
+
+    assert caught.value is original, "집계 예외가 원 예외를 덮었다"
+    notes = getattr(caught.value, "__notes__", [])
+    assert any("schema_failure_max_run_by_role" in n and "집계 결함" in n for n in notes), notes
+    record = json.loads(
+        (tmp_path / "artifacts" / RUN_ID / "run_manifest.json").read_text(encoding="utf-8")
+    )
+    assert record["schema_failure_max_run_by_role"] is None
+    assert record["schema_recovered_calls_by_role"] is not None, "다른 집계까지 잃었다"
 
 
 @pytest.mark.parametrize("status", [None, 404, 503], ids=["no_status", "http_404", "http_503"])

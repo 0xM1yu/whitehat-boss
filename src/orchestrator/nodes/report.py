@@ -36,6 +36,9 @@ _GRADE_UNKNOWN = "-"
 _GRADE_RANK_UNKNOWN = 99
 # 요약 줄에 등급을 높은 것부터 적는다 (PR #37).
 _GRADE_DISPLAY_ORDER = ("E4", "E3", "E2", "E1", "E0")
+# PoV 연속 `inspect` 최장 줄이 Finding을 나열하는 하한(#619 (d)). 줄이 Finding 수에 비례해 자라지
+# 않게 하는 표시 규칙일 뿐 판정 임계값이 아니다 - 값은 manifest에 Finding별로 전부 남는다.
+_INSPECT_LISTED_MIN = 2
 
 
 @dataclass(frozen=True)
@@ -110,10 +113,79 @@ class Report:
     # `finding_deduped`가 건당 1행으로 싣는다. `render()`는 목록을 안 찍는다 — `deferred`의
     # 목록을 `target_skipped`에 둔 것과 같은 이유다(리포트는 요약이라 수백 줄이 Finding을 묻는다).
     merged_into: dict[str, str] = field(default_factory=dict)
+    # 6단계 게이트의 위치 겹침 횟수 `{gated, static_ok, location_ok}` (이슈 #563) - 러너가
+    # `gate_eval`(stage=6) 행에서 센 값을 그대로 받는다(`RunRecord.location_overlap`과 같은 값).
+    # 비면 줄을 안 낸다 - 게이트가 안 돈 run에 「0/0」을 찍으면 측정한 0으로 읽힌다.
+    # `gated`가 0이면(6단계 행은 있으나 전부 `p0` 지름길) 횟수가 아니라 **미측정**으로 찍는다 -
+    # 같은 이유다. 줄을 아예 빼지 않는 것은 「안 쟀다」가 리포트에서 사라지면 읽는 쪽이
+    # 게이트가 안 돈 run과 구별할 수 없기 때문이다. 같은 말을 `docs/evaluation.md` §5.1이 한다.
+    location_overlap: dict[str, int] = field(default_factory=dict)
+    # trace에서 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 (d)) — 러너가 `RunRecord`에 싣는
+    # 값을 그대로 받는다(산식은 `trace.py`). `None`은 그 종류의 trace 행이 없었다(안 쟀다)이고
+    # 「미측정」 줄로 찍는다 - `0`을 지어 찍지도, 줄을 빼지도 않는다(CLAUDE.md §0). 임계값이
+    # 아니다: 값은 실험팀 몫이다.
+    schema_failure_max_run: dict[str, int] | None = None
+    schema_recovered_calls: dict[str, int] | None = None
+    pov_inspect_max_run: dict[str, int] | None = None
+    # 위 셋 중 집계가 던져 `None`이 된 키 → 사유(`RunRecord.trace_aggregate_failures`). 그 키의 줄은
+    # 「미측정」이 아니라 「집계 실패」로 찍는다.
+    trace_aggregate_failures: dict[str, str] | None = None
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
         return self.grades.get(finding.finding_id)
+
+    def _aggregate_lines(self) -> list[str]:
+        """분모 전용 집계 셋(#613·#618, 셋째는 #619 (d))의 줄. `None`은 **생략이 아니라 「미측정」
+        줄**이다 - 안 쟀다와 안 그렸다가 페이지에서 갈려야 한다(CLAUDE.md §0). 임계값이 아니다."""
+        failures = self.trace_aggregate_failures or {}
+
+        def unmeasured(key: str) -> str:
+            # `None`은 「행이 없다」와 「집계가 죽었다」 둘 다다 - 사유가 있으면 그것을 적는다.
+            if key in failures:
+                return f"집계 실패: {failures[key]}"
+            return "미측정 — trace 행이 없거나 집계가 실패했다(실패면 run 경고에 사유)"
+
+        def per_key(label: str, counts: dict[str, int] | None, key: str) -> str:
+            if counts is None:
+                return f"{label}: {unmeasured(key)}"
+            return f"{label}: " + " · ".join(f"{key} {n}" for key, n in counts.items())
+
+        runs = self.pov_inspect_max_run
+        if runs is None:
+            inspect_line = (
+                "PoV 연속 inspect 최장(Finding별, 분모만): "
+                + unmeasured("pov_inspect_max_run_by_finding")
+            )
+        else:
+            # 줄이 Finding 수에 비례해 자라지 않게 한다 - 최장 2 이상만 나열하고 나머지는 건수다.
+            long_runs = {fid: n for fid, n in runs.items() if n >= _INSPECT_LISTED_MIN}
+            rest = len(runs) - len(long_runs)
+            listed = " · ".join(f"{fid} {n}" for fid, n in long_runs.items())
+            listed = listed or f"최장 {_INSPECT_LISTED_MIN} 이상 없음"
+            inspect_line = (
+                f"PoV 연속 inspect 최장(Finding별, 분모만 - 최장 {_INSPECT_LISTED_MIN} 이상인 "
+                f"Finding만 나열): {listed} · 나열하지 않은 Finding {rest}건 "
+                f"(최장 {_INSPECT_LISTED_MIN - 1} 이하)"
+            )
+        return [
+            "### 분모 전용 집계 (임계값 아님)",
+            "",
+            per_key(
+                "연속 스키마 파싱 실패 최장(역할별, 분모만)",
+                self.schema_failure_max_run,
+                "schema_failure_max_run_by_role",
+            ),
+            "",
+            per_key(
+                "스키마 재시도로 살아난 호출(역할별, 분모만)",
+                self.schema_recovered_calls,
+                "schema_recovered_calls_by_role",
+            ),
+            "",
+            inspect_line,
+            "",
+        ]
 
     def render(self) -> str:
         lines = [f"# 취약점 분석 리포트 — {self.run_id}", ""]
@@ -125,6 +197,24 @@ class Report:
             parts = [f"{g} {dist[g]}건" for g in _GRADE_DISPLAY_ORDER if dist[g]]
             if parts:
                 lines += [f"등급 분포: {' · '.join(parts)}", ""]
+        if self.location_overlap:
+            n = self.location_overlap
+            # 비율이 아니라 횟수다. `location_ok` 거짓은 「안 겹쳤다」와 「위치가 없다」를 못 가른다
+            # (`RunRecord.location_overlap` 주석) - 그래서 `static_ok`를 나란히 적는다.
+            if n["gated"] == 0:
+                # 분모가 0이라 「0건 중 … 0건」은 **잰 0**으로 읽힌다(CLAUDE.md §0).
+                lines += [
+                    "정적 신호 위치 겹침(6단계): 미측정 — 6단계 후보가 전부 `p0`에서 "
+                    "단락했다(잰 0이 아니다)",
+                    "",
+                ]
+            else:
+                lines += [
+                    f"정적 신호 위치 겹침(6단계): {n['gated']}건 중 후보 줄과 겹침 "
+                    f"{n['location_ok']}건 · 정적 신호 있음 {n['static_ok']}건 "
+                    "(`location_ok` 거짓은 겹치지 않음과 위치 없음을 가르지 않는다)",
+                    "",
+                ]
         if self.duplicates:
             # 무엇과 합쳤는지는 trace에 건당 1행으로 있다(`merged_into` 필드 주석).
             lines += [
@@ -183,6 +273,7 @@ class Report:
                 f"(상한 {self.critic_top_n} · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
+        lines += self._aggregate_lines()
         for state in _STATE_ORDER:
             group = [f for f in self.findings if f.state is state]
             if not group:
@@ -265,15 +356,20 @@ def run(
     files: dict[str, str | None] | None = None,
     ne_absorbed: dict[str, int] | None = None,
     pov_results: dict[str, str] | None = None,
+    location_overlap: dict[str, int] | None = None,
+    schema_failure_max_run: dict[str, int] | None = None,
+    schema_recovered_calls: dict[str, int] | None = None,
+    pov_inspect_max_run: dict[str, int] | None = None,
+    trace_aggregate_failures: dict[str, str] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
-    `deferred`·`dropped`·`critic_deferred`·`ne_absorbed`·`pov_results`는 러너가 센 값을 그대로
-    받는다 — 노드가 다시 세면 경고와 리포트가 다른 수를 말할 수 있다. `critic_top_n`도 같은 이유로
-    받는다: 노드가 `ctx.config`에서 다시 읽으면 러너의 경고와 갈릴 여지가 생긴다. `grades`도
-    같다 — 등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴 값을 받고 여기서 다시
-    매기지 않는다. `files`(finding_id → 파일)도 러너가 `Candidate.location`에서 얻어
-    넘긴다 — dedupe 키가 파일을 가르는 데 쓴다(#101 a).
+    `deferred`·`dropped`·`critic_deferred`·`ne_absorbed`·`pov_results`·`location_overlap`는 러너가
+    센 값을 그대로 받는다 — 노드가 다시 세면 경고와 리포트가 다른 수를 말할 수 있다.
+    `critic_top_n`도 같은 이유로 받는다: 노드가 `ctx.config`에서 다시 읽으면 러너의 경고와
+    갈릴 여지가 생긴다. `grades`도 같다 — 등급은 게이트 판정이라 러너가 `gate.evaluate`로 매긴
+    값을 받고 여기서 다시 매기지 않는다. `files`(finding_id → 파일)도 러너가
+    `Candidate.location`에서 얻어 넘긴다 — dedupe 키가 파일을 가르는 데 쓴다(#101 a).
 
     버린 Finding마다 `finding_deduped`를 하나 낸다(#101 잔여) — `subject_id`가 버린 것이고
     `representative`가 대신 남은 것이다. 중복이 없는 run은 0건이다(**9단계에 도달한 run에서
@@ -317,6 +413,11 @@ def run(
         grades=dict(grades),
         ne_absorbed=dict(ne_absorbed) if ne_absorbed else {},
         pov_results=dict(pov_results) if pov_results else {},
+        location_overlap=dict(location_overlap) if location_overlap else {},
+        schema_failure_max_run=schema_failure_max_run,
+        schema_recovered_calls=schema_recovered_calls,
+        pov_inspect_max_run=pov_inspect_max_run,
+        trace_aggregate_failures=trace_aggregate_failures,
     )
 
 

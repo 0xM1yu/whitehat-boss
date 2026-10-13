@@ -175,6 +175,10 @@ models:
     # 않아 꼬리를 확인할 수 없고(보고서 메타), 모델도 양자화도 다르다. **그러니 "이 옵션이
     # 이 모델도 고친다"로 읽지 않는다.** 다만 위 기동 조건이 이미 `backend xgrammar`라
     # 옵션 한 줄을 더하는 값이 싸고, `tools/probe/gpt_oss_structured.py`의 팔로 그대로 잰다.
+    # ⏵ 2026-10-13 - #79는 닫혔다(현재 로스터에서 공백 폭주를 관측한 기록이 없다 - 다만 꼬리를 본 적이 없어
+    # 「없었다」가 아니라 「본 적 없다」다). 그 위 「잰다」는 하네스 몫이 아니다 - 실험팀 소관이고, 켜 볼
+    # 이유는 `model_call.attempt_tail_whitespace_only`에 `true`가 나온 run이 생겼을 때다. 옵션은 여전히
+    # `config/serving/*.yaml`에 없다.
     endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 131072
     quantization: "mxfp4"

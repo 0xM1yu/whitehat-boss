@@ -310,6 +310,21 @@ class RunRecord(UtcModel):
     # `chat_template_kwargs`·`thinking_token_budget`). 규칙은 바로 위와 같다: 선언한 역할만,
     # `None`은 이 필드 이전의 manifest. `sampling`(프로필 공통)을 덮은 값도 여기 남는다.
     model_request_params: dict[str, dict[str, JsonValue]] | None = None
+    # 역할 → 장비 파일(`config/serving/<device>.yaml`)이 그 역할 모델에 **의도한** `vllm serve`
+    # 기동 인자(#99) - `--gpu-memory-utilization`·`--max-model-len`·`--max-num-seqs`·`extra_args`.
+    # 비밀로 보이는 값은 `***`로 가려 싣는다(`config.redact_launch_args`).
+    #
+    # **이것은 config의 의도지 서버가 실제로 받은 argv의 증거가 아니다.** 누가 장비 파일과 다른
+    # 인자로 띄워도 이 필드는 모른다. 교대 명령이 보고한 실제 argv는 trace `model_swap`의
+    # `report.server.<key>.args`에 있다(명령이 보고했을 때만 - 러너가 안 보고한 키를 run 경고로
+    # 부른다). 그리고 어느 쪽도 서버의 **실효** 샘플링 기본값(`--generation-config vllm`을 받았는가
+    # 포함)은 아니다 - 이 하네스는 서버에 그것을 묻지 않는다. 그 축은 미측정으로 남는다.
+    # 환경변수(`ServerLaunch.env`)는 싣지 않는다.
+    #
+    # **`None`은 이 run이 교대하지도 장비 파일을 읽지도 않았다는 뜻이다**(교대 선언 없음 ·
+    # `--device` 없음 · 이 필드 이전의 manifest). 빈 dict는 장비 파일을 읽었으나 상주·교대 역할 중
+    # 장비 행이 있는 실서빙 역할이 없었다는 뜻이다. 기본값 `None`이라 옛 manifest는 그대로 로드된다.
+    serving_launch_intended: dict[str, list[str]] | None = None
     # 그 run의 clang 계열 도구가 쓴 컴파일 조건 (#74). 사유와 한계는 `CompileFlags`에
     # 있다 — 요점은 **사후 감사로는 잡히고 비교표로는 안 잡히던** 축을 여는 것이다.
     #
@@ -359,6 +374,35 @@ class RunRecord(UtcModel):
     # `model_call.response_refs`·`reasoning_refs` 키를 바꾸므로 박제한다. `None` = 안 켰다
     # (이 필드 이전의 manifest도 같다 - `slicer`와 같은 관용구라 하위호환이 안 깨진다).
     keep_responses: list[str] | None = None
+    # 6단계 게이트가 Evidence 위치와 후보 위치를 **겹쳐 본 횟수** (이슈 #563 선택지 4) -
+    # `{gated, static_ok, location_ok}`. 셋 다 `gate_eval`(stage=6) 행에서 센 정수다(비율은
+    # 안 싣는다). `gated`는 술어까지 간 행이다 - 관측이 비어 `p0`으로 단락한 행은
+    # `location_ok` 키가 없어 빠진다.
+    # `static_ok > location_ok`이면 「신호는 있었는데 후보 줄과 안 겹쳤다」(#563의 모양)다.
+    # ⚠ `location_ok` 거짓은 「안 겹쳤다」·「위치를 실은 Evidence가 없다」·「후보 위치가
+    # 없다」를 못 가른다. 7·8단계 행은 세지 않는다 - 그 단계는 후보 위치를 안 넘겨
+    # `location_ok`가 구조상 거짓이다.
+    # `None` = 6단계 `gate_eval` 행이 0건이다(게이트가 안 돌았다 · 이 필드 이전의 manifest도
+    # 같다). 0건이 아니라 「안 쟀다」다 - `slicer`·`oracle`과 같은 관용구라 옛 manifest가 그대로
+    # 로드된다.
+    location_overlap: dict[str, int] | None = None
+    # trace에서 run 끝에 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 선택지 (d)) — 하네스는
+    # 동작을 안 바꾸고 값(상한 등)은 실험팀이 정한다. `None`은 **그 종류의 trace 행이 하나도
+    # 없었다**(안 쟀다 - 0이 아니다, CLAUDE.md §0)이고 이 필드 이전의 manifest도 같다(`slicer`와
+    # 같은 관용구 - 하위호환 유지).
+    # `{}`는 나오지 않는다 - 행이 있으면 그 역할·Finding은 잰 `0`으로라도 든다. 산식은 `trace.py`.
+    #
+    # 역할 → 연속 `SchemaParseError` `model_call`의 최장 길이((역할, 대상)별 연속, 역할별 최댓값).
+    schema_failure_max_run_by_role: dict[str, int] | None = None
+    # 역할 → 스키마 재시도로 살아난(`ok`·`attempts>1`) `model_call` 수.
+    schema_recovered_calls_by_role: dict[str, int] | None = None
+    # Finding → 연속 `inspect` PoV 홉의 최장 길이(`action`을 실은 `pov_hop`만 - #619 (d)).
+    pov_inspect_max_run_by_finding: dict[str, int] | None = None
+    # 위 셋 중 **센 집계가 던져서** `None`이 된 키 → 사유(`ExcType: 메시지`). 「그 종류의 행이
+    # 없다」와 「집계가 죽었다」가 같은 `None`이라 갈라 읽는 자리다(CLAUDE.md §0 - 안 쟀다와 못
+    # 쟀다). 안 던졌으면 `None`이고 이 필드 이전의 manifest도 같다(위와 같은 관용구). 같은 사유는
+    # run 경고(stderr)에도 간다.
+    trace_aggregate_failures: dict[str, str] | None = None
     # KB 스냅샷 버전 태그 (knowledge-base.md §7.4).
     kb_snapshot: NonEmptyStr
     started_at: datetime

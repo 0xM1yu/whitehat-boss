@@ -1239,8 +1239,7 @@ def test_thresholds_flatten_is_float_map() -> None:
 def test_max_hops_reaches_the_run_record_and_is_provisional() -> None:
     """`max_hops`(ADR 0012 결정 6 — `capsule_expansion_max`를 대체)가 `flatten()`으로
 
-    run 기록에 실리고, `capsule_expansion_max`와 같은 자리(명세값·미실측)로
-    `PROVISIONAL_THRESHOLDS`에도 있다.
+    run 기록에 실리고, 명세값·미실측 표시인 `PROVISIONAL_THRESHOLDS`에도 든다.
     """
     thresholds = load_config("dev_fake").thresholds
     assert thresholds.max_hops >= 0
