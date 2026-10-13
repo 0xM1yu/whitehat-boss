@@ -90,6 +90,10 @@ def test_cases_skips_the_other_discovery_query(monkeypatch, tree, tmp_path, case
     counter = "candidates_" + skipped
     assert result["counters"][counter] is None  # unknown, not 0
     assert result["measurement_notes"][counter] == f"Skipped by --cases {cases}"
+    # The completion metric is gated on the *last selected* case being counted
+    # (tools/slicer/slicer_pipeline.py:636 `selected_cases()[-1]`), not on case B. Gated on B it
+    # would be None here for `--cases A` -- a run that finished would read as unknown.
+    assert result["counters"]["candidates_not_processed"] == 0
 
 
 # --- spec / index handling ------------------------------------------------------------------
@@ -107,6 +111,21 @@ def test_the_spec_needs_a_sink_with_a_file_and_a_line():
         {"sink": {"file": "a.c", "line": 3}, "source": {"file": "a.c"}},
     ):
         assert target.validate_spec(bad) is not None
+
+
+def test_the_run_signature_hashes_the_input_modules_as_well_as_the_slicer_ones():
+    """`code_hashes` is part of the run contract. `input_*.py` writes `analysis.input_evidence` and
+    `analysis.input_context`, so those modules belong in it -- a `slicer*.py`-only glob would let
+    their output change under the same signature. Positive pins are the files on disk; the negative
+    is this directory's own non-module files, which must stay out."""
+    here = Path(target.__file__).parent
+    names = {p.name for p in target.code_files(here, Path(slicer.__file__).parent)}
+    assert {"input_context.py", "input_evidence.py", "input_paths.py", "input_text.py"} <= names
+    assert {"slicer_target.py", "slicer.py", "slicer_queries.py"} <= names
+    assert "README.md" not in names and not any(n.startswith("test_") for n in names)
+    assert names == {p.name for p in here.glob("*.py")} | {
+        p.name for p in Path(slicer.__file__).parent.glob("slicer*.py")
+    }
 
 
 def test_the_spec_carries_no_ground_truth_field():
@@ -150,6 +169,25 @@ def test_activating_defines_on_a_real_conditional():
     read = next(n for n, text in enumerate(lines, 1) if "read(fd" in text)
     assert target.activating_defines(lines, mmap) == ["QUICK"]  # inside `#ifdef QUICK`
     assert target.activating_defines(lines, read) == []  # in its `#else`
+
+
+def test_choose_prefers_the_specs_function_over_the_narrower_one_on_the_same_line():
+    """One line can sit in two methods (a C++ lambda inside its enclosing function). The spec's
+    function wins; the narrowest is only the tie-break. Pinned because the two orders disagree
+    exactly when the spec's function is the wider one -- and then picking the narrower also writes
+    `function_mismatch` into the note, so the slice would claim the spec named another function."""
+    outer = {"file": "main.c", "line": 1, "line_end": 40, "full_name": "outer", "symbol": "outer"}
+    inner = {"file": "main.c", "line": 9, "line_end": 11, "full_name": "outer.lam", "symbol": "lam"}
+    rows = [
+        {**row("IDENTIFIER", "n", "n", 10, 5), "method": outer},
+        {**row("IDENTIFIER", "n", "n", 10, 5), "method": inner},
+    ]
+    picked, note = target.choose(rows, {"file": "main.c", "line": 10, "function": "outer"})
+    assert note["method"] == "outer" and "function_mismatch" not in note
+    assert [r["method"] for r in picked] == [outer]
+    # Negative: with no `function` in the spec nothing is preferred by name, so the narrowest wins.
+    _, plain = target.choose(rows, {"file": "main.c", "line": 10})
+    assert plain["method"] == "outer.lam"
 
 
 def test_pick_line_prefers_the_symbol_line_and_falls_back():
@@ -397,3 +435,32 @@ def test_a_degraded_slice_takes_the_function_name_from_the_spec(monkeypatch, tre
     data = mock_data(locate=response("locate", []))
     _, _, out, _ = run_target(monkeypatch, tree, tmp_path, data)
     assert [r.location.symbol for r in slice_refs(load_slices(out))] == ["entry", "entry"]
+
+
+def test_the_guard_scan_skips_the_f_slice_with_a_reason_that_is_not_a_case_name(
+    monkeypatch, tree, tmp_path
+):
+    """The F slice of this mode gives the `source` end, so the harness does not know its sink and
+    the guard scan skips it -- with the reason `given_source`, not `case_a`. `SliceRef` carries
+    `given_end` and not `case` (src/adapters/slices.py `_GIVEN_END`), so a case-named reason would
+    be a false one here: an F slice is not a Case A slice.
+
+    Both refs come from this mode's own output through the harness loader, not from a hand-written
+    SliceRef (CLAUDE.md 2.5 -- pin samples come from the repo).
+    """
+    from src.adapters.slices import slice_refs
+    from src.orchestrator.source_guards import scan_guards
+    from src.schemas.common import Location
+
+    code, _, out, _ = run_target(monkeypatch, tree, tmp_path, mock_data())
+    assert code == 0
+    refs = {r.slice_id: r for r in slice_refs(load_slices(out))}
+    anchor = Location(file="main.c", symbol="entry", line_start=1, line_end=8)
+    scans = {
+        key: scan_guards(ref, anchor, SOURCE, lambda _loc: SOURCE) for key, ref in refs.items()
+    }
+    assert scans["forward"].skipped == "given_source"
+    assert scans["forward"].event_fields() == {"guards_skipped": "given_source"}
+    # Negative pin: the same run's B slice gives the sink end and is scanned, so the reason is not
+    # written for every slice of this mode.
+    assert scans["backward"].skipped is None
