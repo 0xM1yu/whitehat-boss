@@ -3049,6 +3049,10 @@ def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
     first_line = VULNERABLE_C.splitlines()[facts["target"]["line_start"] - 1]
     assert facts["source"].splitlines()[0] == first_line
     assert facts["target"]["line_start"] == 3  # 첫 줄 = FACTS.target.line_start (prefix의 단언)
+    # 본문의 「대상」 표기도 같은 범위다 — `describe_target(capsule.target)`이면 entry 한 줄
+    # (「줄 5-5」)이 가서 같은 프롬프트의 FACTS와 어긋난다.
+    body = ctx.models.last_for(Role.SCOUT).body
+    assert "`parser.c` 의 `parse_header` (줄 3-6)" in body and "(줄 5-5)" not in body
     assert "slice_criterion" not in facts  # v4 산문이 그 키를 서술하지 않는다
     assert session.slice is ref
     # resolver의 `visible` — 모델이 본 줄은 함수 3~6이지 SliceRef.lines가 아니다.
