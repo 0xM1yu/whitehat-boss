@@ -199,7 +199,9 @@ def _record_unknown_refs(
 
     **판정은 안 바꾼다.** `gate.evidences_for`는 **Finding**의 `evidence_refs`만 거르고
     `Decision.evidence_refs`를 검증하는 자리는 없다 — `Decision.is_grounded`는
-    `bool(evidence_refs)`다. 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이
+    `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
+    ID 갈래만으로도 참이라 이 경로는 그대로다. 그래서 게이트가 못 보는 ID 하나로도
+    `rebut`이 「근거 있는 반박」이
     되어 `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 홉 관측이 `probe` Evidence의
     `evidence_id`를 Critic에 보이게 한 뒤로 그런 ID를 인용할 길이 생겼다(#600 H2ⓐ · 이슈 #419의
     「E4 경계」). 거르기는 설계 판단이라 여기서 하지 않고 **사후에 셀 수 있게** 수만 남긴다.

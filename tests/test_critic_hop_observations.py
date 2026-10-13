@@ -390,7 +390,8 @@ def test_a_rebut_citing_an_id_only_the_observation_showed_is_recorded_not_filter
 ) -> None:
     """`probe` 관측이 보인 `evidence_id`는 게이트 입력(`state.evidences`)에 없다. Critic이 그 ID로
     `rebut`하면 **게이트가 버리지 않는다** - `gate.evidences_for`는 Finding의 refs만 거르고
-    `Decision.is_grounded`는 `bool(evidence_refs)`라 정규화를 비껴간다. 거르는 것은 설계 판단이라
+    `Decision.is_grounded`는 `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
+    ID 갈래만으로도 참이라 이 경로는 그대로다 — 정규화를 비껴간다. 거르는 것은 설계 판단이라
     안 하고, 그 인용이 왔다는 사실만 trace에 남겨 사후에 셀 수 있게 한다.
 
     인용하는 ID는 지어낸 것이 아니라 **관측 글에서 뽑은** 것이다(CLAUDE.md §2.5).
