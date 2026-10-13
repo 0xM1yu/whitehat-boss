@@ -338,7 +338,8 @@ class GraphIndex:
 
         ## 슬라이스 타깃의 본문은 슬라이스다 (#220 ①)
 
-        `run --slices`면 LIGHT `target_function`과 Scout `SOURCE`가 슬라이스 렌더다. 위 등식을
+        `run --slices`면 LIGHT `target_function`이 슬라이스 렌더다(Scout `SOURCE`는 프롬프트의
+        `input: slice` 선언일 때만 — ⏵ 2026-10-13 #529). 위 등식을
         지키는 본문은 `target`(entry 줄 하나)의 범위가 아니라 **슬라이스의 (file, line) 집합**
         (`body`)이다 — entry만 보면 Case B(sink 줄)는 감싸는 함수의 호출자가, Case A(함수 머리)는
         본문의 호출이 빠졌다. 「본문 안에 정의」는 정의 **범위**가 그 집합과 겹치는가로 본다 —
@@ -1355,7 +1356,8 @@ def source_lines(text: str) -> list[str]:
     r"""인덱스 줄 번호와 같은 좌표로 원문을 줄로 나눈다 -> `\n`에서만 끊고 줄 끝 `\r`만 뗀다.
 
     인덱서는 tree-sitter 행(`start_point[0] + 1`)을 쓰고 그 행은 `\n`에서만 넘어간다.
-    `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·` `에서도 끊어 그 글자마다
+    `str.splitlines()`는 폼피드(`\x0c`)·`\x1c`~`\x1e`·`\x85`·`\u2028`에서도 끊어
+    그 글자마다
     한 줄씩 밀린다 -> 폼피드가 많은 파일(ImageMagick 등)에서 함수 범위가 주석부터 시작하고
     끝이 잘렸다(#446). 슬라이서 좌표는 `slices.split_source`가 같은 이유로 따로 맞춘다(#259).
 

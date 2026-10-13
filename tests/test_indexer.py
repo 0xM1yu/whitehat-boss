@@ -10,6 +10,7 @@
 아무것도 검증하지 않는 상태.
 """
 
+import hashlib
 import importlib.util
 import json
 import subprocess
@@ -19,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters import index_graph
-from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, plan
+from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, Step, judge, plan
 from src.schemas.common import Location
 
 _INDEXER_PATH = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
@@ -35,6 +36,27 @@ def _load_indexer():
 
 
 indexer = _load_indexer()
+
+
+# 이미지 태그 -> 그 이미지에 구워진 `/opt/indexer.py`의 sha256. 이미지를 다시 구우면 여기를 올린다.
+_BAKED_INDEXER_SHA256 = {
+    "harness-tools:v3": "de9c643b0d76f04a29526d1e3a0245425c3668c533f0bed266cd65287ac91d34",
+}
+
+
+def test_indexer_bytes_match_the_pin_of_the_baked_image() -> None:
+    """저장소 `indexer.py`의 바이트 해시가 서빙 이미지에 구워진 것과 같아야 한다.
+
+    이 파일을 고치면 — 주석 한 줄이어도 — 이미지를 다시 굽고 위 핀을 올려야 한다. 안 그러면
+    서빙 preflight(`src/preflight.py`가 파일 전체 sha256을 이미지 `/opt/indexer.py`와 견준다)가
+    ERROR로 exit 2를 낸다 (PR #634 HIGH 1, 2026-10-13: docstring 3줄이 이미지와 해시를 갈랐다).
+    재빌드는 `tool_images` digest를 바꿔 기존 run과 비교 축이 갈리니 의식적으로 한다.
+    """
+    digest = hashlib.sha256(_INDEXER_PATH.read_bytes()).hexdigest()
+    assert digest == _BAKED_INDEXER_SHA256["harness-tools:v3"], (
+        "indexer.py가 이미지 harness-tools:v3와 달라졌다 — 이미지를 다시 굽고 핀을 올리거나, "
+        "수정을 되돌린다. 주석만 고쳐도 preflight가 죽는다"
+    )
 
 
 @pytest.fixture
@@ -217,7 +239,8 @@ def test_cpp_class_namespace_and_extern_c_are_indexed(tmp_path: Path) -> None:
     클래스 본문(`field_declaration_list`)·namespace(`declaration_list`)·
     `extern "C"`(`linkage_specification`) 전부 최상위가 아니다. 첫 구현은 이 파일에서
     심볼 0개·호출 0개를 내면서 exit 0이었다 — 그러면 `Evidence(ok=True)`가 남고
-    E2가 빈 그래프 위에서 열린다.
+    E2가 빈 그래프 위에서 열린다. (⏵ 2026-10-13 #576 — 지금은 `judge()`가 0개를 `ok=False`로
+    내려 E2는 안 열리지만, 그래프가 비는 것은 여전히 결함이라 이 검사가 인덱서 쪽에서 문다.)
     """
     (tmp_path / "net.cpp").write_text(
         "namespace net {\n"
@@ -400,8 +423,9 @@ def test_include_fragment_is_indexed_not_skipped(tmp_path: Path) -> None:
 def test_every_suffix_the_harness_sends_has_a_grammar() -> None:
     """목록이 양쪽에 따로 있다 — 이 스크립트는 `src/`를 import 하지 않는다.
 
-    어긋나면 예외가 아니라 `skipped`에 이름만 남아 조용히 빈 그래프가 나오고, 그
-    그래프로 E2가 열린다. 하네스가 보내기로 한 확장자는 전부 파싱될 수 있어야 한다.
+    어긋나면 예외가 아니라 `skipped`에 이름만 남아 조용히 빈 그래프가 나온다(⏵ 2026-10-13 #576 —
+    심볼이 0개면 `judge()`가 `ok=False`로 내려 E2는 안 열리지만, 그 대상의 그래프 섹션이 비는 것은
+    그대로다). 하네스가 보내기로 한 확장자는 전부 파싱될 수 있어야 한다.
     """
     assert set(_INDEX_SUFFIXES) <= set(indexer._GRAMMARS)
 
@@ -500,6 +524,36 @@ def test_script_runs_as_a_subprocess_and_exits_zero(sample: Path, tmp_path: Path
     assert result.returncode == 0, result.stderr
     assert "# index:" in result.stdout
     assert json.loads(out.read_text(encoding="utf-8"))["version"] == indexer.INDEX_VERSION
+
+
+def _run_script(out: Path, root: Path, *sources: Path) -> str:
+    result = subprocess.run(
+        [sys.executable, str(_INDEXER_PATH), "--out", str(out), "--root", str(root),
+         *map(str, sources)],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+def test_judge_reads_the_real_summary_line_the_script_prints(sample: Path, tmp_path: Path) -> None:
+    """`judge()`가 읽는 철자(`# index: N symbols,`)가 **이 스크립트의 실제 출력**과 같다 (#576).
+
+    손으로 쓴 stdout만 문 `tests/test_container_tools.py`의 판정 테스트는 양쪽이 같이 어긋나도
+    초록이다. 여기는 실제로 돌려 얻은 stdout을 `judge()`에 먹인다 — 심볼 0개(구조체 정의뿐인
+    파일 · `test_empty_source_is_not_an_error`와 같은 입력)는 `ok=False`, 심볼이 있으면 `ok=True`.
+    """
+    (sample / "types.c").write_text("struct T { int x; };\n", encoding="utf-8")
+
+    empty = _run_script(tmp_path / "e.json", sample, sample / "types.c")
+    full = _run_script(tmp_path / "f.json", sample, sample / "parser.c")
+
+    assert "# index: 0 symbols," in empty
+    assert judge("index", [Step(0, empty, "")], 1)[0] is False
+    assert judge("index", [Step(0, full, "")], 1) == (True, 0, None)
 
 
 def test_missing_source_exits_nonzero(tmp_path: Path) -> None:

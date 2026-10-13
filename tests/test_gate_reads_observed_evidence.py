@@ -30,7 +30,8 @@ from src.orchestrator.budget import BudgetLedger
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import critic, gate_node
 from src.orchestrator.policy import FixedThresholdPolicy
-from src.orchestrator.trace import TraceWriter
+from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import (
     Evidence,
     EvidenceGrade,
@@ -440,3 +441,190 @@ def test_the_grade_tracks_the_indexer_not_the_evidence_when_the_graph_fails() ->
         "인덱서가 죽으면 같은 근거·같은 경로인데 등급이 내려간다 — 등급이 인덱서 가동률을 "
         "잰다는 사실이 바뀌었으면 이슈 #576과 D106을 같이 고친다"
     )
+
+
+def _graph_from_index_stdout(stdout: str) -> Evidence:
+    """인덱서 stdout → 어댑터 `judge()`의 판정 → GRAPH Evidence. 어댑터가 실제로 내는 모양이다."""
+    from src.adapters.container_tools import Step, judge
+
+    ok, code, error = judge("index", [Step(0, stdout, "")], 1)
+    return Evidence(
+        evidence_id="ev_graph",
+        run_id=RUN_ID,
+        kind=EvidenceKind.GRAPH,
+        source="index",
+        artifact_id=".",
+        payload_ref="logs/index.json",
+        digest="sha256:" + "0" * 64,
+        observed_at=OBSERVED_AT,
+        ok=ok,
+        exit_code=code,
+        error=error,
+    )
+
+
+def test_an_empty_graph_does_not_open_e2_but_a_populated_one_still_does() -> None:
+    """🔴 **이슈 #576 (D13 ②)** — 심볼 0개의 GRAPH Evidence는 E2를 못 연다. 같은 Finding·같은 경로.
+
+    양성 짝이 같이 있다: 심볼이 있는 그래프는 **예전 그대로 E2**다(오염시켜 이 검사가 항상
+    빨갛지 않음을 보인다). 두 그래프의 유일한 차이는 인덱서 stdout의 심볼 수다.
+
+    ⚠ **「인덱서가 실패하면 E1」은 위 테스트가 이미 문다.** 이 테스트가 문 것은 **인덱서가
+    성공(exit 0)했는데 비어 있는** 경우다 — 그 전에는 `ok=True`라 E2였다.
+    """
+    from src.orchestrator.gate import evaluate
+
+    path = [
+        PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
+        PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+    ]
+    finding = _finding(refs=["ev_graph", "ev_static"], path=path)
+    static = _static_signal()
+    empty = _graph_from_index_stdout(
+        "# index: 0 symbols, 0 calls, 0 unresolved calls, 0 unresolved symbols, 1 files\n"
+    )
+    full = _graph_from_index_stdout(
+        "# index: 321 symbols, 870 calls, 4 unresolved calls, 0 unresolved symbols, 9 files\n"
+    )
+
+    on_empty = evaluate(finding, [empty, static], missings=[], decisions=[])
+    on_full = evaluate(finding, [full, static], missings=[], decisions=[])
+
+    assert empty.ok is False and full.ok is True
+    assert on_empty.predicates["graph_ok"] is False
+    assert on_empty.grade is EvidenceGrade.E1, "빈 그래프로 E2가 열렸다 — 이슈 #576"
+    assert on_full.predicates["graph_ok"] is True
+    assert on_full.grade is EvidenceGrade.E2
+
+
+# --- 핀 ③ 계측: 부착 전 모델 인용 수가 `gate_eval`에 남는다 (이슈 #554) ---------------------
+
+
+def _gate_evals(ctx: RunContext, stage: Stage = Stage.GATE) -> list:
+    return [
+        e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL and e.stage == int(stage)
+    ]
+
+
+def test_cited_by_model_counts_the_refs_before_the_harness_attaches(ctx: RunContext) -> None:
+    """모델 인용 2건 + 하네스 관측 3건 → 저장된 Finding은 5건이고 `gate_eval`은 **2**다.
+
+    부착이 `state.db`의 목록을 덮으므로 저장소로는 이 2를 못 되찾는다 - 그게 이 키의 존재 이유다.
+    """
+    pool = (
+        _evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),
+        _evidence("ev_b", EvidenceKind.STATIC, source="clang-tidy"),
+        _evidence("ev_c", EvidenceKind.STATIC, source="cppcheck"),
+        _evidence("ev_d", EvidenceKind.STATIC, source="flawfinder"),
+        _evidence("ev_e", EvidenceKind.STATIC, source="infer"),
+    )
+    finding = _finding(refs=["ev_a", "ev_b"])
+
+    graded, _ = gate_node.run(
+        ctx, finding=finding, evidences=pool, candidate_location=CANDIDATE_LOCATION
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 2
+    assert len(graded.evidence_refs) == 5
+    stored = ctx.store.get("finding", finding.finding_id)
+    assert len(stored.evidence_refs) == 5, "전제 - 저장소 행은 덮였다(그래서 이 키가 필요하다)"
+
+
+def test_cited_by_model_zero_is_a_measured_zero(ctx: RunContext) -> None:
+    """인용 0건이면 키가 있고 값이 0이다 - 「안 쟀다」(키 부재)와 갈린다."""
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=[]),
+        evidences=(_static_signal(),),
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" in row.data
+    assert row.data["cited_by_model"] == 0
+
+
+def test_cited_by_model_is_a_bare_len_that_counts_duplicates_and_invented_ids(
+    ctx: RunContext,
+) -> None:
+    """정의를 문다: 세는 것은 **ID 개수**다 - 중복도, 풀에 없는 지어낸 ID도 센다 (`trace.py`).
+
+    이 값은 run 사이 비교(D67 「판을 올려 인용이 늘었나」)에 쓰인다. `len(set(...))`이나 「풀로
+    풀리는 것만」으로 바꾸면 앞뒤 run의 값이 **다른 정의로** 한 열에 섞이므로, 바꾸려면 이 핀과
+    `trace.py`의 「모델 인용 수」를 같이 고친다.
+    """
+    pool = (_evidence("ev_a", EvidenceKind.STATIC, source="semgrep", location=SIGNAL_LOCATION),)
+
+    gate_node.run(
+        ctx,
+        finding=_finding(refs=["ev_a", "ev_a", "ev_zz"]),
+        evidences=pool,
+        candidate_location=CANDIDATE_LOCATION,
+    )
+
+    (row,) = _gate_evals(ctx)
+    assert row.data["cited_by_model"] == 3, "중복 1 + 풀에 없는 ID 1 - 둘 다 세는 것이 정의다"
+
+
+def test_cited_by_model_is_absent_when_the_caller_does_not_measure(ctx: RunContext) -> None:
+    """`evaluate_gate`를 인자 없이 부르면 키가 없다 - `None`·`0`으로 채우지 않는다(CLAUDE.md §0)."""
+    ctx.evaluate_gate(_finding(refs=["ev_a"]), (_static_signal(),), stage=Stage.GATE)
+
+    (row,) = _gate_evals(ctx)
+    assert "cited_by_model" not in row.data
+
+
+def test_an_attachment_that_adds_nothing_does_not_store_the_finding(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """부착이 더할 ID가 없으면 `attach_observed`가 **저장하지 않는다** - 그 Finding의
+    `state.db` 행은 모델 원본 그대로다.
+
+    이 한 줄이 셋을 받치고 있다(⏵ 2026-10-14 적대적 리뷰): `trace.py` 모듈 docstring의 셋째
+    경우 · `gate_node.attach_observed` docstring의 ⏵ · `docs/open-questions/D/D67.md`의 좁힘.
+    셋 다 「6단계 행이 있어도 부착이 0건이면 `state.db`에서 셀 수 있다」를 적는데, 그 전제는
+    **early return이 `store.put`을 건너뛴다**는 것뿐이다. 그 줄에 `store.put`을 더하는 한 줄짜리
+    변이가 등급·refs 핀 전부를 통과했다(리뷰어 실측: 259 passed) - 그러면 세 문서가 한꺼번에
+    거짓이 되고 `state.db`를 세는 쪽이 조용히 부착값을 센다(§0 - 과대 계수).
+
+    ⚠ 무는 것은 **저장 호출이 안 났다**까지다 - 부착 뒤 행이 어떤 값이어야 하는가는
+    `test_only_the_handed_evidence_lands_in_evidence_refs`가 든다.
+    """
+    handed = (_static_signal(),)
+    original = _finding(refs=[ev.evidence_id for ev in handed])  # 모델이 이미 다 인용했다
+    stored_kinds: list[str] = []
+    real_put = ctx.store.put
+
+    def spy(obj: object) -> object:
+        stored_kinds.append(type(obj).__name__)
+        return real_put(obj)
+
+    monkeypatch.setattr(ctx.store, "put", spy)
+
+    graded = gate_node.attach_observed(ctx, finding=original, evidences=handed)
+
+    assert graded is original, "더할 것이 없으면 새 Finding을 만들지 않는다"
+    assert stored_kinds == [], f"저장이 났다 - 위 세 문서의 좁힘이 거짓이 된다: {stored_kinds}"
+
+
+def test_an_attachment_that_adds_something_does_store_the_finding(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """음성 짝 - 더할 ID가 있으면 저장한다. 위 핀이 「언제나 안 저장한다」로 읽히지 않게 둔다."""
+    handed = (_static_signal(),)
+    original = _finding(refs=[])
+    stored_kinds: list[str] = []
+    real_put = ctx.store.put
+
+    def spy(obj: object) -> object:
+        stored_kinds.append(type(obj).__name__)
+        return real_put(obj)
+
+    monkeypatch.setattr(ctx.store, "put", spy)
+
+    graded = gate_node.attach_observed(ctx, finding=original, evidences=handed)
+
+    assert graded is not original
+    assert stored_kinds == ["Finding"]
+    assert list(graded.evidence_refs) == ["ev_static"]
