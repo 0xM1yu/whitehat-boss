@@ -440,7 +440,9 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    실린다 — 이 절을 쓴 시점에 `runner.py`의 그 대입은 2단계가 모은 근거 그대로다. 연결은 별 결정이다
    ([D99](open-questions/D/D99.md) 「E4 경계」). 연결을 넣는 PR은 이 문장을 같이 고친다. 모델이 `probe`의 `evidence_id`를 인용했는지는
    `answer` 홉 이벤트의 `cited_probe_evidence`(그 홉이 `probe`로 만든 ID를 `evidence_refs`로 인용한 수)가 세므로
-   「인용했는데 게이트가 조용히 버렸다」가 trace에 남는다.
+   「인용했는데 게이트가 조용히 버렸다」가 trace에 남는다. ⏵ 2026-10-13(#554) — **`probe` 한정이 아닌** 모델의 `evidence_refs`
+   인용 수는 6단계 `gate_eval`의 `cited_by_model`이 센다(하네스 부착 **전**의 ID 개수 - 6단계를 거쳐 관측 Evidence가 붙은 Finding은 부착이 `state.db`의 목록을 덮어 거기서는 못 센다.
+   7·8단계 행에는 키가 없다 · 키 부재 = 안 쟀다. 정본은 `trace.py` 모듈 docstring의 「모델 인용 수」).
 
 6. **홉 예산.** 조사 홉은 `thresholds.auditor_tool_hops`번까지이고, hop 0..N-1이 `lookup`·`probe`를 내도 되며
    **hop N은 `answer`여야 한다**(모델 호출은 최대 N+1회). 다음 홉이 마지막 허용 홉이면 하네스가 관측 뒤에

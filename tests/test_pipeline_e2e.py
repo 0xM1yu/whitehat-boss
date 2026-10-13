@@ -3329,6 +3329,24 @@ def test_gate_grade_does_not_regress_between_stages(tmp_path: Path) -> None:
     assert [grade for _, grade in seen] == sorted(grade for _, grade in seen)
 
 
+def test_cited_by_model_rides_only_on_the_stage_6_gate_eval(tmp_path: Path) -> None:
+    """이슈 #554 - 모델 인용 수는 6단계 `gate_eval`에만 있고 7·8단계 행에는 키가 없다.
+
+    7·8단계의 `evidence_refs`에는 6단계 하네스 부착분이 섞여 있어 「모델이」가 거짓이 된다.
+    """
+    _, trace_path = _run(tmp_path)
+    events = _events(trace_path)
+
+    at_gate = _of(events, "gate_eval", stage=Stage.GATE)
+    assert at_gate, "전제 - 6단계 판정이 있다"
+    assert all(isinstance(e["data"]["cited_by_model"], int) for e in at_gate)
+    later = [
+        e for stage in (Stage.CRITIC, Stage.VALIDATE) for e in _of(events, "gate_eval", stage=stage)
+    ]
+    assert later, "전제 - 7·8단계 판정이 있다"
+    assert all("cited_by_model" not in e["data"] for e in later)
+
+
 def test_stage_removal_rates_are_derivable(tmp_path: Path) -> None:
     """계획 §6 대응표 1~4행. 분모가 0이면 산출 자체가 불가능하므로 그것부터 본다."""
     _, trace_path = _run(tmp_path)
