@@ -1548,7 +1548,9 @@ def _pov_targets(
 
     **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
     ① **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
-    반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류(`need_evidence`, F-7)는
+    반박은 `need_evidence`로 정규화돼 보류(F-7)와 같은 길을 가므로 **든다** - ⏵ 2026-10-13, ADR
+    0015:
+    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는
     **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
     5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
     보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
@@ -1796,8 +1798,10 @@ def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
     왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
-    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는
-    K>0에서 풀에 들므로(PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
+    모델이 낸 `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된
+    반박**(ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. 보류는 K>0에서 풀에 들므로
+    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
     정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
 
     ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
@@ -1832,7 +1836,8 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
     )
     return (
         f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
-        f" · 보류(파서 폴백 포함) {hold} · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest}"
+        f" · 보류(파서 폴백·정규화된 반박 포함) {hold} · 판정 실패 {failed}"
+        f" · Critic 미경유 {unjudged}{rest}"
         f" · pov_attempt_top_n {limit}. "
         f"8단계 PoV는 한 건도 시도되지 않았다({why})"
     )

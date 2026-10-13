@@ -414,8 +414,11 @@ def _build_decision(
     """7단계 Critic 출력.
 
     call graph 근거가 있으면 근거를 붙여 `uphold`, 없으면 **근거 없는 `rebut`**을 낸다.
-    후자는 agent-contracts.md §2.3대로 오케스트레이터가 `uphold`로 정규화하고 지표에
+    후자는 agent-contracts.md §2.3대로 오케스트레이터가 `need_evidence`로 정규화하고 지표에
     남긴다 — 그 경로가 실제로 실행되지 않으면 구현되어 있는지 알 수 없다.
+
+    ⏵ 2026-10-13 (ADR 0015) — 근거 없는 `rebut`은 `rebuttal_axis=[]`다. 축이 `RebuttalAxis` 안의
+    값이면 그것이 근거라 `evidence_refs`가 비어도 근거 있는 반박이 되고 정규화 경로를 못 탄다.
     """
     graph_refs = [
         ref.evidence_id for ref in context.evidence if ref.kind is EvidenceKind.GRAPH and ref.ok
@@ -426,8 +429,10 @@ def _build_decision(
         run_id=context.run_id,
         finding_id=_require_id(context, "finding_id"),
         verdict=Verdict.UPHOLD if grounded else Verdict.REBUT,
-        rebuttal_axis=["guard", "reachability"],
-        # 근거 없는 rebut은 rationale만 있고 evidence_refs가 비어 정규화 대상이 된다.
+        # `guard`·`reachability`는 `RebuttalAxis`의 값이다. 근거 없는 rebut은 축도 비어 있어야
+        # `Decision.is_grounded`가 거짓이고 정규화 대상이 된다(ADR 0015).
+        rebuttal_axis=["guard", "reachability"] if grounded else [],
+        # 근거 없는 rebut은 rationale만 있고 axis·evidence_refs가 비어 정규화 대상이 된다.
         rationale=(
             "상위 호출부에 길이 상한이 없음(call graph 확인)" if grounded else "도달 불가능해 보임"
         ),
