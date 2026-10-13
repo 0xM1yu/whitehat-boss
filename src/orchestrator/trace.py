@@ -646,7 +646,8 @@ class EventKind(StrEnum):
     # 「제거율 — Tool」의 분자(`repro_failed`)에도 분모에도 안 든다.
     # `reason`: `poc_runs_in_the_pov_loop`(신호가 `poc`를 가리키는데 이 노드는 `poc`를
     # 안 돌린다) · `tool_produced_no_measurement`(`build`·`asan`이 `ok=False` - 컴파일·링크가
-    # 안 됐거나 대상이 안 떴다. 원인 Evidence의 `exit_code`·`error`를 싣는다).
+    # 안 됐거나, 대상이 안 떴거나, 떴다가 시간 초과로 끊겼다(`124`). 원인 Evidence의
+    # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
 

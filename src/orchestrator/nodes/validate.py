@@ -11,7 +11,8 @@
 먹인다)이고, 이 노드는 `poc`를 **돌리지 않는다**(입력 바이트를 실을 길이 없어 항상 거절당했다).
 
 **측정하지 못한 것을 재현 실패로 세지 않는다.** 도구 층이 측정을 못 낸 건(`build`·`asan`이
-`ok=False`이고 종료 코드가 있다 - 컴파일·링크가 안 됐거나 대상이 안 떴다)과 `poc` 신호는 F-11로
+`ok=False`이고 종료 코드가 있다 - 컴파일·링크가 안 됐거나, 대상이 안 떴거나, 떴다가 시간
+초과로 끊겼다(`124`))과 `poc` 신호는 F-11로
 내리지 않고 `validated`에 그대로 둔다(`repro_not_measured` 이벤트 + Evidence는 `ok=False`로 남는다).
 F-11을 쓰면 「도구 검증 제거율」(`trace.py`)의 분자가 하네스 한계로 부풀고 보고서에는 Critic을
 통과한 Finding이 재현에 실패한 것으로 찍힌다. **PoV 풀에는 영향이 없다** - 러너가 8단계 진입 시점의
@@ -191,7 +192,10 @@ def _not_measured(tool: str | None, produced: list[Evidence]) -> tuple[str, Evid
     - 도구 층이 측정을 못 낸 Evidence: `ok=False`이고 `exit_code`가 있다.
       `container_tools.judge()`의
       계약이 그것이다 - `build`·`asan`의 `ok=False`는 컴파일·링크가 안 됐거나 대상이 안 떴다는
-      뜻이고, 대상이 떠서 비-0으로 끝난 것은 `ok=True`다(크래시는 신호). **종료 코드가 `None`인
+      뜻이고, 대상이 떠서 비-0으로 끝난 것은 `ok=True`다(크래시는 신호). ⚠ **`124`는 그 둘이
+      아니다** - 시간 초과는 `_execute`가 `ok=False`·`exit_code=124`로 적으므로 대상이 떴다가
+      끊긴 경우도 여기로 온다(`TIMEOUT_EXIT` · run 경고가 종료 코드별로 가른다).
+      **종료 코드가 `None`인
       것은 안 센다** - 모델이 쓴 `steps`가 예약 자리표와 같아 우리가 요청을 안 보낸 `_refuse`이고,
       그것은 명세의 실패라 기존대로 F-11이다.
     """

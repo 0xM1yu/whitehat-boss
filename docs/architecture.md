@@ -64,7 +64,8 @@ graph LR
 > 우리 clang으로 대상에 직접 컴파일한다([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)가 대상 빌드를 우리가 짓지
 > 않기로 했다). CyberGym 번들은 우리 clang으로 컴파일되지 않으므로(#507) **그 번들에서 이 경로는 E4를 못 낸다.**
 > 서빙 점수 경로는 PoV 루프의 `poc`(과제 이미지에 PoC를 먹인다)이고, `validate.run`은 `poc` 신호를 **돌리지 않는다.** 컴파일·링크가
-> 안 되거나 대상이 안 뜬 건과 `poc` 신호는 재현 실패(F-11)가 아니라 **미시도**로 `validated`에 두고 trace
+> 안 되거나, 대상이 안 뜨거나, 떴다가 시간 초과로 끊긴(`124`) 건과 `poc` 신호는 재현 실패(F-11)가
+> 아니라 **미시도**로 `validated`에 두고 trace
 > `repro_not_measured`를 남긴다. 고쳤다는 뜻이 아니다 - 이 경로의 E4 도달성은 그대로 미해결이다(D92).
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -141,8 +142,11 @@ graph LR
 > [D12](open-questions/D/D12.md) 선택지 (a)). 2단계가 오늘 돌리는 도구는 `SIGNAL_TOOLS` = semgrep ·
 > clang-tidy · build 셋이다(`src/orchestrator/nodes/signals.py` — 러너 `_plan_targets`가 artifact마다
 > 부른다). build 신호는 Auditor가 `repro_spec`을 쓸 수 있는지를 가른다 — 빌드되는지 모르는 채 지어낸
-> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). 8단계는 재현 명세의 `steps`로 다시 빌드한 뒤
-> sanitizer를 돌린다(`nodes/validate.py`의 `BUILD_TOOL` · ⏵ 2026-10-13 `poc` 신호는 안 돌린다 - 위 §3 표 뒤 주석). 위 2단계 칸의 나머지(sanitizer log·stack
+> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). ⏵ **2026-10-13 정정 — 8단계는 `steps`로
+> 빌드하지 않는다.** `container_tools.plan`이 노드 argv(`[tool, *spec.steps]`)를 로그 헤더로만
+> 남기고 `build`는 `clang -c`, `asan`은 `clang -o`로 소스를 직접 컴파일·링크한다(`plan` docstring
+> *"노드가 만든 argv는 자리표시자다"*). 돌리는 것은 `build`와 sanitizer뿐이고 `poc` 신호는 안
+> 돌린다(`nodes/validate.py`의 `BUILD_TOOL` · 위 §3 표 뒤 주석). 위 2단계 칸의 나머지(sanitizer log·stack
 > trace 파싱, fuzz coverage, diff 분석)는 책임 정의이고, 오늘 2단계에서 그 일을 하는 도구는 없다.
 
 **Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. ~~새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.~~ (⏵ 2026-09-25 — ADR 0012 결정 6으로 폐기 — 아래 ⚠)
