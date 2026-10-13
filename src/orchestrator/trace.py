@@ -66,6 +66,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `0`은 「쟀더니 0건」이다. 7·8단계 `gate_eval`에는 이 키가 **없다** - 그 시점의 목록에는 6단계
 부착분이 섞여 있어 「모델이」라는 이름이 거짓이 되기 때문이다. 같은 Finding의 모델 인용 수는
 `subject_id`로 6단계 행에서 읽는다. 이 키가 생기기 전 run에는 6단계 행에도 없다.
+**모집단은 6단계 행이 있는 Finding이다.** 서빙(`per_stage`)에서 5단계 도중 예산이 소진되면
+`BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
+6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
+전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
 ⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
