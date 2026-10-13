@@ -768,6 +768,7 @@ class Thresholds(HarnessModel):
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
     # trace `scout_slice_trimmed`가 남는다. 프롬프트 판은 안 바꾼다(Scout v3 prefix가 SOURCE를
     # 줄이 빠진 슬라이스로 서술한다). 기본은 끈다 — 켜면 같은 슬라이스 집합의 Scout 입력이 달라진다.
+    # `input: slice` 프롬프트의 슬라이스 타깃에서만 돈다(`input: source`는 함수 본문이라 — #529).
     scout_slice_trim: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`가 어디까지 믿을 입력인지를 `auditor_source` 이벤트의 `gate_reasons`로
     # 남기는가(`orchestrator/source_gate.py` — 슬라이서가 낸 절단·경계와 `SOURCE` 조립이 본 것에서

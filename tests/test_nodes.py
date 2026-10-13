@@ -76,6 +76,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 from src.tokens import estimate_tokens
+from tests.conftest import declare_scout_input
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -2960,7 +2961,9 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     }
 
 
-def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
+def test_a_slice_target_sends_its_render_and_slice_criterion(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """슬라이스 타깃이면 `SOURCE`가 렌더이고 FACTS에 `slice_criterion`이 붙는다(ADR 0012 결정 1).
 
     `read_source`(심볼 본문)를 부르면 entry 한 줄만 간다 — 줄번호도 배너도 없이.
@@ -2993,6 +2996,139 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
         "degraded": False,
     }
     assert candidate.slice_id == "slice_0001"
+
+
+@pytest.fixture
+def scout_declares_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`input: slice`를 선언한 Scout — 슬라이스 렌더를 `SOURCE`로 읽는 쪽(v3)."""
+    declare_scout_input(monkeypatch, "slice")
+
+
+_GUTTER_LINE = re.compile(r"^\s*\d+[|:]", re.MULTILINE)
+_PARSE_HEADER = Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6)
+
+
+def _source_declared_slice_ref(ctx: RunContext, monkeypatch: pytest.MonkeyPatch) -> SliceRef:
+    """`input: source` 선언 + entry 한 줄(parser.c:5, `parse_header` 3~6 안)짜리 슬라이스 타깃.
+
+    `read_slice`는 부르면 터진다 — 선언이 source면 렌더를 읽지도 않는다는 핀이다."""
+    declare_scout_input(monkeypatch, "source")
+
+    def _must_not_read(slice_id: str) -> str:
+        raise AssertionError(f"input: source인데 슬라이스 렌더({slice_id})를 읽었다")
+
+    ctx.read_slice = _must_not_read
+    ctx.symbols_for = lambda file: [_PARSE_HEADER] if file == "parser.c" else None
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+
+def _slice_scout_session(ctx: RunContext, ref: SliceRef) -> scout.ScoutSession:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+    return scout.open_session(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+
+def _last_scout_facts(ctx: RunContext) -> dict:
+    body = ctx.models.last_for(Role.SCOUT).body
+    return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+
+
+def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#529 — 입력 모양을 고르는 기준은 슬라이스 유무가 아니라 **프롬프트 선언**(`meta.input`)이다.
+
+    v4 prefix는 `SOURCE`를 「함수 본문, 줄번호도 파일 배너도 없고 첫 줄이 `line_start`」라 단언한다.
+    entry는 한 줄이라 `read_source(entry)`가 아니라 entry를 품는 함수가 가야 한다.
+    """
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    body_lines = VULNERABLE_C.splitlines()[2:6]
+    assert facts["source"].splitlines() == body_lines  # entry 한 줄(5)이 아니라 함수(3~6)
+    assert len(facts["source"].splitlines()) > 1
+    assert not _GUTTER_LINE.search(facts["source"]) and "=====" not in facts["source"]
+    first_line = VULNERABLE_C.splitlines()[facts["target"]["line_start"] - 1]
+    assert facts["source"].splitlines()[0] == first_line
+    assert facts["target"]["line_start"] == 3  # 첫 줄 = FACTS.target.line_start (prefix의 단언)
+    # 본문의 「대상」 표기도 같은 범위다 — `describe_target(capsule.target)`이면 entry 한 줄
+    # (「줄 5-5」)이 가서 같은 프롬프트의 FACTS와 어긋난다.
+    body = ctx.models.last_for(Role.SCOUT).body
+    assert "`parser.c` 의 `parse_header` (줄 3-6)" in body and "(줄 5-5)" not in body
+    assert "slice_criterion" not in facts  # v4 산문이 그 키를 서술하지 않는다
+    assert session.slice is ref
+    # resolver의 `visible` — 모델이 본 줄은 함수 3~6이지 SliceRef.lines가 아니다.
+    assert session.shown_lines == tuple(("parser.c", n) for n in range(3, 7))
+
+
+def test_a_source_declaration_without_an_enclosing_symbol_reads_the_entry_window(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """심볼을 못 찾으면 **Auditor와 같은 창**(`entry_scope.ENTRY_WINDOW_LINES`)이다 — 슬라이스
+    렌더로 조용히 되돌아가지도(`read_slice`가 터진다), entry 한 줄로 가지도 않는다."""
+    from src.orchestrator import entry_scope
+
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    ctx.symbols_for = lambda _file: []
+    monkeypatch.setattr(entry_scope, "ENTRY_WINDOW_LINES", 1)
+
+    _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"].splitlines() == VULNERABLE_C.splitlines()[3:6]  # entry 5 ± 1 = 4~6
+    assert facts["target"]["line_start"] == 4 and facts["target"]["line_end"] == 6
+    # 창 폴백은 심볼이 없다 — 노드가 `capsule.target`(슬라이스가 든 심볼)의 이름을 채운다. 그 복사를
+    # 지우면 여기서 죽는다(`_ask_model`의 `if target.symbol is None` 두 줄). FACTS symbol 자체의
+    # 출처는 #633이 따로 든다 — 이 핀은 **창 폴백**만 본다.
+    assert facts["target"]["symbol"] == "parse_header"
+
+
+def test_a_slice_declaration_keeps_the_slice_render_and_criterion(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`input: slice`는 지금 그대로 — 렌더가 `SOURCE`이고 `slice_criterion`이 붙는다."""
+    declare_scout_input(monkeypatch, "slice")
+    render = "/* ===== parser.c ===== */\n4|     char buf[64];\n5|     memcpy(buf, src, len);"
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    ctx.symbols_for = lambda _file: [_PARSE_HEADER]  # 심볼이 있어도 선언이 slice면 안 쓴다
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == render
+    assert "slice_criterion" in facts
+    assert session.shown_lines is None
+
+
+def test_without_a_slice_the_declaration_does_not_matter(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`slice is None`이면 선언과 무관하게 그대로다 — 타깃 심볼 본문, `slice_criterion` 없음."""
+    declare_scout_input(monkeypatch, "slice")
+    ctx.read_slice = lambda slice_id: pytest.fail(f"슬라이스가 없는데 렌더({slice_id})를 읽었다")
+
+    _triage(ctx, VULN_TARGET)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == ctx.read_source(VULN_TARGET)
+    assert "slice_criterion" not in facts
 
 
 def _big_slice(ctx: RunContext, *, trim: int, context_limit: int | None = None) -> SliceRef:
@@ -3038,6 +3174,7 @@ def _gutter_lines(source: str) -> list[int]:
 
 def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     ctx: RunContext,
+    scout_declares_slice: None,
 ) -> None:
     """#353 (b) — 렌더가 창을 넘으면 entry에 가까운 줄부터 남겨 창 안에 든다.
 
@@ -3071,7 +3208,7 @@ def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     assert facts["source"] in prompt.body.split("```json")[0]  # SOURCE도 같은 렌더
 
 
-def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
+def test_slice_trim_off_sends_the_whole_render(ctx: RunContext, scout_declares_slice: None) -> None:
     """기본(0)이면 지금처럼 통째로 — 넘어도 줄이지 않고 이벤트도 없다(크기 거절은 서빙 몫)."""
     ref = _big_slice(ctx, trim=0)
 
@@ -3081,7 +3218,7 @@ def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
+def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext, scout_declares_slice: None) -> None:
     """창이 넉넉하면 켜져 있어도 그대로 — 이벤트 부재 = 안 잘림."""
     ref = _big_slice(ctx, trim=1, context_limit=400_000)
 
@@ -3091,7 +3228,9 @@ def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(ctx: RunContext) -> None:
+def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """프롬프트 고정분만으로 창을 넘으면 entry 한 줄로 보내고 `fit=false` — 크기 거절은 서빙 몫."""
     output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
     ref = _big_slice(ctx, trim=1, context_limit=output_max + 600)
@@ -3169,7 +3308,9 @@ _PROV_K5 = {
 }
 
 
-def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: RunContext) -> None:
+def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 HIGH-2/M-4 — anchor > dependency > context 순으로 남기고, 몫은 정확히 식대로다.
 
     주입 카운터로 몫을 2*K=10 토큰에 고정한다. 남는 다섯은 우선순위 상위 다섯:
@@ -3202,7 +3343,9 @@ def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: Run
     assert 97 not in _gutter_lines(facts["source"])  # 가까운 context보다 먼 anchor가 우선
 
 
-def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> None:
+def test_trim_breaks_distance_ties_toward_the_earlier_line(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 같은 순위·같은 거리면 렌더 순서(앞 줄)를 남긴다. 반대로 깨면 101이 남는다.
 
     99·101 둘 다 entry 100에서 거리 1, provenance 없음(같은 순위). 몫 2*1=2라 하나만 남는다."""
@@ -3219,7 +3362,9 @@ def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> N
     assert _gutter_lines(facts["source"]) == [99]  # 앞 줄(작은 i)을 남긴다
 
 
-def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> None:
+def test_trim_keeps_a_render_that_exactly_fills_the_budget(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 전체 크기가 몫과 **같으면** 자르지 않는다(`<=`). `<`로 바꾸면 자른다."""
     ref = _counter_slice(
         ctx, parser_lines=[10, 11], util_lines=[], provenance={}, entry_line=10, keep_k=2
@@ -3232,7 +3377,9 @@ def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> N
     assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
 
 
-def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
+def test_trim_visible_reflects_only_the_kept_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-2 — 잘린 좌석의 세션은 **모델이 본 줄**만 싣고, resolver `visible`이 그것을 쓴다.
 
     자르기 전 `SliceRef.lines` 전체를 쓰면 모델이 못 본 줄을 "이미 SOURCE에 있다"로 답해 버린다."""
@@ -3265,7 +3412,9 @@ def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
     assert runner._ne_visible(ref, None)["parser.c"] == frozenset(range(95, 106))
 
 
-def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: RunContext) -> None:
+def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 손 f-string이 아니라 `adapters.slices.render()` 출력으로 라운드트립한다.
 
     듬성한 줄(5·8·20)이라 `_parse_render`가 건너뛴 번호를 그대로 들어야 한다."""
