@@ -5298,6 +5298,8 @@ def test_the_symbols_actually_analysed_are_named_in_the_trace(tmp_path: Path) ->
     싣고, 이름이 남는 곳은 `target_skipped`뿐인데 그 run은 `deferred: 0`이라 0건이었다.
     `Candidate.location`도 못 메운다 — 그것은 모델이 쓴 값이고 그 run에서는 `symbol`이 전부
     `null`이었다. 인덱서는 이름을 알고 있는데 그 값이 실행 기록으로 안 건너왔다.
+    ⏵ 2026-10-14 (#633) — 「모델이 쓴 값」은 그 run의 서술이다. 지금은 모델이 `symbol`을 안
+    쓰면 Scout가 후보 줄을 품는 함수를 찍는다(`nodes/scout._stamp_target_symbol`).
     """
     _, trace_path = _run(tmp_path, name="planned", before=_with_index())
 

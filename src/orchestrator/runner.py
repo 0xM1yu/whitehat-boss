@@ -1192,8 +1192,9 @@ def run_pipeline(
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
-    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
-    # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
+    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이고
+    # (⏵ 2026-10-13 — `null`이면 하네스가 후보 줄을 품는 함수로 채운다, 이슈 #633) 그 도장이
+    # 못 도는 경우가 있어 여전히 `null`일 수 있다 — dedupe 키에는 파일만 쓴다.
     by_cand = {c.candidate_id: c.location for c in state.candidates}
     files = {
         f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
