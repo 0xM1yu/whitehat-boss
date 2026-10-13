@@ -359,6 +359,18 @@ class RunRecord(UtcModel):
     # `model_call.response_refs` 키를 바꾸므로 박제한다. `None` = 안 켰다(이 필드 이전의 manifest도
     # 같다 - `slicer`와 같은 관용구라 하위호환이 안 깨진다).
     keep_responses: list[str] | None = None
+    # 6단계 게이트가 Evidence 위치와 후보 위치를 **겹쳐 본 횟수** (이슈 #563 선택지 4) -
+    # `{gated, static_ok, location_ok}`. 셋 다 `gate_eval`(stage=6) 행에서 센 정수다(비율은
+    # 안 싣는다). `gated`는 술어까지 간 행이다 - 관측이 비어 `p0`으로 단락한 행은
+    # `location_ok` 키가 없어 빠진다.
+    # `static_ok > location_ok`이면 「신호는 있었는데 후보 줄과 안 겹쳤다」(#563의 모양)다.
+    # ⚠ `location_ok` 거짓은 「안 겹쳤다」·「위치를 실은 Evidence가 없다」·「후보 위치가
+    # 없다」를 못 가른다. 7·8단계 행은 세지 않는다 - 그 단계는 후보 위치를 안 넘겨
+    # `location_ok`가 구조상 거짓이다.
+    # `None` = 6단계 `gate_eval` 행이 0건이다(게이트가 안 돌았다 · 이 필드 이전의 manifest도
+    # 같다). 0건이 아니라 「안 쟀다」다 - `slicer`·`oracle`과 같은 관용구라 옛 manifest가 그대로
+    # 로드된다.
+    location_overlap: dict[str, int] | None = None
     # trace에서 run 끝에 센 **분모 전용** 집계 셋(#613·#618, 셋째는 #619 선택지 (d)) — 하네스는
     # 동작을 안 바꾸고 값(상한 등)은 실험팀이 정한다. `None`은 **그 종류의 trace 행이 하나도
     # 없었다**(안 쟀다 - 0이 아니다, CLAUDE.md §0)이고 이 필드 이전의 manifest도 같다(`slicer`와

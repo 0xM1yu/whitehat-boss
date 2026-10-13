@@ -11,6 +11,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | --- | --- | --- |
 | 제거율 — Scout | `transition`(stage=4) | `1 − count(scout_promoted) / count(생성)` |
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
+| 정적 신호 위치 겹침 (#563) | `gate_eval`(stage=6) | `count(location_ok)`·`count(static_ok)`를
+`location_ok` 키가 있는 행 수로 센다 — **횟수이고 비율이 아니다**. 6단계만(7·8단계는 후보 위치를
+안 넘겨 `location_ok`가 구조상 거짓). `RunRecord.location_overlap`이 같은 세 수를 싣는다 |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
@@ -20,8 +23,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
-| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage. **루프
-꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 실패하면 0건) — 꺼짐은 `model_call.schema`가
+| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage
+(⏵ 2026-10-13 크기 거절당한 홉도 1건: `stop_reason=context_overflow` · action 없음, #514). **루프
+꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 파싱 실패·예산 소진으로 죽어도 0건 -
+루프의 hop 0 크기 거절만 `context_overflow` 1건을 낸다) — 꺼짐은 `model_call.schema`가
 `Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
@@ -210,6 +215,18 @@ class EventKind(StrEnum):
     # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # ⏵ 2026-10-13 (#573) `harness_note`(하네스가 만든 관측 머리줄 — 지금은 `poc` `exit=1` 모호성)도
+    # `Evidence.harness_note`가 있을 때만 실린다. **키 부재 = 노트 없음.**
+    # ⏵ 2026-10-13(#232) — `crashed`·`crash_banner`는 도구가 **크래시 관측을 쟀을 때만** 실린다
+    # (`Evidence.crashed`가 `None`이 아닐 때 — 컨테이너 러너의 asan·gdb·poc 중 대상이 뜬 호출).
+    # `crashed`는 `true`(로그에 sanitizer 배너나 gdb 신호 정지가 있었다) 또는 `false`(로그를 읽었고
+    # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
+    # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
+    # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 로그 대조가 재생 14건뿐이라
+    # 미검증이다.
+    # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
+    # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
@@ -439,6 +456,44 @@ class EventKind(StrEnum):
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
     CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
+    # Critic 요청에 **Auditor 도구 루프의 홉 관측**을 실었다는 기록과 그 크기의 계산값 (#600 H2ⓐ).
+    # 내는 곳은 `nodes/critic._record_hop_observations`이고 홉 관측이 1개 이상인 Critic 호출마다
+    # 1건, 모델 호출 **앞**에서다. **이벤트 부재 = 관측을 안 실었다**(홉 0 · content-aware가 아닌
+    # 판). `subject_id`는 Finding이다. 싣는 값: `hops`(Critic 사본 수 - 돈 홉 수가 아니다,
+    # 가림에 실패한 홉은 빠진다) ·
+    # `added_chars`(EVIDENCE에 더한 절의 글자, 구분 줄바꿈 포함 · FACTS의 `auditor_hops` 한 줄은
+    # 안 셌다) · `prompt_chars`(prefix+body) · `est_input_tokens`(= `prompt_chars` ÷ 글자/토큰
+    # 최악 비 1.22, 올림) · `input_share_tokens`(= 그 좌석 모델 `context_limit` − 역할
+    # `output_max`) · `over_input_share`(추정이 몫을 넘음) · `over_without_observations`(관측 절을
+    # 뺀 프롬프트도 넘음 — 참이면 원인이 관측이 아니다) · `window_checked`(Fake 좌석은 창이 없어
+    # false이고 그때는 추정·몫·판정 키가 **없다**). ⚠ **전부 계산값이다**(서버가 센
+    # `input_tokens`가 아니다 — 그 값은 같은 호출의 `model_call`에 있다). 그 비 1.22는 Auditor
+    # 좌석의 최악이다. Critic 좌석의 비는 홉 관측 **없는** 요청에서 3.10~4.04로 쟀고
+    # (run `run_20261011_0001`의 Critic 호출 여섯 — `nodes/critic._WORST_CHARS_PER_TOKEN` 주석),
+    # **홉 관측을 실은 요청에서는 미실측**이다. `over_input_share=true`는 「최악 비에서 넘을 수
+    # 있다」이다. **하네스는 자르지 않는다** — 넘어도 절은 그대로 나가고 서버가 크기로 거절하면
+    # `critic_failed`가 남는다. `over_input_share`가 참인 건수는 run 경고(`warnings`)로도 오른다.
+    # ⏵ 2026-10-13 - **크기 거절 폴백.** 관측을 실은 요청이 서버에서 400(컨텍스트 초과)·413으로
+    # 거절되면 `critic.run`이 절을 통째로 빼고 한 번 다시 묻고(홉 0과 같은 요청), 그때 같은
+    # 종류의 이벤트를 하나 더 낸다: `hops`(뺀 관측 수) · `observations_dropped: true` ·
+    # `rejected_status`(거절 상태 코드). 이 이벤트에는 추정·몫 키가 없다. 부재 = 폴백이 안 났다.
+    # 거절은 서버가 잰 사실이다(위 계산값과 다르다). run 경고가 그 건수를 센다.
+    CRITIC_HOP_OBSERVATIONS = "critic_hop_observations"
+    # Critic이 **게이트 입력에 없는** Evidence ID를 `Decision.evidence_refs`로 인용한 사건.
+    # 내는 곳은 `nodes/critic._record_unknown_refs`이고 그런 인용이 1건 이상인 호출마다 1건,
+    # 판정을 **바꾸지 않고** 기록만 한다(거르는 것은 설계 판단이라 안 한다). 부재 = 인용이
+    # 전부 게이트 입력 안이었다(또는 인용이 없었다).
+    # ⚠ **`gate.evidences_for`는 이 인용을 안 본다** — 그 함수는 **Finding**의 `evidence_refs`만
+    # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
+    # `bool(evidence_refs)`라 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
+    # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
+    # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).
+    # 싣는 값: `decision_id` · `cited`(인용 수) · `unknown`(그중 게이트 입력에 없는 수) ·
+    # `all_unknown`(인용이 전부 그런 것) · `verdict`(`Decision.verdict` — 자유 문자열을 표준값으로
+    # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
+    # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
+    # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
@@ -450,7 +505,8 @@ class EventKind(StrEnum):
     # 못 찾음) (#315).
     SCOUT_HOP = "scout_hop"
     # 홉 하나의 Auditor(5단계) 도구 홉 루프 기록 (이슈 #419 — 모델-주도 루프). 내는 곳은
-    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나. `hop`이 조인
+    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나(⏵ 2026-10-13
+    # 크기 거절당한 홉도 하나 - 아래 `context_overflow`, #514). `hop`이 조인
     # 키다(`model_call`의 (subject_id, role, hop) 사슬 — `context.py`). ⚠ **`subject_id`는
     # 후보(candidate)다** — `probe`/`lookup` 홉에는 Finding이 아직 없다(Finding은 `answer`
     # 홉에서만 나온다).
@@ -483,10 +539,20 @@ class EventKind(StrEnum):
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
     #   게이트에 안 닿는 근거를 인용했다」는 사실이다. ⏵ 2026-10-08 — 6단계가 타깃 관측분을 직접
     #   붙이므로(이슈 #552) 이 값은 **등급과 무관한 순수 인용 지표**다.
-    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
+    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`·
+    #   `context_overflow`). ⏵ 2026-10-13(#514) 마지막은 **모델 호출 자체가 크기 거절당한** 홉이라
+    #   응답이 없다: `action`·`input_tokens`·`output_tokens`가 없고 `error`·`error_detail`이 든다.
+    #   예외는 그대로 올라가 러너가 그 후보만 버린다(`target_skipped`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
+    # - ⏵ 2026-10-13 (#600 H2ⓐ) `observation_sanitize_failed` — `lookup` 홉의 Critic용 사본을 못
+    #   만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과
+    #   어긋났다). 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고
+    #   run은 안 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가
+    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다. run 경고
+    #   (`runner._critic_hop_observations_warning`)가 이 키가 든 홉 수를 센다.
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
-    # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
+    # **성공한 뒤** 나가므로(크기 거절만 예외다 - 위 `context_overflow`), 켠 run도 첫 호출이
+    # 실패하면(파싱 실패·예산 소진) 0건이다.
     # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
     # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
     # ⏵ 2026-10-06 — 루프 봉투가 둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이
@@ -494,6 +560,15 @@ class EventKind(StrEnum):
     # v8·v9의 이름이다.
     # ⏵ 2026-10-09 — v11은 셋째 봉투 `AuditorProcedureNullableCweAction`이다(이슈 #525).
     # ⏵ 2026-10-10 — v12는 넷째 봉투 `AuditorProcedureAuditAlwaysAction`이다(이슈 #578).
+    # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` — 쉼표로 이은 문자열)를
+    # 싣는다: 2단계 `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(`nodes/signals.compile_note`). **키 부재 = 노트 없음**(실패한 컴파일 Evidence가
+    # 없었거나 한 방 판). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `probe` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노트가 도구를
+    # 거절하지 않아 모델이 골라도 도구는 돈다.
+    # ⏵ 2026-10-13 — v15는 다섯째 봉투 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 —
+    # `spec` 설명만 다르다).
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
@@ -519,6 +594,13 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 (#619) — **이미 돌린 도구를 다시 요청한 `inspect` 홉은 도구를 안 돌린다**:
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
+    # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"`)를 싣는다: 2단계
+    # `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(코드를 읽는 판 v3 이상만 — `fuzz_*`와 같은 경계). **키 부재 = 노트 없음.** hop0
+    # 파싱 실패 뒤 다시 여는 호출(`hop` 1)의 본문에도 같은 노트가 실리지만 키는 실패한 hop 0
+    # 이벤트에만 있다(`fuzz_*`와 같다). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `inspect` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율이다.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대
