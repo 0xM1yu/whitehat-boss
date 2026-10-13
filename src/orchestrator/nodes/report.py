@@ -113,6 +113,9 @@ class Report:
     # 6단계 게이트의 위치 겹침 횟수 `{gated, static_ok, location_ok}` (이슈 #563) - 러너가
     # `gate_eval`(stage=6) 행에서 센 값을 그대로 받는다(`RunRecord.location_overlap`과 같은 값).
     # 비면 줄을 안 낸다 - 게이트가 안 돈 run에 「0/0」을 찍으면 측정한 0으로 읽힌다.
+    # `gated`가 0이면(6단계 행은 있으나 전부 `p0` 지름길) 횟수가 아니라 **미측정**으로 찍는다 -
+    # 같은 이유다. 줄을 아예 빼지 않는 것은 「안 쟀다」가 리포트에서 사라지면 읽는 쪽이
+    # 게이트가 안 돈 run과 구별할 수 없기 때문이다. 같은 말을 `docs/evaluation.md` §5.1이 한다.
     location_overlap: dict[str, int] = field(default_factory=dict)
 
     def _grade_of(self, finding: Finding) -> str | None:
@@ -133,12 +136,20 @@ class Report:
             n = self.location_overlap
             # 비율이 아니라 횟수다. `location_ok` 거짓은 「안 겹쳤다」와 「위치가 없다」를 못 가른다
             # (`RunRecord.location_overlap` 주석) - 그래서 `static_ok`를 나란히 적는다.
-            lines += [
-                f"정적 신호 위치 겹침(6단계): {n['gated']}건 중 후보 줄과 겹침 "
-                f"{n['location_ok']}건 · 정적 신호 있음 {n['static_ok']}건 "
-                "(`location_ok` 거짓은 겹치지 않음과 위치 없음을 가르지 않는다)",
-                "",
-            ]
+            if n["gated"] == 0:
+                # 분모가 0이라 「0건 중 … 0건」은 **잰 0**으로 읽힌다(CLAUDE.md §0).
+                lines += [
+                    "정적 신호 위치 겹침(6단계): 미측정 — 6단계 후보가 전부 `p0`에서 "
+                    "단락했다(잰 0이 아니다)",
+                    "",
+                ]
+            else:
+                lines += [
+                    f"정적 신호 위치 겹침(6단계): {n['gated']}건 중 후보 줄과 겹침 "
+                    f"{n['location_ok']}건 · 정적 신호 있음 {n['static_ok']}건 "
+                    "(`location_ok` 거짓은 겹치지 않음과 위치 없음을 가르지 않는다)",
+                    "",
+                ]
         if self.duplicates:
             # 무엇과 합쳤는지는 trace에 건당 1행으로 있다(`merged_into` 필드 주석).
             lines += [
