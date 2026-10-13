@@ -914,6 +914,35 @@ def _legacy_db(path: Path, payload: str) -> None:
     conn.close()
 
 
+def test_the_version_history_and_the_error_hint_name_the_same_issues() -> None:
+    """판 이력(모듈 docstring 불릿)과 오류 힌트(`_VERSION_INTRODUCED_BY`)가 **같은 이슈 집합**을
+    든다.
+
+    ⏵ 2026-10-14 (적대적 리뷰 HIGH) — **이 짝이 순차 머지에서 조용히 깎인다.** 불릿은 서로 다른
+    줄이라 git가 합집합으로 붙여 주는데, `_VERSION_INTRODUCED_BY`의 값은 **단일 문자열 리터럴**
+    이라 판을 올리는 PR마다 충돌하고 한쪽을 받으면 다른 쪽 항목이 사라진다. 실측: 그 값을
+    `{2: ("이슈 #232")}`로 통째로 줄이는 변이가 **902 passed로 통과했다** — 유일한 핀
+    (`test_crash_observation.py`의 `test_the_version_error_names_the_change…`)이
+    `match="#232"`와 힌트 템플릿 문자열만 물어서다.
+
+    여기서 무는 것은 **이슈 번호 집합이 두 자리에서 같다**까지다. 불릿의 산문이 맞는지·필드
+    이름이 맞는지는 안 문다 — 그것은 `_PINNED_KIND_FIELDS`(#594 · PR #645)의 몫이다.
+    """
+    doc = sqlite_store.__doc__ or ""
+    start = doc.index("판 2에 든 것은")
+    end = doc.index("게이트는 **이 코드부터** 돈다", start)
+    bullets = [line for line in doc[start:end].splitlines() if line.startswith("- ")]
+    assert len(bullets) >= 2, f"전제 - 판 2 불릿이 여럿이다: {bullets}"
+
+    in_history = {m for line in bullets for m in re.findall(r"#\d+", line)}
+    in_hint = set(re.findall(r"#\d+", sqlite_store._VERSION_INTRODUCED_BY[2]))
+
+    assert in_history == in_hint, (
+        "판 이력과 오류 힌트가 다른 이슈를 든다 - 머지에서 한쪽이 깎였을 수 있다. "
+        f"이력에만 {sorted(in_history - in_hint)} · 힌트에만 {sorted(in_hint - in_history)}"
+    )
+
+
 def _stamped_db(path: Path, version: int) -> None:
     """판 `version`인 파일 — 지금 코드로 만들고 행 하나를 쓴 뒤 판만 바꾼다."""
     with SqliteStateStore(path) as first:
