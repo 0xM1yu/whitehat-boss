@@ -146,8 +146,12 @@ class ModelGatewayError(RuntimeError):
         # 칸이 `None`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답(`""`)이 아니다.
         # 200이었으나 모양이 계약과 달라 이 예외가 된 시도(`_post`의 「응답 모양이 계약과 다르다」
         # 분기)는 읽을 수 있었던 만큼 아래 셋에 싣고, `complete()`가 그 시도를 `raw_texts`의 마지막
-        # 칸으로 옮긴다. 읽을 `message`가 없던 응답(`choices` 비었음 등)은 셋 다 `None`이라 칸이
-        # 안 생긴다 — 그때만 「응답을 받았는데 원문이 없다」.
+        # 칸으로 옮긴다. `raw_text`·`reasoning`이 **둘 다** `None`이면 칸이 안 생긴다.
+        # ⚠ 그 조건은 「읽을 `message`가 없었다」보다 **넓다** — `message`는 읽혔으나 `content`가
+        # 비문자열이고 추론 키도 없던 응답도 같은 `(None, None)`이라 칸이 없다. 그래서
+        # 「칸이 없다」만으로 `message`를 못 읽었다고 말할 수 없다(2026-10-13 실측:
+        # `usage`가 깨지고 `content: null`인 200이 `raw_texts == ()`로 왔다 —
+        # `tests/test_openai_compat.py`의 「칸 규칙」 핀).
         self.raw_texts = raw_texts
         self.raw_text = raw_text
         self.reasoning = reasoning
