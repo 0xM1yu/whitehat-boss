@@ -475,6 +475,9 @@ class ReasonCode(StrEnum):
     # 반박에는 실패했으나 재현 명세가 없어 validated로 올릴 수 없는 경우 (architecture.md §4 E3).
     REPRO_SPEC_MISSING = "repro_spec_missing"
     # 8단계 Tool Validation
+    # ⏵ 2026-10-13(#232) — 값(`repro_confirmed`)은 trace·지표의 키라 그대로다. **뜻은 「재현이
+    # 확정됐다」가 아니라 「도구가 떴고(`ok=True`) 게이트가 E4를 줬다」**(실행됐고 비-0 — 대용
+    # 지표)다.
     REPRO_CONFIRMED = "repro_confirmed"
     REPRO_FAILED = "repro_failed"
     # 재현엔 성공했으나 게이트 등급이 E4 미만이라 proven으로 올리지 않는다 (F-10b).
