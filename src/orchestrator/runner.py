@@ -121,6 +121,7 @@ from src.interfaces.model_client import (
     ModelSwapError,
     SchemaParseError,
     error_detail,
+    is_size_rejection,
     truncate_detail,
 )
 from src.interfaces.oracle import Oracle
@@ -167,6 +168,7 @@ from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
+    AuditorStopReason,
     CapsuleLevel,
     EvidenceGrade,
     EvidenceKind,
@@ -280,16 +282,11 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만 「이 후보가
-# 크다」다** — 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
-# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다(`_is_size_rejection`).
-#
-# **400은 크기만의 값이 아니다(#296).** vLLM 0.27.1은 요청 모양(본문 검증)·서버 설정
-# (`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이 모르는 `reasoning_effort`, 출력
-# 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
-# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
-# 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
-_CONTEXT_OVERFLOW = "maximum context length"
+# 크기 거절의 판정(`_is_size_rejection`)과 그 문구는 `interfaces.model_client`에 있다 - Auditor
+# 노드가 같은 판정을 써야 하는데 노드는 러너를 import할 수 없다(#514). **413과 컨텍스트 초과 문구가
+# 실린 400만 「이 후보가 크다」다** - 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
+# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다. 크기가 아닌 400(#296)은 `_rejects_every_request`가 받는다.
+_is_size_rejection = is_size_rejection
 
 # 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
 # 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
@@ -350,17 +347,6 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     if exc.generating is True:
         return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
-
-
-def _is_size_rejection(exc: Exception) -> bool:
-    """이 실패가 **이 후보가 크다**인가 — 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
-
-    413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
-    게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
-    """
-    if not isinstance(exc, ModelGatewayError):
-        return False
-    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
 
 
 def _rejects_every_request(exc: Exception) -> bool:
@@ -807,6 +793,13 @@ class _Accumulator:
     # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
     # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
+    # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 관측의
+    # Critic용 사본(Auditor가 홉마다 본 관측에서 모델이 고른 식별자를 가린 것 - 가림에 실패한 홉은
+    # 빠진다. 모델 응답 턴은 없다).
+    # `auditor.run(observations=...)`가 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다.
+    # `finding_sources`와 같은 자리에 두는 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가
+    # 물려받는다(#600 H2ⓐ). 8단계 PoV는 안 읽는다.
+    finding_observations: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -1183,6 +1176,15 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **Critic에 실은 홉 관측이 이 좌석의 입력 몫을 넘을 수 있다는 사실도 같은 자리에 올린다 (#600
+    # H2ⓐ).** 하네스는 그 절을 자르지 않으므로(저자 결정 — 자동 절단 없음) 경고가 없으면 크기 거절
+    # (`critic_failed`)이 나기 전까지 trace에만 있다.
+    hop_obs_warning = _critic_hop_observations_warning(trace)
+    if hop_obs_warning is not None:
+        warnings.append(hop_obs_warning)
+    # **그리고 크기 거절로 버린 후보도 (#514).** 러너가 그 후보를 `_drop`으로 받아 run은 가므로
+    # 조용히 넘어가기 쉽다.
+    warnings.extend(_auditor_overflow_warnings(trace))
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1292,6 +1294,9 @@ def _analyze(
                 missings=state.missings.get(finding.finding_id, ()),
                 # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
                 source=state.finding_sources.get(finding.finding_id),
+                # Auditor가 도구 루프에서 본 관측 — 추론은 안 간다(#600 H2ⓐ · critic.py 모듈
+                # docstring).
+                hop_observations=state.finding_observations.get(finding.finding_id, ()),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
@@ -1540,12 +1545,14 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     아니면 `None`(#617).
 
     홉 이벤트가 1건도 없으면 말할 것이 없다 — 루프가 꺼졌거나, 켰어도 첫 모델 호출이
-    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석). 못 가른다.
+    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석. 크기 거절만
+    예외라 첫 호출이 전부 크기 거절이면 `context_overflow` 홉만 남는데 그것은 `action`이 없는
+    홉이라 아래에서 뺀다 - 도구가 안 돈 것이 아니라 모델이 한 번도 못 답한 것이다). 못 가른다.
 
     `stop_reason`이 달린 `probe` 홉(`MAX_HOP`·`REPEAT_REQUEST`)은 세지 않는다 - 그 홉의 조사는
     안 돌았다(`_run_hops`). 도구 실패(`observation_error`)로 끝난 probe 홉은 세고, 왜 안 골랐는지는
     이 run이 가르지 못한다."""
-    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP]
+    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP and "action" in e.data]
     ran = sum(1 for d in hops if d.get("action") == "probe" and "stop_reason" not in d)
     if not hops or ran:
         return None
@@ -1555,6 +1562,63 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
         f"Auditor 도구 루프가 {len(hops)}홉 났는데(lookup {lookups} · answer {answers}) "
         f"probe가 한 번도 실행되지 않았다 — 5단계에서 도구가 한 번도 안 돌았다 (#617)"
     )
+
+
+def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
+    """Critic에 Auditor 홉 관측을 실은 요청이 (a) 추정 입력 몫을 넘을 수 있거나 (b) 크기 거절을
+    받아 관측 절을 빼고 다시 물은 건이 있거나 (c) 홉의 Critic 사본을 못 만든 건
+    (`observation_sanitize_failed`)이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
+
+    `critic_hop_observations`는 두 모양이다: 관측을 실은 호출마다 1건(`over_input_share`)과, 그
+    호출이 400/413으로 거절돼 `critic.run`이 절을 통째로 빼고 한 번 다시 물었다는 표지
+    (`observations_dropped`).
+    (a)는 글자 수 ÷ 최악 비 1.22의 **계산값**이라 「넘을 수 있다」이지 「넘었다」가 아니다 - 서버의
+    크기 거절은 (b)가 실제로 센다. 관측 절을 뺀 프롬프트도 넘는 건(`over_without_observations`)은
+    원인이 관측이 아니라 따로 센다."""
+    events = [e.data for e in trace.events if e.kind is EventKind.CRITIC_HOP_OBSERVATIONS]
+    dropped = [d for d in events if d.get("observations_dropped")]
+    carried = [d for d in events if not d.get("observations_dropped")]
+    over = [d for d in carried if d.get("over_input_share")]
+    # 가림에 실패해 Critic 사본을 못 만든 홉 - Critic 절의 사본 수가 돈 홉 수보다 작은 이유다.
+    unsanitized = sum(
+        1
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP and "observation_sanitize_failed" in e.data
+    )
+    if not over and not dropped and not unsanitized:
+        return None
+    parts = [f"Critic 요청 {len(carried)}건이 Auditor 홉 관측을 실었다"]
+    if unsanitized:
+        parts.append(f"Critic 사본을 만들지 못한 홉 {unsanitized}건(가림 실패 · 사유는 trace)")
+    if over:
+        alone = sum(1 for d in over if d.get("over_without_observations"))
+        parts.append(
+            f"그중 {len(over)}건의 추정 입력이 입력 몫({over[0].get('input_share_tokens')}토큰)을 "
+            f"넘을 수 있다 - 글자/토큰 최악 비 1.22로 센 계산값이고 하네스는 자르지 않았다"
+            f"(관측 절 없이도 넘는 건 {alone})"
+        )
+    if dropped:
+        parts.append(
+            f"{len(dropped)}건은 서버가 크기로 거절해 관측 절을 통째로 빼고 한 번 다시 물었다 "
+            "(실측한 거절이다)"
+        )
+    return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
+
+
+def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
+    """크기 거절당한 Auditor 도구 루프 홉마다 run 경고 한 줄(#514) - 후보 id와 홉.
+
+    그 후보는 버려졌고(`queued` + `target_skipped`) run은 갔다. 연속 폐기 카운터가 크기 거절을
+    안 세므로(`_drop`) 이 줄이 없으면 호출 실패 총계 한 줄 말고는 어느 후보가 몇 번째 홉에서
+    잘렸는지 `trace.jsonl`을 열어야 안다. 홉이 많을수록 잘릴 확률이 오르는 상한
+    `auditor_tool_hops`의 근거가 이 줄들이다.
+    """
+    return [
+        f"후보 {e.subject_id}의 Auditor 홉 {e.data['hop']}에서 크기 거절 — 후보를 버렸다(#514)"
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP
+        and e.data.get("stop_reason") == AuditorStopReason.CONTEXT_OVERFLOW.value
+    ]
 
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
@@ -2560,9 +2624,10 @@ def _run_pov_hops(
     `pov_tool_hops + 1`번까지 묻는다(이슈 #613이 쫓는다).
     게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
-    — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). hop0 재질문은 본문 **끝**에
-    홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
-    몫이다(미정)(이 PR은 프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
+    — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
+    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트).
+    hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
+    아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
     ⏵ **2026-10-12 (#619) — `inspect`는 이미 돌린 도구를 다시 안 돌린다**(`ran` — 키는 도구뿐:
     `inspect`는 늘 직전 gen의 바이트를 싣고 gen이 `poc` 키를 덮는다). 옛 결과에
@@ -2574,6 +2639,11 @@ def _run_pov_hops(
     아니다** — `poc`는 `b""`로 이미 돌았으니 #619 반복이다(`is None`으로 가른다 — 아래 분기 주석).
     `v6` prefix는 이 거절의 첫 gen 전 몫을 서술하고 0바이트 몫은 서술하지 않는다(그쪽이 반복이라
     `inspect_repeat`로 답한다). `v5` prefix는 둘 다 서술하지 않는다.
+
+    ⏵ **2026-10-13 (#507) — 2단계 컴파일 실패는 hop0 본문 끝의 하네스 노트로 알린다**
+    (`compile_note` — 코드를 읽는 판만 · 실패 Evidence가 없으면 `None`이고 바이트가 종전과 같다).
+    `inspect build`·`asan`·`gdb`를 거절하지는 않는다. hop 0의 `pov_hop`이 `compile_note`·
+    `compile_note_tools`를 싣는다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2631,6 +2701,18 @@ def _run_pov_hops(
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
         )
+        # ⏵ 2026-10-13 (이슈 #507) — 2단계가 이미 잰 컴파일 실패를 hop0 본문에 알리는 노트. 코드를
+        # 읽는 판(`pov_wide`)에만 싣는다(v2는 이 PR 전과 바이트가 같다 — `fuzz_entrypoint`와 같은
+        # 경계). 실패 Evidence가 없으면 `None`이라 본문도 trace도 종전 그대로다. 도구는 거절하지
+        # 않는다.
+        compile_failures = ctx.compile_failures.get(workdir, ()) if pov_wide else ()
+        compile_note = signals.compile_note(compile_failures, workdir)
+        # hop0 `pov_hop` 이벤트에만 싣는 계측 — 노트를 붙인 호출이 있었다는 사실과 그것이 짚은
+        # 도구들(`build`가 실패했을 때만 `build,asan,gdb`). 이 키가 있는 run에서
+        # hop ≥ 0의 `tool`이 그 도구들인 비율이 「노트 뒤 재선택률」이다.
+        note_trace = (
+            signals.compile_note_trace(compile_failures) if compile_note is not None else None
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
@@ -2660,6 +2742,7 @@ def _run_pov_hops(
                         source=wide_source,
                         fuzz_entrypoint=entrypoint,
                         retry_note=retry_note,
+                        compile_note=compile_note,
                         hop=hop,
                     )
                 else:
@@ -2679,6 +2762,7 @@ def _run_pov_hops(
                     _emit_pov_hop(
                         ctx, finding, hop=hop, failed=(exc, latency_s),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     hop += 1
                     version = (
@@ -2699,6 +2783,7 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     parse_truncated=truncated,
                 )
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
@@ -2711,6 +2796,7 @@ def _run_pov_hops(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
                     fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     submit_digest=submit_digest,
                 )
                 return _pov_finish_and_record(
@@ -2731,6 +2817,7 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
@@ -2786,6 +2873,7 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action=action.action, poc=hop_poc,
                         failed=(exc, None), wall_ms=max(0, ctx.monotonic_ms() - started),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                 except Exception as emit_exc:
                     exc.add_note(
@@ -2805,6 +2893,7 @@ def _run_pov_hops(
                     ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
                     inspect_without_poc=no_poc, fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
                     ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
@@ -2814,6 +2903,7 @@ def _run_pov_hops(
                 ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                 inspect_repeat_of=repeat_of, inspect_without_poc=no_poc,
                 fuzz=fuzz if hop == 0 else None,
+                hop0_note=note_trace if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
             followup = (
@@ -3051,6 +3141,7 @@ def _emit_pov_hop(
     failed: tuple[Exception, float | None] | None = None,
     wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
+    hop0_note: Mapping[str, TraceValue] | None = None,
     submit_digest: str | None = None,
     parse_truncated: bool = False,
     inspect_repeat_of: tuple[str, int] | None = None,
@@ -3072,6 +3163,9 @@ def _emit_pov_hop(
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
     이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
 
+    `hop0_note`도 **hop0에만** 준다 — hop0 본문에 컴파일 실패 노트를 붙인 호출이었다는 계측이다
+    (`compile_note`·`compile_note_tools` — 이슈 #507). 키가 없으면 노트가 없었다.
+
     `submit_digest`는 `submit` 홉에만 준다 — `poc_sha256` 지명의 결과(`absent`·`matched`·`unknown`).
 
     `inspect_repeat_of`는 `(도구, 옛 홉)`이다 — 같은 (도구, 입력)을 이미 돌려 **이번엔 안 돌린**
@@ -3086,6 +3180,8 @@ def _emit_pov_hop(
         data["fuzz_found"] = bool(fuzz["found"])
         data["fuzz_file"] = str(fuzz["file"])
         data["fuzz_reason"] = str(fuzz["reason"])
+    if hop0_note is not None:
+        data.update(hop0_note)
     if action is not None:
         data["action"] = action
     if evidence is not None:
@@ -3922,6 +4018,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
 
     도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
     `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
+    ⏵ 2026-10-13(#514) 루프 안의 모델 호출이 크기 거절당하면(`context_overflow`) 노드가 그 홉
+    이벤트와 C-5를 단 뒤 **게이트웨이 예외를 그대로 올린다** - 이 함수는 받지 않고 호출자의
+    `_drop`이 그 후보만 버린다(`target_skipped`).
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -3938,6 +4037,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
+    # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
+    observations: list[str] = []
     try:
         finding, missings = auditor.run(
             ctx,
@@ -3945,6 +4046,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             capsule=expanded,
             evidences=evidences,
             source=source,
+            observations=observations,
             # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
@@ -3976,6 +4078,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
     # 비슬라이스도 Auditor가 처음 읽은 문자열을 재사용한다(사용자 선택 B 보완안, 2026-10-05).
     state.finding_sources[finding.finding_id] = source
+    state.finding_observations[finding.finding_id] = tuple(observations)
     return True
 
 
@@ -4081,6 +4184,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-11 — 서빙 판은 v14다(이슈 #67 — v12 + FACTS에서 `source` 사본을 뺀다). hop0 user 턴은
 # v13과
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
+# 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
