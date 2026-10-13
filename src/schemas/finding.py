@@ -69,6 +69,8 @@ class ReproSpec(HarnessModel):
     # 샌드박스에서 순서대로 실행할 단계. 실행 자체는 ToolRunner가 한다.
     steps: list[NonEmptyStr] = Field(min_length=1)
     # 무엇이 관측되면 재현 성공인가. 예: "ASAN heap-buffer-overflow at parse_header".
+    # ⏵ 2026-10-13(#232) — **이 문자열은 도구 이름을 고르는 데만 쓰인다**(`validate.tool_for()`).
+    # 산출물과 대조하는 코드는 없다 — 등급(E4)은 종료 코드로만 갈린다.
     expected_signal: NonEmptyStr
     # 이 명세를 누가 만들었나 (#S7). 기본은 `model` — 모델이 낸 명세의 값이다. 스키마에 드러나
     # 모델이 `harness`를 쓸 수도 있으나 하네스가 저장 전에 덮는다(`auditor._ensure_repro_origin`,

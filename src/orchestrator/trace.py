@@ -196,6 +196,16 @@ class EventKind(StrEnum):
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
     # ⏵ 2026-10-13 (#573) `harness_note`(하네스가 만든 관측 머리줄 — 지금은 `poc` `exit=1` 모호성)도
     # `Evidence.harness_note`가 있을 때만 실린다. **키 부재 = 노트 없음.**
+    # ⏵ 2026-10-13(#232) — `crashed`·`crash_banner`는 도구가 **크래시 관측을 쟀을 때만** 실린다
+    # (`Evidence.crashed`가 `None`이 아닐 때 — 컨테이너 러너의 asan·gdb·poc 중 대상이 뜬 호출).
+    # `crashed`는 `true`(로그에 sanitizer 배너나 gdb 신호 정지가 있었다) 또는 `false`(로그를 읽었고
+    # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
+    # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
+    # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 로그 대조가 재생 14건뿐이라
+    # 미검증이다.
+    # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
+    # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
     TOOL_CALL = "tool_call"
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
