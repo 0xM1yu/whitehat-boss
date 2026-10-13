@@ -1008,3 +1008,220 @@ def test_cli_run_keep_responses_reaches_the_files_and_the_manifest(
     assert json.loads(off_manifest.read_text("utf-8")).get("keep_responses") is None
     assert list(on_manifest.parent.rglob("*_scout*_response.txt"))
     assert not list(off_manifest.parent.rglob("*_response*"))
+
+
+# --- 추론 채널 기록 (D84) ----------------------------------------------------
+#
+# 응답 원문과 **같은 칸·같은 조건**으로 `…_reasoning[_retryK].txt`가 남는다. 추론이 없는 칸은 파일도
+# 없고 `null`이며, 빈 문자열은 0바이트 파일이다.
+
+
+def _attempts(*pairs: tuple[str | None, str | None]):  # noqa: ANN202
+    from src.interfaces.model_client import AttemptRecord
+
+    return tuple(AttemptRecord(reasoning=r, reasoning_field=f) for r, f in pairs)  # type: ignore[arg-type]
+
+
+class _RecoveredReasoningClient(_RecoveredClient):
+    """버려진 1차(추론 `r1`) → 2차 성공(추론 `""`)."""
+
+    def complete(self, *, role, prompt, schema, history=()):  # noqa: ANN001, ANN201
+        ok = super().complete(role=role, prompt=prompt, schema=schema, history=history)
+        return ok.model_copy(
+            update={"attempt_log": _attempts(("r1", "reasoning"), ("", "reasoning_content"))}
+        )
+
+
+def test_a_failed_call_writes_each_attempts_reasoning_next_to_its_response(
+    tmp_path: Path,
+) -> None:
+    exc = _exhausted(("a", "b"))
+    exc.attempt_log = _attempts(("추론 1", "reasoning"), (None, None))
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(exc))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert json.loads(call["response_refs"]) == [
+        f"{DIR_NAME}/0001_scout_response.txt",
+        f"{DIR_NAME}/0001_scout_response_retry1.txt",
+    ]
+    assert json.loads(call["reasoning_refs"]) == [f"{DIR_NAME}/0001_scout_reasoning.txt", None]
+    assert (tmp_path / DIR_NAME / "0001_scout_reasoning.txt").read_bytes() == "추론 1".encode()
+    assert json.loads(call["reasoning_sha256"]) == [sha256_text("추론 1"), None]
+    assert json.loads(call["reasoning_field"]) == ["reasoning", None]
+    assert not (tmp_path / DIR_NAME / "0001_scout_reasoning_retry1.txt").exists()
+
+
+def test_an_empty_reasoning_is_a_zero_byte_file_not_a_null_slot(tmp_path: Path) -> None:
+    exc = _exhausted(("a",))
+    exc.attempt_log = _attempts(("", "reasoning_content"))
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(exc))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    (ref,) = json.loads(call["reasoning_refs"])
+    assert (tmp_path / ref).read_bytes() == b""
+    assert json.loads(call["reasoning_sha256"]) == [sha256_text("")]
+    assert json.loads(call["reasoning_field"]) == ["reasoning_content"]
+
+
+def test_a_null_content_attempt_still_keeps_its_reasoning(tmp_path: Path) -> None:
+    """`content: null`이면 응답 칸은 `null`이고 파일이 없지만, 그 시도의 추론은 파일로 남는다."""
+    exc = _exhausted((None,))  # type: ignore[arg-type]
+    exc.attempt_log = _attempts(("예산을 다 먹은 추론", "reasoning"))
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RaisingClient(exc))
+
+    _call_failing(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["response_refs"] == "[null]"
+    (ref,) = json.loads(call["reasoning_refs"])
+    assert (tmp_path / ref).read_text(encoding="utf-8") == "예산을 다 먹은 추론"
+    assert not list(tmp_path.rglob("*_response*"))
+
+
+def test_a_recovered_call_writes_the_discarded_attempts_reasoning_only(tmp_path: Path) -> None:
+    """키 규칙은 응답과 같다 - 스위치 밖이면 버려진 1차의 추론만, 성공 최종의 추론은 안 남는다."""
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredReasoningClient())
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert json.loads(call["reasoning_refs"]) == [f"{DIR_NAME}/0001_scout_reasoning.txt"]
+    assert json.loads(call["reasoning_field"]) == ["reasoning"]
+    assert not list(tmp_path.rglob("*_reasoning_retry*"))
+
+
+def test_keep_responses_adds_the_final_attempts_reasoning_for_the_chosen_role_only(
+    tmp_path: Path,
+) -> None:
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredReasoningClient())
+    ctx.keep_responses = frozenset({"scout"})
+
+    _call_ok(ctx)
+    _call_ok(ctx, role=Role.CRITIC)
+
+    scout, critic = _model_calls(ctx)
+    refs = json.loads(scout["reasoning_refs"])
+    assert refs == [
+        f"{DIR_NAME}/0001_scout_reasoning.txt",
+        f"{DIR_NAME}/0001_scout_reasoning_retry1.txt",
+    ]
+    assert (tmp_path / refs[1]).read_bytes() == b""  # 최종 시도: 키는 왔고 비었다
+    assert json.loads(scout["reasoning_field"]) == ["reasoning", "reasoning_content"]
+    assert json.loads(critic["reasoning_refs"]) == [f"{DIR_NAME}/0002_critic_reasoning.txt"]
+
+
+def test_no_reasoning_anywhere_leaves_no_reasoning_key_or_file(tmp_path: Path) -> None:
+    """추론 파서가 꺼진 서버·Fake와 같은 모양 - 응답 기록은 그대로이고 추론 키 셋이 통째로 없다."""
+    ctx = _context(prompts=PromptLog(tmp_path), models=_RecoveredClient())
+    ctx.keep_responses = frozenset({"scout"})
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert "response_refs" in call
+    assert not any(k.startswith("reasoning") for k in call)
+    assert not list(tmp_path.rglob("*_reasoning*"))
+
+
+def test_the_fake_model_pipeline_writes_no_reasoning_even_with_keep_responses(
+    tmp_path: Path,
+) -> None:
+    """dev_fake 흔적 불변 핀: Fake는 추론을 안 준다 - 스위치를 켜도 추론 파일·키가 0이다."""
+    run_dir, trace = _run(tmp_path, keep_responses=("scout",))
+
+    assert list(run_dir.rglob("*_scout*_response.txt"))  # 스위치는 실제로 일했다
+    assert not list(run_dir.rglob("*_reasoning*"))
+    assert not any(k.startswith("reasoning") for c in _traced_model_calls(trace) for k in c)
+
+
+def test_a_reasoning_write_failure_keeps_the_response_refs_and_lands_as_its_own_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """막는 명제 — **추론 쓰기 실패가 이미 쓴 응답의 참조를 trace에서 지우지 않는다.**
+
+    양성 핀: `write_reasoning`만 던지면 `response_refs`가 살아 있고 사유는
+    `reasoning_record_error`다. 앞 판은 `_record_failed_responses` 전체가 예외가 돼 호출부가
+    `response_record_error`만 실었고, 그러면 디스크의 `…_response.txt`는 남는데 trace는
+    「응답 안 남음」으로 읽혔다(참조 없는 고아 파일).
+
+    음성 핀: **응답** 쓰기가 실패한 경우는 종전대로 `response_record_error`다 — 그때는 남은
+    응답 파일이 없으니 참조를 싣지 않는 것이 맞다. 둘을 한 테스트에 두는 것은 두 사유 키를
+    하나로 합치는 수정이 여기서 죽게 하기 위해서다.
+    """
+
+    def disk_full(*_a: object, **_k: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    prompts = PromptLog(tmp_path)
+    monkeypatch.setattr(prompts, "write_reasoning", disk_full)
+    ctx = _context(prompts=prompts, models=_RecoveredReasoningClient())
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+    assert call["ok"] is True
+    assert call["reasoning_record_error"] == "OSError(errno=28)"
+    assert "response_record_error" not in call
+    refs = [r for r in json.loads(call["response_refs"]) if r]
+    assert refs, "전제 - 버려진 1차의 응답 원문이 파일로 남는다"
+    for ref in refs:
+        assert (tmp_path / ref).exists()
+    # 추론 세 키는 안 실린다 — 반쪽짜리 배열을 실으면 안 쓴 칸이 `null`(추론 없음)로 읽힌다.
+    assert not any(k in call for k in ("reasoning_refs", "reasoning_sha256", "reasoning_field"))
+    assert ctx.ledger.input_tokens == 40
+
+    other = PromptLog(tmp_path / "resp_fail")
+    monkeypatch.setattr(other, "write_response", disk_full)
+    resp_ctx = _context(prompts=other, models=_RecoveredReasoningClient())
+
+    _call_ok(resp_ctx)
+
+    (resp_call,) = _model_calls(resp_ctx)
+    assert resp_call["response_record_error"] == "OSError(errno=28)"
+    assert "reasoning_record_error" not in resp_call
+    assert "response_refs" not in resp_call
+
+
+def test_the_real_adapter_to_files_path_restores_request_response_finish_reason_and_reasoning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """D84 닫는 조건을 고정한다: 한 run의 산출물에서 호출마다 (요청, 원 응답, `finish_reason`)과
+    서버가 따로 준 추론이 복원된다. 어댑터 `complete()` -> `call_model` -> 파일·trace 전 구간."""
+    from src.adapters.openai_compat import OpenAICompatModelClient, PostedResponse
+
+    good = Candidate(
+        candidate_id="cand_0001", run_id=RUN_ID, artifact_id="art_0001",
+        location=Location(file="parser.c"), score=0.7, state=FindingState.CANDIDATE,
+    ).model_dump_json()
+    usage = Usage(input_tokens=5, output_tokens=5, cached_tokens=0)
+    replies = [
+        PostedResponse(content='{"x": 1}', usage=usage, finish_reason="length",
+                       output_tokens_reported=True, reasoning="1차 추론",
+                       reasoning_field="reasoning"),
+        PostedResponse(content=good, usage=usage, finish_reason="stop",
+                       output_tokens_reported=True, reasoning="2차 추론",
+                       reasoning_field="reasoning"),
+    ]
+    monkeypatch.setattr(OpenAICompatModelClient, "_post", lambda self, payload: replies.pop(0))
+    client = OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="t", temperature=0.0, top_p=1.0,
+        max_tokens=64, seed=1, retries=1,
+    )
+    ctx = _context(prompts=PromptLog(tmp_path), models=client)
+    ctx.keep_responses = frozenset({"scout"})
+
+    _call_ok(ctx)
+
+    (call,) = _model_calls(ctx)
+
+    def read(ref: str) -> str:
+        return (tmp_path / ref).read_text(encoding="utf-8")
+
+    assert PROMPT.body in read(call["prompt_ref"])  # 요청
+    assert [read(r) for r in json.loads(call["response_refs"])] == ['{"x": 1}', good]  # 원 응답
+    assert json.loads(call["attempt_finish_reasons"]) == ["length", "stop"]  # 종료 사유
+    assert [read(r) for r in json.loads(call["reasoning_refs"])] == ["1차 추론", "2차 추론"]
