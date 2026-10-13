@@ -1673,10 +1673,14 @@ def test_the_stamped_symbol_is_the_one_the_model_saw_in_facts(ctx: RunContext) -
     대상 함수 **안**의 후보에서는 품는 함수와 `FACTS.target`이 같은 심볼을 가리켜야 한다 —
     `docs/agent-contracts.md`가 「후보 `location`은 모델이 사실 블록의 대상을 옮겨 적는 값」이라
     적으므로, 하네스가 채운 값이 그 블록과 갈리면 그 서술이 거짓이 된다.
-    ⚠ **이 핀은 #529가 들어온 뒤에 실질적으로 문다.** 이 브랜치 단독에서는 FACTS `target`도
-    `capsule.target`이라 두 자리가 같은 객체에서 와 자명하게 통과한다. #529는 `input: source`
-    선언에서 FACTS `target`을 `enclosing_scope(ctx.symbols_for(...))`로 바꾸므로 그때 원천이 둘이
-    된다 — 둘 다 같은 심볼 표를 읽는 한 이 등식이 유지된다.
+    ⚠ **이 등식은 #641(= `fix/529-scout-source-declaration`)이 병합된 뒤에야 실질적으로 문다.**
+    이 브랜치 단독에서는 이 테스트의 `VULN_TARGET`이 `capsule.target`(Joern 표기)이자 FACTS
+    `target`이고 심볼 표(`_PARSER_SYMBOLS`)가 같은 이름을 들게 짜여 있어 자명하게 통과한다.
+    두 표기가 갈리는 입력(C++ 클래스 바깥 정의 `P::parse` 등)은 이 테스트에 없다 — 갈림은
+    `test_the_stamp_uses_the_index_spelling_not_the_target_spelling`이 물고 실서빙에서 났는지는
+    **미실측**이다. #641은 `input: source` 선언에서 hop0 FACTS `target`을
+    `enclosing_scope(ctx.symbols_for(...))`로 바꾸므로 그때 원천이 둘이 된다 — 둘 다 같은 심볼 표를
+    읽는 한 이 등식이 유지된다.
     """
     written = Location(file="parser.c", line_start=4, line_end=5)
 
@@ -1686,6 +1690,22 @@ def test_the_stamped_symbol_is_the_one_the_model_saw_in_facts(ctx: RunContext) -
     assert candidate.location.symbol == facts["target"]["symbol"]
     (event,) = _stamped_symbols(ctx)
     assert event.data["symbol"] == facts["target"]["symbol"]
+
+
+def test_the_stamp_uses_the_index_spelling_not_the_target_spelling(ctx: RunContext) -> None:
+    """대상(Joern 표기)과 인덱스 표기가 다르면 찍히는 것은 **인덱스 표기**다.
+
+    FACTS `target.symbol`(`capsule.target`)과 찍힌 값이 갈릴 수 있다는 사실의 핀이다 — 인덱서가 C++
+    클래스 바깥 정의를 `P::parse`로 내는 것(`tools/harness-tools/indexer.py`)을 본뜬 표다. 갈림이
+    실서빙에서 났는지는 **미실측**이다.
+    """
+    target = Location(file="parser.c", symbol="parse", line_start=3, line_end=6)
+    table = (Location(file="parser.c", symbol="P::parse", line_start=3, line_end=6),)
+    written = Location(file="parser.c", line_start=4, line_end=5)
+
+    candidate, _, _ = _triage_writing_location(ctx, target, written, symbols=table)
+
+    assert candidate.location.symbol == "P::parse" != target.symbol
 
 
 def test_the_session_carries_the_hop0_target_for_the_follow_up_hops(ctx: RunContext) -> None:
