@@ -31,6 +31,12 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525). 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 판 1
 파일을 여는 것은 여전히 막지 못한다.
+
+판 2 = `RunRecord`에 필드가 더 붙은 모양이다 — 이 브랜치의 넷(`schema_failure_max_run_by_role`·
+`schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`·`trace_aggregate_failures`,
+#613·#618·#619)과 선례 `keep_responses`(커밋 `f0cdba76`). 선례는 **판을 안 올리고 들어왔다** —
+판 1을 적은 `state.db`에 그 필드를 든 행이 이미 있을 수 있고, 그 행은 판 1 코드로는 못 읽힌다
+(`extra="forbid"`). 그 run은 되읽기를 안 하므로(서빙에 resume 경로가 없다) 서빙 결함은 아니다.
 """
 
 import json
@@ -52,7 +58,7 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 """
 
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
-STATE_DB_SCHEMA_VERSION = 1
+STATE_DB_SCHEMA_VERSION = 2
 
 
 class StateDbVersionError(RuntimeError):
