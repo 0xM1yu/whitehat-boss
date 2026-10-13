@@ -78,6 +78,20 @@ F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸
 ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신 대상 소스의 존재를 보고
 `ok=True`를 낸다.
 
+⏵ **2026-10-13 (#232) — 환경이 낸 종료 코드는 `p4`에 안 닿는다 (코드 대조).** `124`는 `_execute`가
+타임아웃을 `ok=False`로 쓰고 `judge()`까지 오지 않는다. `125`~`127`은 asan에서 `_EXEC_FAILED`로,
+`poc`에서 `_poc_is_harness_failure`로 `ok=False`가 되고 gdb는 수명주기 줄이 없으면 `ok=False`다.
+`poc`의 `137`·`255`·`>255`·음수도 `ok=False`다. ⚠ **남은 구멍 하나: asan은 `137`·`255`·`>255`·음수를
+거르지 않는다**(위 「한 도구만 바꾼다」) — 그 값이 `ok=True`로 올라와 `p4`를 참으로 만든다. 환경의
+SIGKILL(`--memory`)과 대상 자신의 OOM이 갈리지 않고, `255`는 gdb 신호 정지의 값이기도 해서
+게이트에서 일괄로 못 뺐다. 이 PR은 바꾸지 않았고 `p4` 스위치를 다시 여는 날 함께 정한다.
+
+⏵ **2026-10-13 (#232) — 크래시 관측을 기록한다 (읽지 않는다).** `observe_crash()`가 대상 로그의
+sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **어느 소비자도 이 값을 읽지 않는다** —
+배너 철자가 sanitizer 문서에서 왔고 실제 로그로 대조한 것은 재생 14건뿐이라 대부분 미검증이다
+(`_CRASH_BANNER` 주석). 실제 `poc_run` 크래시 녹음이 쌓이면 그것으로 철자를 대조한 뒤
+`p4`를 읽게 할지 정한다.
+
 ## 입력 바이트 — `poc`는 먹인다, 나머지 셋은 안 받는다 (ADR 0014)
 
 `ToolArgs.input_bytes`가 있으면 그 도구의 scratch(`/work`)에 `write_input`으로 쓰고, 로그 머리의
@@ -491,6 +505,56 @@ _GDB_TARGET_LIFECYCLE = re.compile(
     r"|Program (?:received|terminated with) signal \S+"
     r'|Thread [\d.]+(?: "[\s\S]{0,64}")? received signal \S+'
 )
+
+# ⏵ 2026-10-13(#232) — **크래시 흔적을 로그에서 찾는 배너.** 대상의 stderr **전체**를 먼저,
+# 히트가 없으면 stdout **전체**를 찾는다 (로그 머리줄은 `# node argv: …`라 거기만 보면 안 맞는다).
+# 🔴 **철자는 sanitizer 문서에서 왔고, 이 하네스의 실제 로그로 대조한 것은 아주 적다** — 2026-10-13
+# 리뷰어가 과제 이미지에서 PoC를 재생한 **arvo-1065 4건 · oss-fuzz 10건**이 전부다(상자의
+# `mmap_rnd_bits=32`라 ASLR 잡음이 낀다. 녹음 파일은 이 저장소에 없다 — 요약만 받았다). 맞은 것:
+# libFuzzer(`==N== ERROR: libFuzzer: deadly signal`, exit 77 x2) · LeakSanitizer(exit 0 x5).
+# 못 맞은 것: **exit 139인데 셸의 `Segmentation fault (core dumped)` 한 줄뿐인 로그 x2**
+# (아래 묶음 둘이 그 구멍이다). MSan 배너는 **아직 한 건도 못 봤다**. CLAUDE.md §0: 그래서
+# `Evidence.crashed`는 **기록뿐**이고 `gate.py`·`policy.py`·최종 지정은 읽지 않는다.
+# 철자가 틀렸으면 `crashed=False`가 거짓으로 쌓인다.
+#
+# 묶음 하나 — sanitizer 보고:
+#   `==N== ERROR: <Address|Memory|UndefinedBehavior|Leak>Sanitizer` — 머리줄.
+#       `==N==` 뒤와 `ERROR:` 뒤의 공백은 있을 수도 없을 수도 있다
+#   `MemorySanitizer: use-of-uninitialized-value` — MSan은 `==N==WARNING:`으로 시작한다(미관측)
+#   `runtime error:` — UBSan. ⚠ 대상이 같은 글을 직접 찍어도 맞는다(오탐 가능)
+#   `libFuzzer: deadly signal` — libFuzzer 하네스의 치사 신호
+#   `AddressSanitizer: SEGV` — ASan의 SEGV 보고
+# 묶음 둘 — **셸이 찍는 신호 보고** (역시 기록뿐): `Segmentation fault`·`Aborted`·`Bus error`·
+#   `Illegal instruction`·`Floating point exception`, 뒤에 `(core dumped)`가 붙을 수도 있다.
+#   sanitizer 없이 신호로 죽은 대상(exit 139 등)은 이 줄만 남는다.
+#   ⚠ 일반 영어 낱말이라 대상이 직접 찍어도 맞는다(오탐 가능) — 그래서 단어 경계를 건다.
+#   ⏵ 2026-10-13 — `Illegal instruction`(SIGILL, exit 132)·`Floating point exception`
+#   (SIGFPE, exit 136)을 더했다. 빠져 있던 동안 둘 다 `crashed=False`였다(2026-10-13 실측:
+#   `observe_crash`를 직접 호출). bash가 같은 꼴로 찍는 묶음이고 `Bus error`(SIGBUS)와
+#   같은 자리다. 🔴 **이 둘도 이 하네스 로그로 대조한 것이 아니다** — 아래 철자 미대조와 같다.
+#
+# ⚠ **`crashed=True`는 exit 0과 함께 올 수 있다.** LeakSanitizer
+#   (`==N==ERROR: LeakSanitizer: detected memory leaks`)는 종료 시점 보고이고
+#   oss-fuzz 재생 5/5가 exit 0이었다 — UBSan `runtime error:`도
+#   프로그램을 계속 돌린다. 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `Leak`을 빼지 않고
+#   **`banner`를 같이 기록한다** — 읽는 쪽이 배너를 보고 가른다.
+#   `crashed=True`를 「오라클이 크래시라 할 것」으로 읽지 않는다.
+#
+# 🕳 **알려진 구멍 — 배너가 없는 크래시.** libFuzzer의 `timeout after N seconds`·`out-of-memory`는
+#   sanitizer 배너를 안 찍는다. 오늘은 의미가 없다 — `poc`·asan 명령은 `-timeout`·`-rss_limit_mb`를
+#   안 넘기고, 샌드박스 타임아웃은 `ok=False`라 `None`이다.
+#   libFuzzer 플래그를 넘기게 되는 날 철자를 더한다.
+_CRASH_BANNER = re.compile(
+    r"==\d+==\s*ERROR:\s*(?:Address|Memory|Undefined ?Behavior|Leak)Sanitizer"
+    r"|MemorySanitizer: use-of-uninitialized-value"
+    r"|runtime error:"
+    r"|libFuzzer: deadly signal"
+    r"|AddressSanitizer: SEGV"
+    r"|\b(?:Segmentation fault|Aborted|Bus error|Illegal instruction"
+    r"|Floating point exception)\b(?: \(core dumped\))?"
+)
+# `Evidence.banner`의 글자 상한. `Evidence.banner`의 `max_length`와 같아야 한다.
+_BANNER_CHARS = 200
 
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
 _TIMEOUT_EXIT = 124
@@ -990,6 +1054,67 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     )
 
 
+def _banner_line(text: str, start: int) -> str:
+    """`start`가 든 줄. 제어 문자는 공백으로, 200자로 묶는다 — 대상이 찍은 날것이다.
+
+    ⚠ **줄이 상한을 넘으면 창을 `start`에서 잡는다.** 종전에는 줄머리부터 200자를 떼서,
+    배너 앞에 긴 접두가 같은 줄에 붙으면 **배너 철자가 창 밖으로 나갔다** — 그러면 `banner`가
+    배너를 안 들고 있어 「읽는 쪽이 가른다」(`_CRASH_BANNER` 주석)가 성립하지 않는다.
+    2026-10-13 실측(이 함수를 직접 호출): `"X" * 300 + "==1==ERROR: AddressSanitizer: …"`의
+    저장된 줄이 `X` 200자였다. 접두를 버린 것은 `…`로 표시한다. 줄이 상한 안이면
+    종전 그대로 줄머리부터다 — 짧은 줄에서 접두를 잃지 않는다.
+    """
+    begin = text.rfind("\n", 0, start) + 1
+    end = text.find("\n", start)
+    end = len(text) if end == -1 else end
+    line = re.sub(r"[\x00-\x1f\x7f]", " ", text[begin:end]).strip()
+    if len(line) <= _BANNER_CHARS or start == begin:
+        return line[:_BANNER_CHARS]
+    from_hit = re.sub(r"[\x00-\x1f\x7f]", " ", text[start:end]).strip()
+    return f"…{from_hit}"[:_BANNER_CHARS]
+
+
+def observe_crash(tool: str, steps: list[Step], total: int) -> tuple[bool | None, str | None]:
+    """실행 로그에서 크래시 흔적을 관측한다 → (crashed, banner). **기록뿐이다** (#232).
+
+    - `True` — 배너(`_CRASH_BANNER`) 또는 gdb의 신호 정지 줄이 있다. `banner`는 그 첫 줄.
+    - `False` — 대상이 떴고 로그를 읽었는데 없다.
+    - `None` — **안 쟀다**: 런타임 도구가 아니거나, 명령이 다 안 돌아 대상이 안 떴다(빌드에서 끊김).
+
+    호출부가 `judge()`의 `ok`가 참일 때만 부른다 — 대상이 안 뜬 건(`poc`의 환경 실패 코드 포함)에는
+    관측이 없고 `Evidence`가 `ok=False`에 `crashed`를 못 싣게 막는다.
+
+    로그는 **마지막 명령**의 stderr과 stdout이고 **stderr를 먼저 본다**(sanitizer 보고와 셸의
+    신호 보고가 둘 다 stderr로 가므로 — 아래 주석). asan·poc는 그 명령이 대상이고, 앞 명령은 빌드라
+    컴파일러 출력이 배너 철자를 우연히 품어도 대상의 흔적으로 안 읽는다. gdb는 마지막 명령이
+    gdb 자신이라 대상 수명주기 줄(`_GDB_TARGET_LIFECYCLE`)로 가른다 — 신호 정지는 `True`, 정상
+    종료는 `False`. 같은 로그에 둘 다 있으면 신호 정지가 이긴다.
+    """
+    if tool not in _RUNTIME_TOOLS or not steps or len(steps) < total:
+        return None, None
+    last = steps[-1]
+    if tool == "gdb":
+        for match in _GDB_TARGET_LIFECYCLE.finditer(last.stdout):
+            if not match.group(0).startswith("[Inferior"):
+                return True, _banner_line(last.stdout, match.start())
+        # 수명주기 줄이 아예 없으면 대상이 안 뜬 것이고 `judge()`가 이미 `ok=False`로 내렸다.
+        return (False, None) if _GDB_TARGET_LIFECYCLE.search(last.stdout) else (None, None)
+    # ⚠ **stderr를 먼저 본다.** 종전에는 `f"{stdout}\n{stderr}"` 한 덩이에서 첫 히트를 썼고,
+    # stdout이 앞에 붙으므로 **대상이 직접 찍은 오탐 문구가 stderr의 진짜 배너를 이겼다**.
+    # 2026-10-13 실측(이 함수를 직접 호출): stdout에 `runtime error: …`(대상이 찍은 글),
+    # stderr에 `==1==ERROR: AddressSanitizer: heap-buffer-overflow`를 두니 `banner`가 stdout
+    # 줄이었다. sanitizer 보고와 셸의 신호 보고는 **둘 다 stderr로 간다**(`_CRASH_BANNER`의
+    # 묶음 둘 주석). stderr에 히트가 없으면 stdout으로 내려간다 — `2>&1`로 합쳐진 로그와
+    # stdout으로 배너를 찍는 대상이 그쪽이다.
+    # ⚠ 한 스트림 안에서는 여전히 **첫 히트**다 — 같은 stderr에 오탐이 진짜 배너보다 앞서면
+    # 오탐이 이긴다. 그것은 안 고쳤다(묶음별 우선순위가 필요하고 실측 사례가 없다).
+    for stream in (last.stderr, last.stdout):
+        match = _CRASH_BANNER.search(stream)
+        if match is not None:
+            return True, _banner_line(stream, match.start())
+    return False, None
+
+
 def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
     """semgrep은 **exit code를 믿지 않는다.** 실측 근거가 있다.
 
@@ -1428,6 +1553,8 @@ class ContainerToolRunner:
         if note is not None:
             sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
+        # 기록뿐이다(#232) — 대상이 뜬(`ok`) 런타임 도구에만 잰다. 게이트는 이 값을 읽지 않는다.
+        crashed, banner = observe_crash(tool, steps, len(commands)) if ok else (None, None)
         summary = summary_line(tool, steps)
         harness_note = None
         if summary is not None and tool == "poc":
@@ -1454,6 +1581,8 @@ class ContainerToolRunner:
             error=error,
             location=first_hit_location(tool, steps),
             harness_note=harness_note,
+            crashed=crashed,
+            banner=banner,
         )
 
     def _kill(self, name: str) -> None:
@@ -1533,6 +1662,8 @@ class ContainerToolRunner:
         error: str | None,
         location: Location | None = None,
         harness_note: str | None = None,
+        crashed: bool | None = None,
+        banner: str | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -1563,6 +1694,8 @@ class ContainerToolRunner:
             exit_code=exit_code,
             error=error,
             harness_note=harness_note,
+            crashed=crashed,
+            banner=banner,
         )
 
 
