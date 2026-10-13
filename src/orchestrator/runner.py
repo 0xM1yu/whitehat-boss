@@ -26,7 +26,8 @@
 **심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
 line_start, line_end)`을 만든다. 인덱스가 없는 프로필(`dev_fake`)은 **파일 단위로
 되돌아가고 그 사실이 `target_plan`에 남는다.** `--slices`로 돈 run은 **슬라이스 1개가 대상
-하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를, Auditor는 슬라이스가
+하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를(`input: slice` 프롬프트일
+때만 — `input: source`면 entry를 품는 함수 본문, #529), Auditor는 슬라이스가
 걸친 함수들의 원본을 entry 함수부터 문자 수 상한 안에서 본다(`_step_scout`·`_auditor_source`).
 
 ⚠ **그 `Location` 하나가 후보 **몇 개**가 되는지는 Scout 자리 수가 정한다.** 단일
