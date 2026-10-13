@@ -68,6 +68,9 @@ RUN pip3 install --no-cache-dir \
       "tree-sitter-c==${TREE_SITTER_C_VERSION}" \
       "tree-sitter-cpp==${TREE_SITTER_CPP_VERSION}"
 
+# ⏵ 2026-10-13 — `indexer.py`는 **주석 한 줄도** 이미지와 바이트가 같아야 한다: `src/preflight.py`가
+# 파일 전체 sha256을 이미지 `/opt/indexer.py`와 견주고 다르면 ERROR(exit 2)다(PR #634 HIGH 1).
+# 고치면 이미지를 다시 굽고 `tests/test_indexer.py`의 `_BAKED_INDEXER_SHA256` 핀을 올린다.
 COPY indexer.py /opt/indexer.py
 COPY gdb.batch /opt/gdb.batch
 
