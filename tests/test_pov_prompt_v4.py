@@ -1900,6 +1900,10 @@ _REVIEWED_V3_LINES = (
     ("src/orchestrator/nodes/pov.py", "v3 배선으로 SOURCE 확대와", "이력: v3 배선"),
     ("src/orchestrator/prompt_loader.py", "v3가 그 줄을 다시 쓸 때까지", "이력: gdb 광고"),
     ("src/orchestrator/prompt_loader.py", "`prompts/pov/v3/meta.yaml`의", "이력: 같은 문장"),
+    # Scout 좌석 v3 prefix(`prompts/scout_boundary/v3/prefix.md`)의 절 이름이라 PoV 판이 아니다 -
+    # 창(뒤 한 줄)이 다음 줄의 `fuzz_entrypoint` - **PoV만**에 걸린다. 줄에 「Scout」을 적어도
+    # 감지기는 같은 줄의 판 표지만 보므로 안 풀린다(2026-10-13 실측: 적고 다시 돌려도 같은 실패).
+    ("src/orchestrator/prompt_loader.py", "Scout v3 prefix의", "Scout 좌석 판 - 창이 다음 줄에"),
     ("src/orchestrator/runner.py", "줄을 받는 판은 meta가 `hop_header`", "참: v2·v3는 줄이 없다"),
 )
 
