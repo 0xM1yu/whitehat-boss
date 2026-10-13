@@ -195,9 +195,10 @@ INDEX_TOOL = "index"
 # 한 글자(docstring 포함)만 달라도 ERROR다. 그래서 「0개 = 근거 아님」은 읽는 쪽 `judge()`가 든다.
 # 그 스크립트가 「`judge()`는 `index`를 exit 0이면 ok로 본다」를 현재형으로 말하는 자리는
 # **셋**이다 — 모듈 docstring 둘(`judge()`가 … 판정한다 / 「빈 그래프로 E2가 열린다」는
-# 문제가 남는데 … open-questions D13에 적었다)과 코드 주석 하나(`judge()`가 exit 0을 …).
+# 문제가 남는데 … open-questions의 그 항목에 적었다 — 이슈 #576이 그 뿌리를 든다)과
+# 코드 주석 하나(`judge()`가 exit 0을 …).
 # 셋 다 이 날 이후 낡았다(#576 — 0개는 `ok=False`로 내려 E2가 안 열린다). **그 파일은
-# 못 고친다** — 이미지와 바이트가 같아야 해서다(위). 그래서 정정은 여기와 D13에만 있다.
+# 못 고친다** — 이미지와 바이트가 같아야 해서다(위). 그래서 정정은 여기와 그 항목에만 있다.
 _INDEX_SYMBOL_COUNT = re.compile(r"^# index: (\d+) symbols,", re.MULTILINE)
 
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
