@@ -14,6 +14,7 @@ import ast
 import dataclasses
 import sqlite3
 import subprocess
+import textwrap
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -135,6 +136,10 @@ def test_a_sanitizer_banner_in_the_target_log_is_recorded(tool: str, banner: str
         "bash: line 1:    42 Segmentation fault      (core dumped) /bin/arvo",
         "Aborted (core dumped)",
         "Bus error (core dumped)",
+        # ⏵ 2026-10-13 — 아래 둘은 빠져 있어 `crashed=False`였다(이 함수를 직접 호출해 확인).
+        # bash가 `Bus error`와 같은 꼴로 찍는 묶음이다. 🔴 이 하네스 로그로 대조한 것은 아니다.
+        "Illegal instruction (core dumped)",
+        "Floating point exception (core dumped)",
     ],
 )
 def test_a_shell_signal_report_alone_is_a_crash_observation(line: str) -> None:
@@ -177,6 +182,42 @@ def test_the_banner_line_is_bounded_and_stripped_of_control_characters() -> None
     assert banner is not None and len(banner) == 200
     assert not any(ord(c) < 0x20 or ord(c) == 0x7F for c in banner)
     assert banner.startswith(ASAN)
+
+
+def test_a_real_banner_on_stderr_beats_a_look_alike_the_target_printed_on_stdout() -> None:
+    """양성 핀 — **읽는 쪽이 가를 수 있게 진짜 배너가 `banner`에 와야 한다.**
+
+    종전에는 `f"{stdout}\\n{stderr}"` 한 덩이의 첫 히트를 썼고 stdout이 앞이라 대상이 직접
+    찍은 `runtime error:`(UBSan 철자와 같은 글 — `_CRASH_BANNER` 주석이 「오탐 가능」이라
+    적는 그 줄)이 stderr의 ASan 배너를 이겼다. 2026-10-13 이 함수를 직접 호출해 확인했다.
+    `crashed`는 양쪽 다 `True`라 **배너 쪽만 틀렸다** — 그래서 값 자체를 단언한다.
+    """
+    printed = "parser: runtime error: 입력이 범위를 넘었다"
+
+    assert observe_crash("poc", [Step(1, f"{printed}\n", f"{ASAN}\n")], 1) == (True, ASAN)
+    # 음성 핀 — stderr에 히트가 없으면 stdout으로 내려간다(`2>&1`로 합쳐진 로그가 그쪽이다).
+    assert observe_crash("poc", [Step(1, f"{ASAN}\n", "")], 1) == (True, ASAN)
+    # 음성 핀 — 오탐뿐이면 종전대로 그 줄이 배너다. 가려낼 근거가 없다(§0).
+    assert observe_crash("poc", [Step(1, f"{printed}\n", "")], 1) == (True, printed)
+
+
+def test_a_banner_behind_a_long_prefix_on_the_same_line_stays_in_the_window() -> None:
+    """양성 핀 — 줄머리에서 200자를 떼면 **배너 철자가 창 밖으로 나간다.**
+
+    2026-10-13 이 함수를 직접 호출해 확인: `"X" * 300 + ASAN`의 저장된 줄이 `X` 200자였다.
+    배너를 안 든 `banner`는 「읽는 쪽이 배너를 보고 가른다」를 못 받친다.
+    """
+    long_line = f"{'X' * 300}{ASAN}"
+
+    crashed, banner = observe_crash("poc", [Step(1, "", f"{long_line}\n")], 1)
+
+    assert crashed is True
+    assert banner is not None and len(banner) <= 200
+    assert "AddressSanitizer" in banner
+    assert banner.startswith("…"), "버린 접두를 표시한다"
+    # 음성 핀 — 줄이 상한 안이면 창은 종전대로 줄머리부터다(접두를 잃지 않는다).
+    short = f"bash: line 1:    42 {SHELL_SEGV} /bin/arvo"
+    assert observe_crash("poc", [Step(139, "", f"{short}\n")], 1) == (True, short)
 
 
 # --- 음성: 잰 False와 안 잰 None을 가른다 -------------------------------------------------
@@ -398,26 +439,100 @@ def test_a_no_banner_return_one_program_is_still_e4_end_to_end(run_with) -> None
 _OBSERVED = {"crashed", "banner", "crash_banner"}
 
 
-def _observation_reads(source: str) -> list[int]:
-    """`crashed`/`banner`을 **읽는** 줄 번호 — 속성 접근 · 키워드 인자 · `getattr(x, "crashed")` ·
-    `x["crashed"]` · `x.get("crashed")`. 독스트링이 그 이름을 적는 것은 읽기가 아니다."""
-    lines = []
-    for node in ast.walk(ast.parse(source)):
+# trace 이벤트를 내는 메서드 이름. 읽기를 빼는 기준은 **이 역할 하나**다 — 파일 이름이 아니다.
+_EMIT = "emit"
+
+
+def _observation_read_nodes(tree: ast.AST) -> list[tuple[ast.AST, int]]:
+    """`crashed`/`banner`을 **읽는** (노드, 줄 번호) — 속성 접근 · 키워드 인자 ·
+    `getattr(x, "crashed")` · `x["crashed"]` · `x.get("crashed")`.
+    독스트링이 그 이름을 적는 것은 읽기가 아니다.
+
+    줄 번호가 아니라 **노드**를 돌려주는 것이 중요하다 — 한 줄에 허용 읽기와 판정 읽기가
+    같이 있으면 줄 단위로 빼면 뒤쪽이 묻힌다."""
+    found: list[tuple[ast.AST, int]] = []
+    for node in ast.walk(tree):
         if isinstance(node, ast.Attribute) and node.attr in _OBSERVED:
-            lines.append(node.lineno)
+            found.append((node, node.lineno))
         elif isinstance(node, ast.keyword) and node.arg in _OBSERVED:
-            lines.append(node.value.lineno)
+            found.append((node, node.value.lineno))
         elif isinstance(node, ast.Subscript):
             key = node.slice
             if isinstance(key, ast.Constant) and key.value in _OBSERVED:
-                lines.append(node.lineno)
+                found.append((node, node.lineno))
         elif isinstance(node, ast.Call) and node.args:
             fn = node.func
             named = fn.id if isinstance(fn, ast.Name) else getattr(fn, "attr", "")
             keys = [a.value for a in node.args[:2] if isinstance(a, ast.Constant)]
             if named in {"getattr", "hasattr", "get"} and _OBSERVED & set(keys):
-                lines.append(node.lineno)
-    return lines
+                found.append((node, node.lineno))
+    return found
+
+
+def _observation_reads(source: str) -> list[int]:
+    return [line for _, line in _observation_read_nodes(ast.parse(source))]
+
+
+def _assign_target_names(stmt: ast.AST) -> set[str]:
+    """이 문장이 **이름에** 대입하는 것들. 대입문이 아니면 빈 집합."""
+    if isinstance(stmt, ast.Assign):
+        return {t.id for t in stmt.targets if isinstance(t, ast.Name)}
+    if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+        return {stmt.target.id}
+    return set()
+
+
+def _emit_payload_names(scope: ast.AST) -> set[str]:
+    """이 범위에서 `*.emit(...)`에 `**`로 펼쳐지는 이름들 — trace 페이로드의 이름이다."""
+    names: set[str] = set()
+    for node in ast.walk(scope):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == _EMIT:
+            names |= {
+                kw.value.id
+                for kw in node.keywords
+                if kw.arg is None and isinstance(kw.value, ast.Name)
+            }
+    return names
+
+
+def _record_only_regions(tree: ast.AST) -> list[ast.AST]:
+    """읽은 값이 **기록으로만** 흐르는 부분 나무. 셋뿐이고 전부 역할로 정의된다.
+
+    ① `*.emit(...)` 호출 그 자체 — 인자로 들어간 읽기.
+    ② emit에 `**`로 펼쳐지는 이름에 대입하는 문장의 **값**.
+    ③ 그 대입**만** 든 `if`의 **조건** — 키를 실을지 말지 가르는 자리다(`else`가 붙으면 안
+      된다). 관측이 없을 때 키를 빼는 것이 이 저장소의 「키 부재 = 안 쟀다」 관용구라서다.
+
+    셋 밖의 읽기는 전부 판정 후보로 센다. 「어느 파일이 판정 파일인가」를 맞히지 않는다 —
+    그 축으로 고르던 앞 판이 `nodes/validate.py`를 통째로 놓쳤다(CLAUDE.md §2.5).
+    """
+    regions: list[ast.AST] = []
+    scopes: list[ast.AST] = [tree]
+    scopes += [
+        n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
+    for scope in scopes:
+        splatted = _emit_payload_names(scope)
+        for node in ast.walk(scope):
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == _EMIT:
+                regions.append(node)
+            elif _assign_target_names(node) & splatted:
+                value = getattr(node, "value", None)
+                if value is not None:
+                    regions.append(value)
+            elif isinstance(node, ast.If) and node.body and not node.orelse:
+                if all(_assign_target_names(s) & splatted for s in node.body):
+                    regions.append(node.test)
+    return regions
+
+
+def _decision_reads(source: str) -> list[int]:
+    """`crashed`·`crash_banner`를 **판정에** 쓰는 줄 번호 — 기록 전용 읽기는 뺀다."""
+    tree = ast.parse(source)
+    allowed: set[int] = set()
+    for region in _record_only_regions(tree):
+        allowed |= {id(node) for node in ast.walk(region)}
+    return sorted(line for node, line in _observation_read_nodes(tree) if id(node) not in allowed)
 
 
 def test_the_observation_detector_catches_every_read_form() -> None:
@@ -430,12 +545,85 @@ def test_the_observation_detector_catches_every_read_form() -> None:
     assert _observation_reads('"""crashed banner"""\nx = {"a": 1}["a"]') == []
 
 
-def test_no_decision_code_reads_the_observation() -> None:
-    """게이트·정책·상태 기계·러너 소스에 `crashed`/`banner` **읽기**가 0건이다 — 읽는 순간 이 PR의
-    약속이 깨진다."""
+def test_no_orchestrator_code_uses_the_observation_to_decide() -> None:
+    """막는 명제 — **`crashed`·`crash_banner`를 판정에 쓰는 곳이 `src/orchestrator/` 아래
+    어디에도 없다.**
+
+    앞 판은 `gate.py`·`policy.py`·`runner.py`·`state_machine.py` **네 파일만** 봤다.
+    3라운드 적대적 리뷰가 `nodes/validate.py`의 `grade` 신호를 crash 기반으로 바꾸는 변이로
+    그 구멍을 통과했다(548 passed) — 8단계 상태를 실제로 가르는 노드가 검사 밖이었다.
+    그래서 축을 「파일 이름」에서 「역할」로 바꿨다: 전수는 `src/orchestrator/**` 전체이고
+    빼는 것은 trace emit 페이로드로 가는 읽기뿐이다(`_record_only_regions`).
+    """
     root = Path(__file__).resolve().parent.parent / "src" / "orchestrator"
-    for name in ("gate.py", "policy.py", "runner.py", "state_machine.py"):
-        assert _observation_reads((root / name).read_text(encoding="utf-8")) == [], name
+    sources = sorted(root.rglob("*.py"))
+    assert len(sources) > 4, "전수 전제 - 앞 판이 보던 네 파일보다 많다"
+    offenders = {
+        str(path.relative_to(root)): lines
+        for path in sources
+        if (lines := _decision_reads(path.read_text(encoding="utf-8")))
+    }
+    assert offenders == {}
+
+
+def test_the_decision_detector_passes_trace_payloads_and_catches_everything_else() -> None:
+    """`_decision_reads`의 핀.
+
+    음성 핀 — **저장소 실형태**다(`src/orchestrator/context.py:697-712`에서 변수 이름만 줄였다):
+    `if ev.crashed is not None:` 조건과 페이로드 dict, 그리고 `**observed`로 펼치는
+    `emit` 호출. 이 셋이 걸리면 기록 전용 코드가 판정으로 잡혀 검사가 못 선다.
+
+    양성 핀 — ① 3라운드에서 생존한 변이의 형태다: `nodes/validate.py`의 `decide()` 신호에
+    `ev.crashed`를 넣는 것(원형은 같은 파일의 `"ok": bool(produced) and all(ev.ok for ev in
+    produced)`). ② 페이로드를 만든 **뒤** 그 키로 가르는 형태 — 대입은 허용 영역이지만
+    `observed["crashed"]`를 다시 읽는 자리는 아니다. ③ `else`가 붙은 분기 — 키를 뺄지
+    가르는 자리가 아니라 길을 가르는 자리다. 셋은 저장소에 없는 형태이므로(검사가 막는
+    것이므로) 지어낸 샘플이고, 그 근거로 ①은 실제 변이, ②·③은 ①을 「대입을 거치면」·
+    「`if`를 쓰면」으로 비켜 가는 최소 변형이다.
+    """
+    record_only = textwrap.dedent(
+        """
+        def call_tool(self):
+            observed: dict[str, object] = {}
+            if ev.crashed is not None:
+                observed = {"crashed": ev.crashed, "crash_banner": ev.banner is not None}
+            self.trace.emit(kind, ok=ev.ok, **observed)
+        """
+    )
+    assert _decision_reads(record_only) == []
+    assert _observation_reads(record_only) != [], "전제 - 이 소스에 읽기는 분명히 있다"
+
+    decides = textwrap.dedent(
+        """
+        def validate(self):
+            self.trace.emit(kind, **observed)
+            return ctx.decide(signals={"ok": all(ev.crashed for ev in produced)})
+        """
+    )
+    assert _decision_reads(decides) == [4]
+
+    reads_back = textwrap.dedent(
+        """
+        def validate(self):
+            observed = {"crashed": evidence.crashed}
+            self.trace.emit(kind, **observed)
+            if observed["crashed"]:
+                grade = "E4"
+        """
+    )
+    assert _decision_reads(reads_back) == [5]
+
+    branches = textwrap.dedent(
+        """
+        def validate(self):
+            if evidence.crashed:
+                observed = {"x": 1}
+            else:
+                observed = {"y": 2}
+            self.trace.emit(kind, **observed)
+        """
+    )
+    assert _decision_reads(branches) == [3]
 
 
 # --- trace ---------------------------------------------------------------------------------------
