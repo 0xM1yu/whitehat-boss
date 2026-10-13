@@ -30,6 +30,13 @@
   (`nodes/gate_node.attach_observed` — 8단계도 같은 함수를 쓴다). 그래서 이 단락에 걸리는 것은
   관측이 0건인 타깃이다. 붙이기 전에는 심사 대상의 자기 신고가 심사 여부를 정했다 —
   실측(`run_20261007_0001`): Finding 5건이 인용 0건이라 전부 E0였고 7단계 이벤트가 0건이었다.
+- **E2의 `GRAPH`는 run 전역 Evidence 하나다 — 이 Finding의 경로를 확인한 것이 아니다 (이슈 #576).**
+  러너가 1단계에서 `index.run`을 **한 번** 돌려 그 Evidence를 모든 타깃의 풀에 넣는다
+  (`runner._artifact_signals`의 `return (graph, *found)`). 그래서 `graph_ok`는 「인덱서가 돌았고
+  **심볼 0개로 보고되지 않았다**」를 말하고(심볼 0개는 어댑터 `judge()`가 `ok=False`로 내리지만 그
+  요약 줄이 없으면 `ok`를 그대로 둔다 · `FakeToolRunner`는 심볼을 안 센다), 인덱서가 서는 동안
+  **E2 ≡ `path_ok ∧ unblocked`** 이며 `path_ok`는 **모델이 쓴 `finding.path`** 다. 인덱서가 실패하면
+  전 타깃이 **동시에** E2를 잃는다 — 등급이 근거 품질이 아니라 인덱서 가동률을 섞어 잰다.
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
 - **E3는 E2를 포함한다 (이슈 #154).** 단조 하강은 「위에서부터 처음 참인 것」이지 포함이
   아니므로 포함은 술어가 직접 든다 — `p3`가 `p2`를 요구한다. 없으면 E2를 못 넘은 Finding이

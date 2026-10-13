@@ -443,6 +443,60 @@ def test_the_grade_tracks_the_indexer_not_the_evidence_when_the_graph_fails() ->
     )
 
 
+def _graph_from_index_stdout(stdout: str) -> Evidence:
+    """인덱서 stdout → 어댑터 `judge()`의 판정 → GRAPH Evidence. 어댑터가 실제로 내는 모양이다."""
+    from src.adapters.container_tools import Step, judge
+
+    ok, code, error = judge("index", [Step(0, stdout, "")], 1)
+    return Evidence(
+        evidence_id="ev_graph",
+        run_id=RUN_ID,
+        kind=EvidenceKind.GRAPH,
+        source="index",
+        artifact_id=".",
+        payload_ref="logs/index.json",
+        digest="sha256:" + "0" * 64,
+        observed_at=OBSERVED_AT,
+        ok=ok,
+        exit_code=code,
+        error=error,
+    )
+
+
+def test_an_empty_graph_does_not_open_e2_but_a_populated_one_still_does() -> None:
+    """🔴 **이슈 #576 (D13 ②)** — 심볼 0개의 GRAPH Evidence는 E2를 못 연다. 같은 Finding·같은 경로.
+
+    양성 짝이 같이 있다: 심볼이 있는 그래프는 **예전 그대로 E2**다(오염시켜 이 검사가 항상
+    빨갛지 않음을 보인다). 두 그래프의 유일한 차이는 인덱서 stdout의 심볼 수다.
+
+    ⚠ **「인덱서가 실패하면 E1」은 위 테스트가 이미 문다.** 이 테스트가 문 것은 **인덱서가
+    성공(exit 0)했는데 비어 있는** 경우다 — 그 전에는 `ok=True`라 E2였다.
+    """
+    from src.orchestrator.gate import evaluate
+
+    path = [
+        PathStep(step=PathStepKind.SOURCE, symbol="read_input"),
+        PathStep(step=PathStepKind.SINK, symbol="memcpy"),
+    ]
+    finding = _finding(refs=["ev_graph", "ev_static"], path=path)
+    static = _static_signal()
+    empty = _graph_from_index_stdout(
+        "# index: 0 symbols, 0 calls, 0 unresolved calls, 0 unresolved symbols, 1 files\n"
+    )
+    full = _graph_from_index_stdout(
+        "# index: 321 symbols, 870 calls, 4 unresolved calls, 0 unresolved symbols, 9 files\n"
+    )
+
+    on_empty = evaluate(finding, [empty, static], missings=[], decisions=[])
+    on_full = evaluate(finding, [full, static], missings=[], decisions=[])
+
+    assert empty.ok is False and full.ok is True
+    assert on_empty.predicates["graph_ok"] is False
+    assert on_empty.grade is EvidenceGrade.E1, "빈 그래프로 E2가 열렸다 — 이슈 #576"
+    assert on_full.predicates["graph_ok"] is True
+    assert on_full.grade is EvidenceGrade.E2
+
+
 # --- 핀 ③ 계측: 부착 전 모델 인용 수가 `gate_eval`에 남는다 (이슈 #554) ---------------------
 
 
