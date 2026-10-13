@@ -677,7 +677,10 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 도구를 `inspect`가 또
   요청하면 도구를 안 돌리고(`tool_call` 없음) 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 인프라
-  실패(124~127)는 기억하지 않는다 · `v5` prefix는 이 거절을 아직 서술하지 않는다) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
+  실패(124~127)는 기억하지 않는다 · `v5` prefix는 이 거절을 아직 서술하지 않는다 ·
+  ⏵ 2026-10-13 — 돌릴 PoC가 없는 `inspect poc`(첫 `gen` 전 — 0바이트 gen 뒤는 `poc`가 `b""`로
+  이미 돌았으니 위 반복이다)도 도구를 안 돌리고 `tool_call` 없이 「먼저 `gen`을 내라」는 관측을
+  되먹인다. 홉은 소비되고 `pov_hop`은 `inspect_without_poc: true`를 단다, #572) — `gdb`는 PR #327(`5cf5c20`, 2026-10-01)이
   `TOOL_KINDS`에 넣었고(`src/adapters/fake_tools.py:30`), 실컨테이너 갈래도 있다
   (`src/adapters/container_tools.py:443-466`·`:247`·`:576-581`). 화이트리스트에 넣은 근거는
   이슈 #360(사용자 결정)이고, 프롬프트·FACTS 확장은 같은 판에서 `prompts/pov/v3`에 넣었다
