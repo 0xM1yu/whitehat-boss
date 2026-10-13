@@ -79,6 +79,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 | 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
+| 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
 `reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
@@ -215,6 +216,9 @@ dict에 **없다**.
 8단계 사유 `evidence_below_proven`(F-10b)을 **안 잡고** 7단계 사유
 `repro_spec_missing`(F-9)은 **잡는다** — 양쪽으로 틀리는 것을 stage 필터 하나가 겨우
 막고 있었다. 8단계 사유가 늘면 이 산식을 같이 고친다(#68).
+
+⏵ 2026-10-13 (이슈 #326) - 8단계에는 전이 없는 출구가 하나 더 있다: 재현을 시도하지 못한 건은
+`repro_not_measured`만 내고 규칙 번호도 `transition` 행도 없다 - 위 산식의 분자·분모에 안 든다.
 
 검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
 파싱 실패율"의 분모가 `model_call`들의 시도 합(`Σ attempts`)인데 스키마가 없는 호출이
@@ -831,6 +835,15 @@ class EventKind(StrEnum):
     # 이 이벤트가 생기기 전에는 리포트의 `중복 제거: N건`이 전부였다 — 실측 `run_20260827_0004`에서
     # E2·`upheld`였던 `find_0005`가 사라졌는데 무엇과 합쳐졌는지를 run 산출물로 답할 수 없었다.
     FINDING_DEDUPED = "finding_deduped"
+    # 8단계가 **재현을 시도하지 못한** `validated` Finding 하나 (이슈 #326). 내는 곳은
+    # `nodes/validate.run`이고 **상태를 안 바꾼다** - 전이도 `policy_decision`도 없으므로
+    # 「제거율 — Tool」의 분자(`repro_failed`)에도 분모에도 안 든다.
+    # `reason`: `poc_runs_in_the_pov_loop`(신호가 `poc`를 가리키는데 이 노드는 `poc`를
+    # 안 돌린다) · `tool_produced_no_measurement`(`build`·`asan`이 `ok=False` - 컴파일·링크가
+    # 안 됐거나, 대상이 안 떴거나, 떴다가 시간 초과로 끊겼다(`124`). 원인 Evidence의
+    # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
+    # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
+    REPRO_NOT_MEASURED = "repro_not_measured"
 
 
 class TraceEvent(HarnessModel):
