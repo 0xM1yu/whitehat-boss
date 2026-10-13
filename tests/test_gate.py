@@ -372,8 +372,8 @@ def test_runtime_evidence_is_e4(kind: EvidenceKind, exit_code: int) -> None:
 
     양성 핀이다 — 아래 음성 핀 둘과 한 쌍이다. 한쪽만 있으면 `p4`를 항상 거짓으로 만드는
     변이(또는 항상 참인 원래 식)가 초록으로 남는다. 종료 코드가 비-0이라는 것은 **크래시의
-    대용 지표**이고 크래시했다는 관측이 아니다 — 그 한계는 `Evidence`에 그것을 표현하는 필드가
-    없다는 것이다.
+    대용 지표**이고 크래시했다는 관측이 아니다 — 그 한계는 `p4`가
+    배너 관측(`Evidence.crashed`, 기록뿐이다)을 안 읽고 종료 코드만 읽는다는 것이다.
     """
     finding = _finding(refs=["ev_run"])
     evidences = [_evidence("ev_run", kind, exit_code=exit_code)]
