@@ -963,20 +963,21 @@ def _spy_connect(
     return seen
 
 
-# 판은 움직이는 값이라 칸을 `STATE_DB_SCHEMA_VERSION` 기준으로 쓴다 — 리터럴 `2`를 「더 새 판」
-# 으로 적어 뒀더니 판이 2로 오른 커밋에서 그 칸이 **같은 판**이 돼 거부가 안 났다.
+_CODE_SCHEMA_VERSION = sqlite_store.STATE_DB_SCHEMA_VERSION
+
+
+# 판 번호를 리터럴로 박지 않는다 — 앞 판은 `2`·`5`·`(1, 2)`였고 판을 1에서 2로 올리는 PR에서
+# 첫 칸이 「더 새 코드」가 아니게 돼 그대로 빨개졌다. 막는 명제는 「**코드 판보다 큰** 판은
+# 더 새 코드가 만든 것이고 **작은** 판(0 제외)은 더 옛 코드가 만든 것이다」라 그 상대 관계로
+# 적는다. 0은 「판을 안 적은 파일」이라 이 표에 안 든다(바로 위 테스트가 그쪽을 문다).
 @pytest.mark.parametrize(
     ("stored", "code_version", "says"),
     [
-        (sqlite_store.STATE_DB_SCHEMA_VERSION + 1, None, "더 새 코드"),
-        (sqlite_store.STATE_DB_SCHEMA_VERSION + 4, None, "더 새 코드"),
+        (_CODE_SCHEMA_VERSION + 1, None, "더 새 코드"),
+        (_CODE_SCHEMA_VERSION + 4, None, "더 새 코드"),
         (2**31 - 1, None, "더 새 코드"),
         (-1, None, "더 옛 코드"),
-        (
-            sqlite_store.STATE_DB_SCHEMA_VERSION,
-            sqlite_store.STATE_DB_SCHEMA_VERSION + 1,
-            "더 옛 코드",
-        ),
+        (_CODE_SCHEMA_VERSION, _CODE_SCHEMA_VERSION + 1, "더 옛 코드"),
     ],
 )
 def test_a_state_db_of_another_version_is_refused_before_any_row_is_read(
