@@ -82,8 +82,9 @@ def _scout_reads_the_slice_render(
 ) -> None:
     """이 파일은 Scout가 **슬라이스 렌더**를 `SOURCE`로 보는 쪽(`input: slice`, v3)을 잰다.
 
-    `dev_fake`의 Scout(`scout/v2`)는 `input: source`라 노드가 함수 본문을 보낸다(#529) -> 선언을
-    `slice`로 바꿔 돈다. `test_source_*` 검사는 디스크 선언 그대로다.
+    `dev_fake`의 Scout(`scout/v1`)는 meta에 `input` 키가 없어 기본값 `source`로 읽히고, 노드는
+    함수 본문을 보낸다(#529) -> 선언을 `slice`로 바꿔 돈다.
+    `test_source_*` 검사는 디스크 선언 그대로다.
     """
     if not request.node.name.startswith("test_source_"):
         declare_scout_input(monkeypatch, "slice")
@@ -348,10 +349,10 @@ def test_scout_sees_the_slice_render_and_the_end_it_was_given(tmp_path: Path) ->
 
 
 def test_source_declaration_gets_the_function_body_through_the_whole_run(tmp_path: Path) -> None:
-    """#529 — `input: source`를 선언한 Scout(`dev_fake`의 scout/v2 · 배선된 v4와 같은 선언)는
-    `--slices` run에서도 **entry를 품는 함수 본문**을 받는다. 거터도 배너도 `slice_criterion`도
-    없이, 첫 줄이 `FACTS.target.line_start`다. 후보의 위치는 모델이 `FACTS.target`에서 복사하므로
-    그 함수 범위다.
+    """#529 — `input: source`로 읽히는 Scout(배선된 v4는 그렇게 선언하고, `dev_fake`의 scout/v1은
+    키가 없어 기본값이 같은 쪽이다)는 `--slices` run에서도 **entry를 품는 함수 본문**을 받는다.
+    거터도 배너도 `slice_criterion`도 없이, 첫 줄이 `FACTS.target.line_start`다. 후보의 위치는
+    모델이 `FACTS.target`에서 복사하므로 그 함수 범위다.
     """
     path = _slices_file(tmp_path, [_slice(*_CASE_B)])
 

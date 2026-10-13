@@ -1159,10 +1159,12 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **버전 문자열이 바뀌는 것을 발화 조건으로 삼으므로 자동으로는 안 걸린다**(위 critic v1·v2 문단과 같은
 > 종류). 이 문단이 그 자리를 대신한다: **#529 전후의 v4 `--slices` run은 직접 비교하지 않는다.** 판 번호를
 > 올릴지는 소유자 판단이라 올리지 않았다. **잃는 측정** — Scout v4로 돈 커밋된 run은 셋이고(10-08 · 10-11 ·
-> 10-12) 그중 보고서가 `--slices`를 적는 것은 둘이다([10-08](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)
-> `arvo-4.json` 4조각 · [10-12](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 같은 4건 ·
-> 10-11 보고서에는 슬라이스 줄이 없다). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는
-> 이번에도 돌지 않았다.
+> 10-12) 그중 보고서 자신이 슬라이스 입력을 적는 것은 둘이다([10-08](experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)
+> `arvo-4.json` 4조각 · [10-12](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 같은 4건).
+> [10-11 보고서](experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md)에는 슬라이스 줄이 없으나
+> 10-12 보고서 「타깃 넷은 10-11과 같다」(`slice_0001`·`0002`·`0003`·`0006`)가 10-11도 같은 슬라이스 타깃이었다고
+> 적으므로 **영향받은 run은 셋일 수 있다**(10-11 쪽은 10-12 보고서의 서술이고 10-11 원천 `s14-results`는
+> 저장소 밖이라 미확인). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는 이번에도 돌지 않았다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

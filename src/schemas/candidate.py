@@ -101,6 +101,9 @@ class Candidate(HarnessModel):
     # `location`은 슬라이스의 대표 위치(entry)라 불연속 줄 집합을 못 들고, entry가 같은 두
     # 슬라이스를 가르지도 못한다 — 그것을 이 필드가 든다. `scout_member`와 같은 논법으로
     # **하네스가 덮는다**(`nodes/scout.finish`). `None`은 `--slices` 없이 돈 run의 후보다.
+    # ⏵ 2026-10-13 #529 — 「location은 entry」는 프롬프트가 `input: slice`일 때다. `input: source`
+    # (서빙 v4)는 모델이 `FACTS.target`을 베끼므로 entry를 품는 함수 범위이고, 슬라이스 run에서
+    # 후보를 가르는 키는 그래서 `slice_id`다.
     slice_id: NonEmptyStr | None = None
 
 
