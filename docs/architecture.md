@@ -46,7 +46,7 @@ graph LR
 > 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
 >
 > ⏵ 2026-10-13(#554) — 6단계는 판정 전에 타깃 관측 Evidence를
-> `evidence_refs`에 붙여 저장하므로(`gate_node.attach_observed`) **6단계를 거친 Finding의** 모델 원본 인용 수는
+> `evidence_refs`에 붙여 저장하므로(`gate_node.attach_observed`) **6단계를 거쳐 관측 Evidence가 붙은 Finding의** 모델 원본 인용 수는
 > 6단계 `gate_eval`의 `cited_by_model`에 남는다(7·8단계 행에는 없다). 6단계 행이 없는 Finding(5단계 도중
 > 예산 소진 등)의 `state.db` 행은 부착 전 원본이다.
 
