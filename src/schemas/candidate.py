@@ -103,7 +103,8 @@ class Candidate(HarnessModel):
     # **하네스가 덮는다**(`nodes/scout.finish`). `None`은 `--slices` 없이 돈 run의 후보다.
     # ⏵ 2026-10-13 #529 — 「location은 entry」는 프롬프트가 `input: slice`일 때다. `input: source`
     # (서빙 v4)는 모델이 `FACTS.target`을 베끼면 entry를 품는 함수 범위다 — **미실측이다**:
-    # 베끼는지 관측된 것은 `file`·`line_start`뿐이고 `symbol`은 D82 ⑥에서 12/12 null이었다
+    # 베끼는지 관측된 것은 `file`·`line_start`뿐이고 `symbol`은 2026-10-12 run(Scout v4)에서
+    # 후보 12건 12/12 null이었다(이슈 #278 닫히는 조건 ⑥의 실측)
     # (그래서 #633이 도장을 넣었다). 슬라이스 run에서
     # 후보를 가르는 키는 그래서 `slice_id`다.
     slice_id: NonEmptyStr | None = None
