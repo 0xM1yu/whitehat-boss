@@ -361,46 +361,58 @@ class PovStopReason(StrEnum):
 class AuditorStopReason(StrEnum):
     """Auditor(5단계) 도구 홉 루프가 서는 사유 (이슈 #419).
 
-    `PovStopReason`을 미러한 모델-주도 루프다. **셋이다** — 노드가 내는 것이 이게 전부이고 홉
+    `PovStopReason`을 미러한 모델-주도 루프다. **넷이다** — 노드가 내는 것이 이게 전부이고 홉
     이벤트(`EventKind.AUDITOR_HOP`)의 `stop_reason`으로 남는다(`NeStopReason` ↔ `SCOUT_HOP`,
-    `PovStopReason` ↔ `POV_HOP`과 같은 짝).
+    `PovStopReason` ↔ `POV_HOP`과 같은 짝). 앞 셋은 **모델이 낸 답**이고 `CONTEXT_OVERFLOW`는
+    서버가 낸 거절이다 - 모델이 아무것도 못 낸 홉이라 산문이 말하는 「답 없이 끝나는 경우」에
+    들지 않는다.
 
     - `ANSWERED` — 모델이 `answer`로 Finding을 냈다. 정상 종료이고, 종전 한 방 경로와
       같은 출력(Finding 하나)으로 5단계를 빠져나간다.
-    - `REPEAT_REQUEST` — 직전 홉과 같은 요청을 또 냈다(같은 도구, 또는 같은 `(kind, target)`
-      집합). NE 루프의 `NeStopReason.REPEAT_REQUEST`와 같은 자리다 — 그쪽은 요청 키를
-      `frozenset((kind, target))`으로 보고(`runner._run_ne_hops`), pov는 조립 **바이트**로
-      본다(`PovStopReason.REPEAT_SPEC`). Auditor는 액션이 둘(`lookup`·`probe`)이라 비교 축도
-      둘이다. **Finding이 없다.**
+    - `REPEAT_REQUEST` — **앞선 어느 홉과** 같은 요청을 또 냈다(같은 도구, 또는 같은
+      `(kind, target)` 집합 - 직전 홉만 보던 판은 A→B→A→B가 안 섰다, #514). NE 루프의
+      `NeStopReason.REPEAT_REQUEST`와 같은 자리다 - 단 NE는 아직 직전 홉만 비교하고
+      (`runner._run_ne_hops`의 `previous_keys`) Auditor는 앞선 모든 홉을 비교한다(#514).
+      그쪽은 요청 키를 `frozenset((kind, target))`으로 보고(`runner._run_ne_hops`), pov는
+      조립 **바이트**로 본다(`PovStopReason.REPEAT_SPEC`). Auditor는 액션이 둘(`lookup`·`probe`)이라
+      비교 축도 둘이다. **Finding이 없다.**
     - `MAX_HOP` — 상한(`thresholds.auditor_tool_hops`)을 조사만으로 소진했다. **Finding이
       없다.**
+    - `CONTEXT_OVERFLOW` — 그 홉의 **모델 호출이 크기 거절**(`model_client.is_size_rejection` -
+      413 또는 컨텍스트 초과 문구가 실린 400)당했다(#514). 홉 16개가 쌓인 입력이 창을 넘을 수 있다
+      (`config.py`의 `auditor_tool_hops` 주석의 계산값). `PovStopReason.CONTEXT_OVERFLOW`와 같은
+      뜻이다. 이 홉은 응답이 없어 `action`이 없고 `error`·`error_detail`이 대신 실린다. **Finding이
+      없다.**
 
-    ⚠ **Finding이 없는 정지는 둘이다 — `REPEAT_REQUEST`와 `MAX_HOP`.** 둘 다 후보를 폐기하지
-    않고 `queued`에 두며(`nodes/auditor._queue_candidate`) `AuditorHopLimit`을 올린다. 전이 표의
-    사유는 **C-5 `capsule_expansion_exhausted`다**(`nodes/auditor._NO_FINDING_REASON` — 딱 맞는
-    행이 없어 가장 가까운 것을 쓴 것이다. C-6·C-7은 파싱 실패·예산 소진이라는 거짓 진단이 된다).
-    그래서 `queued` 후보의 사유만으로는 이 정지와 진짜 캡슐 확장 소진이 안 갈린다 — **홉 이벤트의
-    `stop_reason`을 조인한다.** 「Finding 없음」을 세려면 두 값을 다 센다(`max_hop`만 세면
-    `repeat_request`로 선 후보를 놓친다).
+    ⚠ **Finding이 없는 정지는 셋이다 - `REPEAT_REQUEST` · `MAX_HOP` · `CONTEXT_OVERFLOW`.** 셋 다
+    후보를 폐기하지 않고 `queued`에 두며(`nodes/auditor._queue_candidate`) 전이 표의 사유는 **C-5
+    `capsule_expansion_exhausted`다**(`nodes/auditor._NO_FINDING_REASON` - 딱 맞는 행이 없어 가장
+    가까운 것을 쓴 것이다. C-6·C-7은 파싱 실패·예산 소진이라는 거짓 진단이 된다). 그래서 `queued`
+    후보의 사유만으로는 이 정지와 진짜 캡슐 확장 소진이 안 갈린다 - **홉 이벤트의 `stop_reason`을
+    조인한다.** 「Finding 없음」을 세려면 값을 다 센다(`max_hop`만 세면 `repeat_request`로 선 후보를
+    놓친다). 앞 둘은 `AuditorHopLimit`을 올려 러너가 후보 단위로 받고, `CONTEXT_OVERFLOW`는 **원래
+    게이트웨이 예외가 그대로 올라가** 러너의 `_drop`이 받는다(`target_skipped` · 연속 폐기 카운터가
+    크기 거절을 안 센다).
 
     ⚠ **`nothing_resolved`는 없다.** `lookup`이 이름을 하나도 못 채운 것은 정지 사유가 아니다 — 못
     찾은 이름은 `Not resolved:` 줄로 되먹여 모델이 이름을 고치게 한다. 그 사실은 홉 이벤트의
     `resolved`(0)와 `unfilled`·`truncated`가 센다. 값을 미리 두면 그것을 세는 소비자가 영영 0건인
     행을 기대한다.
 
-    ⚠ **모델 호출의 실패는 흡수하지 않는다.** 스키마 파싱 실패·크기 거절·예산 소진은 5단계 본선
-    사건이라(`PovStopReason`의 `PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`에 해당하는 값이
-    여기 없다) 그대로 올려 보내 C-6·C-7 전이와 예산 정지가 종전처럼 돈다
-    (`nodes/auditor._call_model`이 `_queue_candidate`를 부르고 다시 올린다). pov는 **추가형**이라
-    서버 쪽 사건만 올리고 나머지를 흡수했지만, Auditor는 파이프라인 본선이어서 루프가 흡수하면 그
-    `queued` 전이를 루프가 대신 해야 하고, 빠뜨리면 후보가 `triaged`에 남는다. 조회·도구 쪽 하네스
-    실패는 C-6을 안 단다(모델이 스키마를 못 맞춘 것이 아니다) — 홉 이벤트의 `observation_error`로
-    남는다.
+    ⚠ **노드는 모델 호출의 실패를 삼키지 않는다.** 스키마 파싱 실패·크기 거절·예산 소진은 5단계 본선
+    사건이라(`PovStopReason`의 `PARSE_FAILED`·`GATEWAY_ERROR`에 해당하는 값이 여기 없다) 그대로 올려
+    보내 C-6·C-7 전이와 예산 정지가 종전처럼 돈다(`nodes/auditor._call_model`이 `_queue_candidate`를
+    부르고 다시 올린다). pov는 **추가형**이라 서버 쪽 사건만 올리고 나머지를 흡수했지만, Auditor는
+    파이프라인 본선이어서 노드가 삼키면 러너의 연속 폐기 카운터와 성공 0 백스톱(#296)이 못 본다 -
+    모든 후보가 크기 거절인 run이 완주로 읽힌다. 크기 거절만 사유와 이벤트(`CONTEXT_OVERFLOW`)를
+    **더한 뒤** 올린다. 조회·도구 쪽 하네스 실패는 C-6을 안 단다(모델이 스키마를 못 맞춘 것이
+    아니다) - 홉 이벤트의 `observation_error`로 남는다.
     """
 
     ANSWERED = "answered"
     REPEAT_REQUEST = "repeat_request"
     MAX_HOP = "max_hop"
+    CONTEXT_OVERFLOW = "context_overflow"
 
 
 class UnfilledReason(StrEnum):
