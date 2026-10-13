@@ -83,7 +83,8 @@ SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHE
 # 모델 `AuditProcedure`는 허용집합에 **없다** — 집합은 「코드가 보내는 것」만 든다.
 AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
 
-# pov도 판마다 갈린다(⏵ 2026-10-11 · 이슈 #549): v2~v4=`PovAction`, v5=형제 `PovActionNamed`.
+# pov도 판마다 갈린다(⏵ 2026-10-11 · 이슈 #549): v2~v4=`PovAction`, v5=형제 `PovActionNamed`
+# (⏵ 2026-10-13 v6도 `PovActionNamed`).
 POV_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in pov_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
@@ -545,7 +546,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     것이 로더를 통과하는지만 본다. **고르는 쪽은 registry의 `prompt_template_version`**
     이고, 그 값이 없는 디렉터리를 가리켜도 `load_config`는 통과한다: 프롬프트는 해당
     역할의 첫 모델 호출에서 처음 열리므로 **GPU 시간을 쓴 뒤에 죽는다.** `cli doctor`의
-    `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다.
+    `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다
+    (⏵ 2026-10-13 #600 H3 — 이제 `run`이 같은 `_check_prompts`를 시작 전에 건다).
 
     실서빙 프로필은 단일 `scout`이고 registry가 `v1`이라 통과한다. **풀 프로필
     `local_balanced_pool`도 통과하는데, 그것은 이 검사가 잡을 뻔한 간극을 v2 별칭이
