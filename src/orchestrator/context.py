@@ -610,6 +610,10 @@ class RunContext:
         `HarnessModel.transition()`과 같은 식이되 반환 타입(`SchemaT`)을 살리려고 여기서 직접 쓴다.
 
         **`location`은 덮지 않는다** — 발급값이 아니라 모델이 사실 블록의 대상을 옮겨 적는 값이다.
+        ⏵ 2026-10-13 — 단 Scout 후보의 `location.symbol`이 `null`이면
+        `nodes/scout._stamp_target_symbol`이 그 줄을 품는 함수 이름으로 채운다(이슈 #633).
+        이 메서드를 지난 **뒤**의 별도 도장이고 이벤트도
+        `issued_override`가 아니라 `scout_symbol_stamped`다.
         """
         differed = [name for name, want in issued.items() if getattr(value, name) != want]
         if differed:

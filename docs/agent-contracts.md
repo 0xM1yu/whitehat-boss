@@ -137,6 +137,37 @@ agent:
   (`call_model`·`_call_hop`)와 `slice_id`(`scout.finish`)도 하네스가 덮지만 **기록 없이** 덮는다 — 그 둘의 이탈은
   `issued_override`가 없으니 「모델이 맞게 썼다」가 아니라 「안 쟀다」다. `location`은 덮지 않는다 — 모델이
   사실 블록의 대상을 옮겨 적는 값이다.
+
+  ⏵ 2026-10-13 — 위 `location`은 덮지 않는다는 말에 **예외 하나**가 생겼다: 후보의 `location.symbol`이
+  `null`이면 하네스가 **그 줄을 품는 함수**의 이름을 채운다(이슈 #633 선택지 (a)+(b) —
+  `nodes/scout._stamp_target_symbol`, 발급값 도장 **뒤**의 별도 도장). 네 조건이 다 맞을 때만이다 —
+  모델이 `symbol`을 안 썼다(`null`; `""`·틀린 이름은 쓴 값이라 그대로) · 후보 `location.file`이 대상
+  `file`과 같다(다른 파일 후보는 안 건드린다) · 대상이 `symbol`을 든다(찍는 값의 근거는 아니고, 이름
+  없는 대상은 인덱스가 그 줄의 함수를 알아도 안 찍는 보수적 가드다) · 인덱스(`ctx.symbols_for`)가 후보 `line_start`를 품는 함수를 안다(모르면 안 찍는다 —
+  줄이 없는 후보·인덱스 없는 프로필(`dev_fake`)이 그렇다).
+  ⚠ **찍는 값은 `FACTS.target.symbol`이 아니다.** 슬라이스 타깃의 `FACTS.target`은 entry 한 줄이고
+  `SOURCE`는 여러 함수에 걸치므로, 대상 이름을 그대로 찍으면 **같은 파일 다른 함수**의 후보에 대상
+  함수 이름이 붙어 `repro_spec`·`validate` argv에 실린다. 그래서 인덱스가 아는 품는 함수를 찍는다.
+  **이 브랜치 단독에서는 두 값이 같다고 단언하지 않는다:** 찍는 값은 인덱서(tree-sitter) 표의 이름이고
+  (`_enclosing_symbol`), `FACTS.target.symbol`은 `capsule.target`, 곧 Joern `scopes[0].symbol`이다
+  (`src/adapters/slices.py` 로더). 표기가 갈릴 수 있다 — 인덱서는 C++ 클래스 바깥 정의를 `P::parse`로
+  낸다(`tools/harness-tools/indexer.py` `_NAME_NODES`의 `qualified_identifier`). **미실측**이다.
+  슬라이스 타깃의 hop0 `FACTS.target`을 같은 인덱스 표(`entry_scope.enclosing_scope`)에서 읽는 별도 PR
+  #641이 병합되면 그 경로(`input: source`이고 인덱스가 entry를 품는 함수를 아는 hop0)에서는 같은 표를
+  읽는다 — **후보 줄이 그 함수 안일 때** 같은 값이고, 후보가 같은 파일 **다른 함수**에 앉으면
+  다르다(바로 위 ⚠가 그 동작이다 — 도장은 `candidate.location.line_start`를, FACTS `target`은
+  `slice.entry.line_start`를 품는 함수를 읽는다). 그 PR에서도 창 폴백(인덱스가 entry를 품는 함수를 모를 때)의 `FACTS.target.symbol`은
+  `capsule.target`의 것이고, 되묻기 홉은 FACTS를 다시 싣지 않는다(도장 가드가 보는 `target`은 세션이 이어
+  쥔 `capsule.target`이다).
+  `file`·`line_start`·`line_end`는 계속 모델 값이다. v1~v3·되묻기 홉 전부 같고, 채운 홉마다 trace
+  `scout_symbol_stamped`(`hop`·`symbol`)가 남는다 — **이벤트 부재 = 채우지 않았다**이고 `issued_override`와는
+  섞지 않는다. **한계:** 이것은 후보 객체의 빈 칸을 채울 뿐 모델이 `symbol`을 옮겼다는 뜻이 아니다 — 모델의
+  복사 실패율(s17 12/12 `null`)은 그대로이고 도장은 그 실패를 가린다. **모델 요청 바이트는 안 변한다** —
+  Auditor는 후보를 ID·CWE·신호로만 렌더하고 FACTS `target`은 `capsule.target`이며 Critic은 Finding만 읽는다
+  (`tests/test_nodes.py::test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt`). 값이 닿는 곳은
+  저장된 후보, 합성 `repro_spec`의 문구(`nodes/auditor._synthesize_repro_spec`이 `symbol or file`을 쓴다 —
+  `sanitizer crash at <file>`이 `<symbol>`로 바뀐다)와 러너의 「분석 안 된 대상」 비교 키
+  (`_target_key`에 `symbol`이 든다)다.
 - 프롬프트 규약: thinking 최소화, 출력은 항목당 3줄 이내, 자유 서술 금지
 - 실패 모드: 위험 함수 존재만으로 높은 점수를 주는 편향 → benign 샘플로 반드시 교정 측정([evaluation.md](evaluation.md))
 
@@ -631,6 +662,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `submit`이 선택 필드 `poc_sha256`(이미 낸 gen의 digest — 전체 또는 8자 이상 접두)을 실을 수 있고, 없으면 마지막 gen이
   최종 후보다. 형식은 스키마가 검증하지 않는다(길이 80만 건다 — 넘으면 파싱 실패) — 해석이 정규화하고 못 찾으면 마지막 gen으로 돌아가며 submit 홉 이벤트가
   `submit_digest`(`absent`·`matched`·`unknown`)를 단다.
+
+  ⏵ 2026-10-13 — v6도 형제 봉투 `PovActionNamed`를 요청한다(서빙 판 — meta `output_schema`).
 - 실행: 러너가 `Stage.VALIDATE`에서 `validate.run`과 **나란히** 다중 홉 루프(`_run_pov_hops`)로 부른다
   (추가형 — PoV 배선). 새 단계 번호는 안 만든다(`Stage`는 0~9 고정). 캡슐 미스·스키마 실패·버릴 수 있는
   게이트웨이는 finding을 안 죽이고 `pov_skipped`로 남기고(⏵ 2026-10-11 — **스키마 파싱 실패는 홉 하나를 쓰고
@@ -699,6 +732,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
   접었다(2026-10-02 결정, 아래 한계로 남긴다).
+
+  ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
+  서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1163,7 +1199,10 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-> ### ⚠ 이 규칙이 발화하지 못한 건이 하나 있다 — `prompts/critic/v1`·`v2` (2026-09-12, PR #182)
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+
+> ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
+> ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)
 >
 > **본문이 바뀌었는데 `version`이 안 바뀌었다.** 그래서 `prompt_version: "v1"`이 **서로 다른
 > 두 텍스트**를 가리킨다. 위 규칙 1도 [evaluation.md](evaluation.md) §2.3 규칙 4("프롬프트
