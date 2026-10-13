@@ -666,6 +666,8 @@ class RunContext:
         아예 싣지 않는다**(Fake·추론 파서가 꺼진 서버 — 키 부재 = 추론 채널을 못 받았다).
         응답 원문이 `None`인 칸(`content: null`)에도
         추론은 있을 수 있다 — 추론이 예산을 다 먹은 호출이 정확히 그 모양이다.
+        **추론 쓰기가 실패하면 응답 참조는 그대로 두고 `reasoning_record_error`만 더한다** —
+        응답은 이미 디스크에 있는데 참조를 버리면 trace가 「응답 안 남음」으로 읽힌다.
         """
         if not raw_texts or self.prompts is None:
             return {}
@@ -688,14 +690,22 @@ class RunContext:
         slots = [attempts[i] if i < len(attempts) else None for i in range(len(raw_texts))]
         if all(a is None or a.reasoning is None for a in slots):
             return fields
-        reasoned = [
-            None
-            if a is None or a.reasoning is None
-            else self.prompts.write_reasoning(
-                role=role.value, stage=int(stage), index=index, hop=hop, text=a.reasoning
-            )
-            for index, a in enumerate(slots)
-        ]
+        # **추론 쓰기는 별 `try`다.** 여기서 던지면 함수 전체가 예외가 되고 호출부(:377·:430)는
+        # `response_record_error`만 싣는다 - 디스크에 응답 파일이 남았는데 trace에는 참조가
+        # 없어 **응답을 안 남긴 호출**로 읽힌다(고아 파일). 응답 참조는 이미 손에 있으므로
+        # 그것을 살리고 추론 쪽 실패만 사유로 싣는다.
+        try:
+            reasoned = [
+                None
+                if a is None or a.reasoning is None
+                else self.prompts.write_reasoning(
+                    role=role.value, stage=int(stage), index=index, hop=hop, text=a.reasoning
+                )
+                for index, a in enumerate(slots)
+            ]
+        except Exception as record_exc:
+            errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
+            return {**fields, "reasoning_record_error": f"{type(record_exc).__name__}{errno}"}
         return {
             **fields,
             "reasoning_refs": json.dumps(
