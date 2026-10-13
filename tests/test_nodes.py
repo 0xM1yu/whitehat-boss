@@ -76,6 +76,7 @@ from src.schemas.evidence import Evidence
 from src.schemas.finding import Finding, PathStep, PathStepKind
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 from src.tokens import estimate_tokens
+from tests.conftest import declare_scout_input
 
 RUN_ID = "run_20260901_0001"
 NOW = datetime(2026, 9, 1, tzinfo=UTC)
@@ -994,7 +995,12 @@ def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert _pov_subjects(ctx) == [finding.finding_id]
-    assert state.findings[finding.finding_id].state is FindingState.HYPOTHESIZED, (
+    # ⏵ 2026-10-13 (ADR 0015) - 이 Finding은 7단계에서 Fake Critic의 **근거 없는 반박**을 받는다.
+    # 전엔 그것이
+    # `uphold`로 정규화돼 `HYPOTHESIZED`로 남았고, 지금은 `need_evidence`(F-7)라 `QUEUED`다. 이
+    # 테스트가 묻는
+    # 명제는 그대로다 - PoV(추가형)가 상태를 더 올리지 않는다(`validated`·`proven`이 아니다).
+    assert state.findings[finding.finding_id].state is FindingState.QUEUED, (
         "pov는 추가형이다 — 상태를 바꾸지 않는다"
     )
 
@@ -1112,8 +1118,8 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
             id="upheld_but_held_for_a_missing_repro_spec_F9",
         ),
         pytest.param(
-            FindingState.HYPOTHESIZED, Verdict.REBUT, False, False, True,
-            id="an_ungrounded_rebuttal_is_normalized_to_uphold",
+            FindingState.QUEUED, Verdict.REBUT, False, False, True,
+            id="an_ungrounded_rebuttal_is_normalized_to_need_evidence",
         ),
         pytest.param(
             FindingState.HYPOTHESIZED, None, False, False, True,
@@ -1135,9 +1141,11 @@ def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
 ) -> None:
     """풀 판정표 - 상태가 아니라 **Critic이 이 Finding에 무엇을 했나**로 가른다. `QUEUED`는
     F-2(게이트 E0 - Critic을 안 거쳤다)와 F-6(밀어 냄)·F-7(보류 - 든다)이 섞인 상태라 상태만으로는
-    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `uphold`로 바꾸므로 정책이 `QUEUED`로 안
-    보내고(`HYPOTHESIZED` F-9) 풀에 든다 - 정규화가 한 곳(`gate.normalize`)에서만 일어난다는 전제를
-    같이 문다.
+    못 가른다. 근거 없는 `rebut`은 `gate.normalize`가 `need_evidence`로 바꾸므로 보류(F-7)와 같은
+    길로
+    풀에 든다(⏵ 2026-10-13 ADR 0015 - 전엔 `uphold`로 바뀌어 `HYPOTHESIZED`로 들었다) - 정규화가
+    한 곳
+    (`gate.normalize`)에서만 일어난다는 전제를 같이 문다.
 
     ⚠ 판정표 여덟은 **정책·상태 기계에서 이 상태가 나오는 길**(F-2 · F-6 · F-7 · F-9 · 상한
     절단 · `_drop_finding`)에서 골랐다 - 지어낸 상태가 아니다."""
@@ -1302,7 +1310,13 @@ def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
     state, (kept, rebutted) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
 
     def ask(
-        ctx_: RunContext, *, decision_id: str, finding: Finding, evidences: list, source=None
+        ctx_: RunContext,
+        *,
+        decision_id: str,
+        finding: Finding,
+        evidences: list,
+        source=None,
+        hop_observations=(),
     ) -> Decision:
         verdict = Verdict.REBUT if finding.finding_id == rebutted.finding_id else Verdict.UPHOLD
         return Decision(
@@ -1357,7 +1371,8 @@ def test_an_empty_pov_pool_with_a_pov_seat_lands_in_the_run_warnings_with_its_br
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 5 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
     assert "8단계 PoV는 한 건도 시도되지 않았다" in message
@@ -1378,7 +1393,8 @@ def test_the_empty_pool_sentence_counts_each_way_a_finding_leaves_the_pool(ctx: 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백 포함) 2 · 판정 실패 1"
+        "PoV 대상 0건 — validated 0 · Critic 반박 3 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
         " · Critic 미경유 4 · pov_attempt_top_n 0."
     ), message
     assert "상한 0" in message
@@ -1397,8 +1413,12 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
     ctx: RunContext,
 ) -> None:
     """칸 우선순위와 정규화를 한 번에 문다 — 상한 0 · validated 0, 여섯 Finding이 각자 한 칸:
-    근거 없는 반박(→ `normalize`가 업홀드 → 업홀드 미승격) · 근거 있는 업홀드(미승격) · **판정 실패
-    목록에도 반박이 있는 것**(→ 판정 실패가 먼저) · 근거 있는 반박 · 보류 · 판정 없음."""
+    근거 없는 반박(→ `normalize`가 `need_evidence` → 보류) · 근거 있는 업홀드(미승격) · **판정 실패
+    목록에도 반박이 있는 것**(→ 판정 실패가 먼저) · 근거 있는 반박 · 보류 · 판정 없음.
+
+    ⏵ 2026-10-13 (ADR 0015) - 근거 없는 반박의 칸이 「업홀드 미승격」에서 「보류」로 옮겼다.
+    전에는 그 반박이
+    `uphold`로 읽혀 **업홀드 칸에 두 건**(미승격 2)이 쌓였다."""
     _with_top_n(ctx, 0)
     state = runner._Accumulator()
     plan = {
@@ -1421,8 +1441,9 @@ def test_the_empty_pool_sentence_reads_the_normalized_verdict_and_the_priority_o
 
     assert state.pov_pool_empty is not None
     assert state.pov_pool_empty.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백 포함) 1 · 판정 실패 1"
-        " · Critic 미경유 1 · 업홀드 미승격 2 · pov_attempt_top_n 0."
+        "PoV 대상 0건 — validated 0 · Critic 반박 1 · 보류(파서 폴백·정규화된 반박 포함) 2"
+        " · 판정 실패 1"
+        " · Critic 미경유 1 · 업홀드 미승격 1 · pov_attempt_top_n 0."
     ), state.pov_pool_empty
 
 
@@ -1437,7 +1458,8 @@ def test_an_empty_pov_pool_with_no_findings_at_all_still_warns(ctx: RunContext) 
 
     assert message is not None
     assert message.startswith(
-        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백 포함) 0 · 판정 실패 0"
+        "PoV 대상 0건 — validated 0 · Critic 반박 0 · 보류(파서 폴백·정규화된 반박 포함) 0"
+        " · 판정 실패 0"
         " · Critic 미경유 0 · pov_attempt_top_n 8."
     ), message
 
@@ -1702,10 +1724,38 @@ def test_critic_prompt_omits_auditor_reasoning(ctx: RunContext) -> None:
     assert finding.finding_id in prompt.body
 
 
-def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
-    """근거 없는 반박은 uphold로 처리하되 지표에 남는다. 정규화 지점은 한 곳이다.
+def _critic_says(ctx: RunContext, **update: object) -> None:
+    """Fake Critic은 표준 어휘로만 답한다 - 실서빙에서만 나는 응답 모양을 **응답에 끼워 넣는다**
+    (`test_unreadable_critic_verdict_is_held_and_recorded`와 같은 방식). `DecisionDraft`의 필드를
+    덮어쓴다."""
+    inner = ctx.models.complete
 
-    호출 그래프 근거가 없는 상태를 만든다 — 그래야 Critic이 근거 없이 반박한다.
+    def forced(*, role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+        result = inner(role=role, prompt=prompt, schema=schema, history=history)
+        if role is not Role.CRITIC:
+            return result
+        return result.model_copy(update={"value": result.value.model_copy(update=update)})
+
+    ctx.models.complete = forced  # type: ignore[method-assign]
+
+
+def _normalized_events(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_NORMALIZED]
+
+
+def _critic_verdict_policy(ctx: RunContext):  # noqa: ANN202
+    return next(
+        e
+        for e in ctx.trace.events
+        if e.kind is EventKind.POLICY_DECISION and e.data["point"] == "critic_verdict"
+    )
+
+
+def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
+    """근거 없는 반박은 `need_evidence`로 처리하되 지표에 남는다. 정규화 지점은 한 곳이다.
+
+    호출 그래프 근거가 없는 상태를 만든다 — 그래야 Critic이 근거 없이 반박한다(Fake는 이때 ID도 축도
+    비운다). ⏵ 2026-10-13 (ADR 0015) - 목적지가 `uphold`였다. 사유는 `empty_axis`다.
     """
     candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
     finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
@@ -1713,15 +1763,68 @@ def test_ungrounded_rebuttal_is_normalized_once(ctx: RunContext) -> None:
     after, decision = critic.run(ctx, finding=finding)
 
     assert decision.verdict is Verdict.REBUT and not decision.is_grounded
-    normalized = [e for e in ctx.trace.events if e.kind is EventKind.CRITIC_NORMALIZED]
+    normalized = _normalized_events(ctx)
     assert len(normalized) == 1
-    verdict_decision = next(
-        e
-        for e in ctx.trace.events
-        if e.kind is EventKind.POLICY_DECISION and e.data["point"] == "critic_verdict"
+    assert normalized[0].data["original_verdict"] == "rebut"
+    assert normalized[0].data["reason"] == "empty_axis"
+    assert normalized[0].data["invalid_axes"] == "[]"
+    verdict_decision = _critic_verdict_policy(ctx)
+    assert verdict_decision.data["basis.verdict"] == Verdict.NEED_EVIDENCE.value
+    assert verdict_decision.data["reason"] == "critic_need_evidence"
+    assert after.state is FindingState.QUEUED  # F-7 - 모델이 낸 need_evidence와 같은 길이다
+
+
+def test_a_rebut_with_an_axis_outside_the_vocabulary_is_recorded_with_the_offending_values(
+    ctx: RunContext,
+) -> None:
+    """`critic_normalized`가 사유와 어휘 밖 원문을 싣는다 - 첫 v7 run의 무효 축 비율이 이것으로
+    센다.
+
+    어휘 안의 축(`guard`)이 섞여 있어도 **무효인 것만** 싣는다. 값은 40자·다섯 개로 자른다.
+    """
+    _critic_says(
+        ctx,
+        verdict="rebut",
+        rebuttal_axis=["guard", "guard-check", "무근거", "x" * 100],
+        evidence_refs=[],
     )
-    assert verdict_decision.data["basis.verdict"] == Verdict.UPHOLD.value
-    assert after.state is not FindingState.QUEUED  # 반박으로 탈락하지 않았다
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    after, _ = critic.run(ctx, finding=finding)
+
+    (event,) = _normalized_events(ctx)
+    assert event.data["reason"] == "invalid_axis"
+    assert json.loads(event.data["invalid_axes"]) == ["guard-check", "무근거", "x" * 40]
+    assert _critic_verdict_policy(ctx).data["basis.verdict"] == "need_evidence"
+    assert after.state is FindingState.QUEUED
+
+
+def test_the_offending_axes_are_bounded(ctx: RunContext) -> None:
+    bad = [f"bad{i}" for i in range(9)]
+    _critic_says(ctx, verdict="rebut", rebuttal_axis=bad, evidence_refs=[])
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    critic.run(ctx, finding=finding)
+
+    (event,) = _normalized_events(ctx)
+    assert json.loads(event.data["invalid_axes"]) == [f"bad{i}" for i in range(5)]
+
+
+def test_a_v7_shaped_rebut_with_vocabulary_axes_is_a_real_rebuttal(ctx: RunContext) -> None:
+    """어휘 안의 축을 든 `rebut`(`evidence_refs=[]`)은 정규화 대상이 아니다 - 이벤트도 없고
+    F-6이다."""
+    _critic_says(ctx, verdict="rebut", rebuttal_axis=["guard", "sink"], evidence_refs=[])
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    after, decision = critic.run(ctx, finding=finding)
+
+    assert decision.verdict is Verdict.REBUT and decision.is_grounded
+    assert _normalized_events(ctx) == []
+    assert _critic_verdict_policy(ctx).data["reason"] == "critic_rebutted"
+    assert after.state is FindingState.QUEUED
 
 
 def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> None:
@@ -1743,8 +1846,17 @@ def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> No
     )
     assert gated.grade.value == "E1" and held.state is FindingState.HYPOTHESIZED
     assert held.path and held.repro_spec is not None
+    # ⏵ 2026-10-13 (ADR 0015) - 이 테스트는 Fake Critic의 **근거 없는 반박**이 `uphold`로
+    # 정규화되는 것에
+    # 기대 반박 실패를 얻었다. 지금은 그것이 `need_evidence`(F-7, `QUEUED`)라 명제가 안 선다. 반박
+    # 실패는
+    # **진짜 `uphold`로** 준다 - 인용한 정적 근거를 든 근거 있는 지지다.
+    static_ids = [ev.evidence_id for ev in no_graph if ev.kind is EvidenceKind.STATIC]
+    _critic_says(ctx, verdict="uphold", rebuttal_axis=[], evidence_refs=static_ids)
 
-    after, _ = critic.run(ctx, finding=held, evidences=no_graph, missings=tuple(missings))
+    after, decision = critic.run(ctx, finding=held, evidences=no_graph, missings=tuple(missings))
+
+    assert decision.verdict is Verdict.UPHOLD and decision.evidence_refs
 
     assert after.state is FindingState.HYPOTHESIZED
     last = [e for e in ctx.trace.events if e.kind is EventKind.GATE_EVAL][-1]
@@ -1824,6 +1936,12 @@ def test_build_facts_evidence_location_is_opt_in_by_version() -> None:
     싣는 판으로 돌았다) **인용은 0/5**였다. 단 그 run의 semgrep 히트
     (`1086`~`1296`)가 후보 위치(`429`·`486`·`743`)와 **안 겹쳐** 「겹치는 위치를 보여 주면
     인용이 느는가」는 여전히 0회다 — 그 축이 #563이다.
+
+    ⏵ 2026-10-13(#563) — 겹침 횟수는 이제 run마다 `RunRecord.location_overlap`이 싣는다.
+    #248 뒤 읽힌 값은 `run_20260924_0003` 36/36 참(스모크 · `checksum` 0) · 2026-10-12 보고서
+    run 6/6 거짓(trace 재계수 - 저장소 밖)이고 과제가 다르다. `run_20261007_0001`은 `p0`
+    지름길이라 이 지표로는 미측정이다(D106의 오프라인 재등급 5/5 거짓은 run 실측이 아니다).
+    통제 대조 0건.
 
     **본문과 따로 정해진다**: payload가 없어 본문이 안 실리는 Evidence에도 같은 판이면 키는 나간다
     (적대적 리뷰 #480 LOW-1) — 같은 판의 Critic 줄(`critic._describe_evidence`)과 같은 값을 든다.
@@ -2171,7 +2289,8 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     `test_the_canonical_auditor_version_receives_evidence_bodies`.
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
-        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14"}
+        {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"}
+        | {"v13", "v14", "v15"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
@@ -2553,6 +2672,267 @@ def test_a_step_equal_to_the_input_placeholder_is_refused_not_fatal(ctx: RunCont
     assert transition.data["reason"] == ReasonCode.REPRO_FAILED.value
 
 
+# --- 8단계가 측정하지 못한 것은 재현 실패가 아니다 (#326) -------------------------------------
+#
+# 컨테이너 러너의 `asan`은 우리 clang으로 대상을 컴파일·링크하는데 CyberGym 번들은 그것이 안 된다
+# (#507). 그 `ok=False`를 F-11(`repro_failed`)로 세면 Critic을 통과한 Finding이 `queued`로 내려가고
+# 「제거율 — Tool」의 분자가 하네스 한계로 부푼다.
+
+
+class _AsanFails:
+    """`asan` 요청에 주어진 `ok=False` 결과를 돌려주는 도구 대역 - 다른 도구는 위임한다."""
+
+    def __init__(self, inner: ToolRunner, exit_code: int | None, error: str) -> None:
+        self.exit_code = exit_code
+        self.error = error
+        self._inner = inner
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        evidence = self._inner.run(tool, args, sandbox)
+        if tool == "asan":
+            return evidence.model_copy(
+                update={"ok": False, "exit_code": self.exit_code, "error": self.error}
+            )
+        return evidence
+
+
+def _asan_cannot_build(inner: ToolRunner) -> _AsanFails:
+    """`asan` 요청에 **어댑터가 실제로 내는 문구**로 `ok=False`를 돌려준다 -
+    `container_tools.judge()`가 링크 단계에서 끊긴 대상에 붙이는 것이다. 문구를 손으로 안 쓴다."""
+    from src.adapters.container_tools import Step, judge
+
+    ok, exit_code, error = judge("asan", [Step(1, "", "ld.lld: error: undefined symbol: main")], 2)
+    assert not ok and error is not None, "픽스처 전제 - 어댑터가 ok=False를 낸다"
+    return _AsanFails(inner, exit_code, error)
+
+
+def _asan_times_out(inner: ToolRunner) -> _AsanFails:
+    """`container_tools._execute`의 시간 초과 Evidence와 같은 모양(`124` + `timeout after …`)."""
+    return _AsanFails(inner, validate.TIMEOUT_EXIT, "timeout after 60s")
+
+
+def _validated_with_capsule(ctx: RunContext, signal: str) -> tuple[runner._Accumulator, Finding]:
+    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal=signal)
+    state = runner._Accumulator()
+    state.update(finding)
+    state.finding_capsules[finding.finding_id] = capsule
+    return state, finding
+
+
+def _not_measured_events(ctx: RunContext) -> list:
+    return [e for e in ctx.trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
+
+
+def test_a_stage_8_compile_failure_holds_the_finding_and_pov_still_targets_it(
+    ctx: RunContext,
+) -> None:
+    """asan이 컴파일·링크 단계에서 끊기면 Finding은 `validated`에 남고(`queued`가 아니다) 전이도
+    `policy_decision`도 없다. PoV는 8단계 진입 시점의 `validated` 목록으로 대상을 잡으므로(상태가
+    내려가도 도는 것은 `test_pov_also_runs_for_a_finding_that_validate_demotes_to_queued`가 문다)
+    풀 소속은 그대로다 - **이 검사가 바꾸는 것은 상태·지표·보고서다.**
+    Evidence는 `ok=False`와 사유로 남고 게이트는 그 근거로 등급을 낸다(p4는 거짓)."""
+    state, finding = _validated_with_capsule(ctx, "AddressSanitizer: heap-buffer-overflow")
+    failing = _asan_cannot_build(ctx.tools)
+    broken = dataclasses.replace(ctx, tools=failing)
+
+    runner._analyze(broken, [], state, int(Stage.VALIDATE))
+
+    after = state.findings[finding.finding_id]
+    assert after.state is FindingState.VALIDATED
+    stage_8_transitions = [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.TRANSITION and e.stage == int(Stage.VALIDATE)
+    ]
+    assert stage_8_transitions == [], "전이가 났다"
+    assert not [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.POLICY_DECISION and e.stage == int(Stage.VALIDATE)
+    ]
+    (event,) = _not_measured_events(broken)
+    assert (event.subject_id, event.stage) == (finding.finding_id, int(Stage.VALIDATE))
+    assert event.data == {
+        "tool": "asan",
+        "reason": validate.NOT_MEASURED_TOOL,
+        "exit_code": failing.exit_code,
+        "error": failing.error,
+    }
+    stored = [ev for ev in state.evidences[finding.finding_id] if ev.source == "asan"]
+    assert [(ev.ok, ev.error) for ev in stored] == [(False, failing.error)]
+    assert {ev.evidence_id for ev in stored} <= set(after.evidence_refs)
+    (graded,) = [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert graded.data["p4"] is False
+    assert _pov_subjects(broken) == [finding.finding_id], "PoV 풀에서 빠졌다"
+
+
+def test_a_real_crash_still_routes_and_is_not_reported_as_unmeasured(ctx: RunContext) -> None:
+    """음성 쌍 - 대상이 떠서 비-0으로 끝난 건(`ok=True`, 크래시는 신호)은 종전대로 `proven`이다.
+    `_not_measured`가 `ok=False`만 보는지 문다: 종료 코드로 갈랐다면 여기서 빨개진다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    after, evidences = validate.run(ctx, finding=finding, workdir="parser.c")
+
+    assert any(ev.ok and ev.exit_code not in (None, 0) for ev in evidences), "픽스처 전제"
+    assert after.state is FindingState.PROVEN
+    assert _not_measured_events(ctx) == []
+
+
+def test_a_refused_step_is_still_a_failed_repro_not_an_unmeasured_one(ctx: RunContext) -> None:
+    """모델이 쓴 `steps`가 예약 자리표와 같아 우리가 요청을 안 보낸 건(`exit_code=None`)은 명세의
+    실패라 F-11 그대로다 - 위 `test_a_step_equal_to_the_input_placeholder_…`가 상태까지 묻고, 여기는
+    그 건이 `repro_not_measured`로 새지 않는 것만 문다(종료 코드가 있는 `ok=False`와의 경계)."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+    assert finding.repro_spec is not None
+    finding = finding.transition(
+        repro_spec=ReproSpec(
+            steps=[INPUT_PLACEHOLDER], expected_signal=finding.repro_spec.expected_signal
+        )
+    )
+
+    after, _ = validate.run(ctx, finding=finding, workdir="parser.c")
+
+    assert after.state is FindingState.QUEUED
+    assert _not_measured_events(ctx) == []
+
+
+def test_a_poc_signal_is_not_run_here_and_holds_the_finding(ctx: RunContext) -> None:
+    """`poc` 신호(ADR 0014 - 서빙 점수 경로는 PoV 루프의 `poc`)는 이 노드가 **돌리지 않는다**: 도구
+    호출 0건 - 입력 바이트를 실을 길이 없어 항상 `ok=False`로 거절당하던 갈래다. `queued`가 아니라
+    `validated`에 두고 사유를 남긴다."""
+    finding = _finding(
+        "find_0001", state=FindingState.VALIDATED, signal="poc가 종료 코드 139로 죽는다"
+    )
+    assert finding.repro_spec is not None
+    assert validate.tool_for(finding.repro_spec.expected_signal) == validate.POC_TOOL
+    recorder = _CallRecorder(ctx.tools)
+    watching = dataclasses.replace(ctx, tools=recorder)
+
+    after, evidences = validate.run(watching, finding=finding, workdir="parser.c")
+
+    assert recorder.calls == [] and evidences == []
+    assert after.state is FindingState.VALIDATED
+    assert not [e for e in watching.trace.events if e.kind is EventKind.TRANSITION]
+    (event,) = _not_measured_events(watching)
+    assert event.data == {
+        "tool": "poc",
+        "reason": validate.NOT_MEASURED_POC,
+        "exit_code": None,
+        "error": None,
+    }
+
+
+def _hold_with(ctx: RunContext, tools: ToolRunner, number: int, signal: str) -> None:
+    validate.run(
+        dataclasses.replace(ctx, tools=tools),
+        finding=_finding(f"find_{number:04d}", state=FindingState.VALIDATED, signal=signal),
+        workdir="parser.c",
+    )
+
+
+def test_the_run_warning_is_absent_without_events_and_counts_by_cause(ctx: RunContext) -> None:
+    """`repro_not_measured`는 보고서에 안 보이므로(상태가 그대로다) run 경고로 올린다. 이벤트가
+    없으면 `None`. 시간 초과(124)와 컴파일 실패는 **한 숫자로 합치지 않고** 종료 코드별로 센다."""
+    assert runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True) is None
+    asan = "AddressSanitizer: overflow"
+    _hold_with(ctx, _asan_times_out(ctx.tools), 1, asan)
+    _hold_with(ctx, _asan_times_out(ctx.tools), 2, asan)
+    _hold_with(ctx, _asan_cannot_build(ctx.tools), 3, asan)
+
+    warning = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True)
+
+    assert warning is not None
+    assert "3건" in warning
+    assert "124(시간 초과) 2건" in warning
+    assert "1 1건" in warning, "컴파일 실패(종료 코드 1)가 시간 초과와 한 숫자로 합쳐졌다"
+    assert "poc 신호" not in warning, "poc 신호가 없는 run인데 poc 문장이 있다"
+
+
+def test_the_poc_sentence_depends_on_whether_the_profile_has_a_pov_seat(ctx: RunContext) -> None:
+    """8단계는 `poc`를 실행하지 않는다. 그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 풀 여부는
+    PoV 단계 이벤트가 들고 **없으면 어디서도 안 돈다.** 경고가 좌석이 없을 때 「PoV 루프」를 말하면
+    거짓이다."""
+    _hold_with(ctx, ctx.tools, 1, "poc가 종료 코드 139로 죽는다")
+
+    seated = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True)
+    seatless = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=False)
+
+    assert seated is not None and seatless is not None
+    assert "PoV 단계 이벤트" in seated and "pov 좌석이 없어" not in seated
+    assert "pov 좌석이 없어 어디서도 실행되지 않았다" in seatless
+    assert "PoV 루프" not in seatless
+
+
+def test_the_timeout_exit_code_mirrors_the_adapter() -> None:
+    """`validate.TIMEOUT_EXIT`는 어댑터 상수의 사본이다(노드는 어댑터를 못 import한다) - 경고가 이
+    값으로 시간 초과를 가른다."""
+    from src.adapters import container_tools
+
+    assert validate.TIMEOUT_EXIT == container_tools._TIMEOUT_EXIT
+
+
+def test_a_timeout_holds_the_finding_like_a_compile_failure(ctx: RunContext) -> None:
+    """시간 초과(`ok=False`, 124)도 측정을 못 낸 건이다 - 강등하지 않고 `validated`에 두며 사유와
+    종료 코드를 trace에 남긴다. 옛 동작(F-11 강등)이 돌아오면 여기서 빨개진다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal="AddressSanitizer: x")
+
+    after, _ = validate.run(
+        dataclasses.replace(ctx, tools=_asan_times_out(ctx.tools)),
+        finding=finding,
+        workdir="parser.c",
+    )
+
+    assert after.state is FindingState.VALIDATED
+    (event,) = _not_measured_events(ctx)
+    assert (event.data["reason"], event.data["exit_code"]) == (
+        validate.NOT_MEASURED_TOOL,
+        validate.TIMEOUT_EXIT,
+    )
+
+
+def test_a_judge_with_no_commands_is_a_spec_failure_not_an_unmeasured_one(ctx: RunContext) -> None:
+    """`judge()`가 명령이 하나도 안 돈 건에 종료 코드를 지어내면(127) `_not_measured`가 그것을
+    「대상이 안 떴다」로 읽어 보류한다. 돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 종전대로
+    F-11이다. 127로 되돌리면 두 단언이 같이 빨개진다."""
+    from src.adapters.container_tools import judge
+
+    ok, exit_code, error = judge("asan", [], 2)
+    assert (ok, exit_code) == (False, None) and error is not None
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal="AddressSanitizer: x")
+
+    after, _ = validate.run(
+        dataclasses.replace(ctx, tools=_AsanFails(ctx.tools, exit_code, error)),
+        finding=finding,
+        workdir="parser.c",
+    )
+
+    assert after.state is FindingState.QUEUED
+    assert _not_measured_events(ctx) == []
+
+
+def test_the_adapter_still_reports_a_failed_build_as_not_ok_with_an_exit_code() -> None:
+    """`_not_measured`는 어댑터 문구가 아니라 **`ok=False` + 종료 코드 있음**을 본다. 어댑터가
+    컴파일·링크 실패·대상 미기동에 그 모양을 계속 내는지 실제 `judge()`로 문다 -
+    문구가 바뀌어도 안 깨지고,
+    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다."""
+    from src.adapters.container_tools import Step, judge
+
+    for tool, steps, total in (
+        ("asan", [Step(1, "", "x.c:1:1: error: boom")], 2),  # 빌드 단계에서 끊김
+        ("asan", [Step(0, "", ""), Step(127, "", "")], 2),  # 대상이 안 떴다
+        ("build", [Step(1, "", "x.c:1:1: error: boom")], 1),
+    ):
+        ok, code, error = judge(tool, steps, total)
+        assert (ok, code is not None, bool(error)) == (False, True, True), (tool, steps)
+    ok, code, _ = judge("asan", [Step(0, "", ""), Step(139, "", "ERROR: AddressSanitizer")], 2)
+    assert ok and code == 139, "크래시는 신호다 - ok=True"
+
+
 def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
     """거절 Evidence의 `kind`는 `validate`가 든 사본이다 — 어댑터는 못 import해서 복제했다
     (`prompt_loader`의 도구 이름 사본과 같은 사정). 화이트리스트가 움직이면 여기서 빨개지고, 이
@@ -2560,8 +2940,12 @@ def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
     떨어지므로 그것도 문다."""
     from src.adapters.fake_tools import TOOL_KINDS
 
-    called = {validate.BUILD_TOOL, *(tool for _, tool in validate._SIGNAL_TOOLS)}
-    assert called <= set(validate.REFUSED_KINDS), "이 노드가 부르는 도구가 사본에서 빠졌다"
+    # `poc`는 신호 분류일 뿐 이 노드가 부르지 않는다(#326) - 사본에도 없다.
+    called = {
+        validate.BUILD_TOOL,
+        *(tool for _, tool in validate._SIGNAL_TOOLS if tool != validate.POC_TOOL),
+    }
+    assert called == set(validate.REFUSED_KINDS), "이 노드가 부르는 도구와 사본이 갈라졌다"
     assert validate.REFUSED_KINDS == {tool: TOOL_KINDS[tool] for tool in validate.REFUSED_KINDS}
 
 
@@ -2655,6 +3039,8 @@ def test_validate_evaluates_the_gate_before_deciding(ctx: RunContext) -> None:
     assert len(graded) == 1
     assert graded[0].data["p4"] is True
     assert graded[0].data["grade"] == "E4"
+    # 8단계 목록에는 6단계 하네스 부착분이 섞이므로 「모델 인용 수」를 싣지 않는다(이슈 #554).
+    assert "cited_by_model" not in graded[0].data
 
 
 def test_gate_refuses_stages_where_its_predicates_cannot_hold(ctx: RunContext) -> None:
@@ -2872,6 +3258,26 @@ def test_render_marks_ungraded_finding_as_unknown_not_e0(ctx: RunContext) -> Non
     assert "등급 분포" not in rendered  # 아는 등급이 0건이면 분포 줄 자체가 없다
 
 
+def test_render_lists_only_long_inspect_runs_and_counts_the_rest(ctx: RunContext) -> None:
+    """분모 전용 집계 줄(#619 (d)): inspect 연속 최장이 2 이상인 Finding만 나열하고 나머지는
+    건수다 - 줄이 Finding 수에 비례해 자라지 않는다. 값이 없는(`None`) 집계는 줄을 빼지 않고
+    「미측정」으로 찍는다."""
+    rendered = report.run(
+        ctx,
+        findings=[],
+        schema_failure_max_run={"auditor": 3},
+        pov_inspect_max_run={"find_0001": 3, "find_0002": 2, "find_0003": 1, "find_0004": 0},
+    ).render()
+
+    line = next(ln for ln in rendered.splitlines() if ln.startswith("PoV 연속 inspect"))
+    assert "find_0001 3 · find_0002 2" in line
+    assert "find_0003" not in line and "find_0004" not in line
+    assert "나열하지 않은 Finding 2건" in line
+    assert "연속 스키마 파싱 실패 최장(역할별, 분모만): auditor 3" in rendered
+    recovered = next(ln for ln in rendered.splitlines() if ln.startswith("스키마 재시도로"))
+    assert "미측정" in recovered
+
+
 def test_render_lists_pov_stop_reasons_with_their_counts(ctx: RunContext) -> None:
     """리포트가 PoV 정지 사유를 **사유별 수**로 싣는다 (#357·#358) — 한 수로 묶으면 "상한에서
     헛돌았다"와 "스키마를 못 맞췄다"가 안 갈린다(`ne_absorbed`와 같은 판단).
@@ -2944,11 +3350,18 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     # `slice_criterion`은 슬라이스 타깃에만 붙는다(opt-in) — 슬라이스 없는 프롬프트는 그 키가
     # 생기기 전과 글자가 같아야 한다. 이 호출은 슬라이스 타깃이 아니다.
     # `fuzz_entrypoint`도 opt-in이고 **PoV만** 준다(2026-10-02) — Scout은 슬라이스 타깃이어도
-    # 안 받는다. 등식을 유지하는 것이 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint"}
+    # 안 받는다. `auditor_hops`(2026-10-13)도 opt-in이고 **Critic만** 준다. 등식을 유지하는 것이
+    # 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {
+        "slice_criterion",
+        "fuzz_entrypoint",
+        "auditor_hops",
+    }
 
 
-def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) -> None:
+def test_a_slice_target_sends_its_render_and_slice_criterion(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """슬라이스 타깃이면 `SOURCE`가 렌더이고 FACTS에 `slice_criterion`이 붙는다(ADR 0012 결정 1).
 
     `read_source`(심볼 본문)를 부르면 entry 한 줄만 간다 — 줄번호도 배너도 없이.
@@ -2973,7 +3386,7 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
     # 슬라이스 타깃이라 `slice_criterion`은 붙지만 `fuzz_entrypoint`는 **PoV 전용**이라 안 붙는다
     # (2026-10-02). 등식이라 어느 쪽으로 새도 죽는다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint"}
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint", "auditor_hops"}
     assert facts["source"] == render
     assert facts["slice_criterion"] == {
         "given_end": "sink",
@@ -2981,6 +3394,139 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(ctx: RunContext) ->
         "degraded": False,
     }
     assert candidate.slice_id == "slice_0001"
+
+
+@pytest.fixture
+def scout_declares_slice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`input: slice`를 선언한 Scout — 슬라이스 렌더를 `SOURCE`로 읽는 쪽(v3)."""
+    declare_scout_input(monkeypatch, "slice")
+
+
+_GUTTER_LINE = re.compile(r"^\s*\d+[|:]", re.MULTILINE)
+_PARSE_HEADER = Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6)
+
+
+def _source_declared_slice_ref(ctx: RunContext, monkeypatch: pytest.MonkeyPatch) -> SliceRef:
+    """`input: source` 선언 + entry 한 줄(parser.c:5, `parse_header` 3~6 안)짜리 슬라이스 타깃.
+
+    `read_slice`는 부르면 터진다 — 선언이 source면 렌더를 읽지도 않는다는 핀이다."""
+    declare_scout_input(monkeypatch, "source")
+
+    def _must_not_read(slice_id: str) -> str:
+        raise AssertionError(f"input: source인데 슬라이스 렌더({slice_id})를 읽었다")
+
+    ctx.read_slice = _must_not_read
+    ctx.symbols_for = lambda file: [_PARSE_HEADER] if file == "parser.c" else None
+    return SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+
+def _slice_scout_session(ctx: RunContext, ref: SliceRef) -> scout.ScoutSession:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == "parser.c"
+    )
+    capsule = retrieval.run(ctx, target=ref.location, level=CapsuleLevel.LIGHT)
+    return scout.open_session(ctx, artifact=artifact, capsule=capsule, slice=ref)
+
+
+def _last_scout_facts(ctx: RunContext) -> dict:
+    body = ctx.models.last_for(Role.SCOUT).body
+    return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
+
+
+def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#529 — 입력 모양을 고르는 기준은 슬라이스 유무가 아니라 **프롬프트 선언**(`meta.input`)이다.
+
+    v4 prefix는 `SOURCE`를 「함수 본문, 줄번호도 파일 배너도 없고 첫 줄이 `line_start`」라 단언한다.
+    entry는 한 줄이라 `read_source(entry)`가 아니라 entry를 품는 함수가 가야 한다.
+    """
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    body_lines = VULNERABLE_C.splitlines()[2:6]
+    assert facts["source"].splitlines() == body_lines  # entry 한 줄(5)이 아니라 함수(3~6)
+    assert len(facts["source"].splitlines()) > 1
+    assert not _GUTTER_LINE.search(facts["source"]) and "=====" not in facts["source"]
+    first_line = VULNERABLE_C.splitlines()[facts["target"]["line_start"] - 1]
+    assert facts["source"].splitlines()[0] == first_line
+    assert facts["target"]["line_start"] == 3  # 첫 줄 = FACTS.target.line_start (prefix의 단언)
+    # 본문의 「대상」 표기도 같은 범위다 — `describe_target(capsule.target)`이면 entry 한 줄
+    # (「줄 5-5」)이 가서 같은 프롬프트의 FACTS와 어긋난다.
+    body = ctx.models.last_for(Role.SCOUT).body
+    assert "`parser.c` 의 `parse_header` (줄 3-6)" in body and "(줄 5-5)" not in body
+    assert "slice_criterion" not in facts  # v4 산문이 그 키를 서술하지 않는다
+    assert session.slice is ref
+    # resolver의 `visible` — 모델이 본 줄은 함수 3~6이지 SliceRef.lines가 아니다.
+    assert session.shown_lines == tuple(("parser.c", n) for n in range(3, 7))
+
+
+def test_a_source_declaration_without_an_enclosing_symbol_reads_the_entry_window(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """심볼을 못 찾으면 **Auditor와 같은 창**(`entry_scope.ENTRY_WINDOW_LINES`)이다 — 슬라이스
+    렌더로 조용히 되돌아가지도(`read_slice`가 터진다), entry 한 줄로 가지도 않는다."""
+    from src.orchestrator import entry_scope
+
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    ctx.symbols_for = lambda _file: []
+    monkeypatch.setattr(entry_scope, "ENTRY_WINDOW_LINES", 1)
+
+    _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"].splitlines() == VULNERABLE_C.splitlines()[3:6]  # entry 5 ± 1 = 4~6
+    assert facts["target"]["line_start"] == 4 and facts["target"]["line_end"] == 6
+    # 창 폴백은 심볼이 없다 — 노드가 `capsule.target`(슬라이스가 든 심볼)의 이름을 채운다. 그 복사를
+    # 지우면 여기서 죽는다(`_ask_model`의 `if target.symbol is None` 두 줄). FACTS symbol 자체의
+    # 출처는 #633이 따로 든다 — 이 핀은 **창 폴백**만 본다.
+    assert facts["target"]["symbol"] == "parse_header"
+
+
+def test_a_slice_declaration_keeps_the_slice_render_and_criterion(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`input: slice`는 지금 그대로 — 렌더가 `SOURCE`이고 `slice_criterion`이 붙는다."""
+    declare_scout_input(monkeypatch, "slice")
+    render = "/* ===== parser.c ===== */\n4|     char buf[64];\n5|     memcpy(buf, src, len);"
+    ctx.read_slice = {"slice_0001": render}.__getitem__
+    ctx.symbols_for = lambda _file: [_PARSE_HEADER]  # 심볼이 있어도 선언이 slice면 안 쓴다
+    ref = SliceRef(
+        slice_id="slice_0001",
+        location=Location(file="parser.c", line_start=5, symbol="parse_header"),
+        given_end="sink",
+        entry=Location(file="parser.c", line_start=5, symbol="memcpy"),
+        lines=(("parser.c", 4), ("parser.c", 5)),
+    )
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == render
+    assert "slice_criterion" in facts
+    assert session.shown_lines is None
+
+
+def test_without_a_slice_the_declaration_does_not_matter(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`slice is None`이면 선언과 무관하게 그대로다 — 타깃 심볼 본문, `slice_criterion` 없음."""
+    declare_scout_input(monkeypatch, "slice")
+    ctx.read_slice = lambda slice_id: pytest.fail(f"슬라이스가 없는데 렌더({slice_id})를 읽었다")
+
+    _triage(ctx, VULN_TARGET)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == ctx.read_source(VULN_TARGET)
+    assert "slice_criterion" not in facts
 
 
 def _big_slice(ctx: RunContext, *, trim: int, context_limit: int | None = None) -> SliceRef:
@@ -3026,6 +3572,7 @@ def _gutter_lines(source: str) -> list[int]:
 
 def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     ctx: RunContext,
+    scout_declares_slice: None,
 ) -> None:
     """#353 (b) — 렌더가 창을 넘으면 entry에 가까운 줄부터 남겨 창 안에 든다.
 
@@ -3059,7 +3606,7 @@ def test_an_oversized_slice_is_trimmed_to_the_scout_window_around_the_entry(
     assert facts["source"] in prompt.body.split("```json")[0]  # SOURCE도 같은 렌더
 
 
-def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
+def test_slice_trim_off_sends_the_whole_render(ctx: RunContext, scout_declares_slice: None) -> None:
     """기본(0)이면 지금처럼 통째로 — 넘어도 줄이지 않고 이벤트도 없다(크기 거절은 서빙 몫)."""
     ref = _big_slice(ctx, trim=0)
 
@@ -3069,7 +3616,7 @@ def test_slice_trim_off_sends_the_whole_render(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
+def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext, scout_declares_slice: None) -> None:
     """창이 넉넉하면 켜져 있어도 그대로 — 이벤트 부재 = 안 잘림."""
     ref = _big_slice(ctx, trim=1, context_limit=400_000)
 
@@ -3079,7 +3626,9 @@ def test_a_slice_that_fits_is_not_trimmed(ctx: RunContext) -> None:
     assert not [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SLICE_TRIMMED]
 
 
-def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(ctx: RunContext) -> None:
+def test_a_slice_that_cannot_fit_goes_as_the_entry_line_and_says_so(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """프롬프트 고정분만으로 창을 넘으면 entry 한 줄로 보내고 `fit=false` — 크기 거절은 서빙 몫."""
     output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
     ref = _big_slice(ctx, trim=1, context_limit=output_max + 600)
@@ -3157,7 +3706,9 @@ _PROV_K5 = {
 }
 
 
-def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: RunContext) -> None:
+def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 HIGH-2/M-4 — anchor > dependency > context 순으로 남기고, 몫은 정확히 식대로다.
 
     주입 카운터로 몫을 2*K=10 토큰에 고정한다. 남는 다섯은 우선순위 상위 다섯:
@@ -3190,7 +3741,9 @@ def test_trim_keeps_provenance_tiers_and_does_not_drop_cross_file_first(ctx: Run
     assert 97 not in _gutter_lines(facts["source"])  # 가까운 context보다 먼 anchor가 우선
 
 
-def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> None:
+def test_trim_breaks_distance_ties_toward_the_earlier_line(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 같은 순위·같은 거리면 렌더 순서(앞 줄)를 남긴다. 반대로 깨면 101이 남는다.
 
     99·101 둘 다 entry 100에서 거리 1, provenance 없음(같은 순위). 몫 2*1=2라 하나만 남는다."""
@@ -3207,7 +3760,9 @@ def test_trim_breaks_distance_ties_toward_the_earlier_line(ctx: RunContext) -> N
     assert _gutter_lines(facts["source"]) == [99]  # 앞 줄(작은 i)을 남긴다
 
 
-def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> None:
+def test_trim_keeps_a_render_that_exactly_fills_the_budget(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 전체 크기가 몫과 **같으면** 자르지 않는다(`<=`). `<`로 바꾸면 자른다."""
     ref = _counter_slice(
         ctx, parser_lines=[10, 11], util_lines=[], provenance={}, entry_line=10, keep_k=2
@@ -3220,7 +3775,9 @@ def test_trim_keeps_a_render_that_exactly_fills_the_budget(ctx: RunContext) -> N
     assert ctx.read_slice("slice_0001") in ctx.models.last_for(Role.SCOUT).body
 
 
-def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
+def test_trim_visible_reflects_only_the_kept_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-2 — 잘린 좌석의 세션은 **모델이 본 줄**만 싣고, resolver `visible`이 그것을 쓴다.
 
     자르기 전 `SliceRef.lines` 전체를 쓰면 모델이 못 본 줄을 "이미 SOURCE에 있다"로 답해 버린다."""
@@ -3253,7 +3810,9 @@ def test_trim_visible_reflects_only_the_kept_lines(ctx: RunContext) -> None:
     assert runner._ne_visible(ref, None)["parser.c"] == frozenset(range(95, 106))
 
 
-def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(ctx: RunContext) -> None:
+def test_trim_roundtrips_through_the_real_render_with_noncontiguous_lines(
+    ctx: RunContext, scout_declares_slice: None
+) -> None:
     """#375 M-4 — 손 f-string이 아니라 `adapters.slices.render()` 출력으로 라운드트립한다.
 
     듬성한 줄(5·8·20)이라 `_parse_render`가 건너뛴 번호를 그대로 들어야 한다."""
