@@ -41,7 +41,13 @@ def test_a_run_whose_gate_never_ran_has_no_block_not_zeros() -> None:
     assert _location_overlap(_writer((7, dict(_GATED)), (8, dict(_GATED))).events) is None
 
 
-def test_a_gate_that_ran_but_only_shortcut_is_a_measured_zero() -> None:
+def test_a_gate_that_ran_but_only_shortcut_has_gated_zero_which_is_unmeasured() -> None:
+    """6단계 행은 있으나 전부 `p0` 지름길 - 블록은 있고 `gated`는 0이다.
+
+    그 0은 **잰 0이 아니다**(`docs/evaluation.md` §5.1 - *"`gated`가 0인데 키가 있으면 … 겹침은
+    미측정이다 - 잰 0이 아니다"*). 블록 자체가 `None`이 아닌 것은 「6단계가 돌았다」는 사실이
+    `None`(안 돌았다)과 다르기 때문이고, 그 구분을 리포트가 아래 핀처럼 문구로 옮긴다.
+    """
     assert _location_overlap(_writer((6, {"p0": True})).events) == {
         "gated": 0,
         "static_ok": 0,
@@ -82,6 +88,41 @@ def test_report_prints_no_overlap_line_when_nothing_was_counted() -> None:
         location_overlap={"gated": 5, "static_ok": 5, "location_ok": 0},
     )
     assert "5건 중 후보 줄과 겹침 0건 · 정적 신호 있음 5건" in shown.render()
+
+
+def test_report_calls_a_zero_denominator_unmeasured_not_a_counted_zero() -> None:
+    """막는 명제 - **리포트가 미측정을 잰 수로 찍지 않는다**(CLAUDE.md §0).
+
+    양성 핀: `gated` 0인 블록(실형태는 `_location_overlap`이 `p0`만 있는 run에 내는 것 -
+    `tests/test_location_overlap.py:52`의 `{"gated": 0, …}`)이 **「0건 중」을 안 찍고** 「미측정」을
+    찍는다. `render()`가 `n['gated']`를 안 보고 종전처럼 횟수를 찍으면 죽는다.
+
+    음성 핀: `gated`가 0이 아니고 `location_ok`만 0인 run은 **잰 0**이라 횟수로 찍힌다
+    (바로 위 테스트의 5/5/0). 둘을 한 테스트에 두는 것은 「0이면 미측정」을 `location_ok`
+    쪽으로 잘못 넓히는 수정이 여기서 죽게 하기 위해서다.
+
+    그리고 `if self.location_overlap and self.location_overlap["gated"]:`로 **줄을 통째로
+    빼는** 변이가 3라운드 리뷰에서 생존했다 - 미측정 문구를 단언하므로 그 변이는 여기서 죽는다.
+    """
+    unmeasured = Report(
+        run_id="run_20261013_0001",
+        findings=(),
+        duplicates=0,
+        location_overlap={"gated": 0, "static_ok": 0, "location_ok": 0},
+    )
+    rendered = unmeasured.render()
+    line = next(row for row in rendered.splitlines() if row.startswith("정적 신호 위치 겹침"))
+    assert "미측정" in line
+    assert "0건 중" not in rendered
+
+    measured = Report(
+        run_id="run_20261013_0001",
+        findings=(),
+        duplicates=0,
+        location_overlap={"gated": 3, "static_ok": 3, "location_ok": 0},
+    )
+    assert "3건 중 후보 줄과 겹침 0건" in measured.render()
+    assert "미측정" not in measured.render()
 
 
 def test_a_manifest_written_before_the_field_loads_with_no_block() -> None:
