@@ -2532,8 +2532,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5는 형제 `PovActionNamed`)을 내고
-    도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5·v6 = 서빙 판은 형제
+    `PovActionNamed`)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -2702,7 +2702,8 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                named = getattr(action, "poc_sha256", None)  # v5 봉투(`PovActionNamed`)만 든다
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6(서빙 판)이 그것을 선언한다.
+                named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
