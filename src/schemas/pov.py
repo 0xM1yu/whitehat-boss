@@ -1,4 +1,4 @@
-"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5·v6 = 서빙 판은 형제 `PovActionNamed`), 그 `gen`이
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5와 서빙 판 v6은 형제 `PovActionNamed`), 그 `gen`이
 싣는 PoC 바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신

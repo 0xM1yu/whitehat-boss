@@ -634,7 +634,7 @@ def _build_auditor_procedure_audit_always_action(
 def _build_pov_action_named(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovActionNamed:
-    """형제 봉투(`PovActionNamed` · v5·v6 = 서빙 판)의 fake — `_build_pov_action`과 같은
+    """형제 봉투(`PovActionNamed` · v5와 서빙 판 v6)의 fake — `_build_pov_action`과 같은
     액션(`poc_sha256` 없음)."""
     return PovActionNamed(**_build_pov_action(context, produced_by, history).model_dump())
 
