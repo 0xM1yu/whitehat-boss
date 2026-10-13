@@ -3,6 +3,9 @@
 ⏵ 2026-10-09 — **셋이다**: v11이 `AuditorProcedureNullableCweAction`을 낸다(이슈 #525).
 ⏵ 2026-10-10 — **넷이다**: v12가 `AuditorProcedureAuditAlwaysAction`을 낸다(이슈 #578 — 이 파일 맨
 아래).
+⏵ 2026-10-13 — **다섯이다**: v15가 `AuditorProcedureProbeInputAction`을 낸다(v12 봉투의
+서브클래스 — `probe`의 `spec` 설명만 다시 쓴다, 이 파일 맨 아래). 아래 본문의 「Auditor 경로는
+그 바이트를 도구에 안 싣는다」는 v8~v14 봉투의 서술이다.
 액션 셋과 조사 필드는 공통 베이스가 들고 최종 답의 필드만 갈린다(`finding` ↔ `procedure`).
 
 한 방 경로(`nodes/auditor.py`의 `OUTPUT_SCHEMA = Finding`)는 그대로 남는다. 이 봉투는
@@ -23,6 +26,13 @@
   있지만**(과제 `-vul` 이미지의 `/tmp/poc`) `nodes/auditor._probe`가 `ToolArgs`에 `input_bytes`를
   **안 싣는다**. 그래서 `probe(poc)`는 입력 없는 호출이라 실패 Evidence다 — 싣게 하는 것은
   이슈 #419이고 이 ADR의 범위가 아니다.
+  ⏵ **2026-10-13(#419) — 위 두 문장(⚠ 다만 …·⏵ 2026-10-09)은 이제 그 이전의 기록이다. 이제 싣는다.**
+  `_probe`가 `spec`을 `assemble_poc`으로 조립해 `ToolArgs.input_bytes`로 보낸다(`pov.run_tool`과
+  같은 계약). `probe(poc)`가 입력 없는 호출이라 실패 Evidence라는 말도 그 이전의 서술이다.
+  컨테이너에서 읽는 도구는 `poc` 하나다.
+  ⚠ **동결된 문구가 낡았다** — 아래 `spec`의 필드 설명과 `AuditorAction`·`AuditorProcedureAction`
+  (·형제)의 `probe` 줄(*「이 경로는 입력 바이트를 안 싣는다」*)은 v8~v14의 요청 payload라 고칠 수
+  없다. 고침은 다음 프롬프트 판(auditor v15)과 같이 새 필드·새 봉투로 간다.
 - **코드 열람은 이름으로 묻는다** — 경로·정규식을 받는 `grep`·`cat`을 열지 않는다. 모델
   문자열이 도구 인자로 들어가지 않고, 같은 사실의 두 번째 데이터원이 생기지 않는다.
 
@@ -65,6 +75,7 @@ AUDITOR_TOOLS: tuple[str, ...] = get_args(AuditorTool)
 # `probe`가 `spec`도 쓰는 것은 바이트를 넣어야 관측이 모델 행동의 함수가 되기 때문이다.
 # ⏵ 2026-10-09 — **이 경로가** 그 값을 도구에 안 싣으므로 `spec`은 **기록으로만** 남는다(컨테이너
 # `poc`는 ADR 0014로 받을 수 있다 — 안 싣는 쪽이 이슈 #419다). 그 한계는 노드가 적는다.
+# ⏵ 2026-10-13(#419) — **이제 싣는다**(`nodes/auditor._probe`). 위 두 줄은 그 이전의 기록이다.
 _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
     "lookup": ("requests",),
     "probe": ("tool", "spec"),
@@ -116,6 +127,11 @@ class _AuditorEnvelope(HarnessModel):
     # 바이트를 구성한다」고 적으면 모델이 「내가 만든 입력으로 돌렸더니」라는 거짓 문장을 궤적에
     # 쓴다. 이 경로가 바이트를 싣게 되면(이슈 #419) 이 설명과 노드 관측의 그 줄
     # (`_probe_observation`)을 같이 고친다.
+    # ⏵ 2026-10-13(#419) — **노드는 이제 싣는다**(관측의 그 줄은 지웠다). ⚠ **그런데 아래
+    # `description`은 못 고친다 — 요청 payload라 v8~v14의 요청 바이트다.** 그 문구
+    # (*「지금은 쓰지 않는다 … 싣지 않는다」*)는 이제 **거짓이다**: 모델이 이 문구를 믿으면
+    # `spec`을 안 보낸다(`probe poc`가 0회인 한 원인 — 이슈 #617). 고침은 다음 프롬프트 판(auditor
+    # v15)에서 이 필드를 새 설명으로 다시 선언하는 것과 같이 간다.
     spec: PovSpec | None = Field(
         default=None,
         description=(
@@ -177,6 +193,8 @@ class _AuditorEnvelope(HarnessModel):
 # 따라와야 한다 — 이 봉투 하나로 FT 데이터가 서지 않는다.
 # ⚠ `probe`의 `spec`이 도구 입력으로 들어가려면 **이 노드가 싣는 것**이 선행이다(이슈 #419) —
 # 컨테이너 `poc` 쪽 선행은 ADR 0014로 섰다.
+# ⏵ 2026-10-13(#419) — 노드 쪽 선행도 섰다. 아래 docstring의 `probe` 줄(*「이 경로는 입력 바이트를
+# 안 싣는다」*)은 **이제 낡았다** — v8·v9의 요청 바이트라 못 고치고 다음 판(auditor v15)에서 간다.
 class AuditorAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 
@@ -262,6 +280,13 @@ class AuditProcedure(HarnessModel):
 # 한 글자만 바꿔도 그 판들의 payload가 달라진다(evaluation §2.3). 그래서 「같은 도구를 다시
 # 부르면 같은 관측이 온다」는 과장이 v8·v9에는 남는다 — 그 판의 기록이고, 고치려면 그 판을
 # 올려야 한다.
+# ⏵ 2026-10-13(#514) 아래 docstring의 「직전 홉과 같으면 반복으로 감사가 선다」는 이제 **코드보다
+# 좁다** - 반복 판정은 직전 홉이 아니라 앞선 **어느 홉과든** 같은 요청이면 선다(`nodes/auditor`의
+# `seen`). 이 문장은 v10~v14의 요청 payload라 한 글자도 못 고친다(요청 바이트가 바뀐다) -
+# 고치려면 다음 프롬프트 판과 함께 올린다. 그 전에는 모델이 알린 것보다 넓게 선다.
+# ⏵ 2026-10-13(#419) — 같은 이유로 아래 `probe` 줄의 *「이 경로는 입력 바이트를 안 싣는다 — `spec`을
+# 실어도 도구에 전달되지 않고」*도 이제 거짓이다(노드가 싣는다). v10~v14의 요청 바이트라 못 고치고
+# 다음 판(auditor v15)에서 간다. 형제 봉투(`…NullableCwe…`·`…AuditAlways…`)의 같은 줄도 같다.
 class AuditorProcedureAction(_AuditorEnvelope):
     """감사 좌석이 매 홉 내는 제어 액션.
 
@@ -402,3 +427,47 @@ class AuditorProcedureAuditAlwaysAction(_AuditorEnvelope):
 
     procedure: AuditProcedureAuditAlways | None = None
     rationale: NonEmptyStr
+
+
+# === v15: `probe`가 입력 바이트를 싣는 봉투 (S19 · 이슈 #419 #572 #602) ==================
+#
+# ⏵ 2026-10-13 — v8~v14 봉투의 `spec` 설명(「지금은 쓰지 않는다 … 싣지 않는다」)과 클래스
+# 설명의 `probe` 줄(「이 경로는 입력 바이트를 안 싣는다」)은 노드가 `spec`을 싣게 된 뒤
+# (PR #644) **거짓이 됐다** — 모델이 그 문구를 믿으면 `spec`을 안 보낸다(`probe poc` 0회의
+# 한 원인, 이슈 #617). 그러나 그 문구는 v8~v14의 요청 payload라 한 글자도 못 고친다
+# (evaluation §2.3). 그래서 v12 봉투의 **서브클래스**를 새로 세워 `spec` 설명과 클래스 설명만
+# 다시 쓴다. 최종 답(`AuditProcedureAuditAlways`)·필드 순서(pydantic은 재선언한 필드를 부모
+# 자리에 둔다)·검증기는 v12 그대로다 — 읽는 쪽(`isinstance(..., AuditProcedure)`)이 v12와
+# 같은 최종 답으로 다룬다. `answer`의 `procedure`가 비면 거절하는 규칙(`_check_action`)도
+# 같고, 클래스 설명이 그 사실을 적는다(이슈 #602).
+#
+# ⚠ docstring과 `spec` 설명은 요청 payload에 실린다 — 저장소 내부 참조를 넣지 않는다.
+class AuditorProcedureProbeInputAction(AuditorProcedureAuditAlwaysAction):
+    """감사 좌석이 매 홉 내는 제어 액션.
+
+    `action`이 어느 필드를 쓰는지 정한다.
+
+    - `lookup`: `requests`에 필요한 코드를 **이름으로** 적어 조회한다. 각 요청은 종류
+      (변수·타입·매크로·함수·호출자 등)와 **이름**이고, 경로나 검색 패턴이 아니다. 찾은 원문이
+      다음 홉의 관측으로 들어온다.
+    - `probe`: `tool`로 진단을 한 번 돌린다. `spec`을 실으면 하네스가 그것을 입력 바이트로 조립해
+      도구에 싣는다 — 그 바이트를 읽는 도구는 `poc` 하나이고 `asan`·`gdb`·`build`는 읽지 않는다.
+      같은 도구를 다시 부르는 것(`poc`는 같은 입력 바이트로 다시 부르는 것)은 같은 질문을 다시 하는
+      것이고, 이 감사의 앞선 어느 호출과든 같으면(바로 앞 호출만이 아니다) 반복으로 감사가 선다.
+      나중에 다시 돌린 로그가 같을지는 안 쟀고 `evidence_id`는 호출마다 새로 난다.
+    - `answer`: `procedure`에 최종 감사 결과를 실어 감사를 끝낸다. `procedure`가 없거나 null이면
+      거절한다.
+
+    새 근거 ID는 관측을 받은 뒤에만 인용할 수 있다. 홉 상한에 닿으면 마지막 홉은 `answer`여야
+    한다 — 조사만 하고 끝나면 그 후보는 결과 없이 사유와 함께 대기로 남는다.
+
+    그 액션이 쓰지 않는 필드가 실리면 거절한다.
+    """
+
+    spec: PovSpec | None = Field(
+        default=None,
+        description=(
+            "`probe`에서만 쓴다. 도구에 먹일 입력 바이트를 조각(segments)으로 서술한다 — 하네스가 "
+            "조립해 도구에 싣는다. 읽는 도구는 `poc` 하나다. 생략하면 도구는 입력 없이 돈다."
+        ),
+    )

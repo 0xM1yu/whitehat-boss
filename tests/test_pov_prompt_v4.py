@@ -23,8 +23,10 @@ v4가 v3와 다른 넷: ① 채점기 `vul` 종료 코드를 읽는 규칙(#549)
   `submit`을 **정의하는** 도구 루프 절 · 새 절 · 출력 절에 마지막 홉 규칙을 뒤집는 항목을 끼워도
   어느 테스트도 안 빨갰다(변이로 확인했다, 2026-10-08).
   `test_a_known_defect_reintroducing_edit_breaks_a_pin`이 알려진 변이로 실제로 무는지 보인다.
-  핀이 읽는 판은 **서빙 판**이다(`VERSION` = config) - 판이 올라가면 핀이 새 판을 물어 빨개지고
-  `PINNED_VERSION`과 핀을 의도적으로 다시 만들 때까지 초록이 되지 않는다.
+  핀이 읽는 판은 `PINNED_VERSION`(v5)이다. ⏵ 2026-10-13 — 서빙 판이 v6으로 올라가며(S19 Phase 6-2)
+  **v5의 산문 핀은 불변 기록의 핀이 됐고**, 서빙 판의 산문 핀과 판 올림 경보기는
+  `tests/test_pov_prompt_v6.py`로 옮겼다(v6은 영어로 다시 쓴 판이라 덩어리가 다르다).
+  아래 *행동* 핀은 `VERSION`(= 서빙 판, config)으로 계속 돈다.
 - **못 무는 것 ① 참거짓.** 핀은 문장이 참인지 모른다 — 덩어리와 핀을 함께 고쳐 거짓 문장을
   만들면 초록이다. 참인지는 아래 *행동* 핀이 하네스가 실제로 하는 일로 묻는다: 반복은
   `test_the_loop_ends_on_a_repeat_of_any_earlier_gen`·
@@ -122,18 +124,19 @@ from tests.test_pov_oracle_feedback import ReadingOracle, _feedback_run
 # 이 파일의 산문 핀(`_PINNED_BLOCKS` · `_DEFECT_EDITS`)이 문장을 단언하는 판.
 # **서빙 판과 따로 적는다.**
 PINNED_VERSION = "v5"
-# 핀이 읽는 판은 **서빙 프로필이 실제로 고르는 판**이다(config에서 읽는다 - 판 이름을 박지 않는다).
-# 서빙 판이 v5로 올라가면 핀이 새 판을 물어 `PINNED_VERSION`과 갈린 문장에서 빨개지고, 누군가가
-# 새 판의 문장을 읽고 핀을 **의도적으로** 다시 만들 때까지 초록이 되지 않는다. 이름을 박아 두면
-# 서빙 판이 핀 없이 돈다(변이로 확인했다: v4를 복사해 v5로 올려 마지막 홉 규칙을 뒤집고 좌석
-# 단언만 v5로 고치면 798건이 전부 초록이었다).
+# 행동 핀(`_feedback_run(..., version=VERSION)` 등)이 읽는 판은 **서빙 프로필이 실제로 고르는
+# 판**이다(config에서 읽는다 - 판 이름을 박지 않는다). 이름을 박아 두면 서빙 판이 핀 없이 돈다
+# (변이로 확인했다: v4를 복사해 v5로 올려 마지막 홉 규칙을 뒤집고 좌석 단언만 v5로 고치면 798건이
+# 전부 초록이었다).
+# ⏵ 2026-10-13 — **산문 핀은 서빙 판을 따라가지 않는다**: `_prefix()`의 기본값은 `PINNED_VERSION`
+# 이고 서빙 판의 산문 핀과 판 올림 경보기는 `tests/test_pov_prompt_v6.py`다.
 VERSION = _served_pov_version()
 
 # 홉 줄 — `runner._pov_hop_line`이 내는 모양. 양성·음성 핀: `test_the_hop_line_regex_…`.
 _HOP_LINE = re.compile(r"hop=(\d+) last_hop=(\d+) remaining=(\d+)")
 
 
-def _prefix(version: str = VERSION) -> str:
+def _prefix(version: str = PINNED_VERSION) -> str:
     return (PROMPTS_DIR / "pov" / version / "prefix.md").read_text(encoding="utf-8")
 
 
@@ -816,7 +819,7 @@ def test_the_cached_hedge_is_v3s_unchanged() -> None:
 
 
 # `## ` 절 머리의 **전체 목록** - 새 절이 조용히 생기지 못하게 박는다. (`###`는 부모 절에 든다.)
-# 판이 올라가면 이 목록도 `PINNED_VERSION`과 함께 다시 만든다.
+# v5의 목록이다(⏵ 2026-10-13 서빙 판은 v6 - `tests/test_pov_prompt_v6.py`의 `_PINNED_HEADINGS`).
 _PINNED_HEADINGS = [
     "## 이건 도구 루프다 — 한 번에 끝나지 않는다",
     "## 홉 예산 — 루프에는 끝이 있다",
@@ -1774,22 +1777,13 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
     (`prompt_loader`의 「버전 이름으로 분기하지 않는 이유」) — doctor가 막는 쪽은
     `test_doctor_score_chain.py`의 같은 행이다.
 
-    🔴 **그리고 이것이 판 올림 경보기다.** 서빙 판이 `PINNED_VERSION`(이 파일의 산문 핀이
-    문장을 단언하는 판)과 다르면 실패한다. 핀은 `VERSION`(= 서빙 판)을 읽으므로 같은 때에 덩어리
-    핀도 새 판의 갈린 문장에서 빨갛다 - 누군가가 새 판의 문장을 읽고 `PINNED_VERSION`과
-    `_PINNED_BLOCKS` · `_PINNED_HEADINGS` · `_DEFECT_EDITS`를 **함께, 의도적으로** 다시 만들어야
-    초록이 된다. 이름을 박은 판(`VERSION = "v4"`)에서는 이 일이 필요 없어 서빙 판이 핀 없이 돌았다.
-    ⚠ 새 판이 v4와 덩어리까지 같으면(복사만 한 판) 덩어리 핀은 초록이고 이 단언 하나만 빨갛다 -
-    그때는 판 이름만 갱신하면 된다. 새 판의 문장이 다르면 덩어리 핀이 같이 빨갛고, 이 단언만
-    고쳐서는 초록이 되지 않는다."""
+    ⏵ 2026-10-13 — **판 올림 경보기는 `tests/test_pov_prompt_v6.py`로 옮겼다**(서빙 판이 v6으로
+    올라갔고 이 파일의 산문 핀은 v5의 문장을 문다). 여기서는 서빙 판이 배선됐는지만 본다.
+    ⚠ 이 파일의 산문 핀(`_PINNED_BLOCKS` 등)은 서빙 판이 아니라 `PINNED_VERSION`을 읽으므로, 서빙
+    판이 또 올라가도 이 파일의 핀은 안 빨갛다 - 그 경보는 v6 파일의 `PINNED_VERSION` 단언이 한다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
-    assert selected == VERSION  # 핀이 읽는 판 = 이 프로필이 고르는 판
-    assert selected == PINNED_VERSION, (
-        f"서빙 판이 {selected}로 올라갔다 - 이 파일의 핀은 {PINNED_VERSION}의 문장이다. "
-        f"{selected}/prefix.md를 읽고 `PINNED_VERSION`·`_PINNED_BLOCKS`·`_PINNED_HEADINGS`·"
-        "`_DEFECT_EDITS`를 의도적으로 다시 만든다"
-    )
+    assert selected == VERSION  # 행동 핀이 읽는 판 = 이 프로필이 고르는 판
     assert selected in pov._WIDE_INPUT_VERSIONS
     template = load_prompt(Role.POV, selected)
     assert template.hop_header is True
@@ -1900,6 +1894,10 @@ _REVIEWED_V3_LINES = (
     ("src/orchestrator/nodes/pov.py", "v3 배선으로 SOURCE 확대와", "이력: v3 배선"),
     ("src/orchestrator/prompt_loader.py", "v3가 그 줄을 다시 쓸 때까지", "이력: gdb 광고"),
     ("src/orchestrator/prompt_loader.py", "`prompts/pov/v3/meta.yaml`의", "이력: 같은 문장"),
+    # Scout 좌석 v3 prefix(`prompts/scout_boundary/v3/prefix.md`)의 절 이름이라 PoV 판이 아니다 -
+    # 창(뒤 한 줄)이 다음 줄의 `fuzz_entrypoint` - **PoV만**에 걸린다. 줄에 「Scout」을 적어도
+    # 감지기는 같은 줄의 판 표지만 보므로 안 풀린다(2026-10-13 실측: 적고 다시 돌려도 같은 실패).
+    ("src/orchestrator/prompt_loader.py", "Scout v3 prefix의", "Scout 좌석 판 - 창이 다음 줄에"),
     ("src/orchestrator/runner.py", "줄을 받는 판은 meta가 `hop_header`", "참: v2·v3는 줄이 없다"),
 )
 

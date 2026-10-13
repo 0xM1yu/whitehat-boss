@@ -228,7 +228,8 @@ def dedupe_with_merges(
     쓰는 서로 다른 함수가 한 건으로 합쳐졌다(#77의 `gz_load`·`gz_avail`·`gz_look`·`gz_write`
     넷이 전부 `('CWE-787','input','memcpy')`). 대상 함수는 경로의 PROPAGATE 칸이고, 파일은
     러너가 `Candidate.location`에서 얻어 넘긴다 — `Candidate.location.symbol`은 모델이 쓴
-    값이라 `null`일 수 있어 파일만 쓴다.
+    값이고(⏵ 2026-10-13 — `null`이면 하네스가 후보 줄을 품는 함수로 채운다, 이슈 #633) 그 도장이
+    못 도는 경우가 있어 여전히 `null`일 수 있다. 그래서 파일만 쓴다.
     """
     grades = grades or {}
     files = files or {}
