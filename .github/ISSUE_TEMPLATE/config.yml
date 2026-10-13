@@ -5,5 +5,5 @@ blank_issues_enabled: false
 
 contact_links:
   - name: 논의·질문 (이슈가 아닌 것)
-    url: https://github.com/Yunse4l/whitehat-boss/blob/main/docs/open-questions.md
+    url: https://github.com/0xM1yu/whitehat-boss/blob/main/docs/open-questions.md
     about: 결함·결정이 아니라 논의·질문이면 open-questions.md 「이 목록 관리 방식」을 참고하거나 팀 채널로. 결함이면 — 설계 판단이 걸렸으면 「D-시리즈」, 아니면 「단순 버그」 템플릿을 쓴다.
