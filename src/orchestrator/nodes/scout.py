@@ -31,6 +31,7 @@ from dataclasses import dataclass, replace
 from src.interfaces.model_client import ChatTurn, Prompt, Usage
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
+from src.orchestrator.entry_scope import enclosing_scope
 from src.orchestrator.policy import DecisionPoint, RoutingRequest
 from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
 from src.orchestrator.stages import Stage
@@ -156,8 +157,9 @@ def run(
     `RunContext.call_model`이, v3는 `_call_hop`이 찍는다(ADR 0010 §3, `candidate.py` 필드 주석).
     발급 ID·`run_id`·`artifact_id`·초기 `state`는 `_call_hop`이 `RunContext.stamp_issued`로 덮는다.
 
-    `slice`는 슬라이스 타깃이면 그 슬라이스다(ADR 0012 결정 1) — `SOURCE`가 그 렌더가 되고
-    FACTS에 `slice_criterion`이 붙는다(`_ask_model`). `None`이면 지금처럼 심볼 본문이다.
+    `slice`는 슬라이스 타깃이면 그 슬라이스다(ADR 0012 결정 1) — 프롬프트가 `input: slice`를
+    선언하면 `SOURCE`가 그 렌더가 되고 FACTS에 `slice_criterion`이 붙으며, `input: source`면
+    entry를 품는 함수 본문이다(#529, `_ask_model`). `None`이면 심볼 본문이다.
 
     **`open_session()` + `finish()`다.** v3가 `triage_need_evidence`를 내도 여기서는
     되묻지 않는다 — 그 홉을 계속 돌리는 것은 좌석 집계 루프(러너)의 일이다. 이 함수를
@@ -477,16 +479,29 @@ def _ask_model(
 ) -> _HopResponse:
     """hop0 프롬프트를 렌더해 모델에 묻는다. 실패는 사유 코드로 기록하고 그대로 올린다.
 
-    **슬라이스 타깃이면 `SOURCE`가 슬라이스 렌더다**(ADR 0012 결정 1) — `read_source`로 읽으면
-    `capsule.target`이 entry(대표 위치, 줄 하나)라 그 한 줄만 간다. 렌더는 run 전에 이미
-    만들어져 있고(`build_deps`) 여기서는 id로 찾기만 한다.
+    **`SOURCE`의 모양은 프롬프트 meta의 `input` 선언이 정한다**(#529) — 슬라이스 유무가 아니다.
+    `slice`면 슬라이스 렌더 + `slice_criterion`(ADR 0012 결정 1), `source`면 entry를 품는 함수 본문
+    (`entry_scope.enclosing_scope` — Auditor `_auditor_target`과 같은 규칙·창 폭)이고 FACTS
+    `target`·`shown_lines`도 그 범위다. 슬라이스 없음은 선언과 무관하게 `capsule.target`의
+    심볼 본문이다.
     """
     template = load_prompt(role, ctx.config.model_for(role.value).prompt_template_version)
     schema = resolve_output_schema(template.output_schema)
+    target = capsule.target
+    shown_lines: tuple[tuple[str, int], ...] | None = None
     if slice is None:
-        source = ctx.read_source(capsule.target)
+        source = ctx.read_source(target)
+    elif template.input == "source":
+        target = enclosing_scope(ctx.symbols_for(slice.entry.file), slice.entry)
+        # 창 폴백은 심볼이 없다 — 슬라이스가 든 심볼(`capsule.target`)의 이름을 쓴다.
+        if target.symbol is None:
+            target = target.model_copy(update={"symbol": capsule.target.symbol})
+        source = ctx.read_source(target)
+        first = target.line_start or 1
+        shown_lines = tuple((target.file, first + i) for i in range(len(source.splitlines())))
     else:
         source = ctx.read_slice(slice.slice_id)
+    slice_input = slice is not None and template.input == "slice"
 
     def render(source: str) -> Prompt:
         return template.render(
@@ -494,20 +509,21 @@ def _ask_model(
                 run_id=ctx.run_id,
                 ids={"candidate_id": candidate_id},
                 artifact_id=artifact.artifact_id,
-                target=capsule.target,
+                target=target,
                 capsule=capsule,
                 source=source,
                 evidences=evidences,
-                slice_criterion=None if slice is None else _slice_criterion(slice),
+                slice_criterion=_slice_criterion(slice) if slice_input else None,
             ),
-            target=describe_target(capsule.target),
+            target=describe_target(target),
             capsule_sections=describe_sections(capsule),
             source=source,
         )
 
     prompt = render(source)
-    shown_lines: tuple[tuple[str, int], ...] | None = None
-    if slice is not None and ctx.config.thresholds.scout_slice_trim:
+    # `source` 선언은 트림이 안 돈다 — 큰 함수는 잘리지 않고 크기 거절된다
+    # (`runner._is_size_rejection` -> `_drop`, #529).
+    if slice_input and ctx.config.thresholds.scout_slice_trim:
         prompt, shown_lines = _fit_slice(ctx, role, slice, candidate_id, source, render, prompt)
     try:
         hop_response = _call_hop(
@@ -527,7 +543,8 @@ def _ask_model(
     except Exception:
         _queue_previous(ctx, previous, ReasonCode.SCHEMA_PARSE_FAILED)
         raise
-    # 잘렸으면 모델이 본 줄 집합을 세션에 싣는다 — resolver의 `visible`이 된다(#375 M-2).
+    # 모델이 본 줄 집합을 세션에 싣는다 — resolver의 `visible`이 된다(#375 M-2). 슬라이스 렌더는
+    # 잘렸을 때만, `source` 선언은 늘 있다(함수 본문 범위). `None`이면 `SliceRef.lines` 전체다.
     return hop_response if shown_lines is None else replace(hop_response, shown_lines=shown_lines)
 
 
@@ -581,6 +598,7 @@ def _fit_slice(
     prompt: Prompt,
 ) -> tuple[Prompt, tuple[tuple[str, int], ...] | None]:
     """슬라이스 렌더가 Scout 창에 안 들면 줄을 빼서 맞춘다(`scout_slice_trim`, #353 (b)).
+    `input: slice` 선언에서만 돈다 — `source` 선언은 함수 본문이라 부르지 않는다(#529).
 
     돌려주는 둘: 맞춘 프롬프트와, **모델에 실제로 간 (file, line) 집합**(안 잘렸으면 `None`).
     뒤엣것을 러너의 need_evidence resolver가 `visible`로 써서 "이미 SOURCE에 있다"를 **모델이

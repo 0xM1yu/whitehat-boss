@@ -146,9 +146,10 @@ class RunContext:
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
-    # 슬라이스 id → 그 슬라이스의 렌더(gutter·배너 — ADR 0012 결정 1). 슬라이스 타깃의 Scout
-    # `SOURCE`가 여기서 온다. Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에
-    # 같은 조회를 넣는다) — `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
+    # 슬라이스 id → 그 슬라이스의 렌더(gutter·배너 — ADR 0012 결정 1). `input: slice`를 선언한
+    # 프롬프트의 슬라이스 타깃 Scout `SOURCE`가 여기서 온다(`input: source`면 함수 본문 — #529).
+    # Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에 같은 조회를 넣는다) —
+    # `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
     read_slice: Callable[[str], str] = field(default=_unwired_read_slice)
     # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic·Auditor의 content-aware
     # 버전(각 노드의 `_CONTENT_AWARE_VERSIONS`)이 근거 본문을 받으려면 이 리더가 필요하다(#237
