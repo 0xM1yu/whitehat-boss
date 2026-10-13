@@ -48,8 +48,9 @@
   잘리므로 사유가 맨 앞이다 — `_failure_detail`). 실패하면 `error`를 꼭 채운다.
   권하는 필드: `ok`·`models`·서버별
   `action`·`util`·`max_num_seqs`·`max_model_len`·`args`·`revision`·`load_s`·`ready_s`·`attempts` ·
-  `memavail_before`·`memavail_after`·`vllm_version`·`error`. 서버의 기동 조건은 이 보고로만 기록에
-  남는다 — 올린 키의 `server.<key>.*`가 하나도 없으면 교대가 성공해도 러너가 run 경고로 그 키를
+  `memavail_before`·`memavail_after`·`vllm_version`·`error`. 서버가 **실제로 받은** 기동 조건은 이
+  보고로만 기록에 남는다(장비 파일이 *의도한* 인자는 `RunRecord.serving_launch_intended`에 따로
+  있다) — 올린 키의 `server.<key>.*`가 하나도 없으면 교대가 성공해도 러너가 run 경고로 그 키를
   부른다.
 - ⚠ **띄운 vLLM의 stdout·stderr는 로그 파일로 돌린다**(기동마다 새 파일). 서버가 명령의 파이프를
   물려받으면 `subprocess.run`이 EOF를 못 받아 **서버가 죽을 때까지 안 돌아온다.**

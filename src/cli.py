@@ -145,9 +145,12 @@ RUN_DIR_PREFIX = "run_"
 # 실측 전 초기값인 임계값 (이슈 #91·#92 — 둘 다 닫혔다, 값은 여전히 안 잰 초기값).
 # 조건 간 비교 전에 확정해야 한다. `pov_tool_hops`(#511, 2026-10-12 닫음)는 값이
 # 16(사용자 결정 2026-10-06)이나 효과 미실측이라 같은 자리다.
+# ⏵ 2026-10-13 - `capsule_expansion_max`를 이 목록에서 뺐다(#78). 그 값을 읽는 정책 결정점은 코드에
+# 남아 있으나 러너가 부르는 곳이 없다(ADR 0012 결정 6이 확장 경로를 `max_hops` 루프로 대체) -
+# 어느 run도 그 값에 좌우되지 않는데 doctor가 「확정하라」고 말하는 것은 거짓 경고다. 코드 삭제는
+# 별 작업이다.
 PROVISIONAL_THRESHOLDS = (
     "scout_threshold",
-    "capsule_expansion_max",
     "requeue_max",
     "max_hops",
     "pov_tool_hops",
@@ -593,6 +596,10 @@ def _slice_input_prompts(config: HarnessConfig) -> list[str]:
     ⏵ **2026-10-07 — 저장소의 어느 프로필도 이 목록을 채우지 않는다**(PR #524로 Scout가
     v4 = `input: source`에 배선됐다). 가드는 그대로 선다 — v3가 디스크에 있고 그것을 고르는
     설정이면 다시 찬다. 역할·버전을 여기 박지 않는 이유가 그것이다.
+
+    ⏵ 2026-10-13 — 반대 방향(`input: source`인데 `--slices`를 줌)은 가드가 필요 없다: 노드가
+    `SOURCE`의 모양을 이 선언으로 골라(`scout._ask_model`, #529) `--slices` run에서도 함수 본문이
+    간다.
     """
     return [
         f"{role}/{version}"
@@ -727,6 +734,14 @@ def _check_scout_slice_trim(config: HarnessConfig) -> list[Check]:
     하네스 트림을 서술하는 프롬프트 판에만 이 좌석을 돌리는 것(#351 `source_options` 선례)이다.
     """
     if not config.thresholds.scout_slice_trim:
+        return []
+    # ⏵ 2026-10-13 — 트림은 `input: slice` 판의 렌더에서만 돈다(`scout._ask_model`, #529). 배선된
+    # Scout가 전부 `input: source`(서빙 v4)면 줄을 빼는 일이 없어 알릴 것이 없다.
+    try:
+        wired = _slice_input_prompts(config)
+    except PromptError:
+        wired = ["scout"]  # 로드 실패는 `_check_prompts`가 ERROR로 댄다 — 여기서는 WARN을 살린다
+    if not any(name.startswith("scout") for name in wired):
         return []
     return [
         Check(
