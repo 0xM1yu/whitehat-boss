@@ -2880,6 +2880,12 @@ def _run_pov_hops(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
+            # `evidence is None` ⟺ `no_poc`다 — 아래 두 자리가 `no_poc` 대신 `evidence`를
+            # 보는 것이 같은 축인 이유는 타입이다: `pov.run_tool`의 반환형이
+            # `Evidence`(옵셔널 아님)이고 `prior[1]`도 Evidence라, 위 삼항에서 `None`이
+            # 나오는 갈래는 `no_poc` 하나뿐이다. **`run_tool`을 옵셔널로 바꾸면 이 두 자리를
+            # `no_poc`로 바꿔야 한다** — 안 바꾸면 도구가 Evidence를 못 낸 홉이 「PoC 없음」
+            # 관측을 받는다.
             if prior is None and evidence is not None:
                 if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
                     ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
