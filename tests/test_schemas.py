@@ -833,6 +833,14 @@ def test_a_manifest_written_before_tool_seconds_still_loads() -> None:
     # 않았다」다. 기본값이 없으면 이 fixture가 로드에서 죽는다.
     assert "serving_launch_intended" not in payload, "fixture가 낡지 않았다 - 검사가 공허해진다"
     assert record.serving_launch_intended is None
+    # 분모 전용 집계 셋(#613·#618)도 같다 - 옛 기록은 `None`(안 쟀다)이지 `{}`·`0`이 아니다.
+    for key in (
+        "schema_failure_max_run_by_role",
+        "schema_recovered_calls_by_role",
+        "pov_inspect_max_run_by_finding",
+    ):
+        assert key not in payload, "fixture가 낡지 않았다 — 검사가 공허해진다"
+        assert getattr(record, key) is None, key
 
 
 # ## required 두 필드 — 이 계약은 모델이 무엇을 채우는가를 가른다

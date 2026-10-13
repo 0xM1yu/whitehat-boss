@@ -2216,6 +2216,59 @@ def test_a_probe_observation_tells_a_missing_log_from_an_empty_one(
     assert needle in body and absent not in body
 
 
+@pytest.mark.parametrize("stderr_chars", [1_000, 300_000])
+def test_a_probe_observation_carries_the_ambiguity_note_exactly_once(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, stderr_chars: int
+) -> None:
+    """이슈 #573 — `poc` 조사의 `exit=1` 모호성 줄은 로그 끝에 붙어 읽기 상한(200,000자)을 넘는
+    출력에서는 읽히지도 않았다. 이제 하네스가 만든 줄이라 로그를 거치지 않고 머리줄에 붙는다.
+    실 러너 → 실 `make_payload_reader` → 실 `_probe_observation`, 정확히 한 번(짧은 로그도
+    중복 없음)."""
+    import subprocess
+    from datetime import UTC, datetime
+
+    from src.adapters import container_tools
+    from src.ids import IdFactory
+    from src.interfaces.tool_runner import INPUT_PLACEHOLDER, SandboxSpec, ToolArgs
+
+    monkeypatch.setattr(container_tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(
+        container_tools.subprocess,
+        "run",
+        lambda argv, **kw: subprocess.CompletedProcess(argv, 1, "", "x" * stderr_chars),
+    )
+    runner = container_tools.ContainerToolRunner(
+        ids=IdFactory("run_20260901_0001"),
+        run_id="run_20260901_0001",
+        root=tmp_path,
+        artifacts_root=tmp_path,
+        runtime="docker",
+        observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+        poc_target=container_tools.PocTarget(image="n132/arvo:1065-vul", argv=("/bin/arvo",)),
+    )
+    sandbox = SandboxSpec(
+        image=container_tools.DEFAULT_IMAGE,
+        network=False,
+        read_only=True,
+        cpu_limit=1.0,
+        memory_mb=2048,
+        timeout_s=300,
+    )
+    evidence = runner.run(
+        "poc", ToolArgs(argv=["poc", INPUT_PLACEHOLDER], workdir=".", input_bytes=b"A"), sandbox
+    )
+    ctx.read_payload = container_tools.make_payload_reader(tmp_path)
+
+    observation = auditor._probe_observation(ctx, 1, evidence)
+
+    assert observation.count(container_tools.POC_AMBIGUOUS_NOTE) == 1
+    # 위치 — 머리줄(`tool=…`) 바로 다음 줄이고 도구 출력 구간(`--- poc output`)보다 앞이다.
+    lines = observation.splitlines()
+    assert lines[2] == container_tools.POC_AMBIGUOUS_NOTE
+    output_at = next((i for i, ln in enumerate(lines) if ln.startswith("--- poc output")), None)
+    assert output_at is None or 2 < output_at
+
+
 def test_the_answer_hop_counts_the_probe_evidence_it_cites(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

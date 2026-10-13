@@ -749,6 +749,13 @@ class RunContext:
                 "input_bytes": len(args.input_bytes),
                 "input_sha256": hashlib.sha256(args.input_bytes).hexdigest(),
             }
+        if evidence.harness_note is not None:  # `error`처럼 있을 때만 — 키 부재 = 노트 없음(#573)
+            sent["harness_note"] = evidence.harness_note
+        # 크래시 관측(#232)은 **잰 도구에만** 키가 실린다 — 키 부재 = 안 쟀다(Fake·정적 도구·대상이
+        # 안 뜬 호출). `crash_banner`는 배너 줄을 Evidence에 남겼는가이고 본문은 trace에 안 간다.
+        observed: dict[str, TraceValue] = {}
+        if evidence.crashed is not None:
+            observed = {"crashed": evidence.crashed, "crash_banner": evidence.banner is not None}
         self.trace.emit(
             EventKind.TOOL_CALL,
             stage=stage,
@@ -762,6 +769,7 @@ class RunContext:
             error=evidence.error,
             finding_id=subject_id,
             **sent,
+            **observed,
         )
         # **밀리초를 그대로 넘긴다.** 여기서 `// 1000`을 하던 것이 이 결함의 세 지점 중
         # 하나였다 — 도구 11건 중 8건(342~906 ms)이 0으로 청구됐다(2026-08-17 실측).
