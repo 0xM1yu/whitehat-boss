@@ -62,6 +62,7 @@ from src.interfaces.model_client import (
     MAX_ERROR_DETAIL,
     AttemptRecord,
     ModelGatewayError,
+    ModelResult,
     Prompt,
     SchemaParseError,
     Usage,
@@ -1100,3 +1101,38 @@ def test_a_call_without_a_breakdown_has_a_null_tail_key() -> None:
     _, data = _run(routed, schema=Candidate, prompt=_fake_prompt())
 
     assert data["attempt_tail_whitespace_only"] is None
+
+
+def test_texts_that_do_not_line_up_with_the_attempts_are_null_not_misattributed() -> None:
+    """핀: `_success_attempt_texts`의 길이 가드. 칸 수가 시도 수와 안 맞으면 빈 튜플이라 모든
+    칸이 `null`이고, 가드를 빼면 **성공 시도의 원문이 0번 칸(버려진 시도)의 판정으로 읽힌다.**
+
+    이 모양은 지어낸 것이 아니다 - `ModelResult`는 `len(attempt_log) == attempts`도
+    `failed_raw_texts`의 칸 수도 **불변식으로 강제하지 않는다**(`src/interfaces/model_client.py`의
+    두 필드 주석: 「구현체가 안 채우면 빈 튜플」·「어댑터가 짓는 시점의 관례이지 강제되는
+    불변식이 아니다」). 꼬리가 공백인 원문을 넣어 **가드가 없으면 `true`가 나오는** 자리로 잡았다.
+    """
+    from src.orchestrator.context import _attempt_fields, _success_attempt_texts
+
+    log = (
+        AttemptRecord(output_tokens=4096, finish_reason="length"),
+        AttemptRecord(output_tokens=4096, finish_reason="length"),
+    )
+    skewed = ModelResult(
+        value=Tiny(ok=True),
+        usage=Usage(input_tokens=10, output_tokens=8192, cached_tokens=0),
+        model="m",
+        attempts=2,
+        raw_text=RUNAWAY,  # 꼬리가 공백뿐이다
+        attempt_log=log,  # `failed_raw_texts`는 기본값 `()`이라 칸이 하나 모자란다
+    )
+
+    assert _success_attempt_texts(skewed) == ()
+    tails = _attempt_fields(log, _success_attempt_texts(skewed))["attempt_tail_whitespace_only"]
+    assert json.loads(str(tails)) == [None, None]
+    # 칸이 맞으면 같은 원문이 제 칸에서 `true`로 읽힌다 - 위 `null`이 「원문이 없다」가 아니라
+    # 「정렬을 못 믿는다」임을 가른다.
+    lined_up = skewed.model_copy(update={"failed_raw_texts": (RUNAWAY,)})
+    assert _success_attempt_texts(lined_up) == (RUNAWAY, RUNAWAY)
+    lined = _attempt_fields(log, _success_attempt_texts(lined_up))["attempt_tail_whitespace_only"]
+    assert json.loads(str(lined)) == [True, True]
