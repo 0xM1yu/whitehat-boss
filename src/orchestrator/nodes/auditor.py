@@ -105,6 +105,14 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   `tests/test_container_tools.py::test_no_executed_container_command_receives_the_input_today`가
   고정한다). 이 노드가 싣는다고 그 셋의 관측이 `spec`의 함수가 되지는 않는다. 이 절을 고친 PR은
   **노드**만 바꿨고 컨테이너 러너는 안 건드렸다.
+- ⏵ **2026-10-13 (이슈 #507) — 컴파일 기반 도구는 hop0 본문이 미리 알린다, 거절하지 않는다.**
+  2단계 `build`·`clang-tidy`가 컴파일러 오류로 실패했으면(`ctx.compile_failures[workdir]` —
+  `signals.run`이 `with_signal()`이 거르기 전에 남긴다) **루프 판**의 hop0 본문 끝에 하네스 노트가
+  붙는다 (`signals.compile_note`: 도구마다 측정한 건수·첫 오류, `build`가 실패했을 때만
+  「`build`·`asan`·`gdb`는 같은 컴파일 명령」). 실패가 없으면 `None`이라 본문이 종전과 같다. 한 방
+  판에는 안 붙는다 — 도구를 고르는 자리가 없다. 모델이 그 뒤에도 `probe build`를 고르면 종전대로
+  돈다. hop0 `auditor_hop` 이벤트가 `compile_note`·`compile_note_tools`를 싣는다(노트를 안
+  붙였으면 키가 없다).
 """
 
 import hashlib
@@ -123,6 +131,7 @@ from src.interfaces.model_client import (
 from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.context import RunContext
+from src.orchestrator.nodes import signals
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_sections, describe_target
 from src.orchestrator.poc_assembly import assemble_poc
@@ -537,6 +546,10 @@ def _ask_model(
     )
     if problem is not None:
         raise PromptError(problem)
+    # ⏵ 2026-10-13 (이슈 #507) — 루프 판만 받는다(도구를 고르는 자리가 루프 판뿐이다). 2단계가 잰
+    # 컴파일 실패가 없으면 둘 다 `None`이다.
+    failures = ctx.compile_failures.get(workdir, ()) if envelope is not None else ()
+    note = signals.compile_note(failures, workdir)
     prompt = _render_hop0(
         ctx,
         template,
@@ -545,6 +558,7 @@ def _ask_model(
         capsule=capsule,
         evidences=evidences,
         source=source,
+        compile_note=note,
     )
     if envelope is not None:
         try:
@@ -556,6 +570,7 @@ def _ask_model(
                 prompt=prompt,
                 workdir=workdir,
                 schema=envelope,
+                hop0_note=signals.compile_note_trace(failures) if note is not None else None,
             )
         except BudgetExhausted:
             # 모델 호출 쪽 소진은 `_call_model`이 이미 내렸다(`_queue_candidate`는 `triaged`가
@@ -721,10 +736,13 @@ def _render_hop0(
     capsule: ContextCapsule,
     evidences: tuple[Evidence, ...],
     source: Callable[[], str] | None,
+    compile_note: str | None = None,
 ) -> Prompt:
     """hop0 프롬프트 — 한 방 경로의 유일한 호출이자 도구 루프의 첫 호출이다. 두 경로가 이 렌더를
     같이 쓴다 — 갈라지면 루프를 꺼도 요청 바이트가 달라져 이전 run과 비교할 수 없다
     (evaluation §2.3).
+
+    `compile_note`는 본문 **끝**에 붙는 하네스 노트다(이슈 #507). `None`이면 바이트가 종전과 같다.
     """
     text = ctx.read_source(capsule.target) if source is None else source()
     # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽고 위치도 싣는다.
@@ -732,7 +750,7 @@ def _render_hop0(
     # 유무가 아니라 판이 정한다).
     aware = template.version in _CONTENT_AWARE_VERSIONS
     bodies = evidence_summaries(evidences, ctx.read_payload) if aware else {}
-    return template.render(
+    prompt = template.render(
         facts=build_facts(
             run_id=ctx.run_id,
             ids=ids,
@@ -753,6 +771,13 @@ def _render_hop0(
         capsule_sections=describe_sections(capsule),
         source=text,
     )
+    if compile_note is None:
+        return prompt
+    return Prompt(
+        prefix=prompt.prefix,
+        body=f"{prompt.body}\n\n{compile_note}",
+        prompt_version=prompt.prompt_version,
+    )
 
 
 def _run_hops(
@@ -764,6 +789,7 @@ def _run_hops(
     prompt: Prompt,
     workdir: str,
     schema: type[_LoopEnvelope],
+    hop0_note: Mapping[str, TraceValue] | None = None,
 ) -> Finding:
     """도구 루프 본체 — 모델이 `answer`를 낼 때까지 `lookup`·`probe` 관측을 되먹인다.
 
@@ -786,7 +812,10 @@ def _run_hops(
     남기면 그 홉의 모델 호출만 trace에 있고 홉 이벤트가 없어, 어느 홉에서 하네스가 실패했는지
     `model_call`과 조인해 봐야 안다. `answer` 홉은 인용한 `probe` Evidence 수를
     싣는다(`cited_probe_evidence` — 그 Evidence는 게이트에 안 닿는다. `_probe_observation` 참조).
-    """
+
+    `hop0_note`는 hop0 본문에 컴파일 실패 노트를 붙였을 때 그 계측(`compile_note`·
+    `compile_note_tools`)이고 **hop 0의 `auditor_hop` 이벤트에만** 실린다(이슈 #507). 어느 정지
+    사유로 hop 0이 끝나든 같다. """
     limit = ctx.config.thresholds.auditor_tool_hops
     history: tuple[ChatTurn, ...] = ()
     seen: set[Hashable] = set()
@@ -821,6 +850,7 @@ def _run_hops(
                 usage=result.usage,
                 observed=_answer_observed(answer, cited=len(cited)),
                 stop_reason=AuditorStopReason.ANSWERED,
+                hop0_note=hop0_note if hop == 0 else None,
             )
             return _finding_from(
                 ctx,
@@ -833,7 +863,15 @@ def _run_hops(
         key = _request_key(action)
         stop = _stop_without_finding(key, seen, hop=hop, limit=limit)
         if stop is not None:
-            _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, stop_reason=stop)
+            _emit_hop(
+                ctx,
+                candidate,
+                hop=hop,
+                action=action,
+                usage=result.usage,
+                stop_reason=stop,
+                hop0_note=hop0_note if hop == 0 else None,
+            )
             raise AuditorHopLimit(stop, hops=hop + 1, limit=limit)
         try:
             observed, observation = _observe(
@@ -847,9 +885,18 @@ def _run_hops(
                 action=action,
                 usage=result.usage,
                 observed={"observation_error": type(exc).__name__},
+                hop0_note=hop0_note if hop == 0 else None,
             )
             raise
-        _emit_hop(ctx, candidate, hop=hop, action=action, usage=result.usage, observed=observed)
+        _emit_hop(
+            ctx,
+            candidate,
+            hop=hop,
+            action=action,
+            usage=result.usage,
+            observed=observed,
+            hop0_note=hop0_note if hop == 0 else None,
+        )
         if "evidence_id" in observed:
             probe_evidence.add(str(observed["evidence_id"]))
         # 다음 홉이 마지막 허용 홉이면 그 사실을 관측 뒤에 붙인다(`_LAST_HOP_NOTE`).
@@ -1296,12 +1343,14 @@ def _emit_hop(
     usage: Usage,
     observed: Mapping[str, TraceValue] | None = None,
     stop_reason: AuditorStopReason | None = None,
+    hop0_note: Mapping[str, TraceValue] | None = None,
 ) -> None:
     """`AUDITOR_HOP` 이벤트 하나 — hop0 포함 홉마다. 싣는 값은 `EventKind.AUDITOR_HOP` 주석이 든다.
 
     `subject_id`는 **후보**다(조사 홉에는 Finding이 아직 없다). `usage`는 그 홉의 모델 호출
     값이라 상한(`auditor_tool_hops`)을 실측으로 정할 근거가 된다. `observed`는 조사를 돌린 홉만
-    준다 — 정지한 홉은 조사를 안 돌렸다.
+    준다 — 정지한 홉은 조사를 안 돌렸다. `hop0_note`는 hop 0에만 준다 — hop0 본문에 컴파일 실패
+    노트를 붙였다는 계측이다(이슈 #507). 키가 없으면 노트가 없었다.
     """
     data: dict[str, TraceValue] = {
         "hop": hop,
@@ -1314,6 +1363,7 @@ def _emit_hop(
     if action.action == "lookup":
         data["requested"] = len(action.requests)
     data.update(observed or {})
+    data.update(hop0_note or {})
     if stop_reason is not None:
         data["stop_reason"] = stop_reason.value
     ctx.trace.emit(
