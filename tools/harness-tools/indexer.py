@@ -271,6 +271,13 @@ _SCOPE_KEYWORDS = frozenset({"class", "namespace"})
 # `types`에서 본문 있는 태그 행의 `kind` — 앞선 선언 typedef 행(`kind: "typedef"`)을 뺄 근거다.
 _TAG_KINDS = frozenset(_TYPE_SPECIFIERS.values())
 
+# 정의 기록·필드 owner 추적에 쓰는 지정자. C++ `class`(`class_specifier`)는 멤버를 소유하고
+# `struct`처럼 타입 이름으로도 쓰이지만 tree-sitter가 따로 태그해서 지금까지 전혀 기록되지
+# 않았다 — 클래스 멤버가 owner 없이 `fields`에서 누락됐다(C++로 파싱되는 `.cc`/`.cpp`/`.hpp`,
+# 그리고 `.h`를 C++로 올린 뒤의 헤더). `struct`로 기록하면 그 멤버가 잡히고 클래스가 타입으로
+# 풀린다. `_TYPE_SPECIFIERS`의 다른 용도(`_TAG_KINDS`·`_forward_tag`)는 건드리지 않는다.
+_RECORD_SPECIFIERS = {**_TYPE_SPECIFIERS, "class_specifier": "struct"}
+
 _MACROS = frozenset({"preproc_def", "preproc_function_def"})
 
 # 이름 → 기록 목록 모양의 v2~v4 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
@@ -540,11 +547,11 @@ def _lookup_tables(root, relative: str) -> dict:
             func = _function_name(node) or ""
             for param in _params(node) if func else ():
                 _add_line(scoped["locals"], func, _text(param), param)
-        elif kind in _TYPE_SPECIFIERS and node.child_by_field_name("body") is not None:
+        elif kind in _RECORD_SPECIFIERS and node.child_by_field_name("body") is not None:
             name = node.child_by_field_name("name")
             span = _span(node, relative)
             if name is not None:
-                _add(tables["types"], _text(name), {**span, "kind": _TYPE_SPECIFIERS[kind]})
+                _add(tables["types"], _text(name), {**span, "kind": _RECORD_SPECIFIERS[kind]})
                 owner = (_text(name), span)
             elif not _lends_owner(node):
                 owner = (None, span)
