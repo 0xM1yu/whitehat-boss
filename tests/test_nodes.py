@@ -1563,6 +1563,273 @@ def test_scout_v3_follow_up_hop_is_stamped_too(ctx: RunContext) -> None:
     assert override.data["written.state"] == "triaged"
 
 
+# --- 후보 `location.symbol` 도장 (이슈 #633) ----------------------------------
+
+
+def _with_symbol(location: Location, symbol: str | None, *, file: str | None = None) -> Location:
+    return Location(
+        file=file or location.file,
+        symbol=symbol,
+        line_start=location.line_start,
+        line_end=location.line_end,
+    )
+
+
+# 도장이 고르는 심볼 표. `ctx`의 기본 `symbols_for`는 `None`(= 인덱스 없음, `dev_fake`)이라 도장이
+# 아예 돌지 않는다 — 실서빙(`harness_pool`)은 인덱서 표를 들고 도장은 그 표에서 **후보 줄을 품는
+# 함수**를 고른다. `other_fn`은 `VULNERABLE_C`에 없는 **합성 심볼**이다: 「같은 파일 다른 함수」를
+# 세우는 것이 용도이고, 도장은 파일 내용이 아니라 이 표만 읽는다.
+_PARSER_SYMBOLS = (
+    Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6),
+    Location(file="parser.c", symbol="other_fn", line_start=20, line_end=40),
+    # ⏵ 2026-10-14 — **다른 파일의 심볼이 표에 있어야** 파일 가드 핀이 자명해지지 않는다.
+    # 이 줄이 없으면 `util.c` 후보는 품는 함수를 못 찾아 어차피 안 찍히므로
+    # `test_scout_does_not_stamp_a_candidate_in_another_file`이 가드를 지워도 통과했다
+    # (적대적 리뷰 실측: 378 passed로 생존).
+    Location(file="util.c", symbol="util_fn", line_start=1, line_end=99),
+)
+
+
+def _symbol_table(symbols: tuple[Location, ...]):  # noqa: ANN202
+    def _for(file: str) -> list[Location] | None:
+        found = [symbol for symbol in symbols if symbol.file == file]
+        return found or None
+
+    return _for
+
+
+def _triage_writing_location(  # noqa: ANN202
+    ctx: RunContext,
+    target: Location,
+    written: Location,
+    *,
+    symbols: tuple[Location, ...] = _PARSER_SYMBOLS,
+):
+    """모델이 후보 `location`을 `written`으로 낸 것처럼 Scout를 돌린다(심볼 표를 배선해서)."""
+    stub = _RewritingModelClient(ctx.models, lambda value: value.transition(location=written))
+    patched = dataclasses.replace(ctx, models=stub, symbols_for=_symbol_table(symbols))
+    return _triage(patched, target)
+
+
+def _stamped_symbols(ctx: RunContext) -> list:  # noqa: ANN202
+    return [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SYMBOL_STAMPED]
+
+
+def test_scout_stamps_the_enclosing_function_when_the_model_left_it_null(ctx: RunContext) -> None:
+    """모델이 `symbol`을 `null`로 낸 후보(s17 12/12)는 그 줄을 품는 함수 이름을 받는다.
+
+    `file`·`line_*`는 모델이 쓴 값 그대로이고(여기선 `line_end`를 일부러 다르게 냈다), 저장된 후보도
+    같은 값이다. 채운 홉은 `scout_symbol_stamped`로 남는다.
+    """
+    written = _with_symbol(VULN_TARGET, None)
+    written = Location(file=written.file, line_start=3, line_end=9)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location == Location(
+        file="parser.c", symbol="parse_header", line_start=3, line_end=9
+    )
+    assert ctx.store.get("candidate", candidate.candidate_id).location == candidate.location
+    (event,) = _stamped_symbols(ctx)
+    assert event.subject_id == candidate.candidate_id
+    assert (event.data["hop"], event.data["symbol"]) == (0, "parse_header")
+
+
+def test_scout_stamps_the_other_function_not_the_target_symbol(ctx: RunContext) -> None:
+    """같은 파일 **다른 함수**의 후보에는 대상 이름이 아니라 그 함수 이름이 찍힌다 (리뷰 MEDIUM 1).
+
+    전 판은 조건이 셋(파일 같음 · 모델 `null` · 대상에 이름 있음)뿐이라 대상 이름을 그대로 찍었다.
+    슬라이스 타깃의 `FACTS.target`은 entry 한 줄이고 `SOURCE`는 여러 함수에 걸치므로 이 경우가
+    실재한다 — `inflate.c:1200`(`inflate_fast` 안) 후보에 `inflate`가 붙어 `repro_spec`·`validate`
+    argv에 실렸다.
+    """
+    written = Location(file="parser.c", line_start=25, line_end=30)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.symbol == "other_fn"
+    (event,) = _stamped_symbols(ctx)
+    assert event.data["symbol"] == "other_fn"
+
+
+@pytest.mark.parametrize(
+    ("written", "why"),
+    [
+        (Location(file="parser.c", line_start=12, line_end=14), "표의 어느 심볼도 안 품는 줄이다"),
+        (Location(file="parser.c"), "줄이 없어 품는 함수를 고를 근거가 없다"),
+    ],
+)
+def test_scout_stamps_nothing_when_the_index_cannot_place_the_line(
+    ctx: RunContext, written: Location, why: str
+) -> None:
+    """품는 함수를 못 찾으면 안 찍는다 — 대상 이름으로 메우지 않는다(CLAUDE.md §0)."""
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.symbol is None, why
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_stamps_nothing_without_an_index(ctx: RunContext) -> None:
+    """인덱스가 없는 프로필(`dev_fake` 기본 `symbols_for` = `None`)에서는 도장이 안 돈다."""
+    written = _with_symbol(VULN_TARGET, None)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written, symbols=())
+
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_the_stamped_symbol_is_the_one_the_model_saw_in_facts(ctx: RunContext) -> None:
+    """찍힌 값이 모델이 hop0 `FACTS.target`에서 본 심볼과 같다 (리뷰 MEDIUM 2).
+
+    대상 함수 **안**의 후보에서는 품는 함수와 `FACTS.target`이 같은 심볼을 가리켜야 한다 —
+    `docs/agent-contracts.md`가 「후보 `location`은 모델이 사실 블록의 대상을 옮겨 적는 값」이라
+    적으므로, 하네스가 채운 값이 그 블록과 갈리면 그 서술이 거짓이 된다.
+    ⚠ **이 등식은 #641(= `fix/529-scout-source-declaration`)이 병합된 뒤에야 실질적으로 문다.**
+    이 브랜치 단독에서는 이 테스트의 `VULN_TARGET`이 `capsule.target`(Joern 표기)이자 FACTS
+    `target`이고 심볼 표(`_PARSER_SYMBOLS`)가 같은 이름을 들게 짜여 있어 자명하게 통과한다.
+    두 표기가 갈리는 입력(C++ 클래스 바깥 정의 `P::parse` 등)은 이 테스트에 없다 — 갈림은
+    `test_the_stamp_uses_the_index_spelling_not_the_target_spelling`이 물고 실서빙에서 났는지는
+    **미실측**이다. #641은 `input: source` 선언에서 hop0 FACTS `target`을
+    `enclosing_scope(ctx.symbols_for(...))`로 바꾸므로 그때 원천이 둘이 된다 — 둘 다 같은 심볼 표를
+    읽고 **후보 줄이 그 함수 안인 한** 이 등식이 유지된다 — 후보가 같은 파일 다른 함수에 앉으면
+    갈리고, 그것이 이 PR이 의도적으로 만든 동작이다.
+    """
+    written = Location(file="parser.c", line_start=4, line_end=5)
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    facts = _facts_of(ctx.models.last_for(Role.SCOUT).body)
+    assert candidate.location.symbol == facts["target"]["symbol"]
+    (event,) = _stamped_symbols(ctx)
+    assert event.data["symbol"] == facts["target"]["symbol"]
+
+
+def test_the_stamp_uses_the_index_spelling_not_the_target_spelling(ctx: RunContext) -> None:
+    """대상(Joern 표기)과 인덱스 표기가 다르면 찍히는 것은 **인덱스 표기**다.
+
+    FACTS `target.symbol`(`capsule.target`)과 찍힌 값이 갈릴 수 있다는 사실의 핀이다 — 인덱서가 C++
+    클래스 바깥 정의를 `P::parse`로 내는 것(`tools/harness-tools/indexer.py`)을 본뜬 표다. 갈림이
+    실서빙에서 났는지는 **미실측**이다.
+    """
+    target = Location(file="parser.c", symbol="parse", line_start=3, line_end=6)
+    table = (Location(file="parser.c", symbol="P::parse", line_start=3, line_end=6),)
+    written = Location(file="parser.c", line_start=4, line_end=5)
+
+    candidate, _, _ = _triage_writing_location(ctx, target, written, symbols=table)
+
+    assert candidate.location.symbol == "P::parse" != target.symbol
+
+
+def test_the_session_carries_the_hop0_target_for_the_follow_up_hops(ctx: RunContext) -> None:
+    """`open_session`이 `capsule.target`을 세션에 싣는 **실제 배선**을 문다.
+
+    아래 되묻기 테스트는 세션을 손으로 짜(`_ne_session` + `dataclasses.replace`) `target`을 직접
+    넣으므로 그 배선을 안 본다 — `open_session`의 `target=capsule.target`을 `None`으로 바꿔도
+    초록이었다(생존 변이).
+    """
+    artifacts = preprocess.run(ctx, source_root=_root_of(ctx))
+    artifact = next(a for a in artifacts if a.path == VULN_TARGET.file)
+    capsule = retrieval.run(ctx, target=VULN_TARGET, level=CapsuleLevel.LIGHT)
+
+    session = scout.open_session(ctx, artifact=artifact, capsule=capsule)
+
+    assert session.target == capsule.target
+    assert session.target is not None and session.target.symbol == "parse_header"
+
+
+def test_scout_keeps_a_symbol_the_model_wrote(ctx: RunContext) -> None:
+    """모델이 쓴 `symbol`은 대상과 달라도 그대로다 — 도장은 `null`만 채운다. `""`도 쓴 값이다."""
+    for written_symbol in ("other_fn", ""):
+        written = _with_symbol(VULN_TARGET, written_symbol)
+
+        candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+        assert candidate.location.symbol == written_symbol
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_does_not_stamp_a_candidate_in_another_file(ctx: RunContext) -> None:
+    """대상 파일이 아닌 곳의 후보에 대상 함수 이름을 붙이지 않는다 — 슬라이스는 여러 파일을 본다."""
+    written = _with_symbol(VULN_TARGET, None, file="util.c")
+
+    candidate, _, _ = _triage_writing_location(ctx, VULN_TARGET, written)
+
+    assert candidate.location.file == "util.c"
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_stamps_nothing_when_the_target_has_no_symbol(ctx: RunContext) -> None:
+    """이름 없는 대상(`FACTS.target.symbol`이 `null`)에서는 지어내지 않는다."""
+    nameless = _with_symbol(VULN_TARGET, None)
+
+    candidate, _, _ = _triage_writing_location(ctx, nameless, nameless)
+
+    assert candidate.location.symbol is None
+    assert _stamped_symbols(ctx) == []
+
+
+def test_scout_v3_follow_up_hop_stamps_the_symbol_from_the_hop0_target(ctx: RunContext) -> None:
+    """되묻기 홉의 후보도 `symbol`이 `null`이면 hop0의 target으로 가려 품는 함수를 채운다.
+
+    `finish()`가 마지막 홉의 후보를 저장하므로 hop0만 막으면 되묻기를 거친 후보는 도로 `null`이다.
+    """
+    session = dataclasses.replace(_ne_session(), target=VULN_TARGET)
+
+    class _Stub:
+        def complete(self, *, role: Role, prompt, schema, history=()):  # noqa: ANN001, ANN202
+            written = session.candidate.transition(
+                location=_with_symbol(VULN_TARGET, None), reason_codes=["triage_review"]
+            )
+            value = ScoutResponse(candidate=written, analysis_summary=AnalysisSummary(claim="h1"))
+            return ModelResult(
+                value=value,
+                usage=Usage(input_tokens=110, output_tokens=15, cached_tokens=90),
+                model="stub",
+                raw_text="HOP1 RAW",
+            )
+
+    next_session = scout.continue_session(
+        dataclasses.replace(ctx, models=_Stub(), symbols_for=_symbol_table(_PARSER_SYMBOLS)),
+        session,
+        "FOLLOWUP",
+    )
+
+    assert next_session.candidate.location.symbol == "parse_header"
+    assert next_session.target == VULN_TARGET, "다음 홉이 또 쓸 수 있게 이어 쥔다"
+    (event,) = _stamped_symbols(ctx)
+    assert (event.data["hop"], event.data["symbol"]) == (1, "parse_header")
+
+
+def test_the_stamped_symbol_reaches_the_repro_spec_but_no_model_prompt(ctx: RunContext) -> None:
+    """도장이 닿는 곳은 합성 `repro_spec` 문구 하나다 — Auditor·Critic 프롬프트 바이트는 안 변한다.
+
+    Auditor는 후보를 `_describe_candidate`(ID·CWE·신호)로만 렌더하고 FACTS의 `target`은
+    `capsule.target`이라 `Candidate.location`을 안 읽는다. Critic은 Finding만 읽는다. 이 핀이
+    깨지면(후보 위치를 프롬프트에 싣기 시작하면) 도장이 요청 바이트를 바꾸기 시작한 것이니
+    `docs/agent-contracts.md`의 ⏵ 2026-10-13 문단(Scout)을 같이 고친다.
+    """
+    stamped, capsule, evidences = _triage_writing_location(
+        ctx, VULN_TARGET, _with_symbol(VULN_TARGET, None)
+    )
+    assert stamped.location.symbol == "parse_header", "전제 — 도장이 찍혔다"
+    unstamped = stamped.transition(location=_with_symbol(VULN_TARGET, None))
+
+    assert auditor._synthesize_repro_spec(stamped).expected_signal == (
+        "sanitizer crash at parse_header"
+    )
+    assert auditor._synthesize_repro_spec(unstamped).expected_signal == (
+        "sanitizer crash at parser.c"
+    )
+    auditor.run(ctx, candidate=stamped, capsule=capsule, evidences=evidences)
+    auditor.run(ctx, candidate=unstamped, capsule=capsule, evidences=evidences)
+    prompt_a, prompt_b = [p for role, p in ctx.models.prompts if role is Role.AUDITOR][-2:]
+    issued = re.compile(r"(?:find|mev)_\d+")  # 호출마다 새로 발급되는 ID만 가린다
+    assert prompt_a.prefix == prompt_b.prefix
+    assert issued.sub("<id>", prompt_a.body) == issued.sub("<id>", prompt_b.body)
+
+
 def test_auditor_stamps_the_issued_ids_over_the_ones_the_model_wrote(ctx: RunContext) -> None:
     """D83 ② — Auditor가 **남의** `finding_id`·`candidate_id`, 다른 `run_id`를 써도 둘 다 남는다."""
     first_candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
