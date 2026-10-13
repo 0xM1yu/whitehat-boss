@@ -1575,6 +1575,11 @@ def _with_symbol(location: Location, symbol: str | None, *, file: str | None = N
 _PARSER_SYMBOLS = (
     Location(file="parser.c", symbol="parse_header", line_start=3, line_end=6),
     Location(file="parser.c", symbol="other_fn", line_start=20, line_end=40),
+    # ⏵ 2026-10-14 — **다른 파일의 심볼이 표에 있어야** 파일 가드 핀이 자명해지지 않는다.
+    # 이 줄이 없으면 `util.c` 후보는 품는 함수를 못 찾아 어차피 안 찍히므로
+    # `test_scout_does_not_stamp_a_candidate_in_another_file`이 가드를 지워도 통과했다
+    # (적대적 리뷰 실측: 378 passed로 생존).
+    Location(file="util.c", symbol="util_fn", line_start=1, line_end=99),
 )
 
 
@@ -1680,7 +1685,8 @@ def test_the_stamped_symbol_is_the_one_the_model_saw_in_facts(ctx: RunContext) -
     `test_the_stamp_uses_the_index_spelling_not_the_target_spelling`이 물고 실서빙에서 났는지는
     **미실측**이다. #641은 `input: source` 선언에서 hop0 FACTS `target`을
     `enclosing_scope(ctx.symbols_for(...))`로 바꾸므로 그때 원천이 둘이 된다 — 둘 다 같은 심볼 표를
-    읽는 한 이 등식이 유지된다.
+    읽고 **후보 줄이 그 함수 안인 한** 이 등식이 유지된다 — 후보가 같은 파일 다른 함수에 앉으면
+    갈리고, 그것이 이 PR이 의도적으로 만든 동작이다.
     """
     written = Location(file="parser.c", line_start=4, line_end=5)
 

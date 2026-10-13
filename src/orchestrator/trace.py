@@ -279,6 +279,10 @@ class EventKind(StrEnum):
     # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
     # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
     # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    # ⏵ 2026-10-14 (#633) — 「`Candidate.location`은 모델이 쓴 값」은 그 run의 서술이다. 지금은
+    # 모델이 `symbol`을 안 쓰면(`None`) Scout가 **후보 줄을 품는 함수**를 찍고
+    # `scout_symbol_stamped`를 남긴다 — 모델이 쓴 `""`·틀린 이름은 그대로 두고, 인덱스가
+    # 그 줄을 품는 함수를 모르면 안 찍는다.
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
