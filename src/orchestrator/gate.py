@@ -23,7 +23,7 @@
 | E1 | `any(e.kind == STATIC)` **or** `any(e.location.overlaps(cand.location))` |
 | E2 | `{SOURCE, SINK} ⊆ path.steps` **and** `any(e.kind == GRAPH)` **and** `not any(m.blocking)` |
 | E3 | `p2` **and** `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
-| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` |
+| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` (대용 지표) |
 
 - **E0의 조건은 「모델이 인용을 안 했다」가 아니라 「붙일 관측이 없었다」다** (이슈 #552).
   `evidence_refs`는 모델이 쓰지만 **6단계가 판정 전에 그 타깃에서 관측한 Evidence를 붙인다**
@@ -59,11 +59,24 @@
   어댑터가 낸다 — 컨테이너는 `judge()`, Fake는 `_run_repro()`가 **대상 존재**로 낸다.
   그래서 `p4`가 참이어도 「기대한 신호가 관측됐다」는 아니다(#232).
 - **E4의 종료 코드 조건은 크래시의 대용 지표이고 그 이상이 아니다 (#232).** exit 0과 미측정
-  (`None`)을 크래시로 세지 않는다 — 거기까지다. 비-0은 asan·poc에서 **대상 바이너리**의 값이라
+  (`None`)을 크래시로 세지 않는다 — 거기까지다. ⏵ 2026-10-13(#232) **E4 = 「실행됐고 비-0으로
+  끝났다」이지 「재현됐다」가 아니다.** 판정은 오라클이 한다(ADR 0013·0014). `expected_signal`을
+  대조하는 선택지는 기각됐다 — `synthesize_repro_spec`이 켜진 run에서는 하네스가 그 신호를 직접
+  써서 대조가 순환한다. 비-0은 asan·poc에서 **대상 바이너리**의 값이라
   대상이 스스로 비-0을 돌려줘도 같고, gdb에서는 **gdb 프로세스**의 값이다(대상이 스스로 끝났을
-  때만 대상의 값 — `--return-child-result`). 「크래시했다」를 표현하는 필드는 `Evidence`에 없다.
+  때만 대상의 값 — `--return-child-result`). 종료 코드로 「크래시했다」를
+  표현하는 필드는 없다 — 배너 관측 `Evidence.crashed`가 있으나 `p4`는 안 읽는다(아래 ⏵).
   gdb를 8단계에 배선하기 전에 정상 종료인지 신호 정지인지를 `judge()` 밖으로 따로 내야 한다 —
   지금은 8단계가 gdb를 고르지 않는다(`validate.tool_for()`).
+- ⏵ 2026-10-13(#232) **`Evidence.crashed`(배너 관측)는 이 술어가 안 읽는다 — 기록뿐이다.**
+  컨테이너 러너가 대상 로그의 sanitizer 배너를 찾아 싣지만(`container_tools.observe_crash`) 철자가
+  문서에서 온 것이고 실제 로그 대조는 재생 14건(arvo 4·oss-fuzz 10)뿐이라 대부분 미검증이다.
+  `p4`가 그것을 읽게 하는 전환은
+  `poc_run` 크래시 녹음이 쌓인 뒤로 미뤘다. **환경이 낸 종료 코드는 `p4`에 거의 안 닿는다** —
+  `ok=False`인 것(타임아웃 124 · asan의 125~127 · `poc`의 124~127·137·255·>255·음수 · 수명주기 줄
+  없는 gdb)은 `usable`이 걸러 낸다(코드 대조 2026-10-13). ⚠ **남은 구멍: asan의 137·255·>255·음수는
+  `ok=True`로 올라와 `p4`를 참으로 만든다** — 환경의 SIGKILL과 대상 자신의 OOM이 갈리지 않고 255는
+  gdb 신호 정지의 값이기도 해서 여기서 일괄로 빼지 않았다.
 - **ambiguous(E1↔E2)**: `p1 and not p2 and (a and (not b or not c))`.
   경로는 이어졌는데 그래프 근거나 blocking 해소 중 하나가 빈 경우다.
   이때 `gate_ambiguous`를 기록하고 **E1으로 확정한다. 모델을 호출하지 않는다.**
