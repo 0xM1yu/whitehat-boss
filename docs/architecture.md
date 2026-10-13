@@ -99,7 +99,9 @@ graph LR
 >   `queued`된다 — 루프 0건. 풀 프로필의 v3 프롬프트가 이미 슬라이스를 전제해 지금 입력과 어긋난다 →
 >   [D82](open-questions/D/D82.md)(D82 닫힘 2026-10-12 — 서빙은 v4). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
 >   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
->   need_evidence 루프는 그대로 0건이다(Phase 5).)
+>   need_evidence 루프는 그대로 0건이다(Phase 5). ⏵ 2026-10-13 #529 — 「`SOURCE`가 슬라이스 렌더이고 `slice_criterion`이 붙으며」는
+>   프롬프트가 `input: slice`를 선언했을 때만이다. `input: source`(서빙 v4)는 슬라이스 타깃에서도 entry를 품는 함수 본문이고
+>   `slice_criterion`이 없다.)
 > (⏵ 2026-09-26 — 루프가 이 변경으로 배선됐다: `runner._step_scout_open`(hop0)·`_step_scout_settle`
 > (동료 확인 → `_run_ne_hops`)이 `Stage.SCOUT`을 두 행으로 가르고, `triage_need_evidence`는 더 이상
 > `scout_threshold` 미만 취급으로 `below_scout_threshold`에 묻히지 않는다 — `policy._scout_triage`가
@@ -110,8 +112,9 @@ graph LR
 > (ATOM 스모크 전).)
 > (⏵ **2026-10-07 — 서빙 Scout 판이 v4다**(PR #524 배선). v4는 `input: source`를 선언하고 `SOURCE`를
 > 「대상 함수 본문, 줄번호·배너 없음」으로 정의하므로 **위 v3 서술은 서빙 경로가 아니다.** ⚠ 어긋남의
-> 방향이 뒤집혔다 — 노드는 여전히 슬라이스 유무로 `SOURCE`를 고르니(`nodes/scout.py`) `--slices` run에서는
-> 렌더가 가고 v4 산문과 어긋난다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
+> 방향이 뒤집혔다 — ~~노드는 여전히 슬라이스 유무로 `SOURCE`를 고르니(`nodes/scout.py`) `--slices` run에서는
+> 렌더가 가고 v4 산문과 어긋난다.~~ ⏵ 2026-10-13 고쳤다(#529): 노드가 meta `input`으로 `SOURCE`를 골라 `--slices` run에서도
+> v4는 함수 본문을 받는다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
 > 서빙 경로에서 돌지 않는다.)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
 >   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · 봉투가 `AuditorProcedureNullableCweAction` · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67 · ⏵ 2026-10-11 지금 배선된 판은 **v14**다 — v12 + 같은 FACTS 변경 · 봉투가 `AuditorProcedureAuditAlwaysAction`, PR #601)은

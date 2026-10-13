@@ -210,8 +210,9 @@ class Deps:
     # 슬라이스 id → 렌더(gutter·배너). `build_deps`가 run 전에 **전부** 렌더해 둔 dict의 조회다 —
     # drift가 첫 모델 호출 전에 `SliceInputError`로 나야 해서다(run 도중에 나면 앞 슬라이스의 호출을
     # 이미 태운 뒤다).
-    # Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서 나온다 — `read_source`가
-    # Retriever와 같은 함수여야 하는 것과 같은 이유다.
+    # `input: slice` 프롬프트의 Scout `SOURCE`와 Retriever의 `target_function`이 이 한 조회에서
+    # 나온다 — `read_source`가 Retriever와 같은 함수여야 하는 것과 같은 이유다
+    # (`input: source`면 Scout는 함수 본문 — #529).
     read_slice: Callable[[str], str] = _no_slices
     # 역할 → 그 역할 모델의 실 토크나이저 카운터. `None`이면 그 역할은 기본 카운터
     # (글자수 근사 `len//4`)를 유지한다(#96 (b)).
@@ -601,8 +602,9 @@ def build_deps(
         locals_of=graph.locals_of,
         slice_refs=slice_refs(loaded) if loaded is not None else None,
         slicer=slicer_summary(loaded) if loaded is not None else None,
-        # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — Scout `SOURCE`와 캡슐의
-        # `target_function` 토큰이 한 렌더에서 나온다.
+        # Retriever에 넣은 것과 **같은 조회**다(위 `_BuildArgs`) — `input: slice` 프롬프트의 Scout
+        # `SOURCE`와 캡슐의 `target_function` 토큰이 한 렌더에서 나온다
+        # (`input: source`면 아니다 — #529).
         read_slice=read_slice,
         counter_for_role=counter_for_role,
         counter_report=counter_report(),
