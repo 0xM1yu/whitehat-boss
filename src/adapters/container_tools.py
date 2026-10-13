@@ -877,7 +877,12 @@ def compile_failure_reason(text: str, *, tagged_only: bool = False) -> str:
     found = _COMPILE_ERROR_LINE.findall(text)
     if not found:
         return ""
-    first = re.sub(r"[\x00-\x1f\x7f]", " ", found[0])[:_COMPILE_REASON_CHARS]
+    # 제어문자 + 유니코드 줄 구분자(`\x85` NEL · U+2028 LINE SEPARATOR ·
+    # U+2029 PARAGRAPH SEPARATOR) — `#error` 메시지가 노트·관측에서 새 줄을 시작하지
+    # 못하게 한다(`str.splitlines`가 줄로 읽는 것들).
+    # ⚠ 뒤 둘은 **이스케이프로** 적는다. 리터럴로 두면 에디터·린터의 「비정상 줄 종결자
+    # 제거」가 조용히 지워 접기가 사라진다 — 이 주석도 같은 이유로 코드포인트 이름만 쓴다.
+    first = re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029]", " ", found[0])[:_COMPILE_REASON_CHARS]
     return f" — 컴파일 오류 {len(found)}건, 첫 오류: {first}"
 
 
