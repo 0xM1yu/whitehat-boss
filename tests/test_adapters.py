@@ -1186,8 +1186,10 @@ def _kind_field_fingerprints() -> dict[str, str]:
 # 지문은 판 2일 때 쟀다. 판 2는 Evidence.harness_note · crashed · banner와 RunRecord 필드들을 든
 # 모양이다(`sqlite_store.py` 판 이력). 판 1의 값과 다른 종류는 evidence·run 둘뿐이다.
 # 잰 환경: CPython 3.14.5 · pydantic 2.13.4. 정규화(`_type_notation`)는
-# 파이썬·pydantic 판에 안 흔들리게 쓰였으나 **3.11에서는 미실행**이다(이 장비에 3.11이 없다) —
-# 3.11에서 어긋나면 이 값을 그 환경에서 다시 재야 한다.
+# 파이썬·pydantic 판에 안 흔들리게 쓰였다. ⏵ 2026-10-14 — **CPython 3.11.0 · pydantic 2.12.4**
+# 에서 8종 전부 이 값과 일치함을 확인했다(적대적 리뷰 실측). CI도 3.11을 돌린다
+# (`.github/workflows/ci.yml`) — 다만 **지금 그 CI는 과금 문제로 아예 안 돈다**(2026-10-14),
+# 그러니 이 일치는 CI가 아니라 그 손 측정이 근거다. 다른 판에서 어긋나면 그 환경에서 다시 잰다.
 # ⚠ 이 짝이 무는 것은 **필드 이름 집합 · 정규화한 타입 표기(Enum 멤버·`Literal` 값·중첩 모델의
 # 필드 포함) · `KIND_MAP` 종류 집합**이다. 참인 명제는 「이 지문으로 바뀌면 죽는다」다 —
 # validator·기본값·`Annotated`의 `Field`/`StringConstraints` 제약만 바뀌면 지문은 그대로이고,
@@ -1224,7 +1226,7 @@ def test_the_stored_model_fields_and_the_db_version_move_together() -> None:
 def test_the_kind_field_fingerprint_bites_a_new_field_but_not_prose_or_a_validator() -> None:
     """지문이 무는 것과 안 무는 것.
 
-    양성 핀은 저장소에서 샌 실형태다 — `RunRecord.keep_responses`(`src/schemas/run.py:361`)가
+    양성 핀은 저장소에서 샌 실형태다 — `RunRecord.keep_responses`(`src/schemas/run.py`의 그 필드)가
     기본값 있는 필드 하나로 커밋 `f0cdba76`에 들어오면서 판을 안 올렸다.
     """
 
