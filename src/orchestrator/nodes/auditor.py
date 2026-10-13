@@ -1572,6 +1572,11 @@ def _probe_observation(
         f"kind={evidence.kind.value} "
         f"evidence_id={evidence.evidence_id}{sent}{detail}",
     ]
+    if evidence.harness_note:
+        # 하네스가 만든 줄(`poc` `exit=1` 모호성 — #573)은 로그를 거치지 않는다.
+        # `_pov_observation`과 같은 자리다 — 로그에 두면 읽기 상한·절단에 잘리거나 짧은 로그에서
+        # 두 번 나온다.
+        lines.append(evidence.harness_note)
     shown = evidence_summaries(
         (evidence,), ctx.read_payload, per_cap=_PROBE_BODY_CHARS, total_cap=_PROBE_BODY_CHARS
     ).get(evidence.evidence_id)

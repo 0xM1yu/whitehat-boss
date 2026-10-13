@@ -3143,6 +3143,9 @@ def _pov_observation(
     도구가 받은 것으로 읽힌다. 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
     `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
     `wide=False`면 안 싣는다(꼬리와 같은 경계).
+
+    ⏵ 2026-10-13 (#573) — `Evidence.harness_note`(`poc` `exit=1` 모호성 줄)가 있으면 머리줄 바로
+    뒤 **별도 줄**로 붙는다(로그를 거치지 않는다). `wide=False`에서는 이것도 안 싣는다.
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
@@ -3154,6 +3157,10 @@ def _pov_observation(
     if poc is not None:
         head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
     head += detail
+    # ⏵ 2026-10-13 (#573) — 하네스가 만든 줄(`poc` `exit=1` 모호성)은 로그를 거치지 않고 여기서
+    # 붙는다. 로그 끝에 두면 읽기 상한(200,000자)에 잘려 v5 prefix의 약속이 깨졌다.
+    if evidence.harness_note:
+        head = f"{head}\n{evidence.harness_note}"
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
