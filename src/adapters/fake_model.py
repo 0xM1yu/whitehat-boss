@@ -512,6 +512,9 @@ def _auditor_investigation(
     `ToolArgs`에 `input_bytes`가 없다. 컨테이너 `poc` 자체는 ADR 0014로 받을 수 **있다**).
     그래서 `spec`은 기록일 뿐이고, 그 경로가 싣게 되기(이슈 #419) 전에 fake가 그 길을 태울 이유가
     없다. hop≥2는 `answer`다.
+    ⏵ 2026-10-13(#419) — 노드는 이제 `spec`을 싣는다. fake는 **그래도 `spec`을 안 낸다**: 이 fake가
+    내는 홉 열이 dev_fake trace와 그것을 세는 검사들의 기준이라 바꾸지 않았다(`probe`에 입력이 가는
+    길은 `tests/test_auditor_loop.py`가 `_ScriptedModel`로 건다).
 
     홉을 `history`로 가르는 자리는 `_build_pov_action`과 같다 — 홉 번호가 따로 안 넘어온다.
     다만 거기는 「비었나」만 보지만 여기는 **홉 번호**가 필요하다: 매 홉이 user 턴(그 홉 본문)과
