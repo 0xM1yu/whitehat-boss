@@ -45,7 +45,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src import cli
 from src.adapters import fake_model
 from src.adapters.symbol_render import render_followup, render_unfilled
 from src.config import load_config
@@ -675,28 +674,9 @@ def test_v15_is_wired_in_every_place_a_new_prompt_version_has_to_be() -> None:
     assert auditor.tool_hops_in_effect("v15", 16) == 16
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_auditor_seat_selects_v15_and_the_doctor_has_nothing_to_say(
-    profile: str,
-) -> None:
-    config = load_config(profile)
-    version = config.model_for("auditor").prompt_template_version
-
-    assert version == "v15"
-    assert cli._check_prompt_version(config, "auditor", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-
-
-def test_no_auditor_version_newer_than_the_served_one_is_on_disk() -> None:
-    """doctor의 「디스크 새 판」 WARN이 0인 이유 — 서빙 판이 디스크의 마지막 판이다."""
-    numbers = sorted(
-        int(p.name[1:])
-        for p in (PROMPTS_DIR / "auditor").iterdir()
-        if p.is_dir() and p.name[1:].isdecimal()
-    )
-
-    assert numbers[-1] == 15
+# ⏵ 2026-10-14 — 「서빙 좌석이 v15다 · 디스크에 더 새 판이 없다」 핀 둘은 서빙 판이 v16이 되며
+# `tests/test_auditor_v16.py`로 옮겼다(서빙 판 핀은 서빙 판의 파일이 든다). v15가 배선된 판이라는
+# 사실은 위 `test_v15_is_wired_in_every_place_…`가 계속 묻는다.
 
 
 def test_a_fake_loop_runs_on_v15(ctx: RunContext) -> None:
@@ -809,9 +789,12 @@ def _require(active: bool, pr: str, what: str) -> None:
     """
     if active:
         return
-    if _SERVED_AUDITOR_VERSION == "v15":
+    # ⏵ 2026-10-14 - v16은 v15의 그 문장들을 그대로 물려받았다(`tests/test_auditor_v16.py`가 차이를
+    # prefix 다섯 군데로 바이트 등식으로 묶는다) - 서빙 판이 v16이어도 그 창은 그대로 열려 있다.
+    if _SERVED_AUDITOR_VERSION in ("v15", "v16"):
         pytest.fail(
-            f"{pr}가 아직 main에 없는데 `config/models.yaml`의 Auditor 좌석이 이미 v15다 — "
+            f"{pr}가 아직 main에 없는데 `config/models.yaml`의 Auditor 좌석이 이미 "
+            f"{_SERVED_AUDITOR_VERSION}다 — "
             f"v15 산문의 「{what}」이 코드와 어긋난 채 모델 요청에 실린다. {pr}를 먼저 머지한다"
         )
     pytest.skip(f"{pr}가 아직 main에 없다 — v15 산문의 「{what}」이 그 PR에 의존한다")

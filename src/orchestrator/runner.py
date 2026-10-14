@@ -166,6 +166,7 @@ from src.orchestrator.source_definitions import (
     slice_names_first,
 )
 from src.orchestrator.source_guards import scan_guards
+from src.orchestrator.source_input_context import carry_input_context
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import (
     EventKind,
@@ -4441,6 +4442,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
 # ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
 # 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + prefix 다섯 군데 — body는 v15와 바이트 동일). 위
+# 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -4586,7 +4589,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
-    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 맨 뒤(호출자 창 다음 — 호출자 창이 먼저
+    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 호출자 창 다음(호출자 창이 먼저
     자리를 잡아 쓰기 창에 밀리지 않는다, PR #468 리뷰 MEDIUM-1)에, 슬라이스 줄에 나온 이름·필드에
     쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
     범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
@@ -4594,14 +4597,26 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     붙인 창이 있으면 그 수를 trace `write_windows_omitted`가 든다(#650). 세는 대상은 **SOURCE에
     실제로 든 범위(`shown`) 밖의 지점**이다 — 크기 상한에 걸려 못 실은 함수·창 안의 지점도, 줄인
     entry 함수(`auditor_entry_trim`)에서 뺀 구간 안의 지점도 센다(`seen`에는 들어 있어도 모델은
-    못 본다. 줄인 entry 함수는 남은 줄 범위만 `shown`에 든다). `auditor_write_window_marker`가 1이면
-    그 수를 SOURCE 끝 `_WRITE_WINDOWS_MORE` 한 줄로도 단다(0이면 줄이 없고
-    SOURCE는 이 옵션 전과 바이트 동일).
+    못 본다. 줄인 entry 함수는 남은 줄 범위만 `shown`에 든다). 입력 맥락 블록(아래)이 보인 범위도
+    `shown`이라 그 안의 지점은 안 센다 — 그래서 수는 입력 맥락 블록을 붙인 **뒤**에 확정한다.
+    `auditor_write_window_marker`가 1이면 그 수를 SOURCE 끝 `_WRITE_WINDOWS_MORE` 한 줄로도 단다
+    (0이면 줄이 없고 SOURCE는 이 옵션 전과 바이트 동일).
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
+
+    **입력 맥락 함수(`auditor_input_context`, S20 Phase 13)** — 1이면 쓰기 지점 창 다음, 마지막
+    블록(#650 표지 줄이 있으면 그 앞)으로 슬라이서의 `analysis.input_context`(`ref.input_context`)가
+    고른 함수 본문을 붙인다(`source_input_context`). `status`가 `selected`이고 `basis`가 `cpg`일
+    때만이고, 같은 상한을 쓴다. 함수 **전체**가 `shown`(블록을 붙인 자리에서만 느는 목록)에 든 범위
+    안이면 건너뛰고(`skipped_carried` — `_contained`) 창 조각과 일부만 겹치면 완전한 함수를 붙인다.
+    상한에 넘치면 통째로 뺀다. 붙인 블록은 `functions`에 안 들고 `input_context_added`가 센다.
+    `input_context_chars`는 이 블록을 붙이기 전후 `SOURCE` 길이의 차다(entry 배너가 새로 생기면
+    포함). 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을 때와 바이트 동일이다.
+    ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로 - Critic은
+    `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때).
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -4657,8 +4672,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     seen = [anchor]
     # 실제로 `SOURCE`에 **실린** 범위 — `seen`은 상한에 걸려 못 실은 범위도 들지만 이것은 블록을
     # 붙인 자리에서만 는다. 줄인 entry 함수는 뺀 구간을 뺀 남은 줄 범위들만 들고(`_shown_ranges`),
-    # 줄인 enum은 일부만 보이므로 안 든다. 읽는 곳은 쓰기 창 생략 수(`write_windows_omitted`)의
-    # 「이미 보이나」 하나다.
+    # 줄인 enum은 일부만 보이므로 안 든다. 읽는 곳은 둘이다 — 쓰기 창 생략 수
+    # (`write_windows_omitted`)의 「이미 보이나」와 입력 맥락 함수의 「이미 실렸나」
+    # (`source_input_context._contained`).
     shown = _shown_ranges(anchor, anchor_text) if omitted else [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         seen.append(symbol)
@@ -4901,15 +4917,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # `shown`에는 없는 범위(크기 상한에 못 실은 함수·창) 안의 지점. 겹치면 하나로 센다.
     # `write_sites_found - write_windows`가 아니다 — 찾은 수는 실린 코드 안의 지점도 센다. 줄인
     # entry 함수는 남은 줄 범위만 `shown`에 있어, 뺀 구간 안의 지점은 세고 남은 줄의 지점은 안 센다.
-    hidden: list[Location] = []
+    # `hidden`은 (깎지 않은 창, 그 창이 못 보인 쓰기 줄) 쌍이다 — 지점마다 하나씩 든다. 창을 미리
+    # 깎거나 겹치는 지점을 버리면 아래 입력 맥락 블록이 첫 지점만 덮을 때 둘째 지점이 같이 사라진다
+    # (#668 리뷰 2차). 겹침은 그 블록을 붙인 뒤 실제 `shown`에 대고 차례로 걸러 하나로 센다.
+    hidden: list[tuple[Location, int]] = []
 
     def hide(site: Location) -> None:
-        cut = _clip_around(
-            _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1,
-            [*shown, *hidden],
-        )
-        if cut is not None:
-            hidden.append(cut)
+        hidden.append((_caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1))
 
     if write_sites:
         sites = _write_sites(ctx, ref, carried, anchor.file)
@@ -4931,12 +4945,25 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             block = _block(window, ctx.read_source(window))
             if size + 1 + measure(block) > cap:
                 write_windows_dropped += 1
-                hidden.append(window)
+                hidden.append((window, site.line_start or 1))
                 continue
             blocks.append(block)
             shown.append(window)
             size += 1 + measure(block)
             write_windows += 1
+    # 슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문(`auditor_input_context`)은 쓰기 지점 창
+    # **뒤**의 마지막 블록이다(#650 표지 줄이 있으면 그 앞). 켜지 않았으면 `None`이라 블록도 이벤트
+    # 필드도 없다.
+    input_context = (
+        carry_input_context(
+            ref, read_source=ctx.read_source, block=_block, measure=measure,
+            seen=seen, shown=shown, size=size, cap=cap,
+        )
+        if ctx.config.thresholds.auditor_input_context
+        else None
+    )
+    if input_context:
+        blocks += input_context.blocks
     # 못 실은 창은 `auditor_write_window_marker`가 1이면 SOURCE 끝에 줄로 남긴다 — 잘린 목록을
     # 완전한 목록으로 읽히지 않게(#650). 꼴은 주석 한 줄이다(`_OMITTED`와 같은 `/* ... */` — 「+N
     # more … 」 꼴은 `source_guards.py`의 `_MORE_ROWS`(`... +N more rows omitted`)를 따랐고, 「not
@@ -4944,12 +4971,31 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # (`write_windows_dropped`)과 못 실은 함수 안의 지점을 다 센다 - 전부 모델은 못 본다. 줄 자체는
     # 예산(`size`·`cap`)에는 안 들지만 이벤트의 `chars`(토큰 상한이면 `tokens`도)에는 든다 —
     # 아래에서 `source`에 붙인 뒤 잰다. 옵션이 0이면 줄을 안 달아도 수는 trace에 남는다.
-    write_windows_omitted = len(hidden)
+    # 수는 입력 맥락 블록을 붙인 **뒤** 확정한다 — 그 블록이 `shown`에 든 범위 안의 지점은 모델이
+    # 보므로 못 본 것으로 세면 안 된다(쓰기 창 루프는 그 블록보다 앞이라 그때는 몰랐다).
+    probe = list(shown)
+    write_windows_omitted = 0
+    for window, line in hidden:
+        cut = _clip_around(window, line, probe)
+        if cut is not None:
+            probe.append(cut)
+            write_windows_omitted += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
     blocks[1:1] = guard_blocks
-    source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
+
+    def assemble(parts: list[str]) -> str:
+        return "\n".join(parts) if len(parts) > 1 or omitted else anchor_text
+
+    source = assemble(blocks)
+    # 입력 맥락 블록이 늘린 글자 수는 **실제로 잰다** — entry 함수만 실렸던 SOURCE는 배너가 없는데
+    # 블록이 붙으면 entry에도 배너가 생겨, 블록 길이의 합과 다르다.
+    input_context_chars = (
+        len(source) - len(assemble(blocks[: len(blocks) - len(input_context.blocks)]))
+        if input_context
+        else 0
+    )
     if write_windows_omitted and ctx.config.thresholds.auditor_write_window_marker:
         source += "\n" + _WRITE_WINDOWS_MORE.format(write_windows_omitted)
     ctx.trace.emit(
@@ -4960,8 +5006,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         slice_id=ref.slice_id,
         # 함수가 아닌 블록을 전부 뺀다 — 정의·호출자 창·쓰기 지점 창·GUARDS(0 또는 1). 래퍼·별칭·
         # 간접 피호출은 함수 본문이라 센다. 옵션마다 따로 더한 식이 합쳐질 때 하나가 빠지면
-        # `functions`가 조용히 틀린다.
-        functions=len(blocks) - definitions - callers - write_windows - len(guard_blocks),
+        # `functions`가 조용히 틀린다. 입력 디코더 본문(`auditor_input_context`)은 함수 본문이지만
+        # 슬라이서가 고른 것이라 `input_context_added`가 따로 센다 - 여기서 뺀다.
+        functions=(
+            len(blocks) - definitions - callers - write_windows - len(guard_blocks)
+            - (len(input_context.blocks) if input_context else 0)
+        ),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -5011,6 +5061,18 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             else {}
         ),
         **(guard_scan.event_fields() if guard_scan else {}),
+        **(
+            {
+                **input_context.event,
+                **(
+                    {"input_context_chars": input_context_chars}
+                    if input_context.event["input_context"] != "absent"
+                    else {}
+                ),
+            }
+            if input_context
+            else {}
+        ),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
