@@ -2454,6 +2454,51 @@ def test_write_sites_found_counts_a_line_once() -> None:
     assert (event["write_windows"], event["write_sites_found"]) == (2, 2)
 
 
+# --- 상한에 잘린 쓰기 지점 창은 SOURCE에 「더 있다」 줄을 남긴다 (#650) ---------------------------
+# `write_sites_found`는 이미 실린 코드 안의 지점도 세므로 `found - shown`이 뺀 창 수가 아니다.
+_WS_MORE = "/* ... +1 more write windows not shown ... */"
+
+
+def test_write_windows_cut_at_the_limit_say_so_in_source() -> None:
+    """`_WS_*`의 지점은 둘(init 41 · setup 22) — 상한 1이면 하나가 빠지고 그 줄이 SOURCE 끝에
+    선다."""
+    source, event = _write_sites(1)
+    assert source.endswith("\n" + _WS_MORE)
+    assert event["write_windows_omitted"] == 1
+
+
+def test_the_omitted_count_skips_sites_inside_code_already_carried() -> None:
+    """찾은 지점 3곳 중 하나(w.c:2)는 이미 실린 entry 함수 안이다 — 상한 1이면 창 하나를 붙이고
+    남는 둘 중 실제로 빠진 창은 하나뿐이다(`found - shown`은 2)."""
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [
+            Location(file="w.c", symbol="setup", line_start=22, line_end=22),
+            Location(file="w.c", symbol="f", line_start=2, line_end=2),
+        ]},
+    )
+    source, event = _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+    assert (event["write_windows"], event["write_sites_found"]) == (1, 3)
+    assert event["write_windows_omitted"] == 1
+    assert source.endswith(_WS_MORE)
+
+
+def test_nothing_omitted_means_no_marker_and_a_zero_count() -> None:
+    source, event = _write_sites(6)
+    assert "more write windows" not in source
+    # 표식 로직 이전과 같은 바이트 — entry 배너 블록과 창 둘(init · setup)을 줄바꿈으로 이은 것.
+    lines = _WS_FILE["w.c"]
+    assert source == "\n".join([
+        "/* ===== w.c:1-3 ===== */", *lines[0:3],
+        "/* ===== w.c:40-42 ===== */", *lines[39:42],
+        "/* ===== w.c:20-24 ===== */", *lines[19:24],
+    ])
+    assert event["write_windows_omitted"] == 0
+    # 꺼졌을 때는 키가 없다 — 0(안 빠짐)과 None(안 셈)은 다르다.
+    assert "write_windows_omitted" not in _write_sites(0)[1]
+
+
 # --- 큰 enum은 물은 상수 주변만 잘라 싣는다 -----------------------------------------------------
 # index-v4가 enum 상수를 enum 정의 전체로 싣자 2,000자를 넘는 enum이 통째로 버려졌다(2026-10-04 로컬
 # 274표본에서 「크기 초과로 버림」 29 -> 142, run ID 없음). 머리 · 물은 상수마다 그 앞뒤 · 닫는 줄만
@@ -2983,3 +3028,49 @@ def test_limitation_a_constant_only_mentioned_in_the_block_counts_as_shown(
     source, event = _real_source(tmp_path, files, "f", [("u.c", 3)])
     assert "AAA_ALIAS = OP005_B" in source and "OP005_B = 6" not in source
     assert _counts(event) == (1, 0, 1)
+
+
+def test_windows_dropped_for_the_size_cap_are_counted_in_the_marker_too() -> None:
+    """상한 6 안이어도 SOURCE 크기 상한(여기서는 30단어)에 못 붙인 창은 모델이 못 본다 — 같은 줄이
+    센다. 둘 중 하나(init)만 붙고 하나(setup)는 `write_windows_dropped`로 빠진다."""
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=30,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
+    )
+    source, event = _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+    assert (event["write_windows"], event["write_windows_dropped"]) == (1, 1)
+    assert event["write_windows_omitted"] == 1
+    assert source.endswith(_WS_MORE)
+
+
+def test_omitted_sites_whose_windows_overlap_count_as_one_window() -> None:
+    """상한 1에 init(41)이 붙고, 빠진 `setup`의 쓰기 둘(22 · 23)은 창이 겹친다(둘 다 setup 20-24로
+    잘린다) — 붙였다면 창은 하나이므로 N은 1이다. 셈에서 앞서 센 창을 안 빼면 2가 된다."""
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [
+            Location(file="w.c", symbol="setup", line_start=22, line_end=22),
+            Location(file="w.c", symbol="setup", line_start=23, line_end=23),
+        ]},
+    )
+    source, event = _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+    assert (event["write_windows"], event["write_sites_found"]) == (1, 3)
+    assert event["write_windows_omitted"] == 1
+    assert source.endswith(_WS_MORE)
+
+
+def test_marker_follows_a_bare_anchor_when_every_window_is_size_dropped() -> None:
+    """창이 전부 크기 상한에 떨어지면 블록은 entry 하나뿐이라 SOURCE는 배너 없는 `anchor_text`다 —
+    표식은 그 뒤에 붙는다."""
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=20,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
+    )
+    source, event = _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+    assert (event["write_windows"], event["write_windows_dropped"]) == (0, 2)
+    marker = "/* ... +2 more write windows not shown ... */"
+    assert source == "\n".join([*_WS_FILE["w.c"][0:3], marker])
+    assert event["chars"] == len(source)  # 표식은 예산 밖이지만 `chars`에는 든다
