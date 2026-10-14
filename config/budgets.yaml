@@ -263,7 +263,8 @@ thresholds:
   #
   # 풀은 「Critic이 밀어 내지 않은 Finding」이다 — Critic이 반박으로 판정한 것과 판정 호출이
   # 실패해 버려진 것은 뺀다(`runner._pov_targets`). ⏵ 2026-10-11 — 보류(`need_evidence`)는 이제 들고
-  # 정렬·최종 지정에서 uphold, 미경유, 보류 순이다(이슈 #604 · ⏵ 2026-10-12 — 미경유를 uphold와
+  # 정렬·최종 지정에서 uphold, 미경유, 보류 순이다(최종 지정은 같은 `vul` 응답 코드 계단 안에서 -
+  # ⏵ 2026-10-14 #637)(이슈 #604 · ⏵ 2026-10-12 — 미경유를 uphold와
   # 갈라 그 사이에 뒀다, (b)의 순서). 드는 것은 Critic을
   # 안 거친 Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어
   # `hypothesized`에 멈춘 것(F-9) 등이다.
