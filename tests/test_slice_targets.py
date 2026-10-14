@@ -3179,10 +3179,10 @@ def test_omitted_windows_that_partly_overlap_are_cut_not_dropped() -> None:
     assert source.endswith("/* ... +2 more write windows not shown ... */")
 
 
-def test_an_omitted_window_is_clipped_before_it_hides_a_later_site() -> None:
+def test_an_omitted_window_is_clipped_before_it_covers_a_later_site() -> None:
     """k(33-33)가 먼저 붙고 빠진 m(20-50)의 쓰기는 35 · 32다. 35의 창 32-38은 k에 깎여 34-38이다.
-    깎인 채로 숨은 목록에 들어가야 32(창 29-32)가 따로 선다. 안 깎은 32-38을 넣으면 32가 그 안이라
-    N이 1로 줄어든다."""
+    다시 세는 곳(`probe`)에 깎인 조각을 넣어야 32(창 29-32)가 따로 선다. 안 깎은 32-38을 넣으면
+    32가 그 안이라 N이 1로 줄어든다."""
     k = Location(file="p.c", symbol="k", line_start=33, line_end=33)
     m = Location(file="p.c", symbol="m", line_start=20, line_end=50)
     args = ([k, m], {}, [_site_at("k", 33), _site_at("m", 35), _site_at("m", 32)])
@@ -3240,3 +3240,33 @@ def test_a_write_site_in_a_kept_line_of_a_trimmed_entry_is_not_counted_as_hidden
     source, event = _trimmed_entry_write(2)
     assert "  use(p->len);" in source
     assert event["write_windows_omitted"] == 0 and "more write windows" not in source
+
+
+def test_a_window_stays_counted_when_the_decoder_covers_only_its_first_site(monkeypatch) -> None:  # noqa: ANN001
+    """setup(20-24)에 `len` 쓰기가 22 · 23이고 상한 1이라 `init`만 실린다. 입력 맥락 디코더가 22행만
+    품으면 23행은 여전히 안 보인다 - 창은 N에 남고 줄이 달려야 한다. 숨길 때 둘째 지점(23)은 첫 창
+    (20-24)에 겹쳐 버려지고 첫 창은 22행 몫이라, 디코더가 22를 덮는 순간 N에서 통째로 사라졌다
+    (#668 리뷰 2차 MEDIUM)."""
+    from src.orchestrator import runner
+    from src.orchestrator.source_input_context import InputContextCarry
+
+    def carry(ref, *, read_source, block, measure, seen, shown, size, cap):  # noqa: ANN001, ANN202
+        where = Location(file="w.c", symbol="dec", line_start=22, line_end=22)
+        shown.append(where)
+        seen.append(where)
+        return InputContextCarry((block(where, read_source(where)),), {"input_context": "selected"})
+
+    monkeypatch.setattr(runner, "carry_input_context", carry)
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        auditor_write_window_marker=1, auditor_input_context=1,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [
+            Location(file="w.c", symbol="setup", line_start=22, line_end=22),
+            Location(file="w.c", symbol="setup", line_start=23, line_end=23),
+        ]},
+    )
+    source, event = _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+    assert "  return;" not in source, "전제 - 23행은 SOURCE에 없다"
+    assert event["write_windows_omitted"] == 1
+    assert source.endswith(_WS_MORE)

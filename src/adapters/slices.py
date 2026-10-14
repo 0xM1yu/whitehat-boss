@@ -503,18 +503,17 @@ def render_slices(loaded: SliceSet, root: Path) -> dict[str, str]:
         except OSError as exc:
             raise SliceInputError(f"{relative}: 하네스 사본에 없다 — drift ({exc})") from exc
 
+    renderable = [item for item in loaded.slices if _under(root, item.entry["file"]).is_file()]
     # `analysis.input_context.functions[].file`도 같은 못 믿는 경로다 — 5단계의 `read_source`가
     # 읽는데 거기서 `PathEscape`가 나면 run 전체가 죽는다(Scout가 GPU를 쓴 뒤). 그래서 여기서 먼저
-    # 막는다.
-    for item in loaded.slices:
-        if item.input_context is not None:
-            for function in item.input_context.functions:
+    # 막는다. 읽히는 것만 본다 — `carry_input_context`가 읽는 것은 렌더되는 슬라이스의 `selected`
+    # + `cpg`뿐이라, 안 읽는 슬라이스의 경로까지 막으면 쓰지도 않을 입력으로 run이 멈춘다.
+    for item in renderable:
+        context = item.input_context
+        if context is not None and context.status == "selected" and context.basis == "cpg":
+            for function in context.functions:
                 _under(root, function.file)
-    return {
-        item.id: render(item, read_bytes)
-        for item in loaded.slices
-        if _under(root, item.entry["file"]).is_file()
-    }
+    return {item.id: render(item, read_bytes) for item in renderable}
 
 
 def _under(root: Path, relative: str) -> Path:
