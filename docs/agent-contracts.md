@@ -218,7 +218,7 @@ agent:
   (`absent` · `none_selected` · `selected` - **`absent`는 수를 0으로 채우지 않는다**) · `input_context_basis` · `input_context_cap_hit`(슬라이서가 쓴 그대로 -
   `none_selected`에 서 있으면 0이 아니라 모름) · `_cap_reasons` · `_listed` · `_added` · `_chars`(`SOURCE`가 **실제로 늘어난 길이** — 디코더 블록만 붙인 자리에 entry 함수 배너가 새로 생기면 그 배너도 든다) · `_skipped_syntax`(`syntax` 근거) · `_skipped_carried`(전체가 이미 SOURCE에 **실린** 범위 안) ·
   `_skipped_size`(상한) · `_skipped_empty`(읽은 본문이 비었다 - 없는 파일) · `_carried_decoders` · `_dispatches`다. **v16부터 서술·선언한다** - v15 이하를 고르고 켜면 `cli` run·doctor가 막는다.
-  ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때 - 이 블록과 표지 줄을 prefix가 서술하는 판은 Critic v8·PoV v7부터다). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
+  ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때 - 이 블록과 표지 줄을 prefix가 서술하는 판은 Critic v8·PoV v7부터다 - 그 전 판 좌석과 함께 켜면 `cli` run·doctor가 막는다, 위 §4 ⏵ 2026-10-15). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
   상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수는 남은 줄 범위만 `shown`에 들고(`_shown_ranges`), 줄여 실은 enum은 일부만 보여 안 든다.
   ⏵ **2026-10-14 — 열한째 옵션 `auditor_slice_state`**(S20 Phase 14 · 이슈 #438 선택지 (b) · `budgets.yaml` **0 — 꺼져 있다. 켜는 것은 측정 결정이다**: [D101](open-questions/D/D101.md)의 닫히는 조건이
   켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정 분포가 움직일 방향은 안 쟀다). `SOURCE`가 아니라 **FACTS**를 넓힌다: 켜면 슬라이스가 있는 후보의 hop0 FACTS에 opt-in 키
@@ -1405,8 +1405,16 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **Auditor v15 이하는 이 옵션을 선언하지 않으므로 그 판과 함께 켜면 `cli` run·doctor가 막고, 켜지 않은 run의 요청
 > 바이트는 그대로다.** 켠 run에서는 같은 `SOURCE` 문자열이 Critic·PoV에도 가는데(`critic._SOURCE_INPUT_VERSIONS` ·
 > `pov._WIDE_INPUT_VERSIONS`) Critic v6·v7 · PoV v3~v6의 프롬프트는 이 줄을 서술하지 않는다 — 못 실은 쓰기 창이 있는
-> 슬라이스에서만 그 요청 바이트가 달라진다. 그런 판 조합(옵션을 켠 Auditor 판 + 줄을 모르는 Critic·PoV 판)을
-> `cli`가 추가로 막는 가드는 #676이 넣는다.
+> 슬라이스에서만 그 요청 바이트가 달라진다. 그런 판 조합(옵션을 켠 Auditor 판 + 줄을 모르는 Critic·PoV 판)은
+> ⏵ **2026-10-15 — #676이 `cli`의 run·doctor 가드를 넣었다**(사용자 승인 C1 「+guard」). Critic v8 · PoV v7의 meta가
+> `source_options: [auditor_write_window_marker, auditor_input_context]`를 선언하고(prefix가 두 블록을 서술한다 -
+> `tests/test_relayed_source_options.py`가 선언 <=> prefix 문구를 묶는다), `cli._undescribed_relayed_options`가 켜진
+> `config.RELAYED_SOURCE_OPTIONS`를 **SOURCE를 받는 판**(`critic._SOURCE_INPUT_VERSIONS` · `pov._WIDE_INPUT_VERSIONS`)의
+> 선언과 맞춘다. 선언이 없으면(Critic v7 이하 · PoV v6 이하) 「서술하지 않는다」로 읽어 `옵션(critic/v7)` 꼴로 이름을
+> 대고 run은 시작하지 않으며 doctor는 ERROR를 낸다. SOURCE를 안 받는 판(Critic v5 이하 · PoV v2) · Fake 좌석 · run이 닿지
+> 않는 단계의 좌석 · 꺼진 옵션은 막지 않는다. 이 둘이 아닌 옵션(`auditor_guards` 등)은 이 가드에 안 든다 - Critic v6·v7이
+> 가드 문맥·정의·피호출 본문·호출자 창·쓰기 창을 한 문장으로 서술하고 PoV 판은 SOURCE 블록 종류를 열거하지 않아 서술이
+> 거짓이 되는 판이 없다(2026-10-15 prefix를 읽어 확인한 값).
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

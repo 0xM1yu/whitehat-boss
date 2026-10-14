@@ -32,6 +32,11 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 `cli`가 run을 막는다(#351 리뷰 MEDIUM-2). **모르는 키는 거절한다** — 오타 하나가 그 가드를 조용히
 끈다(`input`과 같은 판단).
 
+**Critic·PoV meta도 이 키를 쓴다**(PR #676). 같은 `SOURCE` 문자열이 그 좌석에도 가므로
+(`runner.finding_sources`) 두 좌석의 판은 `config.RELAYED_SOURCE_OPTIONS`(쓰기 창 표지 줄 · 입력
+디코더 블록) 중 자기 prefix가 서술하는 것만 선언한다 - `cli._undescribed_relayed_options`가 읽는다.
+선언이 없는 판은 서술하지 않는 판이다.
+
 ## meta의 `tools` — 그 프롬프트 판이 모델에게 광고하는 도구
 
 `PROMPT_TOOL_NAMES` 중 그 프롬프트의 prefix가 「쓸 수 있는 도구」로 서술하는 이름의 목록이다
