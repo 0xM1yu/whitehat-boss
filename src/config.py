@@ -767,8 +767,9 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-11 — 서빙 판 v14(이슈 #67)도 같은 서술로 선언한다.
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
-    # Auditor `SOURCE` 맨 뒤(쓰기 지점 창 다음)에 슬라이서의 `analysis.input_context`가 고른 입력
-    # 디코더 함수 본문을 붙이는가(S20 Phase 13 · council 2026-10-14). 0이면 안 붙인다 -
+    # Auditor `SOURCE`의 쓰기 지점 창 다음 마지막 블록(#650 표지 줄 앞)으로 슬라이서의
+    # `analysis.input_context`가 고른 입력 디코더 함수 본문을 붙이는가(S20 Phase 13 · council
+    # 2026-10-14). 0이면 안 붙인다 -
     # `SOURCE`·이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 `SliceRef.input_context`가
     # `status == "selected"`이고 `basis == "cpg"`일 때 그 `functions[]`의 본문을 같은
     # 상한(`auditor_source_tokens`)·`seen` 기계로 붙인다(`orchestrator/source_input_context`). 새
