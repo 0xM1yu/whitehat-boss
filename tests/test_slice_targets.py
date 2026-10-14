@@ -43,7 +43,8 @@ from tests.test_pipeline_e2e import (
 
 @pytest.fixture(autouse=True)
 def _decision_1b_baseline(monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest) -> None:
-    """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 아홉)을 **전부 끈**
+    """이 파일의 `_run`은 Auditor SOURCE 옵션(`AUDITOR_SOURCE_OPTIONS` — 지금 열, ⏵ 2026-10-14
+    `auditor_input_context` 추가)을 **전부 끈**
     설정에서 돈다(결정 1-b 모양).
 
     2026-10-03부터 `budgets.yaml`이 그중 일곱을 켠다(entry 줄이기만 꺼짐 · #349 · ⏵ 2026-10-04
@@ -1333,7 +1334,8 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
                 auditor_source_gate=0, auditor_guards=0,
                 auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
                 auditor_entry_trim=0, auditor_caller_lines=0, auditor_callee_wrappers=0,
-                auditor_indirect_callees=0, auditor_write_sites=0)),
+                auditor_indirect_callees=0, auditor_write_sites=0,
+                auditor_input_context=0)),
             trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
         )
         ref = SliceRef(slice_id="slice_0004", location=entry, given_end="source", entry=entry,
@@ -1371,7 +1373,8 @@ def _trim_source(
             auditor_source_gate=0, auditor_guards=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=trim, auditor_caller_lines=0, auditor_callee_wrappers=0,
-                auditor_indirect_callees=0, auditor_write_sites=0)),
+                auditor_indirect_callees=0, auditor_write_sites=0,
+                auditor_input_context=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     ref = SliceRef(slice_id="slice_big", location=entry, given_end="source",
@@ -1463,7 +1466,8 @@ def _caller_source(lines: int, carried_caller: bool = False, cap: int = 10_000):
             auditor_source_gate=0, auditor_guards=0,
             auditor_callee_hops=0, auditor_definitions=0, auditor_source_tokens=cap,
             auditor_entry_trim=0, auditor_caller_lines=lines, auditor_callee_wrappers=0,
-                auditor_indirect_callees=0, auditor_write_sites=0)),
+                auditor_indirect_callees=0, auditor_write_sites=0,
+                auditor_input_context=0)),
         trace=types.SimpleNamespace(emit=lambda *a, **kw: events.append(kw)),
     )
     slice_lines = (("x.c", 31),) + ((("x.c", 3),) if carried_caller else ())
@@ -1516,7 +1520,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         "auditor_source_gate": 0, "auditor_guards": 0,
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
-        "auditor_indirect_callees": 0, "auditor_write_sites": 0,
+        "auditor_indirect_callees": 0, "auditor_write_sites": 0, "auditor_input_context": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
@@ -2162,6 +2166,7 @@ def test_auditor_v4_t1_refuses_the_wrapper_option() -> None:
     on = config.thresholds.transition(
         auditor_caller_lines=0, auditor_callee_wrappers=1,
         auditor_indirect_callees=0, auditor_write_sites=0, auditor_guards=0,
+        auditor_input_context=0,
     )
     config = config.transition(models={**config.models, key: entry}, thresholds=on)
     assert cli._undescribed_source_options(config) == ["auditor_callee_wrappers(auditor/v4_t1)"]

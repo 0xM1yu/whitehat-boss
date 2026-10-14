@@ -110,6 +110,38 @@ class Candidate(HarnessModel):
     slice_id: NonEmptyStr | None = None
 
 
+class InputContextFunction(HarnessModel):
+    """`analysis.input_context.functions[]` 한 항목 중 **읽는 네 키** — 위치만 든다.
+    종류(`kind`)·점수·증명 (`cpg`)은 안 읽는다. 본문은 소비하는
+    쪽(`orchestrator/source_input_context`)이 `read_source`로 읽는다."""
+
+    file: NonEmptyStr
+    symbol: str | None
+    line_start: int
+    line_end: int
+
+
+class InputContext(HarnessModel):
+    """슬라이서 `slices[].analysis.input_context`(`tools/slicer_v2/input_context.py`) 중 하네스가
+    읽는 키.
+
+    `SliceRef.input_context`가 `None`이면 **키가 없던 슬라이스**(`--index`를 안 줬다)이고, 이 객체의
+    `status == "none_selected"`는 「인덱스로 훑었는데 더할 함수가 없었다」다 — 둘은 다른 사실이라
+    합치지 않는다(CLAUDE.md §0). `cap_hit`이 서 있는 `none_selected`는 0이 아니라 **모름**이다 (잘린
+    탐색일 수 있다 — 슬라이서 README). `carried_decoders`·`dispatches`는 이 판이 싣지 않아 수만
+    든다(이벤트 보고용)."""
+
+    version: int
+    status: Literal["selected", "none_selected"]
+    # 선택의 근거 - `cpg`는 호출 경로 증명이 있고 `syntax`는 인덱스만으로 고른 약한 선택이다.
+    basis: Literal["cpg", "syntax"]
+    cap_hit: bool
+    cap_reasons: tuple[str, ...]
+    functions: tuple[InputContextFunction, ...]
+    carried_decoders: int
+    dispatches: int
+
+
 class SliceRef(HarnessModel):
     """러너가 슬라이스 하나를 타깃으로 세우는 데 필요한 것 — 어댑터가 `slices.json`에서 만든다.
 
@@ -163,3 +195,7 @@ class SliceRef(HarnessModel):
     # 않는다 — 인클루드 디렉터리가 겹쳐 붙은 꼴이 나온다:
     # `libavdevice/libavformat/libavformat/avio.h`. `line`은 -1일 수 있다(Joern이 줄을 못 준 노드).
     boundaries: tuple[tuple[str, str, int], ...] = ()
+    # 슬라이서의 `analysis.input_context` - 입력 디코더로 보이는 함수의 **이름**(소스는 안 싣는다).
+    # `None`은 키가 없다(`--index` 없이 돈 슬라이스·옛 슬라이스)이고 `none_selected`와 다르다. 읽는
+    # 곳은 `auditor_input_context`가 켜진 run의 `runner._auditor_source` 하나다.
+    input_context: InputContext | None = None

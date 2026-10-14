@@ -1,0 +1,33 @@
+# 도구 루프 판. 배선 조건은 v12·v14·v15와 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
+# `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
+#
+# v16 = v15 + **`SOURCE` 블록 하나의 서술**(S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인). 새 옵션
+# `auditor_input_context`가 켜지면 슬라이서의 `analysis.input_context`가 고른 입력 디코더 함수의 본문이 `SOURCE`
+# **맨 뒤**(쓰기 지점 창 다음)에 붙는다(`orchestrator/source_input_context`). body·봉투·도구·다른 옵션 여덟은 v15와 같다.
+# - body는 v15와 바이트 동일이다. prefix는 아래 네 군데만 v15와 다르다
+#   (`tests/test_auditor_v16.py`가 그 차이를 묶는다).
+#   0. 「Trust boundary」의 하네스 생성 텍스트 목록에 `/* ... +N more write windows not shown ... */` 줄을 더한다 -
+#      쓰기 지점 창을 다 못 실었을 때 `SOURCE`의 **맨 끝**(모든 블록 뒤)에 붙는 줄이다(이슈 #650 · PR #667).
+#   1. `Build contract`: 쓰기 지점 창 항목의 머리말이 「Last」에서 「Then」으로 바뀐다 - 이제 맨 끝이 아니다.
+#   2. 새 항목 「Last, input-context functions」 - 슬라이서가 고른 함수가 완전한 함수로 붙는다 · 전체가 이미 든 함수만 건너뛴다(창 조각과 일부만 겹치면 붙고 몇 줄이 중복될 수 있다) ·
+#      같은 상한에서 넘치면 통째로 뺀다 · 블록이 통째로 없을 수 있고 없음은 증거가 아니다 · 붙었다고 슬라이스의 데이터가
+#      그 함수를 지난다는 뜻은 아니다. 이 서술은 **CPG 근거(`basis: cpg`)가 선 선택만** 붙는다는 러너 동작과 같다.
+#   3. `Build contract`: 보조 문맥 목록(「supporting context」)에 입력 맥락 함수를 더한다.
+# - source_options: v15의 여덟에 `auditor_input_context`를 더한 아홉이다. 이 판이 아닌 v15 이하를 고르고 그 옵션을 켜면
+#   `cli`의 run·doctor가 막는다(`_undescribed_source_options`) - v15는 이 옵션의 서술이 없어 SOURCE와 어긋난다.
+# ⚠ 0번은 PR #667(쓰기 지점 창 표지)이 main에 들어와야 코드와 맞는다 - 그 전에 서빙하면 그 줄은 `SOURCE`에 안 나온다
+#   (CLAUDE.md §2.1). 머지 순서는 #667 → 이 PR이다.
+# ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE 문자열을 `finding_sources`로 받는다 - 디코더 본문이 PoV 프롬프트에도
+#   든다. PoV 판 쪽 서술은 이 판이 안 고친다.
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `b9e058bbf2a0005d22caf8c43ae6ca811a1a08b0554f9a45aac095f314a4e7c2`
+#   body.md   sha256 `c4799594df6cc3e6d84658674e82bf357d9127479a27c255b93a5a093acb9584` (v15 body와 같다)
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 켠 옵션의 효과(모델이 디코더 본문을 판정에 쓰는지)는 미실측이다. v15 이하와 직접 비교하지
+# 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: auditor
+version: v16
+output_schema: AuditorProcedureProbeInputAction
+description: v15에 입력 맥락 함수 블록 하나의 서술을 더한 판입니다(슬라이서의 input_context가 CPG 근거로 고른 입력 디코더 함수가 SOURCE 맨 뒤에 붙을 수 있다 · 블록이 없을 수 있고 없음은 증거가 아니다). body·봉투·도구·다른 SOURCE 옵션은 v15와 같습니다.
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards, auditor_input_context]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]
+facts_source: false
