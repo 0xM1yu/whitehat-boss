@@ -7,13 +7,14 @@
 Critic v7·PoV v6 몫은 이 판이 안 고친다). 묶는 것은 다섯이다.
 
 1. **v16은 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/feat/p13-input-context`
-   (`4e3790a`)의 값이다(규칙 1).
+   (`ca902d2`)의 값이다(규칙 1).
 2. **v17 산문 = v16 + 이 편집들** - body는 바이트 동일이고 prefix는 `_EDITS`를 v16에 적용한
    결과와 바이트 동일이다. 편집은 두 군데다.
 3. **문장이 코드와 맞는다** - 정정한 문장은 러너가 실제로 내는 `SOURCE`(배너 없는 entry 함수 +
    끝 줄 표지)와 맞고, 새 항목이 부르는 키·사유 철자는 `slice_state.facts`와 슬라이서 소스에서 온다.
 4. **배선** - `_CONTENT_AWARE_VERSIONS` · meta · `config/models.yaml` · doctor · Fake.
-5. **meta가 옵션과 맞는다** - 선언 == 켜진 옵션 + 측정 대기로 끈 옵션(`auditor_slice_state`).
+5. **meta가 옵션과 맞는다** - 선언 == 켜진 옵션(표지 줄 · 입력 맥락 포함) + 측정 대기로 끈
+   옵션(`auditor_slice_state`).
 
 ⚠ 철자·구조 핀이다 - 모델이 `slice_state`를 판정에 쓰는지는 미측정이다.
 """
@@ -59,12 +60,12 @@ def _sha(data: bytes) -> str:
 
 # === 1. v16은 한 글자도 안 바뀌었다 ===============================================================
 
-# `origin/feat/p13-input-context` `4e3790a`의 `prompts/auditor/v16/*` sha256
+# `origin/feat/p13-input-context` `ca902d2`의 `prompts/auditor/v16/*` sha256
 # (`git show <ref>:<path> | sha256sum`).
 _V16_SHA = {
     "prefix.md": "b9e4106a21be8ae1bb763a3eec9adaa230cefdd056eab5af12ea609530ea4aa7",
     "body.md": "c4799594df6cc3e6d84658674e82bf357d9127479a27c255b93a5a093acb9584",
-    "meta.yaml": "efb0776cd25dc6973463f88940bc0c49e1568620e49ac27650ac1d9cf9fb05d4",
+    "meta.yaml": "e94398868e83fd7ce6af5d00d4de872c8baf60e5ddcfbde1dde910bd4ec5c3fb",
 }
 
 
@@ -232,6 +233,7 @@ def test_the_corrected_sentence_matches_the_source_when_every_write_window_drops
 
     unit, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=20,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
     )
@@ -258,7 +260,10 @@ def test_the_corrected_sentence_still_holds_when_nothing_was_omitted() -> None:
     예외를 더한 것이지 규칙을 뒤집은 것이 아니다."""
     from tests.test_slice_targets import _WS_F, _WS_FILE, _WS_INIT, _WS_SETUP
 
-    unit, events, _, _ = _unit(_WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=0)
+    unit, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT],
+        auditor_write_sites=0, auditor_write_window_marker=1,
+    )
     source, _ = _unit_run(unit, events, _WS_F, [("w.c", 2)])
 
     assert "/* =====" not in source and "more write windows" not in source
@@ -408,7 +413,9 @@ def test_turning_the_option_on_is_blocked_before_v17_and_allowed_on_it() -> None
         "auditor_slice_state(auditor/v16)"
     ]
     assert cli._undescribed_source_options(with_version("v15")) == [
-        "auditor_input_context(auditor/v15)", "auditor_slice_state(auditor/v15)",
+        "auditor_write_window_marker(auditor/v15)",
+        "auditor_input_context(auditor/v15)",
+        "auditor_slice_state(auditor/v15)",
     ]
 
 

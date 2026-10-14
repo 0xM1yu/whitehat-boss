@@ -1519,9 +1519,9 @@ def test_v7_does_not_describe_the_guards_option_so_the_cli_refuses_turning_it_on
     key = config.model_key_for("auditor")
     v7 = config.models[key].transition(prompt_template_version="v7")
     config = config.transition(models={**config.models, key: v7})
-    # ⏵ 2026-10-14 — `auditor_input_context`(v16부터 서술)도 v7이 서술하지 않아 같이 끈다 - 이
-    # 검사가 묻는 옵션은 하나다.
-    base = config.thresholds.transition(auditor_input_context=0)
+    # ⏵ 2026-10-14 — `auditor_write_window_marker`·`auditor_input_context`(v16부터 서술)도 v7이
+    # 서술하지 않아 같이 끈다 - 이 검사가 묻는 옵션은 하나다.
+    base = config.thresholds.transition(auditor_write_window_marker=0, auditor_input_context=0)
     off = config.transition(thresholds=base.transition(auditor_guards=0))
     assert cli._undescribed_source_options(off) == []  # 꺼짐(0 주입)은 막히지 않는다
     on = config.transition(thresholds=base.transition(auditor_guards=1))

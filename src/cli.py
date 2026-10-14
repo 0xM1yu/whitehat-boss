@@ -1764,10 +1764,10 @@ def run(args: argparse.Namespace) -> int:
     # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와
     # 같다, 이슈 #67).
     # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술·body는 v14와 같다, S19).
-    # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + `auditor_input_context` 서술 — 그 옵션의 서술은
-    # v16부터다, S20 Phase 13).
+    # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + `auditor_input_context` 서술 · 표지 줄
+    # `auditor_write_window_marker` 설명 — 두 옵션의 서술은 v16부터다, S20 Phase 13).
     # ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + `auditor_slice_state` 서술 — 그 옵션의 서술은
-    # v17부터다, S20 Phase 14 · 이슈 #438 (b)).
+    # v17부터다, S20 Phase 14 · 이슈 #438 (b). 위 두 옵션은 v17도 선언한다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
