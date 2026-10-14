@@ -717,6 +717,12 @@ thresholds:
   # 정한 값이고 켠 효과는 미실측
   auditor_indirect_callees: 1
   auditor_write_sites: 6
+  # 쓰기 창이 상한·크기 상한에 못 붙었을 때 SOURCE 끝에 `/* ... +N more write windows not shown ... */` 한 줄을
+  # 다는가(이슈 #650 · 2026-10-14). **꺼 둔다 - 이 줄을 서술·선언한 Auditor 판이 아직 없다**: v15 이하는 모르는
+  # 줄이고 같은 SOURCE를 받는 Critic v6·v7 · PoV v3~v6도 모른다. 꺼진 run의 SOURCE는 이 옵션이 생기기 전과
+  # 바이트 동일하다(`tests/test_slice_targets.py`). 켜려면 그 줄을 서술하는 판이 먼저 서빙 판이어야 한다
+  # (`cli`의 run·doctor가 막는다).
+  auditor_write_window_marker: 0
   # sink 앞 구문상 가드 목록(GUARDS · #349). 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에
   # `GUARDS (syntactic — may not dominate)` 블록이 붙고(`source_guards`) 크기는 총 상한에서 먼저 빠진다.
   # 인덱스 표를 안 읽는다(원문만). 동기의 수치는 이 옵션을 넣은 PR 본문의 진술이다(로컬 · run ID 없음 · 원자료
