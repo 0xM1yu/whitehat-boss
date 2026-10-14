@@ -30,7 +30,8 @@ What it adds for a consumer that wants to know where an input is decoded:
 
 The spec gives (file, line, function, symbol string); nothing else is read -- no ground truth, no
 CWE. Only the **start and stop nodes** are chosen from it, and the slice is not corrected toward
-any expected answer:
+any expected answer. The sink and source objects are recorded in `settings.spec`, which the
+`run_signature` covers:
 
 1. Line: within spec line +-2, the line that contains the symbol string (whitespace ignored),
    nearest to the spec line. None -> the line holding the most (at least half) of the symbol's
@@ -1397,7 +1398,7 @@ def main(argv: list[str] | None = None) -> int:
         "mode": "targeted",
         # The spec picks the lines that get cut, and `defines` follows from it and the sources, so
         # two runs that cut different lines must not share a run_signature (PR #638 review).
-        "spec": spec,
+        "spec": {role: spec[role] for role in ("sink", "source") if role in spec},
         "query_timeout_seconds": args.query_timeout_seconds,
         "engine_overrides": limits,
         "backward_depth": args.backward_depth,
