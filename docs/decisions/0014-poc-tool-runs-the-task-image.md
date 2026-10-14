@@ -95,7 +95,8 @@ docker run --rm --network none --pull never \
    (`POC_UNREADABLE_EXIT_REASON`).
 2. **채점은 오라클만 한다. 이 도구는 관측만 낸다.** 둘이 갈리면 오라클이 이긴다.
     **이 ADR은 「지정은 채점기 값을 읽지 않는다」를 건드리지 않는다** —
-   `test_designation_does_not_read_oracle_fields`가 그대로 선다.
+   `test_designation_does_not_read_oracle_fields`가 그대로 선다. ⏵ 2026-10-14 — 그 결정은
+   ADR 0013 결정 2 개정(#637)으로 **후보 자기 `vul` 응답 코드 하나만큼** 열렸다(이 ADR이 연 것이 아니다).
 3. **`-fix` 이미지는 도구에 노출하지 않는다.** 모드를 받을 수 있는 인자를 **노출하지 않는 것**으로
    막는다(주석이 아니라 타입).
 4. **`vm.mmap_rnd_bits`가 28보다 크면 실행을 거부한다.** ⚠ 술어는 `> 28`이다 — 처음 이 줄을
@@ -140,7 +141,7 @@ docker run --rm --network none --pull never \
 | **A** | `[<우리가 빌드한 대상>, "/work/poc.bin"]` | **우리 clang이 이 번들을 컴파일하지 못한다**(#507 — `unknown type name 'uint8_t'` 등 19건, 번들에 `config.h`가 없다). 저자 과제는 1,507건이고 빌드 규칙이 과제마다 다르다. 우리가 빌드 규칙을 **지어내는** 것은 §0과 닿는다 |
 | **C** | 입력을 받아 대상을 부르는 래퍼를 scratch에 쓴다 | 래퍼가 부를 **대상 바이너리가 여전히 필요**하므로 A로 환원된다. 그리고 래퍼는 또 하나의 「우리가 지은 재현 경로」다 |
 | **E** | `poc`를 PoV 도구 목록에서 뺀다 | 「0줄」이 **거짓이었다**: 서빙 중 `prompts/pov/v3/prefix.md`가 `poc`를 이름으로 광고하고(`- \`poc\` — 재현 실행 도구.`), `src/schemas/pov.py`의 `PovAction.tool`이 `Literal["asan","build","gdb","poc"]`라 **스키마 차원이라 v2에도 든다**. 그리고 **지정이 내부 등급에 의존한다**(`_designate_final`의 사슬 첫 키) |
-| **F** | `oracle_vul`을 Evidence로 승격한다 | `runner._designate_final`이 채점기 값을 읽지 않는 것이 이 저장소의 결정이고 `test_designation_does_not_read_oracle_fields`가 분기마다 문다. 사유는 *"그 값으로 후보를 가르면 후보를 채점기에 물어 고르는 best-of가 된다"*이고, ADR 0013([PR #560](https://github.com/0xM1yu/whitehat-boss/pull/560))이 같은 축의 #549 ⓒ를 기각했다. F는 그 전면 뒤집기다 |
+| **F** | `oracle_vul`을 Evidence로 승격한다 | ⏵ 2026-10-14 — 새 사유: 채점기 값을 **하네스 내부 등급에 섞는다.** 내부 등급은 게이트·Critic 풀·리포트·지정이 다 읽는 값이라 영향이 한 자리에 안 머물고, 「채점 성공」이 내부 등급을 올리거나 그 반대가 된다(`src/interfaces/oracle.py`의 ⚠ · #232). ⏵ 2026-10-14 — **이 행의 옛 사유는 물러났다.** 옛 사유는 *"`_designate_final`이 채점기 값을 읽지 않는 것이 이 저장소의 결정이고, 그 값으로 후보를 가르면 후보를 채점기에 물어 고르는 best-of가 된다"*(ADR 0013의 #549 ⓒ 기각과 같은 축 — [PR #560](https://github.com/0xM1yu/whitehat-boss/pull/560))였는데, ADR 0013 결정 2 개정(#637)으로 지정이 후보 자기 `vul` 응답 코드 하나를 읽게 됐다. 그래서 F는 「지정이 채점기 값을 읽는다」가 아니라 **그 값을 등급 전체에 묶는다**는 점에서만 기각이다. `test_designation_does_not_read_oracle_fields`는 지금 그 한 필드 말고는 안 읽는 것을 문다 |
 | **D** | 안 고치고 한계로 적는다 | 아래 「철회 트리거」로 남긴다 |
 
 ### 철회 트리거 — D로 돌아가는 조건
