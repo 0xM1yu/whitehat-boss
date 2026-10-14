@@ -4467,6 +4467,8 @@ _AUDITOR_ENTRY_CONTEXT_LINES = 20
 _AUDITOR_ENTRY_HEAD_LINES = 10
 # 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`source_definitions`)는 이 표시의 낱말을 안 본다.
 _OMITTED = "/* ... {} lines omitted ... */"
+# 쓰기 지점 창을 다 못 실었다는 SOURCE 끝 줄(#650). `{}`는 못 실은 창 수.
+_WRITE_WINDOWS_MORE = "/* ... +{} more write windows not shown ... */"
 _OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
 # 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)) — 이미 실린 범위와 겹쳐 건너뛴
 # 지점은 안 센다. 널리 불리는 함수면 호출 지점이 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고
@@ -4582,7 +4584,9 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     자리를 잡아 쓰기 창에 밀리지 않는다, PR #468 리뷰 MEDIUM-1)에, 슬라이스 줄에 나온 이름·필드에
     쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
     범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
-    — `write_windows`·`write_windows_dropped`가 따로 센다.
+    — `write_windows`·`write_windows_dropped`가 따로 센다. 상한에 걸려 안 읽은 창과 크기 상한에 못
+    붙인 창이 있으면 SOURCE 끝에 `_WRITE_WINDOWS_MORE` 한 줄을 달고 그 수를
+    `write_windows_omitted`가 든다(#650) — 안 읽은 지점 중 이미 실린 범위 안의 것은 안 센다.
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -4872,13 +4876,26 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 범위와 겹치는 쓰기 창은 쓰는 줄 쪽 남은 조각으로 자르고, 쓰는 줄 자체가 실려 있으면 안 붙인다
     # (읽는 지점 수 상한도 안 먹는다).
     write_sites = ctx.config.thresholds.auditor_write_sites
-    write_windows = write_windows_dropped = write_sites_found = 0
+    write_windows = write_windows_dropped = write_sites_found = write_windows_omitted = 0
     if write_sites:
         sites = _write_sites(ctx, ref, carried, anchor.file)
         write_sites_found = len(sites)
         tried = 0
-        for site in sites:
+        for at, site in enumerate(sites):
             if tried == write_sites:
+                # 상한에 걸려 안 읽은 지점. `write_sites_found - write_windows`가 아니다 — 찾은 수는
+                # 이미 실린 코드 안의 지점도 센다. 위 루프와 같은 `_clip_around`로 잘렸다면(= 읽혀
+                # 창이 됐을 지점 — 크기 상한에 또 떨어졌을 수는 있다) 센다.
+                # `probe`가 `seen`의 복사본이라 원본은 안 바뀐다 — 이미 실린 범위·앞서 센 창
+                # 안의 지점은 뺀다.
+                probe = list(seen)
+                for rest in sites[at:]:
+                    cut = _clip_around(
+                        _caller_window(ctx, rest, _AUDITOR_WRITE_LINES), rest.line_start or 1, probe
+                    )
+                    if cut is not None:
+                        probe.append(cut)
+                        write_windows_omitted += 1
                 break
             window = _clip_around(
                 _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1, seen
@@ -4894,11 +4911,22 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             write_windows += 1
+    # 못 실은 창은 SOURCE 끝에 줄로 남긴다 — 잘린 목록을 완전한 목록으로 읽히지 않게(#650). 꼴은
+    # 주석 한 줄이다(`_OMITTED`와 같은 `/* ... */` — 「+N more … 」 꼴은 `source_guards.py`의
+    # `_MORE_ROWS`(`... +N more rows omitted`)를 따랐고, 「not shown」 문구는 이 변경(#650)이
+    # 정했다). 상한에 걸린 창(`write_windows_omitted`)에 더해 글자·토큰 상한에 못 붙인 창
+    # (`write_windows_dropped`)도 센다 — 둘 다 모델은 못 본다. 줄 자체는 예산(`size`·`cap`)에는
+    # 안 들지만 이벤트의 `chars`(토큰 상한이면 `tokens`도)에는 든다 — 아래에서 `source`에
+    # 붙인 뒤 잰다.
+    # 여기서부터 `write_windows_omitted`는 합계다 — `write_windows_dropped`를 또 더하지 않는다.
+    write_windows_omitted += write_windows_dropped
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
     blocks[1:1] = guard_blocks
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
+    if write_windows_omitted:
+        source += "\n" + _WRITE_WINDOWS_MORE.format(write_windows_omitted)
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
         stage=Stage.AUDITOR,
@@ -4937,6 +4965,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 "write_windows": write_windows,
                 "write_windows_dropped": write_windows_dropped,
                 "write_sites_found": write_sites_found,
+                "write_windows_omitted": write_windows_omitted,
             }
             if write_sites
             else {}
