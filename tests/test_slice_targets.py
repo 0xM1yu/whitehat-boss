@@ -1516,7 +1516,7 @@ def _unit(files: dict[str, list[str]], symbols: list[Location], **opts):  # noqa
         "auditor_source_gate": 0, "auditor_guards": 0,
         "auditor_callee_hops": 0, "auditor_definitions": 0, "auditor_source_tokens": 0,
         "auditor_entry_trim": 0, "auditor_caller_lines": 0, "auditor_callee_wrappers": 0,
-        "auditor_indirect_callees": 0, "auditor_write_sites": 0,
+        "auditor_indirect_callees": 0, "auditor_write_sites": 0, "auditor_write_window_marker": 0,
     }
     thresholds.update({k: v for k, v in opts.items() if k.startswith("auditor_")})
     reads: list[Location] = []
@@ -2272,7 +2272,7 @@ def _write_sites(sites: int, **opts):  # noqa: ANN202
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=sites,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
-        **opts,
+        **{"auditor_write_window_marker": 1, **opts},
     )
     return _unit_run(ctx, events, _WS_F, [("w.c", 2)])
 
@@ -2450,7 +2450,7 @@ def test_write_sites_found_counts_a_line_once() -> None:
 
 
 # --- 상한에 잘린 쓰기 지점 창은 SOURCE에 「더 있다」 줄을 남긴다 (#650) ---------------------------
-# `write_sites_found`는 이미 실린 코드 안의 지점도 세므로 `found - shown`이 뺀 창 수가 아니다.
+# `write_sites_found`는 SOURCE에 든 코드 안의 지점도 세므로 `found - shown`이 뺀 창 수가 아니다.
 _WS_MORE = "/* ... +1 more write windows not shown ... */"
 
 
@@ -2463,10 +2463,11 @@ def test_write_windows_cut_at_the_limit_say_so_in_source() -> None:
 
 
 def test_the_omitted_count_skips_sites_inside_code_already_carried() -> None:
-    """찾은 지점 3곳 중 하나(w.c:2)는 이미 실린 entry 함수 안이다 — 상한 1이면 창 하나를 붙이고
+    """찾은 지점 3곳 중 하나(w.c:2)는 SOURCE에 실린 entry 함수 안이다 — 상한 1이면 창 하나를 붙이고
     남는 둘 중 실제로 빠진 창은 하나뿐이다(`found - shown`은 2)."""
     ctx, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [
             Location(file="w.c", symbol="setup", line_start=22, line_end=22),
@@ -3030,6 +3031,7 @@ def test_windows_dropped_for_the_size_cap_are_counted_in_the_marker_too() -> Non
     센다. 둘 중 하나(init)만 붙고 하나(setup)는 `write_windows_dropped`로 빠진다."""
     ctx, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=30,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
     )
@@ -3044,6 +3046,7 @@ def test_omitted_sites_whose_windows_overlap_count_as_one_window() -> None:
     잘린다) — 붙였다면 창은 하나이므로 N은 1이다. 셈에서 앞서 센 창을 안 빼면 2가 된다."""
     ctx, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [
             Location(file="w.c", symbol="setup", line_start=22, line_end=22),
@@ -3061,6 +3064,7 @@ def test_marker_follows_a_bare_anchor_when_every_window_is_size_dropped() -> Non
     표식은 그 뒤에 붙는다."""
     ctx, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=20,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
     )
@@ -3069,3 +3073,129 @@ def test_marker_follows_a_bare_anchor_when_every_window_is_size_dropped() -> Non
     marker = "/* ... +2 more write windows not shown ... */"
     assert source == "\n".join([*_WS_FILE["w.c"][0:3], marker])
     assert event["chars"] == len(source)  # 표식은 예산 밖이지만 `chars`에는 든다
+
+
+# --- 크기 상한에 못 실린 범위 안의 쓰기 지점도 N에 든다 (#650 리뷰 MEDIUM-1) ---------------------
+# 이전 판은 N을 `seen`(상한에 걸려 뺀 함수·창도 든다)으로 잘라, 모델이 못 보는 코드 안의 쓰기 지점이
+# 안 실리고 안 세어졌다. 이제 센다 — 실제로 SOURCE에 든 범위(`shown`) 안만 뺀다.
+_SD_FILE = {
+    "s.c": [
+        "int f(struct pkt *p) {",  # 1
+        "  use(p->len);",  # 2 — 슬라이스 줄: 필드 len
+        "}",  # 3
+        *[f"filler{i}" for i in range(4, 20)],  # 4-19
+        "void g(struct pkt *p, int n) {",  # 20
+        "  int a = 0;",  # 21
+        "  p->len = n * 2;",  # 22 — 필드 쓰기(g 안 · 슬라이스가 지나는 함수)
+        "  a += 1;",  # 23
+        "  a += 2;",  # 24
+        "  sink(p, a);",  # 25 — 슬라이스 줄(g가 실릴 후보지만 크기 상한에 떨어진다)
+        "  a += 3;", "  a += 4;", "  a += 5;", "  a += 6;",  # 26-29
+        "}",  # 30
+    ]
+}
+_SD_F = Location(file="s.c", symbol="f", line_start=1, line_end=3)
+_SD_G = Location(file="s.c", symbol="g", line_start=20, line_end=30)
+
+
+def _size_dropped(**opts):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _SD_FILE, [_SD_F, _SD_G], auditor_write_sites=6, auditor_source_tokens=20,
+        field_writes={"len": [Location(file="s.c", symbol="g", line_start=22, line_end=22)]},
+        **opts,
+    )
+    return _unit_run(ctx, events, _SD_F, [("s.c", 2), ("s.c", 25)])
+
+
+def test_a_write_site_inside_a_size_dropped_function_is_counted() -> None:
+    """`g`(20-30)는 슬라이스가 지나지만 상한 20에 못 실린다 — 그 안의 `p->len = n * 2;`(22)는
+    SOURCE에 없다. `seen`으로 자르던 판은 그 지점을 이미 본 것으로 읽어 N이 0이고 줄도 없었다."""
+    source, event = _size_dropped(auditor_write_window_marker=1)
+    assert "p->len = n * 2;" not in source and event["dropped"] == 1
+    assert event["write_windows_omitted"] >= 1
+    assert source.endswith("/* ... +1 more write windows not shown ... */")
+
+
+def test_marker_option_off_leaves_source_bytes_as_before_the_marker_existed() -> None:
+    """`auditor_write_window_marker` 0(기본) — 못 실은 창이 있어도 줄이 없다. 켠 SOURCE는 꺼진
+    SOURCE에 그 줄 하나를 줄바꿈으로 이은 것이다(= 꺼진 쪽이 #650 이전과 바이트 동일). 수는
+    trace에 남는다."""
+    off_source, off = _write_sites(1, auditor_write_window_marker=0)
+    on_source, on = _write_sites(1)
+    assert "more write windows" not in off_source
+    assert on_source == off_source + "\n" + _WS_MORE
+    assert off["write_windows_omitted"] == on["write_windows_omitted"] == 1
+    assert off["chars"] + len("\n" + _WS_MORE) == on["chars"]
+
+
+# --- 부분 겹침: 생략 창은 `_clip_around`로 깎아 센다 (#650 리뷰 LOW-1) ----------------------------
+# 핀 없이는 「겹치면 버린다」·「안 깎은 창을 센다」는 변이가 살았다.
+_PO_FILE = {
+    "p.c": [
+        "int f(struct pkt *p) {",  # 1
+        "  memcpy(dst, p->payload, p->len);",  # 2 — 슬라이스 줄: dst · 필드 payload·len
+        "}",  # 3
+        *[f"filler{i}" for i in range(4, 20)],  # 4-19
+        *[f"line{i}" for i in range(20, 53)],  # 20-52 — g 20-40 · m 20-50 · init 50-52가 겹쳐 쓴다
+    ]
+}
+_PO_F = Location(file="p.c", symbol="f", line_start=1, line_end=3)
+
+
+def _site_at(symbol: str, line: int) -> Location:
+    return Location(file="p.c", symbol=symbol, line_start=line, line_end=line)
+
+
+def _partial(symbols: list[Location], writes: dict, field: list[Location], cap: int):  # noqa: ANN202
+    ctx, events, _, _ = _unit(
+        _PO_FILE, [_PO_F, *symbols], auditor_write_sites=cap, auditor_write_window_marker=1,
+        writes=writes, field_writes={"len": field},
+    )
+    return _unit_run(ctx, events, _PO_F, [("p.c", 2)])
+
+
+def test_omitted_windows_that_partly_overlap_are_cut_not_dropped() -> None:
+    """g(20-40)의 쓰기 22 · 28 — 창은 19-25 → 20-25, 25-31이고 둘은 25에서 겹친다. 둘째는 버리지
+    않고 깎여(26-31) 따로 선다 — 상한을 3으로 올렸을 때 상한 1 뒤에 실제로 더 붙는 창 수와 같다.
+    겹치면 버리는 셈이면 1이 된다."""
+    g = Location(file="p.c", symbol="g", line_start=20, line_end=40)
+    init = Location(file="p.c", symbol="init", line_start=50, line_end=52)
+    args = ([g, init], {"dst": [_site_at("init", 51)]}, [_site_at("g", 22), _site_at("g", 28)])
+    source, event = _partial(*args, cap=1)
+    _, wide = _partial(*args, cap=3)
+    assert wide["write_windows"] == 3
+    assert event["write_windows_omitted"] == wide["write_windows"] - 1 == 2
+    assert source.endswith("/* ... +2 more write windows not shown ... */")
+
+
+def test_an_omitted_window_is_clipped_before_it_hides_a_later_site() -> None:
+    """k(33-33)가 먼저 붙고 빠진 m(20-50)의 쓰기는 35 · 32다. 35의 창 32-38은 k에 깎여 34-38이다.
+    깎인 채로 숨은 목록에 들어가야 32(창 29-32)가 따로 선다. 안 깎은 32-38을 넣으면 32가 그 안이라
+    N이 1로 줄어든다."""
+    k = Location(file="p.c", symbol="k", line_start=33, line_end=33)
+    m = Location(file="p.c", symbol="m", line_start=20, line_end=50)
+    args = ([k, m], {}, [_site_at("k", 33), _site_at("m", 35), _site_at("m", 32)])
+    source, event = _partial(*args, cap=1)
+    assert event["write_windows"] == 1
+    assert event["write_windows_omitted"] == 2
+    assert source.endswith("/* ... +2 more write windows not shown ... */")
+
+
+def test_a_write_site_inside_a_trimmed_entry_is_not_counted_as_hidden() -> None:
+    """줄인 entry 함수는 `shown`에 없지만 그 안의 지점(2행의 `p->len`)을 「못 본 창」으로 세면
+    보이는 줄을 두고 「더 있다」고 말하게 된다 — 숨은 쓰기 창은 0이고 줄도 없다."""
+    lines = {
+        "t.c": [
+            "int f(struct pkt *p) {", "  use(p->len);",
+            *[f"  w{i} x{i};" for i in range(3, 30)], "}",
+        ]
+    }
+    entry = Location(file="t.c", symbol="f", line_start=1, line_end=29)
+    ctx, events, _, _ = _unit(
+        lines, [entry], auditor_write_sites=6, auditor_source_tokens=20, auditor_entry_trim=1,
+        auditor_write_window_marker=1,
+        field_writes={"len": [Location(file="t.c", symbol="f", line_start=2, line_end=2)]},
+    )
+    source, event = _unit_run(ctx, events, entry, [("t.c", 2)])
+    assert event["entry_omitted_lines"] > 0 and "lines omitted" in source
+    assert event["write_windows_omitted"] == 0 and "more write windows" not in source

@@ -139,7 +139,7 @@ graph LR
 >   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)다 -> 짧은 래퍼면 그 너머 2단까지, 이름만 바꾸는 매크로면
 >   그 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술). ⏵ 같은 날 -> 간접 피호출(`auditor_indirect_callees` — 필드
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
->   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다). 쓰기 창은 못 실은 창이 있으면 SOURCE 끝에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(#650 — 프롬프트는 이 줄을 서술하지 않는다).
+>   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다). ⏵ 2026-10-14 (#650) -> 쓰기 창은 못 실은 창이 있고 새 옵션 `auditor_write_window_marker`가 1이면 SOURCE 끝에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(옵션은 기본 꺼짐이고 `budgets.yaml`도 0이다 — 이 줄을 서술·선언한 Auditor 판이 아직 없다).
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
 >   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판이 아닌 v12도 같다, 이슈 #578 · ⏵ 같은 날 서빙 판 v13도 같다, 이슈 #67 · ⏵ 2026-10-11 서빙 판 v14도 같다 — v12 + 같은 FACTS 변경). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
 >   PoV 프롬프트에도 든다
