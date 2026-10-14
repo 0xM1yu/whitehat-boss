@@ -111,6 +111,7 @@ def run(
             slice_id=slice_id,
         )
         capsule = ctx.retriever.search(query, level)
+        _record_cuts(ctx, capsule)
         # 설명은 Retriever를 안 건드리고 노드에서 붙인다 — 구현(fake·hybrid)에 무관하게 한
         # 자리에서 하고, 설명은 run 단위 사실이라 target별 Retriever가 알 필요가 없다.
         if ctx.vuln_description:
@@ -119,6 +120,27 @@ def run(
             )
         ctx.store.put(capsule)
     return capsule
+
+
+def _record_cuts(ctx: RunContext, capsule: ContextCapsule) -> None:
+    """예산 절단이 내용을 갈랐으면 `capsule_cut`을 남긴다(#663).
+
+    안 잘렸거나 기록이 없으면(`None`) 안 낸다.
+    """
+    cuts = capsule.cuts
+    if cuts is None or not cuts.any_cut:
+        return
+    ctx.trace.emit(
+        EventKind.CAPSULE_CUT,
+        stage=Stage.RETRIEVAL,
+        subject_kind="capsule",
+        subject_id=capsule.capsule_id,
+        level=capsule.level.value,
+        dropped_sections=",".join(cuts.dropped_sections),
+        graph_stopped=cuts.graph_stopped,
+        graph_skipped=cuts.graph_skipped,
+        related_skipped=cuts.related_skipped,
+    )
 
 
 def _attach_vuln_description(
