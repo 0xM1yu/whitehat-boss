@@ -176,7 +176,8 @@ class SliceRef(HarnessModel):
     # 슬라이서의 분석 사실 — slice-v2 `analysis_kind`·`truncated`·`analysis.truncation_reasons`·
     # `analysis.sinks_capped`·`analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
     # 버렸다** — 그러면 하류가 「이 슬라이스는 잘렸다·역추적이 호출 간선 없는 파라미터에 닿았다」를
-    # 못 안다(`orchestrator/source_gate.py`가 읽는다). 기본값은 옛 슬라이스(키가 없다)의 것이라
+    # 못 안다(`orchestrator/source_gate.py`가 읽고 ⏵ 2026-10-14 `orchestrator/slice_state.py`도 같은
+    # 필드를 읽는다 — 둘째 소비자, 이슈 #438 (b)). 기본값은 옛 슬라이스(키가 없다)의 것이라
     # `truncated=False`만으로는 「절단 아님」인지 「안 적었다」인지 안 갈린다 — `analysis_kind`가 빈
     # 문자열이면 슬라이서가 분석 사실을 안 적은 슬라이스다.
     analysis_kind: str = ""
@@ -195,6 +196,14 @@ class SliceRef(HarnessModel):
     # 않는다 — 인클루드 디렉터리가 겹쳐 붙은 꼴이 나온다:
     # `libavdevice/libavformat/libavformat/avio.h`. `line`은 -1일 수 있다(Joern이 줄을 못 준 노드).
     boundaries: tuple[tuple[str, str, int], ...] = ()
+    # 위 `truncated` · `truncation_reasons` · `boundaries`를 슬라이서가 **실제로 적었나**(이슈
+    # #438 (b)). 빈 값(`False` · `()`)만으로는 「적었는데 비었다」와 「그 키를 안 적는다」가 안
+    # 갈린다 — Case A `parameter_paths`는 사유·경계를 안 적고 `degraded_anchor_only`는 경계를 안
+    # 적는다. 기본 `False`는 모름이다. 읽는 곳은 `orchestrator/slice_state.py`(Auditor FACTS ·
+    # `auditor_slice_state`)다 - 사후 관측 `source_gate`는 안 읽는다(빈 값을 사유 없음으로 둔다).
+    truncated_recorded: bool = False
+    truncation_reasons_recorded: bool = False
+    boundaries_recorded: bool = False
     # 슬라이서의 `analysis.input_context` - 입력 디코더로 보이는 함수의 **이름**(소스는 안 싣는다).
     # `None`은 키가 없다(`--index` 없이 돈 슬라이스·옛 슬라이스)이고 `none_selected`와 다르다. 읽는
     # 곳은 `auditor_input_context`가 켜진 run의 `runner._auditor_source` 하나다.
