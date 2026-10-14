@@ -45,10 +45,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from src.paths import PathEscape, safe_join
-from src.schemas.candidate import SliceRef
+from src.schemas.candidate import InputContext, InputContextFunction, SliceRef
 from src.schemas.common import Location
 
 SUPPORTED_SLICE_VERSION = "slice-v2"
+# 읽는 `analysis.input_context.version`(`tools/slicer_v2/input_context.py`의 `VERSION`) - 모르는
+# 판은 모양을 믿을 수 없어 로드에서 죽는다.
+SUPPORTED_INPUT_CONTEXT_VERSION = 1
 
 # 슬라이서 `case` → v3 `slice_criterion.given_end`
 # (`prompts/scout_*/v3/prefix.md` 「Slice criterion」: `source`면 앞으로, `sink`면 뒤로 자른 것).
@@ -111,6 +114,8 @@ class Slice:
     truncation_reasons: tuple[str, ...] = ()
     sinks_capped: bool = False
     boundaries: tuple[tuple[str, str, int], ...] = ()
+    # `analysis.input_context` - `None`은 키가 없다. `SliceRef`가 같은 이름으로 들고 간다.
+    input_context: InputContext | None = None
 
     @property
     def given_end(self) -> str:
@@ -257,6 +262,92 @@ def _array(raw: object, name: str) -> list:
     return raw
 
 
+def _int(raw: object, name: str) -> int:
+    """JSON 정수만 받는다 - `bool`은 `int`의 서브클래스라 따로 거른다. 강제 변환하지 않는다."""
+    if type(raw) is not int:
+        raise TypeError(f"{name}: 정수가 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _listed(raw: object, name: str) -> list:
+    """`_array`와 달리 `null`을 빈 목록으로 읽지 않는다 - 읽는 키가 `null`이면 모양이 틀린
+    것이다."""
+    if not isinstance(raw, list):
+        raise TypeError(f"{name}: 배열이 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _str(raw: object, name: str) -> str:
+    if not isinstance(raw, str):
+        raise TypeError(f"{name}: 문자열이 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _input_context(item: dict) -> InputContext | None:
+    """`analysis.input_context`에서 **하네스가 쓰는 키만** 엄격히 읽는다. 키가 없으면 `None`
+    (`--index` 없이 돈 슬라이스)이고 `none_selected`와 다르다 - `null`은 키가 없는 것이 아니라
+    모양이 틀린 것이다. 모양이 틀리면(모르는 판 · 모르는 `status`/`basis` · 불리언이 아닌
+    `cap_hit` · 함수 위치가 정수가 아니다 · 끝 줄이 시작 줄 앞) `KeyError`/`TypeError`/
+    `ValueError`로 로드를 멈춘다 - 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
+
+    클러스터가 합친 슬라이스는 `analysis`가 대표 후보의 것이다 - 그 대표의 선택을 읽는다
+    (구성원별 분석은 `member_analysis`에 있고 여기서는 안 읽는다). `carried_decoders`·
+    `dispatches`는 싣지 않는 것들이라 **개수만** 센다."""
+    analysis = _object(item.get("analysis"), "analysis")
+    if "input_context" not in analysis:
+        return None
+    raw = analysis["input_context"]
+    if not isinstance(raw, dict):
+        raise TypeError(f"input_context: 객체가 아니다 - {type(raw).__name__}")
+    # 읽는 키는 **전부 있어야 한다**(`[]` 색인 → 없으면 `KeyError`로 로드가 선다). 없는 `cap_hit`을
+    # `False`로 읽으면 「상한에 안 닿았다」는 안 잰 사실이 된다.
+    context = raw
+    version = _int(context["version"], "input_context.version")
+    if version != SUPPORTED_INPUT_CONTEXT_VERSION:
+        raise ValueError(
+            f"input_context.version {version}는 읽지 않는다 - "
+            f"{SUPPORTED_INPUT_CONTEXT_VERSION}만 받는다"
+        )
+    status, basis = context["status"], context["basis"]
+    if status not in ("selected", "none_selected"):
+        raise ValueError(f"input_context.status {status!r}")
+    if basis not in ("cpg", "syntax"):
+        raise ValueError(f"input_context.basis {basis!r}")
+    functions = []
+    for entry in _listed(context["functions"], "input_context.functions"):
+        if not isinstance(entry, dict):
+            raise TypeError(f"functions[]: 객체가 아니다 - {type(entry).__name__}")
+        start = _int(entry["line_start"], "functions[].line_start")
+        end = _int(entry["line_end"], "functions[].line_end")
+        if not 1 <= start <= end:
+            raise ValueError(f"functions[]: 줄 범위 {start}-{end}")
+        symbol = entry["symbol"]
+        functions.append(
+            InputContextFunction(
+                file=_str(entry["file"], "functions[].file"),
+                symbol=None if symbol is None else _str(symbol, "functions[].symbol"),
+                line_start=start,
+                line_end=end,
+            )
+        )
+    if type(context["cap_hit"]) is not bool:
+        got = type(context["cap_hit"]).__name__
+        raise TypeError(f"input_context.cap_hit: 불리언이 아니다 - {got}")
+    return InputContext(
+        version=version,
+        status=status,
+        basis=basis,
+        cap_hit=context["cap_hit"],
+        cap_reasons=tuple(
+            _str(reason, "cap_reasons[]")
+            for reason in _listed(context["cap_reasons"], "cap_reasons")
+        ),
+        functions=tuple(functions),
+        carried_decoders=len(_listed(context["carried_decoders"], "carried_decoders")),
+        dispatches=len(_listed(context["dispatches"], "dispatches")),
+    )
+
+
 def _analysis_facts(
     item: dict,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool]:
@@ -312,6 +403,7 @@ def _slice(item: dict) -> Slice:
         truncation_reasons=truncation_reasons,
         sinks_capped=sinks_capped,
         boundaries=boundaries,
+        input_context=_input_context(item),
     )
 
 
@@ -352,6 +444,7 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 truncation_reasons=item.truncation_reasons,
                 sinks_capped=item.sinks_capped,
                 boundaries=item.boundaries,
+                input_context=item.input_context,
             )
         )
     return tuple(refs)
