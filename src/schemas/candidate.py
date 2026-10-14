@@ -174,7 +174,8 @@ class SliceRef(HarnessModel):
     # 기본 `{}`는 provenance 없는 입력(옛 슬라이스·degraded 빈 범주)이고, 그럴 땐 거리순만 남는다.
     provenance: dict[str, tuple[tuple[str, int], ...]] = Field(default_factory=dict)
     # 슬라이서의 분석 사실 — slice-v2 `analysis_kind`·`truncated`·`analysis.truncation_reasons`·
-    # `analysis.sinks_capped`·`analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
+    # `analysis.sinks_capped`·`analysis.cross_method_flow_truncated`·
+    # `analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
     # 버렸다** — 그러면 하류가 「이 슬라이스는 잘렸다·역추적이 호출 간선 없는 파라미터에 닿았다」를
     # 못 안다(`orchestrator/source_gate.py`가 읽고 ⏵ 2026-10-14 `orchestrator/slice_state.py`도 같은
     # 필드를 읽는다 — 둘째 소비자, 이슈 #438 (b)). 기본값은 옛 슬라이스(키가 없다)의 것이라

@@ -23,6 +23,9 @@
   적는다). `cross_method_flow_truncated` - 대상 지정 모드가 교차 메서드 간선을
   `CROSS_EDGE_LIMIT`에서 잘랐나(그 모드만 적는다). 둘 다 `truncated`와 별개의 상한이다 -
   `truncated: false`는 흐름 수 상한에 안 닿았다는 뜻일 뿐 슬라이스가 완전하다는 뜻이 아니다.
+  ⚠ 상한이 이 둘뿐은 아니다 - Case B 싱크 후보의 사전 절단(`slicer_queries.py`의
+  `.take(CASE_B_*_CAP)`, `sinksCapped` 앞)과 대상 지정 모드의 시작 노드 동점 절단
+  (`tied_truncated`, locate note에만 남는다)은 어느 키에도 안 실린다.
 
 ## 「모름」은 `false`가 아니다 (CLAUDE.md §0)
 
