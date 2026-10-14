@@ -51,25 +51,38 @@ def file_identity(path: Path) -> dict | None:
 
 
 class SlicingStages:
+    def selected_cases(self) -> str:
+        """--cases: which candidate discovery queries run. A contract without the key (the default
+        and every run before the flag) ran both."""
+        return self.settings.get("cases", "AB")
+
     def collect_candidates(self) -> None:
         rows = {}
+        selected = self.selected_cases()
         # --priority-case-a: the list goes to the Case A discovery query itself (rank and call
         # limit); without the flag --priority-files only orders the candidates found below.
         listed = None
         if self.priority_case_a and self.priority_files:
             listed = sorted(self.priority_files)
-        for case, query in (
-            ("A", queries.candidates_a_query(listed, self.repo.as_posix())),
-            ("B", queries.candidates_b_query(self.engine_limits)),
+        for case, build in (
+            ("A", lambda: queries.candidates_a_query(listed, self.repo.as_posix())),
+            ("B", lambda: queries.candidates_b_query(self.engine_limits)),
         ):
-            rows[case], _ = self.query("case_" + case.lower(), query)
+            if case not in selected:
+                # Not 0: the query never ran, so the count is unknown, not empty.
+                self.result["measurement_notes"]["candidates_case_" + case.lower()] = (
+                    f"Skipped by --cases {selected}"
+                )
+                continue
+            rows[case], _ = self.query("case_" + case.lower(), build())
             self.measure(
                 "candidates_case_" + case.lower(), len(collect({case: rows[case]}, self.repo))
             )
         # HIGH-1 (#241 review): the .take cap in candidates_a_query is silent. When the count
         # reaches the cap, api and/or readers may be truncated, so record a per-run note (measure
         # popped any prior note). Below the cap it cannot have been truncated, so no note.
-        if self.result["counters"]["candidates_case_a"] >= queries.CASE_A_CANDIDATE_CAP:
+        case_a = self.result["counters"]["candidates_case_a"]
+        if case_a is not None and case_a >= queries.CASE_A_CANDIDATE_CAP:
             order_note = (
                 "priority-file methods first, then write-context methods" if listed
                 else "write-context methods first"
@@ -619,7 +632,9 @@ class SlicingStages:
             self.measure("slices_before_clustering", len(self.completed))
             self.result["slices"] = cluster(self.completed, self.result["threshold"], self.sources)
             self.measure("slices_after_clustering", len(self.result["slices"]))
-            if self.result["counters"]["candidates_case_b"] is not None:
+            # Discovery finished: the last selected case was counted (B, unless --cases A).
+            last_case = "candidates_case_" + self.selected_cases()[-1].lower()
+            if self.result["counters"][last_case] is not None:
                 self.measure("candidates_not_processed", len(self.candidates) - self.processed)
         if self.errors:
             self.result["error"] = "; ".join(dict.fromkeys(self.errors))

@@ -202,6 +202,13 @@ Notion 워크스페이스로 두고 기록을 이 저장소로 들이지 않는�
 보관 배너(`STATUS.md`·`docs/experiments/README.md`·`docs/research/README.md`)는 이 노트와 같은 PR이 달았다 —
 배너와 이 줄은 main에 함께 들어간다.
 
+⏵ **2026-10-13 — 슬라이서의 정본은 `tools/slicer`다.** 위 표의 「Joern 기반 슬라이서」가 그것이다(후보 발견: Case A·B 합집합).
+PR #638의 `tools/slicer_v2/`는 그 사본이 아니라 **정본 위에 얹힌 확장**이다 — 지정한 source·sink에서 자르는 대상 지정 모드
+(`slicer_target.py` · 역방향 `case: "B"` · 정방향 `case: "F"`), 슬라이스 옆 입력 디코더의 CPG 근거(`analysis.input_evidence`)와
+선택(`analysis.input_context` · `--index`), 그리고 정본에 들어간 `--cases`·c2cpg `--define`. 인덱서 입력은 이 절의 정본
+(`tools/harness-tools/indexer.py`, index-v2 이상)이고, 포크가 들고 있던 `tools/slicer`·`attach/`·`indexer.py` 사본은 들이지 않았다.
+자세한 계약은 [슬라이서 README](docs/slicer-README.md)의 마지막 절이다.
+
 ---
 
 ## 3. 로스터를 바꾸는 법 — **여기만 고친다**

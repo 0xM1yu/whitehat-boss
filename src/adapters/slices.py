@@ -11,7 +11,10 @@
 
 `slices[]`의 한 항목이 러너 타깃 하나가 된다(배선은 러너 쪽). `case`가 v3 프롬프트의
 `FACTS.slice_criterion.given_end`를 정한다 — Case A는 진입점에서 앞으로 자른 것(`source`),
-Case B는 위험 연산에서 뒤로 자른 것(`sink`)이다.
+Case B는 위험 연산에서 뒤로 자른 것(`sink`), Case F는 대상 지정 모드
+(`tools/slicer_v2/slicer_target.py`)가 source에서 앞으로 자른 것(`source` — A와 같은 끝)이다.
+`case`에서 읽는 것은 `given_end`뿐이라 A와 F는 이 아래 어디서도 안 갈린다 — 가드 스캔이 안
+훑는 사유를 `given_source`로 적는 것이 그 때문이다(`orchestrator/source_guards.py`).
 
 ## 로드에서 죽는다 — `index_graph`와 반대다
 
@@ -48,8 +51,11 @@ from src.schemas.common import Location
 SUPPORTED_SLICE_VERSION = "slice-v2"
 
 # 슬라이서 `case` → v3 `slice_criterion.given_end`
-# (`prompts/scout_*/v3/prefix.md` 「Slice criterion」).
-_GIVEN_END = {"A": "source", "B": "sink"}
+# (`prompts/scout_*/v3/prefix.md` 「Slice criterion」: `source`면 앞으로, `sink`면 뒤로 자른 것).
+# `F`는 `tools/slicer_v2/slicer_target.py`의 정방향 슬라이스다 — source에서 시작해 앞으로 자르므로
+# 쥐여 준 끝은 `source`다(Case A와 같은 끝). 하네스가 `case`에서 읽는 것은 이 `given_end`뿐이다
+# (`SliceRef.given_end` → Scout `slice_criterion`·가드 스캔·`NO_CALLER_IN_CPG` 판정).
+_GIVEN_END = {"A": "source", "B": "sink", "F": "source"}
 
 
 class SliceInputError(ValueError):
