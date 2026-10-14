@@ -282,10 +282,13 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # 그대로라 본문 전제는 유지된다(`tests/test_auditor_v15.py`가 v14와의 차이를 묶는다).
 # v16(2026-10-14 · S20 Phase 13)은 v15에 입력 맥락 함수 블록의 서술을 더한 판이다 - 위 구절은 v15와
 # 바이트 동일이다(`tests/test_auditor_v16.py`가 차이를 prefix 다섯 군데로 묶는다).
+# v17(2026-10-14 · S20 Phase 14)은 v16에 슬라이스 상태(`FACTS.slice_state`)의 서술과 「배너 없으면
+# 첫 블록 하나」 문장의 정정을 더한 판이다 - 위 구절은 v16과 바이트 동일이다
+# (`tests/test_auditor_v17.py`가 차이를 prefix 두 군데로 묶는다).
 _CONTENT_AWARE_VERSIONS = frozenset(
     {
         "v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
-        "v16",
+        "v16", "v17",
     }
 )
 
@@ -348,8 +351,10 @@ CALLERS_SECTION = "callers"
 # 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py` ·
 # ⏵ 2026-10-13 서빙 판 v15의 prefix는 v14 + 계약 문장 여섯이라 더 길다 — 글자 수는 안 쟀고 user
 # 턴(body)은 v14와 바이트 동일이다 · ⏵ 2026-10-14 서빙 판 v16은 v15에 prefix 다섯 군데를 더했고
-# 글자 수는 안 쟀다) ↔ v4 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰
-# 넘는다(계산값 — v4 기준이다. hop0가 클수록 넘는 폭도 커진다).
+# 글자 수는 안 쟀다 · ⏵ 2026-10-14 서빙 판 v17은 v16에 prefix 두 군데를 더해
+# `len(load_prompt(...).prefix)`가 64,339자에서 67,312자가 됐다 - 토큰은 안 쟀다) ↔ v4 13,405자라
+# hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다. hop0가
+# 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
 # **Scout 좌석 비**(`runner._HOP_CHARS_PER_TOKEN` — 좌석별 3.28~4.23의 하한)를 빌린 **낙관 쪽**이다
 # — Auditor 실측 범위의 상단(3.32) 바로 아래라 「안에 든다」는 그 비를 가정할 때만이다.
@@ -478,6 +483,7 @@ def run(
     source: Callable[[], str] | None = None,
     workdir: str = ".",
     observations: list[str] | None = None,
+    slice_state: Mapping[str, object] | None = None,
 ) -> tuple[Finding, list[MissingEvidence]]:
     """가설 Finding과 그것이 요청한 MissingEvidence를 만들어 저장한다.
 
@@ -503,6 +509,11 @@ def run(
     뺀다. 러너가 그것을 Critic에 넘긴다(`critic.run(hop_observations=...)`). 반환 계약을 안 바꾸려고
     값이 아니라 쓰는 통로로 낸다. 한 방 경로(홉 0)는 아무것도 안 덧붙인다. 모델의 원문
     응답(`raw_text`)·근거 서술은 여기 안 담긴다.
+
+    ⏵ 2026-10-14 (이슈 #438 (b)) — `slice_state`는 hop0 FACTS의 opt-in 키 `slice_state`로 간다
+    (`orchestrator/slice_state.facts`가 만든 값 — 러너가 `auditor_slice_state`가 켜졌고 슬라이스가
+    있을 때만 준다). `None`이면 키가 없다(종전과 바이트 동일). 값은 노드가 안 건드린다 - 어느 판이
+    그 키를 서술하는지는 meta `source_options`와 `cli`의 게이트가 정한다.
     """
     ids = {
         "candidate_id": candidate.candidate_id,
@@ -519,6 +530,7 @@ def run(
             source=source,
             workdir=workdir,
             observations=observations,
+            slice_state=slice_state,
         )
         # **재현 명세의 출처를 하네스가 정한다** (#S7). 모델이 낸 명세는 `origin=model`로 덮고
         # (모델이 `harness`를 참칭 못 함), 비워 냈고 `synthesize_repro_spec`이 켜졌으면 후보 위치로
@@ -561,6 +573,7 @@ def _ask_model(
     source: Callable[[], str] | None,
     workdir: str,
     observations: list[str] | None = None,
+    slice_state: Mapping[str, object] | None = None,
 ) -> Finding:
     """Finding을 얻는다 — 한 방 호출 또는 도구 루프. 어느 쪽인지는 프롬프트 meta가 정한다.
 
@@ -602,6 +615,7 @@ def _ask_model(
         evidences=evidences,
         source=source,
         compile_note=note,
+        slice_state=slice_state,
     )
     if envelope is not None:
         try:
@@ -781,12 +795,15 @@ def _render_hop0(
     evidences: tuple[Evidence, ...],
     source: Callable[[], str] | None,
     compile_note: str | None = None,
+    slice_state: Mapping[str, object] | None = None,
 ) -> Prompt:
     """hop0 프롬프트 — 한 방 경로의 유일한 호출이자 도구 루프의 첫 호출이다. 두 경로가 이 렌더를
     같이 쓴다 — 갈라지면 루프를 꺼도 요청 바이트가 달라져 이전 run과 비교할 수 없다
     (evaluation §2.3).
 
     `compile_note`는 본문 **끝**에 붙는 하네스 노트다(이슈 #507). `None`이면 바이트가 종전과 같다.
+
+    `slice_state`는 FACTS의 opt-in 키다(이슈 #438 (b)) — `None`이면 키가 없어 바이트가 종전과 같다.
     """
     text = ctx.read_source(capsule.target) if source is None else source()
     # content-aware 버전(`_CONTENT_AWARE_VERSIONS`)일 때만 payload 본문을 읽고 위치도 싣는다.
@@ -805,11 +822,12 @@ def _render_hop0(
             evidences=evidences,
             evidence_bodies=bodies,
             evidence_locations=aware,
-            # `facts_source: false` 판(v13·v14 · 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14 v16도)은
-            # FACTS에 `source` 사본을 안 싣는다 — 원문은 아래 산문 `source` 하나로 간다. 판의 meta가
-            # 정하고 노드는 이름 목록을 안 든다.
+            # `facts_source: false` 판(v13·v14 · 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14
+            # v16·v17도)은 FACTS에 `source` 사본을 안 싣는다 — 원문은 아래 산문 `source` 하나로
+            # 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
             include_source=template.facts_source,
             callers=caller_names(capsule),
+            slice_state=slice_state,
         ),
         candidate=_describe_candidate(candidate),
         target=describe_target(capsule.target),

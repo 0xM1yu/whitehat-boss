@@ -29,7 +29,6 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
 from src.adapters import fake_model
 from src.config import load_config
 from src.orchestrator.context import RunContext
@@ -246,28 +245,9 @@ def test_v16_is_wired_in_every_place_a_new_prompt_version_has_to_be() -> None:
     assert auditor.tool_hops_in_effect("v16", 16) == 16
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_auditor_seat_selects_v16_and_the_doctor_has_nothing_to_say(
-    profile: str,
-) -> None:
-    config = load_config(profile)
-    version = config.model_for("auditor").prompt_template_version
-
-    assert version == "v16"
-    assert cli._check_prompt_version(config, "auditor", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-    assert cli._undescribed_source_options(config) == []
-
-
-def test_no_auditor_version_newer_than_the_served_one_is_on_disk() -> None:
-    """doctor의 「디스크 새 판」 WARN이 0인 이유 - 서빙 판이 디스크의 마지막 판이다."""
-    numbers = sorted(
-        int(p.name[1:])
-        for p in (PROMPTS_DIR / "auditor").iterdir()
-        if p.is_dir() and p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 16
+# ⏵ 2026-10-14 — 「서빙 좌석이 v16이다 · 디스크에 더 새 판이 없다」 핀 둘은 서빙 판이 v17이 되며
+# `tests/test_auditor_v17.py`로 옮겼다(서빙 판 핀은 서빙 판의 파일이 든다). v16이 배선된 판이라는
+# 사실은 위 `test_v16_is_wired_in_every_place_…`가 계속 묻는다.
 
 
 def test_a_fake_loop_runs_on_v16(ctx: RunContext) -> None:
