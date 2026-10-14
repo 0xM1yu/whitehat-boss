@@ -11,8 +11,12 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | --- | --- | --- |
 | 제거율 — Scout | `transition`(stage=4) | `1 − count(scout_promoted) / count(생성)` |
 | 제거율 — Gate | `gate_eval`(stage=6) | `count(grade=E0) / count(*)` |
+| 정적 신호 위치 겹침 (#563) | `gate_eval`(stage=6) | `count(location_ok)`·`count(static_ok)`를
+`location_ok` 키가 있는 행 수로 센다 — **횟수이고 비율이 아니다**. 6단계만(7·8단계는 후보 위치를
+안 넘겨 `location_ok`가 구조상 거짓). `RunRecord.location_overlap`이 같은 세 수를 싣는다 |
 | 제거율 — Critic | `transition`(stage=7) | `count(rebutted ∪ need_evidence) / count(*)` |
 | 제거율 — Tool | `transition`(stage=8) | 분모는 8단계 사유 셋 — 산식 아래 (#68) |
+| 모델 인용 수 | `gate_eval`(stage=6) | `cited_by_model` = 부착 전 ID 수, 중복 포함 (#554) |
 | Critic 선별 절단 | `critic_skipped` | `count(*)`. **이벤트 부재 = 안 잘림** |
 | 토큰 in/out/cached | `model_call`의 3필드 | 역할·단계별 합계 |
 | GPU 시간 | `model_call`·`retrieval_call`의 `gpu_ms` | 합계. 실측/근사는 `gpu_ms_source` |
@@ -20,8 +24,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
-| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage. **루프
-꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 실패하면 0건) — 꺼짐은 `model_call.schema`가
+| Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage
+(⏵ 2026-10-13 크기 거절당한 홉도 1건: `stop_reason=context_overflow` · action 없음, #514). **루프
+꺼지면 0건이지만 0건이 곧 꺼짐은 아니다**(첫 호출이 파싱 실패·예산 소진으로 죽어도 0건 -
+루프의 hop 0 크기 거절만 `context_overflow` 1건을 낸다) — 꺼짐은 `model_call.schema`가
 `Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
@@ -30,6 +36,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 토큰 계상 방식 | `token_counter` | 역할별 `real`/`approx`와 그 사유. run당 **정확히 1건** |
 | 스키마 파싱 실패율 | `model_call`(`attempts`·`ok`·`error`) | 시도 단위 — 산식 아래 (#83) |
 | 시도별 출력 토큰·종료 사유 | `model_call`의 `attempt_*` 둘 | 시도 순서 — 아래 (#550) |
+| 빈 `answer` 거절 호출 | `model_call`의 `error_detail` | 호출 단위 — run 경고 (#602) |
 | 실패 응답 원문 | `model_call`의 `response_refs`·`response_sha256` | 스키마 소진·게이트웨이
 거절로 끝난 호출의 스키마 실패 시도(JSON 배열 문자열, 시도 순서).
 **칸이 `null`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답이 아니고 파일도
@@ -38,21 +45,80 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 시도.**
 (회복된 실패를 세려면 키 유무가 아니라 `attempts>1`을 쓴다 - 스위치가 깨끗한 성공에도 키를
 붙인다.) **키 부재 = 깨끗한 성공(스위치 밖) · PromptLog 없음 · 원문을 못 실은 호출 —
-키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 모양이 계약과 달라
-`ModelGatewayError`가 된 시도의 원문은 안 남는다
-(`_post`의 「응답 모양이 계약과 다르다」 분기).** 쓰기 실패는 `response_record_error` (#603) |
-| 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)` |
+키 부재만으로 응답 없음을 단정하지 않는다: 200이었으나 `choices[0].message`조차 못 읽어
+`ModelGatewayError`가 된 시도는 원문이 없다. `message`를 읽을 수 있던 200(`usage`만 깨진 경우 등)은
+`ModelGatewayError`가 돼도 **원문이나 추론을 읽었으면** 그 시도를 마지막 칸으로 싣는다(`_post`의
+「응답 모양이 계약과 다르다」 분기). ⚠ 그 200의 `content`가 비문자열이고 추론 키도 없으면 **칸이
+아예 안 생긴다** — 같은 `content: null`이 스키마 실패 경로로 가면 `null` 칸이 생기므로 두 경로의
+칸 규칙이 다르고, 그 갈래에선 읽을 수 있었던 `finish_reason`도 `null`로 남는다.** 쓰기 실패는
+`response_record_error` (#603) |
+| 추론 채널 (#280) | `model_call`의 `reasoning_refs`·`reasoning_sha256`·`reasoning_field` | 위
+`response_refs`와 **같은 칸·같은 조건**(실패·버려진 시도는 항상, 성공 최종은
+`--keep-responses` 역할만). 파일은 `prompts/…_reasoning[_retryK].txt`. 칸이 `null`이면 그
+시도는 서버가 추론 키를 안 줬다(`message.reasoning`·`message.reasoning_content` 둘 다
+없거나 문자열이 아님) — **빈 문자열이 아니고 파일도 없다.** 칸이 있는데 파일이 0바이트면
+서버가 키는 줬고 비었다. `reasoning_field`는 칸마다 서버가 쓴 키 이름(`"reasoning"` 또는
+`"reasoning_content"`)이라 vast 서빙에서 어느 이름인지가 이 값에서 처음
+측정된다. **세 키는 어느 칸에도 추론이 없으면 통째로 안 실린다** — Fake·추론 파서 없는 서버 ·
+`--keep-responses` 밖의 깨끗한 성공은 같은 모양이다. 응답 원문이 `null`인 칸(`content: null`)에도
+추론은 있을 수 있다. 추론 파일 쓰기가 실패하면 **세 키 대신** `reasoning_record_error`가 실리고
+`response_refs`·`response_sha256`은 그대로 남는다 — 응답 쪽 쓰기 실패(`response_record_error`)와
+다른 키다. 그 실패가 칸 도중이면 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조 없는 고아로
+남는다. 내보내기 형식은 정하지 않았다(ADR 0012 결정 7 — 데이터셋 팀) |
+| 연속 스키마 실패 최장 | `model_call`의 `ok`·`error` | 연속 길이의 역할별 최댓값 — 아래 (#613) |
+| 재시도로 살아난 호출 | `model_call`의 `ok`·`attempts` | `attempts>1`인 성공 행 — 아래 (#618) |
+| PoV 연속 `inspect` 최장 | `pov_hop`의 `action` | Finding별 연속 길이의 최댓값 — 아래 (#619 (d)) |
+| 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
+⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
+`evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
+이 값을 한 열에 놓지 않는다.** |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
+| 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
+| 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
+
+⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
+`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
+`count(reason=invalid_axis) / count(rebut)`.
+⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
+`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는 서빙 v6에서
+규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** — ADR 0015가 예측한 실패 양상
+(2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가 이 지표라서 그 한계를 같이 적는다.
+⚠ **그 분모는 trace에 없다** — `rebut` 총수는
+`state.db`의 `decision` 표(`decision.verdict = rebut`)로 센다(ADR 0015 「첫 v7 run이 셀 것」 표).
+정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —
+그래서 이 사건은 F-5가 아니라 F-7로 이어진다.
 
 ⚠ **「제거율 — Gate」는 2026-10-08 전후가 같은 지표가 아니다 (이슈 #552).** 그전에는 6단계가
 모델의 인용 목록을 그대로 썼으므로 그 비율에 **인용 순응률**이 섞여 있었다. 지금은 6단계가
 타깃에서 관측한 Evidence를 직접 붙이므로(`gate_node.attach_observed`) E0는 「관측이 0건인
 타깃」을 센다. **그 날 앞뒤 run의 이 값을 한 열에 놓지 않는다.** 새 임계는 미실측이다.
+
+「모델 인용 수」(#554): `gate_node.attach_observed`가 `evidence_refs`에 하네스 관측 Evidence를
+덧붙여 같은 `(kind, obj_id)`로 저장하므로
+**부착 뒤 `state.db`로는 모델이 몇 건 인용했는지 셀 수 없다**
+(결함 본문이 `state.db`를 세어 낸 옛 「`evidence_refs` 0개」 수가 그 방법이었다). 대체가
+`gate_eval.cited_by_model`이다 - **6단계 행의 값만이 모델 자신의 인용 수**다(5단계가 옮긴 목록의
+길이, 부착 전에 읽는다). 세는 것은 **ID 개수**다 - 맨 `len()`이라
+**중복도 센다**(중복 제거 없음). FACTS 안 ID인지·지어낸 ID인지·`Evidence`로 풀리는지는
+**가리지 못한다**: 지어낸 ID도 1건으로 센다.
+`0`은 「쟀더니 0건」이다. 7·8단계 `gate_eval`에는 이 키가 **없다** - 그 시점의 목록에는 6단계
+부착분이 섞여 있어 「모델이」라는 이름이 거짓이 되기 때문이다. 같은 Finding의 모델 인용 수는
+`subject_id`로 6단계 행에서 읽는다. 이 키가 생기기 전 run에는 6단계 행에도 없다.
+**모집단은 6단계 행이 있는 Finding이다.** 서빙(`per_stage`)에서 5단계 도중 예산이 소진되면
+`BudgetExhausted`가 `_triage_by_stage`를 지나 올라가므로(안 잡는다) 5단계가 저장한 Finding에는
+6단계 행이 없다. 5·6단계 사이에서 run이 선 경우도 같다 - 그 Finding의 `state.db` 행은 **부착
+전 원본**이라 거기서는 셀 수 있다. 그 수를 이 열에 섞지 않는다(행이 없다 = 안 쟀다).
+⏵ 2026-10-14 - **셋째 경우: 6단계 행이 있어도 부착이 0건이면 그 행은 원본 그대로다.**
+`attach_observed`가 더할 ID가 없으면(`new_refs`가 빈다) `store.put`을 **안 한다** - 그래서
+「6단계 행이 있는 Finding은 못 센다」는 **관측 Evidence가 붙은** 경우까지만 참이다. 이 키는
+그 경우에도 실린다(부착 전에 읽으므로) - 못 세는 쪽이 `state.db`다.
+⚠ `auditor_hop.cited_probe_evidence`는 대체가 아니다 - `probe` Evidence만 센다.
 
 「발급값 이탈」의 부재가 말하는 것은 `RunContext.stamp_issued`가 덮는 키(ID·`run_id`·
 `artifact_id`·초기 `state`·`missing_evidence`)뿐이다. 하네스가 덮는 `produced_by`·
@@ -62,6 +128,21 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패는 `attempts−1`,
 소진(`SchemaParseError`)은 `attempts`, 게이트웨이 거절은 파싱 대상이 없어 뺀다(#83).
 
+「run 끝 집계 셋」(#613·#618·#619 (d)): `RunRecord`의 `schema_failure_max_run_by_role`·
+`schema_recovered_calls_by_role`·`pov_inspect_max_run_by_finding`과 report.md의 같은 줄이 위 세 행의
+출처다(함수는 이 모듈의 같은 이름). **분모만 세운다 — 하네스는 이 값으로 동작을 바꾸지 않고
+임계값(연속 실패 상한 등)은 이 집계를 본 실험팀이 정한다.** 첫째는 `error="SchemaParseError"`인
+실패 `model_call`이 같은 (역할, `subject_id`)에서 이어진 길이이고 성공이나 다른 사유의 실패가
+끊는다. 둘째는 소진되지 않고 재시도로 살아난 호출 수이며 그 응답 원문은 위 「실패 응답 원문」 행이
+싣는다. 셋째는 이슈 #619 선택지 (d) 「계측만 한다」의 것이다 - `action`을 실은 `pov_hop`만 열로
+보고 `gen`·`submit`이 연속을 끊는다. **`action`이 없는 홉**(모델 호출 자체가 실패한 홉)만 세지도
+끊지도 않고, 도구 호출이 예산에서 끊긴 홉(#394)은 응답이 있어 `action`을 실으므로 **센다**.
+**해당 종류의 행이 하나도 없으면 값은 `None`이다 — 안 쟀다이지 0이 아니다.** 집계 함수가 **던져서**
+`None`이 된 키는 `RunRecord.trace_aggregate_failures`(키 → 사유)에도 들고, report.md가 그 줄에
+「집계 실패: <사유>」를 적는다 - 값만 보면 「행이 없다」와 갈리지 않는다. 행이 있으면 그
+역할·Finding은 잰 `0`으로도 들고, 행동을 실은 홉이 없는 Finding(PoV 루프가 첫 홉 전에 던졌다 등)은
+dict에 **없다**.
+
 「시도별 출력 토큰·종료 사유」(#550): `model_call.output_tokens`는 **재시도를 합친 값**이다. 합이
 **이미** 주는 것이 있다 — 상한이 32,768일 때 두 시도의 합 65,536은 산술로 둘 다 정확히 32,768이고,
 합 27,888은 **`null` 칸이 없을 때** 두 시도가 다 상한 아래임을 보인다(`null` 칸은 합에 0을 더한
@@ -69,13 +150,24 @@ count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패
 32,768이 `length`인지 상한과 같은 값에서의 정상 종료인지뿐이다. 합이 **못** 주는 것은
 ① 상한과 그 2배 사이의 합에서 어느 시도가 닿았나(CLAUDE.md §2.2의 `a₁ + a₂ = 8,402` 사례)
 ② `abort` 같은 `length`·`stop` 밖의 사유 ③ 추론이 아니라 서버의 직접 확인이다. 그래서 같은
-이벤트에 두 키를 더 싣는다(성공·실패 행 모두, 키 집합이 같다).
+이벤트에 두 키를 더 싣는다(성공·실패 행 모두, 키 집합이 같다). 같은 배열 모양의 세 번째 키가
+공백 폭주(#79)용으로 하나 더 있다(아래 마지막 항목).
 
 - `attempt_output_tokens` — 시도별 출력 토큰. 예: `"[8192,12]"`
 - `attempt_finish_reasons` — 시도별 서버 종료 사유(`stop`·`length`·`abort` … 서버가 준 그대로).
   공백뿐인 값은 `null`이다. 원문이 512자를 넘는 값만 `error_detail`과 같은 자르기로 묶이는데, 그
   자르기는 공백 연속을 한 칸으로 접고 다시 재므로 **접은 결과가 512자 이하면 잘림 표시 없이 공백만
   달라진다**(표시가 붙는 것은 접은 뒤에도 넘칠 때뿐이다). 예: `"[\\"length\\",\\"stop\\"]"`
+- `attempt_tail_whitespace_only` — (위 둘과 사유가 다르다 - 합이 못 주는 것을 메우는 키가 아니다)
+  시도별 「응답 꼬리가 공백뿐인가」(#79). `finish_reason`이 `length`이고 응답 원문이 있는
+  시도만 판정한다 - 원문의 끝 `TAIL_WHITESPACE_CHARS`자가 전부 공백·탭·개행이면 `true`, 아니면
+  `false`(원문이 그 창보다 짧으면 못 채우므로 전부 공백이어도 `false`다 - 빈 응답 포함).
+  예: `"[null,true]"`. 창 크기는 값을 여기 베끼지 않는다 - 상수는 `orchestrator/context.py`다.
+  **`null`은 두 가지이고 같은 이벤트의 `attempt_finish_reasons`로 가른다** - 그 칸이 `length`가
+  아니면 안 본 것(해당 없음)이고, `length`인데 `null`이면 원문을 못 구해 못 본 것(미측정 -
+  게이트웨이 거절·`content: null`·원문 없는 구현체)이다. **창 크기는 정한 값이고 잰 값이 아니다.**
+  이 키에 `true`가 한 번이라도 나오면 #79(공백 폭주)의 재개 조건이고, run 경고 한 줄이 같이 난다
+  (`runner._whitespace_tail_warning`). 세 키가 모두 `null`이면 규칙 2와 같다.
 
 값은 JSON 배열 **문자열**이다(`json.loads`로 읽는다) — `TraceValue`가 스칼라라서이고, 쉼표 연결은
 미측정(`null`)을 빈 칸이나 지어낸 문자열로 써야 해서 안 쓴다. 읽는 규칙 셋:
@@ -125,6 +217,9 @@ count(error="ModelGatewayError")`, 분모 `Σ attempts`. 성공 호출의 실패
 `repro_spec_missing`(F-9)은 **잡는다** — 양쪽으로 틀리는 것을 stage 필터 하나가 겨우
 막고 있었다. 8단계 사유가 늘면 이 산식을 같이 고친다(#68).
 
+⏵ 2026-10-13 (이슈 #326) - 8단계에는 전이 없는 출구가 하나 더 있다: 재현을 시도하지 못한 건은
+`repro_not_measured`만 내고 규칙 번호도 `transition` 행도 없다 - 위 산식의 분자·분모에 안 든다.
+
 검색 호출을 `model_call`에 `role=embedding`으로 끼워 넣지 않는 이유도 같다 — "스키마
 파싱 실패율"의 분모가 `model_call`들의 시도 합(`Σ attempts`)인데 스키마가 없는 호출이
 섞이면 그 값이 조용히 희석된다. embedding·reranker는 `Role`도 아니다(ADR 0004).
@@ -153,7 +248,7 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import TextIO
@@ -192,7 +287,22 @@ class EventKind(StrEnum):
     # 도구 호출 하나. `input_bytes`·`input_sha256`(맨 hex)은 도구 요청에 **데이터로** 실은 입력이
     # 있을 때만 실린다(PoV의 PoC — `ToolArgs.input_bytes`). 요청에 실었다는 뜻이지 도구가 읽었다는
     # 뜻이 아니다. 원바이트는 안 간다. **키 부재 = 입력 없음.**
+    # ⏵ 2026-10-13 (#573) `harness_note`(하네스가 만든 관측 머리줄 — 지금은 `poc` `exit=1` 모호성)도
+    # `Evidence.harness_note`가 있을 때만 실린다. **키 부재 = 노트 없음.**
+    # ⏵ 2026-10-13(#232) — `crashed`·`crash_banner`는 도구가 **크래시 관측을 쟀을 때만** 실린다
+    # (`Evidence.crashed`가 `None`이 아닐 때 — 컨테이너 러너의 asan·gdb·poc 중 대상이 뜬 호출).
+    # `crashed`는 `true`(로그에 sanitizer 배너나 gdb 신호 정지가 있었다) 또는 `false`(로그를 읽었고
+    # 없었다)이고 `crash_banner`는 배너 줄을 Evidence에 남겼는가(bool)다. **키 부재 = 안 쟀다** —
+    # Fake 러너·정적 도구·대상이 안 뜬(`ok=false`) 호출이 그렇고, `false`와 다르다.
+    # ⚠ **기록뿐이다 — 게이트(`p4`)·정책·최종 지정은 읽지 않는다.** 철자 목록
+    # (`container_tools._CRASH_BANNER`)이 sanitizer 문서에서 왔고 실제 로그 대조가 재생 14건뿐이라
+    # 미검증이다.
+    # 세는 법: `trace.jsonl`의 `tool_call` 중 `tool`이 `asan`·`gdb`·`poc`인 줄을 `crashed` 값
+    # (`true`·`false`·부재)으로 센다 — 별도 리포트 절은 없다.
     TOOL_CALL = "tool_call"
+    # Evidence Gate 판정 하나(Finding·단계당 1행). 키: `grade` · 술어들(`p0`~`p4` 등) ·
+    # `cited_by_model`(**6단계 행에만**, 부착 전 모델 인용 ID 수 - 이슈 #554). 키 부재 = 안 쟀다.
+    # 7·8단계 행에 없는 이유와 읽는 법은 모듈 docstring의 「모델 인용 수」 단락.
     GATE_EVAL = "gate_eval"
     GATE_AMBIGUOUS = "gate_ambiguous"
     CACHE = "cache"
@@ -278,6 +388,10 @@ class EventKind(StrEnum):
     # 이라 `target_skipped`가 0건이었고, `Candidate.location`은 **모델이 쓴 값**이라
     # `symbol`이 전부 `null`이었다. **인덱서는 이름을 알고 있다**(`index_graph.py`의
     # `Location(file, symbol, line_start, line_end)`) — 끊긴 자리가 여기다.
+    # ⏵ 2026-10-14 (#633) — 「`Candidate.location`은 모델이 쓴 값」은 그 run의 서술이다. 지금은
+    # 모델이 `symbol`을 안 쓰면(`None`) Scout가 **후보 줄을 품는 함수**를 찍고
+    # `scout_symbol_stamped`를 남긴다 — 모델이 쓴 `""`·틀린 이름은 그대로 두고, 인덱스가
+    # 그 줄을 품는 함수를 모르면 안 찍는다.
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
@@ -418,10 +532,52 @@ class EventKind(StrEnum):
     # 경로는 `Path.home()`을 지난다. 대신 `{role}_source`(리비전이 박힌 `models.yaml` 값)를
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
+    # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
     CRITIC_VERDICT_UNMAPPED = "critic_verdict_unmapped"
+    # Critic 요청에 **Auditor 도구 루프의 홉 관측**을 실었다는 기록과 그 크기의 계산값 (#600 H2ⓐ).
+    # 내는 곳은 `nodes/critic._record_hop_observations`이고 홉 관측이 1개 이상인 Critic 호출마다
+    # 1건, 모델 호출 **앞**에서다. **이벤트 부재 = 관측을 안 실었다**(홉 0 · content-aware가 아닌
+    # 판). `subject_id`는 Finding이다. 싣는 값: `hops`(Critic 사본 수 - 돈 홉 수가 아니다,
+    # 가림에 실패한 홉은 빠진다) ·
+    # `added_chars`(EVIDENCE에 더한 절의 글자, 구분 줄바꿈 포함 · FACTS의 `auditor_hops` 한 줄은
+    # 안 셌다) · `prompt_chars`(prefix+body) · `est_input_tokens`(= `prompt_chars` ÷ 글자/토큰
+    # 최악 비 1.22, 올림) · `input_share_tokens`(= 그 좌석 모델 `context_limit` − 역할
+    # `output_max`) · `over_input_share`(추정이 몫을 넘음) · `over_without_observations`(관측 절을
+    # 뺀 프롬프트도 넘음 — 참이면 원인이 관측이 아니다) · `window_checked`(Fake 좌석은 창이 없어
+    # false이고 그때는 추정·몫·판정 키가 **없다**). ⚠ **전부 계산값이다**(서버가 센
+    # `input_tokens`가 아니다 — 그 값은 같은 호출의 `model_call`에 있다). 그 비 1.22는 Auditor
+    # 좌석의 최악이다. Critic 좌석의 비는 홉 관측 **없는** 요청에서 3.10~4.04로 쟀고
+    # (run `run_20261011_0001`의 Critic 호출 여섯 — `nodes/critic._WORST_CHARS_PER_TOKEN` 주석),
+    # **홉 관측을 실은 요청에서는 미실측**이다. `over_input_share=true`는 「최악 비에서 넘을 수
+    # 있다」이다. **하네스는 자르지 않는다** — 넘어도 절은 그대로 나가고 서버가 크기로 거절하면
+    # `critic_failed`가 남는다. `over_input_share`가 참인 건수는 run 경고(`warnings`)로도 오른다.
+    # ⏵ 2026-10-13 - **크기 거절 폴백.** 관측을 실은 요청이 서버에서 400(컨텍스트 초과)·413으로
+    # 거절되면 `critic.run`이 절을 통째로 빼고 한 번 다시 묻고(홉 0과 같은 요청), 그때 같은
+    # 종류의 이벤트를 하나 더 낸다: `hops`(뺀 관측 수) · `observations_dropped: true` ·
+    # `rejected_status`(거절 상태 코드). 이 이벤트에는 추정·몫 키가 없다. 부재 = 폴백이 안 났다.
+    # 거절은 서버가 잰 사실이다(위 계산값과 다르다). run 경고가 그 건수를 센다.
+    CRITIC_HOP_OBSERVATIONS = "critic_hop_observations"
+    # Critic이 **게이트 입력에 없는** Evidence ID를 `Decision.evidence_refs`로 인용한 사건.
+    # 내는 곳은 `nodes/critic._record_unknown_refs`이고 그런 인용이 1건 이상인 호출마다 1건,
+    # 판정을 **바꾸지 않고** 기록만 한다(거르는 것은 설계 판단이라 안 한다). 부재 = 인용이
+    # 전부 게이트 입력 안이었다(또는 인용이 없었다).
+    # ⚠ **`gate.evidences_for`는 이 인용을 안 본다** — 그 함수는 **Finding**의 `evidence_refs`만
+    # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
+    # `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
+    # ID 갈래만으로도 참이라 이 경로는 그대로다.
+    # 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
+    # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
+    # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).
+    # 싣는 값: `decision_id` · `cited`(인용 수) · `unknown`(그중 게이트 입력에 없는 수) ·
+    # `all_unknown`(인용이 전부 그런 것) · `verdict`(`Decision.verdict` — 자유 문자열을 표준값으로
+    # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
+    # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
+    # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
     # 홉 하나의 Scout 되묻기 기록 (ADR 0012 결정 2 — need_evidence 루프). 내는 곳은
@@ -433,7 +589,8 @@ class EventKind(StrEnum):
     # 못 찾음) (#315).
     SCOUT_HOP = "scout_hop"
     # 홉 하나의 Auditor(5단계) 도구 홉 루프 기록 (이슈 #419 — 모델-주도 루프). 내는 곳은
-    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나. `hop`이 조인
+    # `nodes/auditor.py`의 홉 루프다 — **모델 호출이 성공한 홉마다**(0 포함) 하나(⏵ 2026-10-13
+    # 크기 거절당한 홉도 하나 - 아래 `context_overflow`, #514). `hop`이 조인
     # 키다(`model_call`의 (subject_id, role, hop) 사슬 — `context.py`). ⚠ **`subject_id`는
     # 후보(candidate)다** — `probe`/`lookup` 홉에는 Finding이 아직 없다(Finding은 `answer`
     # 홉에서만 나온다).
@@ -466,10 +623,20 @@ class EventKind(StrEnum):
     #   등급을 못 올린다(`gate.evidences_for`가 모르는 참조를 조용히 버린다). 0이 아니면 「모델이
     #   게이트에 안 닿는 근거를 인용했다」는 사실이다. ⏵ 2026-10-08 — 6단계가 타깃 관측분을 직접
     #   붙이므로(이슈 #552) 이 값은 **등급과 무관한 순수 인용 지표**다.
-    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`).
+    # - 종단 홉의 `stop_reason`(`AuditorStopReason` — `answered`·`repeat_request`·`max_hop`·
+    #   `context_overflow`). ⏵ 2026-10-13(#514) 마지막은 **모델 호출 자체가 크기 거절당한** 홉이라
+    #   응답이 없다: `action`·`input_tokens`·`output_tokens`가 없고 `error`·`error_detail`이 든다.
+    #   예외는 그대로 올라가 러너가 그 후보만 버린다(`target_skipped`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
+    # - ⏵ 2026-10-13 (#600 H2ⓐ) `observation_sanitize_failed` — `lookup` 홉의 Critic용 사본을 못
+    #   만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과
+    #   어긋났다). 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고
+    #   run은 안 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가
+    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다. run 경고
+    #   (`runner._critic_hop_observations_warning`)가 이 키가 든 홉 수를 센다.
     # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
-    # **성공한 뒤** 나가므로, 켠 run도 첫 호출이 실패하면(파싱 실패·크기 거절·예산 소진) 0건이다.
+    # **성공한 뒤** 나가므로(크기 거절만 예외다 - 위 `context_overflow`), 켠 run도 첫 호출이
+    # 실패하면(파싱 실패·예산 소진) 0건이다.
     # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
     # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
     # ⏵ 2026-10-06 — 루프 봉투가 둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이
@@ -477,6 +644,15 @@ class EventKind(StrEnum):
     # v8·v9의 이름이다.
     # ⏵ 2026-10-09 — v11은 셋째 봉투 `AuditorProcedureNullableCweAction`이다(이슈 #525).
     # ⏵ 2026-10-10 — v12는 넷째 봉투 `AuditorProcedureAuditAlwaysAction`이다(이슈 #578).
+    # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` — 쉼표로 이은 문자열)를
+    # 싣는다: 2단계 `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(`nodes/signals.compile_note`). **키 부재 = 노트 없음**(실패한 컴파일 Evidence가
+    # 없었거나 한 방 판). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `probe` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노트가 도구를
+    # 거절하지 않아 모델이 골라도 도구는 돈다.
+    # ⏵ 2026-10-13 — v15는 다섯째 봉투 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 —
+    # `spec` 설명만 다르다).
     AUDITOR_HOP = "auditor_hop"
     # 홉 하나의 PoV 툴 루프 기록 (Option C — 모델-주도 루프). 내는 곳은
     # `runner._run_pov_hops`다 — 홉마다(0 포함) 하나. `hop`이 조인 키다(`model_call`의
@@ -502,6 +678,17 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 (#619) — **이미 돌린 도구를 다시 요청한 `inspect` 홉은 도구를 안 돌린다**:
     # `tool`과 `inspect_repeat_of_hop`(그 결과를 낸 홉)만 싣고 `tool_ok`·`exit_code`·
     # `evidence_kind`는 없다(이 홉에서 잰 값이 아니다). `tool_call` 이벤트도 없다.
+    # ⏵ 2026-10-13 (#572) — **돌릴 PoC가 없는 `inspect poc` 홉**(첫 `gen` 전 - 0바이트 gen 뒤는
+    # #619 반복이다)도 도구를 안 돌린다: `tool`(요청한 도구 - 반복 홉과 같은 뜻)과
+    # `inspect_without_poc: true`만 싣고 `tool_ok`·`exit_code`·`evidence_kind`는 없다.
+    # `tool_call` 이벤트도 없고 홉은 소비된다.
+    # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
+    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"`)를 싣는다: 2단계
+    # `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 호출이었다(코드를 읽는 판 v3 이상만 — `fuzz_*`와 같은 경계). **키 부재 = 노트 없음.** hop0
+    # 파싱 실패 뒤 다시 여는 호출(`hop` 1)의 본문에도 같은 노트가 실리지만 키는 실패한 hop 0
+    # 이벤트에만 있다(`fuzz_*`와 같다). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `inspect` 홉 `tool`이
+    # `compile_note_tools`에 드는 비율이다.
     POV_HOP = "pov_hop"
     # PoV 루프가 **모델이 submit해** 최종 PoC를 낸 기록. 내는 곳은 `runner._pov_finish`이고
     # (`_run_pov`→`_run_pov_hops`), 프로필이 pov 좌석을 선언한 run에서 **PoV 대상** Finding당 최대
@@ -610,6 +797,17 @@ class EventKind(StrEnum):
     # 관측은 여기에만 남는다. `subject_id`는 발급값이다(같은 출력의 `model_call`·`transition`과
     # 같은 키).
     ISSUED_OVERRIDE = "issued_override"
+    # Scout 후보의 `location.symbol`을 하네스가 **그 줄을 품는 함수** 이름으로 채웠다 (이슈 #633).
+    # 내는 곳은 `nodes/scout._stamp_target_symbol`이고 **채운 홉마다 1행**이다 —
+    # `subject_id`는 후보, `hop`은 그 홉 번호(되묻기 홉도 모델이 다시 `null`을 쓰면 다시 채운다),
+    # `symbol`은 채운 값이다. ⏵ 2026-10-13 — 그 값은 `FACTS.target.symbol`이 아니라 인덱스가 아는
+    # 품는 함수다(`ctx.symbols_for`). 둘이 갈리는 자리가 슬라이스 타깃이다 — entry 한 줄짜리 대상에
+    # 여러 함수에 걸친 `SOURCE`가 가므로 후보가 대상 밖 함수에 앉을 수 있다.
+    # **이벤트 부재 = 채우지 않았다** — 모델이 `symbol`을 썼거나, 후보가 대상 파일 밖이거나, 대상이
+    # `symbol`을 안 들었거나, 인덱스가 후보 줄을 품는 함수를 모른다(`dev_fake`처럼 인덱스가 없는
+    # run이 그렇다). `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
+    # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
+    SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #
@@ -638,6 +836,15 @@ class EventKind(StrEnum):
     # 이 이벤트가 생기기 전에는 리포트의 `중복 제거: N건`이 전부였다 — 실측 `run_20260827_0004`에서
     # E2·`upheld`였던 `find_0005`가 사라졌는데 무엇과 합쳐졌는지를 run 산출물로 답할 수 없었다.
     FINDING_DEDUPED = "finding_deduped"
+    # 8단계가 **재현을 시도하지 못한** `validated` Finding 하나 (이슈 #326). 내는 곳은
+    # `nodes/validate.run`이고 **상태를 안 바꾼다** - 전이도 `policy_decision`도 없으므로
+    # 「제거율 — Tool」의 분자(`repro_failed`)에도 분모에도 안 든다.
+    # `reason`: `poc_runs_in_the_pov_loop`(신호가 `poc`를 가리키는데 이 노드는 `poc`를
+    # 안 돌린다) · `tool_produced_no_measurement`(`build`·`asan`이 `ok=False` - 컴파일·링크가
+    # 안 됐거나, 대상이 안 떴거나, 떴다가 시간 초과로 끊겼다(`124`). 원인 Evidence의
+    # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
+    # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
+    REPRO_NOT_MEASURED = "repro_not_measured"
 
 
 class TraceEvent(HarnessModel):
@@ -659,6 +866,85 @@ def canonical_line(event: TraceEvent) -> str:
     """재현성 비교용 표현. `VOLATILE_FIELDS`를 뺀 JSON 한 줄."""
     payload = event.model_dump(mode="json", exclude=set(VOLATILE_FIELDS))
     return json.dumps(payload, ensure_ascii=False, sort_keys=False)
+
+
+def schema_failure_max_run_by_role(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """역할별 **연속 스키마 파싱 실패의 최장 길이** — 분모 전용 계측이다(#613).
+
+    한 줄은 `model_call` 호출 하나다(그 안의 재시도 `attempts`가 아니다). 길이를 세는 줄은
+    `ok=False`이고 `error="SchemaParseError"`인 행이고, **같은 (역할, `subject_id`)의 앞뒤 행**이
+    이어져야 연속이다 — 성공 행이나 다른 사유의 실패(`ModelGatewayError` 등)는 연속을 끊는다.
+    다른 Finding·후보의 실패를 이어 붙이지 않는다. 반환은 역할 → 최장 길이이고 `model_call`을 한
+    역할은 실패가 없었어도 `0`으로 든다(잰 0). **`model_call` 행이 하나도 없으면 `None`이다**(안 잰
+    것이지 0이 아니다 — CLAUDE.md §0). 임계값이 아니다: 연속 실패 상한의 값은 실험팀 몫이다(#613).
+    """
+    rows = [e for e in events if e.kind is EventKind.MODEL_CALL]
+    if not rows:
+        return None
+    longest: dict[str, int] = {}
+    current: dict[tuple[str, str | None], int] = {}
+    for e in rows:
+        role = str(e.data.get("role"))
+        key = (role, e.subject_id)
+        longest.setdefault(role, 0)
+        if e.data.get("ok") is False and e.data.get("error") == "SchemaParseError":
+            current[key] = current.get(key, 0) + 1
+            longest[role] = max(longest[role], current[key])
+        else:
+            current[key] = 0
+    return dict(sorted(longest.items()))
+
+
+def schema_recovered_calls_by_role(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """역할별 **스키마 재시도로 살아난 호출 수** — `ok=True`·`attempts > 1`인 `model_call`(#618).
+
+    분모 전용이다. 소진·게이트웨이로 끝난 실패 행은 세지 않는다(그쪽은 `error`가 말한다).
+    `attempts`는 어댑터의 시도 수이고 이 저장소의 모델 호출에는 전송 재시도가 없어(2026-10-11
+    보고서 §1) 1보다 크면 스키마 재시도다. 반환은 역할 → 수이고 `model_call`을 한 역할은 `0`으로도
+    든다. **`model_call` 행이 하나도 없으면 `None`이다**(안 잰 것).
+    """
+    rows = [e for e in events if e.kind is EventKind.MODEL_CALL]
+    if not rows:
+        return None
+    counts: dict[str, int] = {}
+    for e in rows:
+        role = str(e.data.get("role"))
+        counts.setdefault(role, 0)
+        attempts = e.data.get("attempts")
+        if e.data.get("ok") is True and isinstance(attempts, int) and attempts > 1:
+            counts[role] += 1
+    return dict(sorted(counts.items()))
+
+
+def pov_inspect_max_run_by_finding(events: Sequence[TraceEvent]) -> dict[str, int] | None:
+    """Finding별 **연속 `inspect` 홉의 최장 길이** — 분모 전용 계측이다(#619 선택지 (d)).
+
+    `pov_hop` 중 `action`을 실은 행만 홉 열이다 — 호출 자체가 실패한 홉(`action` 없음)은 모델이
+    행동을 고르지 않았으므로 세지도 끊지도 않는다. 도구 호출이 예산에서 끊긴 홉(#394)은 응답이
+    있어 `action`을 싣고 `error`도 실리므로 **센다**. `gen`·`submit`이 연속을 끊는다. 이미 돌린
+    도구를 다시 요청해 안 돌린 홉(`inspect_repeat_of_hop`, #619)도 모델이 `inspect`를 고른 홉이라
+    센다. ⏵ 2026-10-14 — **도구를 안 돌린 홉은 그것 하나가 아니다**: 돌릴 PoC가 없어 러너가
+    도구 전에 거절한 홉(`inspect_without_poc`, #572 · PR #639)도 `action="inspect"`를 실으므로
+    같은 몫으로 센다(`runner._run_pov_hops`). 둘 다 「모델이 `inspect`를 골랐다」가 기준이고
+    도구가 실제로 돌았는지는 이 집계가 안 본다.
+    반환은 `subject_id`(Finding) → 최장 길이이고 행동이 있던 Finding은 `inspect`가 없었어도
+    `0`으로 든다. **행동을 실은 `pov_hop`이 하나도 없으면 `None`이다**(PoV를 안 돌렸거나 안 쟀다).
+    행동을 실은 홉이 없는 Finding(루프가 첫 홉 전에 던졌다 등)은 dict에 **없다**.
+    """
+    rows = [e for e in events if e.kind is EventKind.POV_HOP and "action" in e.data]
+    if not rows:
+        return None
+    longest: dict[str, int] = {}
+    current: dict[str, int] = {}
+    for e in rows:
+        finding = str(e.subject_id)
+        longest.setdefault(finding, 0)
+        if e.data["action"] == "inspect":
+            current[finding] = current.get(finding, 0) + 1
+            longest[finding] = max(longest[finding], current[finding])
+        else:
+            current[finding] = 0
+    return dict(sorted(longest.items()))
 
 
 class TraceWriter:

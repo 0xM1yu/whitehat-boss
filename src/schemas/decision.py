@@ -8,41 +8,80 @@ from src.schemas.common import (
     NonEmptyStr,
     ProducedBy,
 )
-from src.schemas.enums import Verdict
+from src.schemas.enums import RebuttalAxis, Verdict
+
+# `Decision.ungrounded_reason`의 값 - `critic_normalized` trace의 `reason`이 그대로 쓴다(ADR 0015).
+EMPTY_AXIS = "empty_axis"
+INVALID_AXIS = "invalid_axis"
 
 
 class Decision(HarnessModel):
     """Critic의 반박 판정.
 
-    **근거 없는 반박을 스키마에서 막지 않는다.** agent-contracts.md §2.3은 "근거 없는
-    반박은 `uphold`로 처리하되 **지표에 기록한다**"고 정한다. Critic의 구조화 출력은
+    **근거 없는 반박을 스키마에서 막지 않는다.** agent-contracts.md §2.3은 근거 없는 반박을
+    **`need_evidence`로 처리하되 사유와 함께 지표에 기록한다**고 정한다(ADR 0015 - 그 문서의 옛
+    규칙은 취소선이 됐다). Critic의 구조화 출력은
     이 객체로 직접 파싱되므로, 여기서 ValidationError를 던지면 "근거 없는 반박"이
     "스키마 파싱 실패"로 뭉개져 지표를 잃는다. 두 실패는 모델 비교에서 다른 의미다.
 
-    따라서 Decision은 Critic이 말한 것을 그대로 담고, 정규화(`rebut` → `uphold`)와
+    따라서 Decision은 Critic이 말한 것을 그대로 담고, 정규화(`rebut` → `need_evidence`)와
     지표 기록은 오케스트레이터가 `is_grounded`를 보고 수행한다(PR 2).
     이 분담은 확정이 아니다 — docs/agent-contracts.md §3 제안 항목 참조.
+
+    ⏵ 2026-10-13 (ADR 0015) — 정규화 목적지가 `uphold`에서 **`need_evidence`**로 바뀌었다. 근거
+    없는 반박이 `uphold`로 읽히면 게이트 `p3`이 서서 Finding이 `validated`까지 올라간다 —
+    「Critic이 반박을 못 해서 승격」이다. 근거의 정의도 넓어졌다(`is_grounded`).
     """
 
     decision_id: Identifier
     run_id: Identifier
     finding_id: Identifier
     verdict: Verdict
-    # 반박 축. agent-contracts.md §2.3 체크리스트: guard / reachability / aliasing /
-    # lifetime / 컴파일 타임 조건·플래그 / 입력 도달성. 열거형 승격은 문서 제안 항목.
+    # 반박 축. 어휘는 `RebuttalAxis` 열 값이다(agent-contracts.md §2.3). ⏵ 2026-10-13 (ADR 0015) —
+    # 열거형 승격은 **했다**, 다만 필드 타입은 자유 문자열 그대로다: 스키마에서 `enum`으로 강제하면
+    # grammar 마스크가 모델의 맞는 답을 덮는다(아래 `DecisionDraft` 주석 — gpt-oss-20b 실측
+    # 2026-09-12: 강제 2/5, 제거 5/5). 어휘 검사는 파싱 뒤 `is_grounded`가 한다.
     rebuttal_axis: list[NonEmptyStr] = Field(default_factory=list)
     rationale: NonEmptyStr
     evidence_refs: list[Identifier] = Field(default_factory=list)
     produced_by: ProducedBy
 
     @property
+    def invalid_axes(self) -> list[str]:
+        """`RebuttalAxis`로 못 읽은 반박 축 원문. 순서·중복을 그대로 둔다."""
+        return [axis for axis in self.rebuttal_axis if RebuttalAxis.from_text(axis) is None]
+
+    @property
+    def ungrounded_reason(self) -> str | None:
+        """반박이 근거를 못 갖춘 사유 - 갖췄으면 `None` (agent-contracts.md §2.3 · ADR 0015).
+
+        근거는 둘 중 하나다. ① `evidence_refs`가 비어 있지 않다 - v6이 서빙 중이고 그 `rebut`은
+        등록된 ID를 인용한다. ② `rebuttal_axis`가 비어 있지 않고 **전부** `RebuttalAxis`다 - v7은
+        `rebut`에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
+        ⚠ **②는 v7 전용이 아니다** — 이 술어에 판 구분이 없어 v6 `rebut`도 ID 없이 유효 축만
+        들면 ①을 안 거쳐 ②로 근거가 된다(ADR 0015의 v6 뒤집힘 표). 위 v6/v7 꼬리표는
+        「그 규약을 요구하는 프롬프트」를 가리키지 술어의 적용 범위가 아니다.
+        ⚠ ②는 **모델의 자기 신고**다. 인용한 코드가 SOURCE에 실재하는지는 보지 않는다(ADR 0015 P0b,
+        보류). 어휘 안인 축이 근거의 자격이지 근거의 참이 아니다.
+        """
+        if self.evidence_refs:
+            return None
+        if not self.rebuttal_axis:
+            return EMPTY_AXIS
+        if self.invalid_axes:
+            return INVALID_AXIS
+        return None
+
+    @property
     def is_grounded(self) -> bool:
         """반박이 근거를 동반하는가 (agent-contracts.md §2.3).
 
-        `False`인 `rebut`은 오케스트레이터가 `uphold`로 정규화하고 그 사건을 지표에
-        남긴다. 여기서 판정만 제공하고 처리는 하지 않는다.
+        `bool(evidence_refs) or (rebuttal_axis가 비어 있지 않고 전부 RebuttalAxis)`. `False`인
+        `rebut`은 오케스트레이터가 **`need_evidence`**로 정규화하고 그 사건을 사유와 함께 지표에
+        남긴다 (⏵ 2026-10-13, ADR 0015 - 전엔 `uphold`로 정규화했다). 여기서 판정만 제공하고
+        처리는 하지 않는다.
         """
-        return bool(self.evidence_refs)
+        return self.ungrounded_reason is None
 
 
 class DecisionDraft(HarnessModel):

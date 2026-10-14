@@ -1,6 +1,7 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(v5는 `PovActionNamed`) — gen/inspect/submit 하나를 낸다. `gen`은
+매 홉 모델이 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`) — gen/inspect/submit 하나를
+낸다. `gen`은
 `PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
 대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
 `validate.run`과 나란히 `_run_pov_hops`로 이 노드의 홉 헬퍼를 부른다(추가형).
@@ -28,7 +29,7 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5는
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6은
 # `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
 # (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
@@ -37,7 +38,7 @@ OUTPUT_SCHEMA = PovAction
 # `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
-# 값(`PovAction`)으로 남는다.
+# 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6(서빙 판)도 `PovActionNamed`를 선언한다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
@@ -54,8 +55,9 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
-# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가 `config/models.yaml`의 실 PoV 좌석이라 이
-# 넓은 입력을 받는다. v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
+# 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가, 2026-10-09부터 v5가,
+# 2026-10-13부터 v6이 `config/models.yaml`의 실 PoV 좌석이라 이 넓은 입력을 받는다.
+# v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
 # 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
 # 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
 # 관측이 함께 켜졌지만 둘은 서로 다른 입력 변경이다(#354/#386①).
@@ -67,7 +69,7 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
 
 # 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
 # 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다
@@ -83,6 +85,7 @@ def _render_prompt(
     source: Callable[[], str] | None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     retry_note: str | None = None,
+    compile_note: str | None = None,
 ) -> Prompt:
     """hop0 프롬프트를 렌더한다 — 사실 블록(FACTS)이 여기 실린다.
 
@@ -117,12 +120,17 @@ def _render_prompt(
         target=describe_target(capsule.target),
         source=text,
     )
-    if retry_note is None:
+    # 본문 **끝**에 붙는 것은 둘이고 둘 다 `None`이면 바이트 그대로다. ① `compile_note` — 2단계가
+    # 잰 컴파일 실패를 알리는 하네스 노트(이슈 #507 · `signals.compile_note`). 하네스 사실이라
+    # FACTS 뒤에 따로 둔다(프롬프트 body는 불변이다). ② `retry_note` — hop0 파싱 실패 뒤 다시 물을
+    # 때만의 오류 노트. 받은 그대로 쓴다(`source`와 같다) — **어느 판에 싣는가는 러너가
+    # 정한다**(`_WIDE_INPUT_VERSIONS`).
+    tails = [note for note in (compile_note, retry_note) if note is not None]
+    if not tails:
         return prompt
-    # hop0 파싱 실패 뒤 다시 물을 때만 — 본문 끝에 오류 노트를 붙인다(`None`이면 바이트 그대로).
     return Prompt(
         prefix=prompt.prefix,
-        body=f"{prompt.body}\n\n{retry_note}",
+        body="\n\n".join([prompt.body, *tails]),
         prompt_version=prompt.prompt_version,
     )
 
@@ -152,6 +160,7 @@ def open_hop(
     source: Callable[[], str] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     retry_note: str | None = None,
+    compile_note: str | None = None,
     hop: int = 0,
 ) -> PovHop:
     """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다.
@@ -171,6 +180,12 @@ def open_hop(
     ⏵ 2026-10-11 (#550) — `retry_note`·`hop`은 **hop0 호출이 스키마 파싱에 실패해 다시 열 때만**
     준다. 실패한 호출도 홉 하나를 쓴 것이라(`runner._run_pov_hops`) 다시 여는 호출은 `hop`번 홉이고,
     노트는 본문 끝에 붙는다. 둘 다 기본값이면 첫 호출과 바이트가 같다.
+
+    ⏵ **2026-10-13 (이슈 #507) — `compile_note`는 2단계가 이미 잰 컴파일 실패를 hop0 본문 끝에
+    싣는다** (`signals.compile_note` — 없으면 `None`이고 바이트가 종전과 같다). 러너가
+    `_WIDE_INPUT_VERSIONS` 판에만 준다(v2는 이 PR 전과 바이트가 같아야 한다). 도구를 거절하지
+    않는다 — 모델이 그 뒤에도 `inspect build`를 고르면 종전처럼 돈다. hop0 파싱 실패 뒤 다시 열
+    때도 같은 노트가 실린다.
     """
     prompt = _render_prompt(
         ctx,
@@ -179,6 +194,7 @@ def open_hop(
         source=source,
         fuzz_entrypoint=fuzz_entrypoint,
         retry_note=retry_note,
+        compile_note=compile_note,
     )
     return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=hop)
 
@@ -239,7 +255,8 @@ def run_tool(
     (`[tool, INPUT_PLACEHOLDER]`). 어댑터가 자기 namespace의 파일로 쓴다(컨테이너는 로그 머리의
     자리표만 그 경로로 바꾼다) — 이 노드는 컨테이너 안 경로를 모른다. `gen` 홉은 그 홉이 조립한
     PoC를, `inspect` 홉은 **직전 gen의** PoC를 싣고 아직 gen이 없으면 `None`이다(argv가 `[tool]`
-    하나). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
+    하나). ⏵ 2026-10-13 (#572) — 이는 비-`poc` 도구에 한한다: 러너가 `poc`는 그 전에 거절한다(PoC가
+    없으면 도구를 안 돌린다). 출처는 모델 spec에서 `assemble_poc`이 조립한 바이트뿐이다.
 
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너의 `poc`는 그 바이트를 먹인다.** 과제 `-vul` 이미지의
     `/tmp/poc`로 바인드하므로 **그 도구의 관측은 PoC의 함수다**. ⚠ **나머지는 아니다** — fake는
@@ -249,6 +266,11 @@ def run_tool(
     빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은 러너가
     관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
     안 간다 — `call_tool`이 크기와 digest만 싣는다.
+    ⏵ **2026-10-13 (#507) — 대신 모델에게 알린다, 거절하지 않는다**: 2단계 `build`·`clang-tidy`가
+    컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)과, `build`가 실패했을 때만
+    「`build`·`asan`·`gdb`는 같은 컴파일 명령이라 같은 오류가 예상된다」를 하네스 노트로
+    싣는다(`open_hop(compile_note=)`). 이 함수는 그 뒤에도 요청받은 도구를 종전 그대로(argv 불변)
+    돌린다 — 실패 관측이 `compile_failure_reason`을 머리줄에 단다.
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서

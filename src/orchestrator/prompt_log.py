@@ -39,7 +39,8 @@ canonical 표현에 들어 있으므로 trace의 run 의존성 자체는 기존 
   파일도 없다 — 호출자가 그 칸을 `write_response`로 부르지 않는다. ⏵ 2026-10-12 — 재시도가
   성공한 호출의 버려진 앞 시도 원문도 같은 이름으로 남고(#618), `RunContext.keep_responses`
   (`run --keep-responses`)에 든 역할은 성공한 최종 응답도 마지막 칸으로 남긴다(#612). 둘 다
-  아니면 성공 응답은 여전히 안 남는다).
+  아니면 성공 응답은 여전히 안 남는다. 같은 조건에서 시도의 추론 채널은 짝 파일
+  `…_reasoning[_retryK].txt`로 남는다 — `write_reasoning`, #280).
   `Candidate`·`Finding`·`Decision`이 이미 StateStore에 통째로 들어가고 usage·`gpu_ms`는
   `model_call`에 있다. 성공 응답은 사본을 만들면 정본을 물어야 해서 기본은 안 남긴다 —
   실패한 응답에는 정본(파싱된 값)이 없어 그 이유가 적용되지 않는다.
@@ -210,9 +211,30 @@ class PromptLog:
         **누출 스캔에 넣지 않는다.** `eval/leakage`의 `RUN_GLOBS`(`*/prompts/*.md`)가 `.txt`를 안
         부르고, 이것은 모델 입력이 아니라 모델 출력이라 그 스캐너가 지키는 것의 매개가 아니다.
         """
+        return self._write_output(
+            kind="response", role=role, index=index, hop=hop, text=text
+        )
+
+    def write_reasoning(
+        self, *, role: str, stage: int, index: int, hop: int = 0, text: str
+    ) -> tuple[str, str]:
+        """시도(`index`)의 **추론 채널** 텍스트를 `…_reasoning[_retryK].txt`로 남긴다 (#280).
+
+        `write_response`와 같은 이름 규칙·같은 바이트 그대로다 — 짝 파일이라 `_response`만
+        `_reasoning`으로 바뀐다. **빈 문자열도 쓴다**(0바이트 파일 = 서버가 키는 줬고 비었다):
+        파일 없음이 「추론 키가 없었다」이고, 둘을 한 모양으로 합치지 않는다. 호출자는 추론이
+        없는 칸(`None`)을 부르지 않는다.
+        """
+        return self._write_output(
+            kind="reasoning", role=role, index=index, hop=hop, text=text
+        )
+
+    def _write_output(
+        self, *, kind: str, role: str, index: int, hop: int, text: str
+    ) -> tuple[str, str]:
         suffix = f"_hop{hop}" if hop else ""
         retry = f"_retry{index}" if index else ""
-        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_response{retry}.txt"
+        name = f"{self._seq:0{SEQ_WIDTH}d}_{role}{suffix}_{kind}{retry}.txt"
         data = text.encode("utf-8", errors="surrogatepass")
         self._dir.mkdir(parents=True, exist_ok=True)
         (self._dir / name).write_bytes(data)

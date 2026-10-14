@@ -56,6 +56,11 @@ from src.schemas.run import RunRecord
 # 도구 실행은 토큰을 쓰지 않는다. 매번 만들지 않도록 상수로 둔다.
 _NO_TOKENS = Usage(input_tokens=0, output_tokens=0, cached_tokens=0)
 
+# `critic_normalized`의 `invalid_axes`가 싣는 상한. **설계 상수이고 잰 값이 아니다** - 모델이 낸
+# 자유 문자열이 trace 한 줄을 부풀리지 않게 하는 폭이다. 어휘 변형이 어떤 모양인지 보기엔 충분하다.
+_INVALID_AXES_KEPT = 5
+_INVALID_AXIS_CHARS = 40
+
 
 def _default_monotonic_ms() -> int:
     return int(perf_counter() * 1000)
@@ -70,8 +75,42 @@ def _trace_scalar(value: object) -> str:
     return ",".join(value) if isinstance(value, list) else str(value)
 
 
-def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
-    """시도별 출력 토큰·종료 사유를 `model_call`의 두 키로 (#550). 정본 설명은 `trace.py`다.
+# `finish_reason == "length"`로 끝난 시도의 응답 **꼬리** 몇 글자를 볼지 (#79). 공백 폭주는
+# 꼬리가 공백·탭·개행의 연속인 모양이다(2026-09-11 프로브: 꼬리 공백 12,849~13,199자 - 현재 로스터가
+# 아닌 `qwen3-coder-30b-a3b`). **정한 값이고 잰 값이 아니다 (CLAUDE.md §0)** - 현재 로스터의 꼬리는
+# 이 탐지기 이전에 본 적이 없다. 줄이면 정상 JSON의 들여쓰기 끝을 폭주로 읽는 쪽으로, 키우면 폭주가
+# 덜 자란 응답을 놓치는 쪽으로 움직인다.
+TAIL_WHITESPACE_CHARS = 64
+
+
+def _tail_whitespace_only(text: str) -> bool:
+    """응답 끝 `TAIL_WHITESPACE_CHARS`자가 전부 공백인가. **창을 못 채우는 짧은 응답은 거짓이다**
+    (빈 문자열 포함) - 63자 이하가 전부 공백인 응답(개행 둘)은 폭주가 아니고, 아무것도 안 낸
+    응답(추론 파서가 `content`를 비운 모양)도 아니다."""
+    return len(text) >= TAIL_WHITESPACE_CHARS and text[-TAIL_WHITESPACE_CHARS:].isspace()
+
+
+def _tail_whitespace_verdicts(
+    log: Sequence[AttemptRecord], texts: Sequence[str | None]
+) -> list[bool | None]:
+    """시도마다 꼬리 판정 한 칸 - `texts[i]`가 `log[i]`의 응답 원문이다(앞에서부터 정렬된다).
+
+    **`None`은 두 가지다 - 같은 이벤트의 `attempt_finish_reasons`로 가른다.** 그 칸이 `length`가
+    아니면 안 본 것이고(해당 없음), `length`인데 원문이 없으면(게이트웨이 거절·`content: null`·
+    원문을 안 든 구현체) 못 본 것이다(미측정 - 거짓으로 채우지 않는다).
+    """
+    return [
+        _tail_whitespace_only(texts[i])
+        if record.finish_reason == "length" and i < len(texts) and texts[i] is not None
+        else None
+        for i, record in enumerate(log)
+    ]
+
+
+def _attempt_fields(
+    log: Sequence[AttemptRecord], texts: Sequence[str | None] = ()
+) -> dict[str, TraceValue]:
+    """시도별 출력 토큰·종료 사유·꼬리 판정을 `model_call`의 세 키로 (#550·#79). 정본: `trace.py`.
 
     **값은 JSON 배열 문자열이다**(`TraceValue`가 스칼라라서). 쉼표로 잇지 않는 것은 미측정 칸
     (`null`)을 빈 칸이나 지어낸 문자열로 쓰지 않으려는 것이다 — `json.loads`로 읽으면 `None`이
@@ -83,11 +122,25 @@ def _attempt_fields(log: Sequence[AttemptRecord]) -> dict[str, TraceValue]:
     행에서 같아야 한다.
     """
     if not log:
-        return {"attempt_output_tokens": None, "attempt_finish_reasons": None}
+        return {
+            "attempt_output_tokens": None,
+            "attempt_finish_reasons": None,
+            "attempt_tail_whitespace_only": None,
+        }
+    tails = _tail_whitespace_verdicts(log, texts)
     return {
         "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
         "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
+        "attempt_tail_whitespace_only": json.dumps(tails, separators=(",", ":")),
     }
+
+
+def _success_attempt_texts(result: ModelResult) -> tuple[str | None, ...]:
+    """성공 호출의 시도별 응답 원문 - 버려진 앞 시도들 + 마지막(성공) 시도. 칸 수가 시도 수와 안
+    맞으면 정렬을 믿을 수 없어 빈 튜플이다(구현체가 `failed_raw_texts`를 안 채운 경우 - 꼬리 판정은
+    `None`)."""
+    texts = (*result.failed_raw_texts, result.raw_text)
+    return texts if len(texts) == len(result.attempt_log) else ()
 
 
 def _unwired_read_source(_target: Location) -> str:
@@ -135,15 +188,21 @@ class RunContext:
     # 요구하는 것은 역할별 **지표**이지 역할별 상한이 아니다. 역할을 아는 곳이 여기이고,
     # 이 값은 `runner.unmeasured_gpu_warning()`의 입력이 된다.
     gpu_unmeasured_roles: dict[str, int] = field(default_factory=dict)
+    # 2단계(`signals.run`)가 **컴파일러 오류 문구를 들고 실패한** `build`·`clang-tidy` Evidence —
+    # 키는 그 호출의 `workdir`(= `artifact.path`)다. `with_signal()`이 `ok=False`를 걸러 타깃의
+    # `evidences` 에는 안 남으므로 따로 둔다(이슈 #507). 8단계 PoV·5단계 Auditor 루프의 hop0
+    # 노트가 읽고, 없으면 노트도 없다(요청 바이트가 종전과 같다).
+    compile_failures: dict[str, tuple[Evidence, ...]] = field(default_factory=dict)
     # 마지막으로 진입한 단계. Retriever 콜백이 자기 단계를 모르므로 여기서 채운다.
     current_stage: Stage = Stage.PREPROCESS
     # 대상 심볼의 원문을 읽는다. `ContextCapsule`은 본문을 담지 않는 매니페스트이므로
     # 프롬프트에 실을 코드는 여기서 온다. 구현은 Retriever와 **같은 함수**여야 한다 —
     # 두 곳이 다르게 읽으면 캡슐의 토큰 수와 실제 프롬프트가 어긋난다.
     read_source: Callable[[Location], str] = field(default=_unwired_read_source)
-    # 슬라이스 id → 그 슬라이스의 렌더(gutter·배너 — ADR 0012 결정 1). 슬라이스 타깃의 Scout
-    # `SOURCE`가 여기서 온다. Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에
-    # 같은 조회를 넣는다) — `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
+    # 슬라이스 id → 그 슬라이스의 렌더(gutter·배너 — ADR 0012 결정 1). `input: slice`를 선언한
+    # 프롬프트의 슬라이스 타깃 Scout `SOURCE`가 여기서 온다(`input: source`면 함수 본문 — #529).
+    # Retriever의 `target_function`과 **같은 함수**다(`build_deps`가 둘에 같은 조회를 넣는다) —
+    # `read_source`가 Retriever와 같아야 하는 것과 같은 이유다.
     read_slice: Callable[[str], str] = field(default=_unwired_read_slice)
     # evidence payload(`Evidence.payload_ref`)의 원문 로그를 읽는다. Critic·Auditor의 content-aware
     # 버전(각 노드의 `_CONTENT_AWARE_VERSIONS`)이 근거 본문을 받으려면 이 리더가 필요하다(#237
@@ -339,7 +398,9 @@ class RunContext:
                 "gpu_ms_source": getattr(exc, "gpu_ms_source", None),
                 # 시도별 내역도 같은 규칙이다 — 안 실려 왔으면 `None`이고 지어낸 빈 목록이 아니다.
                 # 가르려는 호출(`SchemaParseError`로 버려진 Finding)이 전부 이 경로로 온다(#550).
-                **_attempt_fields(getattr(exc, "attempt_log", ())),
+                **_attempt_fields(
+                    getattr(exc, "attempt_log", ()), getattr(exc, "raw_texts", ())
+                ),
             }
             # 실패해도 재시도가 실제로 보낸 요청은 남긴다 — 400을 받은 요청이 무엇이었는지가
             # 이 항목의 요점이다(#80). 소비를 안 든 예외(`BudgetExhausted`)는 `retry_bodies`가
@@ -366,7 +427,11 @@ class RunContext:
             # (위 재시도 기록 가드는 `OSError`뿐). 성공 호출의 버려진 시도는 아래에서 쓴다(#618).
             try:
                 response_fields = self._record_failed_responses(
-                    role=role, stage=stage, raw_texts=getattr(exc, "raw_texts", ()), hop=hop
+                    role=role,
+                    stage=stage,
+                    raw_texts=getattr(exc, "raw_texts", ()),
+                    hop=hop,
+                    attempts=getattr(exc, "attempt_log", ()),
                 )
             except Exception as record_exc:  # 원 예외·청구를 가리면 안 된다
                 errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
@@ -419,7 +484,7 @@ class RunContext:
             kept = (*kept, result.raw_text)
         try:
             response_fields = self._record_failed_responses(
-                role=role, stage=stage, raw_texts=kept, hop=hop
+                role=role, stage=stage, raw_texts=kept, hop=hop, attempts=result.attempt_log
             )
         except Exception as record_exc:
             errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
@@ -449,7 +514,7 @@ class RunContext:
             gpu_ms_source=result.gpu_ms_source,
             attempts=result.attempts,
             # `output_tokens`는 위 시도들의 합이다. 시도별 내역과 종료 사유는 여기(#550).
-            **_attempt_fields(result.attempt_log),
+            **_attempt_fields(result.attempt_log, _success_attempt_texts(result)),
         )
         # 모델 호출은 지금까지 GPU 시간을 **한 번도 청구하지 않았다** — `ModelResult`에 그
         # 값이 없었기 때문이다(2026-08-17 확인). GPU를 가장 많이 쓰는 경로가 장부에 0으로
@@ -554,6 +619,10 @@ class RunContext:
         `HarnessModel.transition()`과 같은 식이되 반환 타입(`SchemaT`)을 살리려고 여기서 직접 쓴다.
 
         **`location`은 덮지 않는다** — 발급값이 아니라 모델이 사실 블록의 대상을 옮겨 적는 값이다.
+        ⏵ 2026-10-13 — 단 Scout 후보의 `location.symbol`이 `null`이면
+        `nodes/scout._stamp_target_symbol`이 그 줄을 품는 함수 이름으로 채운다(이슈 #633).
+        이 메서드를 지난 **뒤**의 별도 도장이고 이벤트도
+        `issued_override`가 아니라 `scout_symbol_stamped`다.
         """
         differed = [name for name, want in issued.items() if getattr(value, name) != want]
         if differed:
@@ -634,7 +703,13 @@ class RunContext:
         return {"sent_sha256": last_digest}
 
     def _record_failed_responses(
-        self, *, role: Role, stage: Stage, raw_texts: tuple[str | None, ...], hop: int = 0
+        self,
+        *,
+        role: Role,
+        stage: Stage,
+        raw_texts: tuple[str | None, ...],
+        hop: int = 0,
+        attempts: tuple[AttemptRecord, ...] = (),
     ) -> dict[str, TraceValue]:
         """시도들의 응답 원문을 `…_response[_retryK].txt`로 남기고 참조·해시를 준다.
 
@@ -648,6 +723,18 @@ class RunContext:
         (`_attempt_fields`와 같은 관례, CLAUDE.md §0). `index`는 칸 위치 그대로라 `_retryK`
         번호는 시도 번호와 정렬된다. 칸이 전부 `None`이어도 비어 있지 않으므로 `[null]`이 나가
         시도 칸과 맞는다.
+
+        **추론 채널은 같은 칸·같은 조건으로 `…_reasoning[_retryK].txt`에 남는다**(#280) —
+        칸 K의 추론은 `attempts[K]`(`attempt_log`의 K번째)다. `AttemptRecord.reasoning`이
+        `None`인 칸은 파일이 없고 `reasoning_refs`·`reasoning_sha256`·`reasoning_field`의
+        그 자리가 `null`이다. `""`는 파일이 있다(0바이트). **어느 칸에도 추론이 없으면 세 키를
+        아예 싣지 않는다**(Fake·추론 파서가 꺼진 서버 — 키 부재 = 추론 채널을 못 받았다).
+        응답 원문이 `None`인 칸(`content: null`)에도
+        추론은 있을 수 있다 — 추론이 예산을 다 먹은 호출이 정확히 그 모양이다.
+        **추론 쓰기가 실패하면 응답 참조는 그대로 두고 `reasoning_record_error`만 더한다** —
+        응답은 이미 디스크에 있는데 참조를 버리면 trace가 「응답 안 남음」으로 읽힌다.
+        다만 추론 쓰기가 칸 도중에 실패하면 그 앞 칸에 이미 쓴 `…_reasoning*.txt`는 참조가
+        없는 고아로 디스크에 남는다(`reasoning_*` 세 키는 칸 전체가 성공해야 실린다).
         """
         if not raw_texts or self.prompts is None:
             return {}
@@ -659,12 +746,44 @@ class RunContext:
             )
             for index, text in enumerate(raw_texts)
         ]
-        return {
+        fields: dict[str, TraceValue] = {
             "response_refs": json.dumps(
                 [w[0] if w else None for w in written], separators=(",", ":")
             ),
             "response_sha256": json.dumps(
                 [w[1] if w else None for w in written], separators=(",", ":")
+            ),
+        }
+        slots = [attempts[i] if i < len(attempts) else None for i in range(len(raw_texts))]
+        if all(a is None or a.reasoning is None for a in slots):
+            return fields
+        # **추론 쓰기는 별 `try`다.** 여기서 던지면 함수 전체가 예외가 되고 호출부(:377·:430)는
+        # `response_record_error`만 싣는다 - 디스크에 응답 파일이 남았는데 trace에는 참조가
+        # 없어 **응답을 안 남긴 호출**로 읽힌다(고아 파일). 응답 참조는 이미 손에 있으므로
+        # 그것을 살리고 추론 쪽 실패만 사유로 싣는다.
+        try:
+            reasoned = [
+                None
+                if a is None or a.reasoning is None
+                else self.prompts.write_reasoning(
+                    role=role.value, stage=int(stage), index=index, hop=hop, text=a.reasoning
+                )
+                for index, a in enumerate(slots)
+            ]
+        except Exception as record_exc:
+            errno = f"(errno={record_exc.errno})" if isinstance(record_exc, OSError) else ""
+            return {**fields, "reasoning_record_error": f"{type(record_exc).__name__}{errno}"}
+        return {
+            **fields,
+            "reasoning_refs": json.dumps(
+                [w[0] if w else None for w in reasoned], separators=(",", ":")
+            ),
+            "reasoning_sha256": json.dumps(
+                [w[1] if w else None for w in reasoned], separators=(",", ":")
+            ),
+            "reasoning_field": json.dumps(
+                [a.reasoning_field if a is not None else None for a in slots],
+                separators=(",", ":"),
             ),
         }
 
@@ -693,6 +812,13 @@ class RunContext:
                 "input_bytes": len(args.input_bytes),
                 "input_sha256": hashlib.sha256(args.input_bytes).hexdigest(),
             }
+        if evidence.harness_note is not None:  # `error`처럼 있을 때만 — 키 부재 = 노트 없음(#573)
+            sent["harness_note"] = evidence.harness_note
+        # 크래시 관측(#232)은 **잰 도구에만** 키가 실린다 — 키 부재 = 안 쟀다(Fake·정적 도구·대상이
+        # 안 뜬 호출). `crash_banner`는 배너 줄을 Evidence에 남겼는가이고 본문은 trace에 안 간다.
+        observed: dict[str, TraceValue] = {}
+        if evidence.crashed is not None:
+            observed = {"crashed": evidence.crashed, "crash_banner": evidence.banner is not None}
         self.trace.emit(
             EventKind.TOOL_CALL,
             stage=stage,
@@ -706,6 +832,7 @@ class RunContext:
             error=evidence.error,
             finding_id=subject_id,
             **sent,
+            **observed,
         )
         # **밀리초를 그대로 넘긴다.** 여기서 `// 1000`을 하던 것이 이 결함의 세 지점 중
         # 하나였다 — 도구 11건 중 8건(342~906 ms)이 0으로 청구됐다(2026-08-17 실측).
@@ -751,6 +878,7 @@ class RunContext:
         *,
         stage: Stage,
         candidate_location: Location | None = None,
+        cited_by_model: int | None = None,
     ) -> GateResult:
         """순수 판정(gate.evaluate) + `gate_eval`·`gate_ambiguous` 기록.
 
@@ -761,6 +889,14 @@ class RunContext:
         아직 성립할 수 없는 술어를 거짓으로 기록하게 되고, 그 행이 제거율의 분모에
         섞인다. 여기서 막지 않으면 `GATE_STAGES`는 **아무도 안 보는 상수**가 된다 —
         실제로 그랬고, 그동안 8단계에는 호출이 아예 없었다(W3).
+
+        **`cited_by_model`은 하네스가 부착하기 *전*에 센 모델 자신의 인용 수다 (이슈 #554).**
+        `gate_node.attach_observed`가 `Finding.evidence_refs`에 관측 Evidence를 덧붙여 `state.db`
+        행을 덮으므로 부착 뒤에는 모델의 원본을 셀 수 없다. 6단계(`gate_node.run`)만 넘긴다 —
+        그 시점의 `evidence_refs`는 5단계가 모델 출력에서 옮긴 그대로이기 때문이다. **넘기지
+        않으면 `gate_eval`에 키가 없다**(`None`을 쓰지 않는다 - 키 부재 = 안 쟀다, CLAUDE.md §0).
+        0은 「쟀더니 0건」이다. 7·8단계는 넘기지 않는다: 그 시점의 목록에는 하네스 부착분이
+        섞여 있어 「모델이」라는 이름이 거짓이 된다.
         """
         if stage not in GATE_STAGES:
             raise ValueError(
@@ -769,6 +905,7 @@ class RunContext:
         result = gate.evaluate(
             finding, evidences, decisions, missings, candidate_location=candidate_location
         )
+        measured = {} if cited_by_model is None else {"cited_by_model": cited_by_model}
         self.trace.emit(
             EventKind.GATE_EVAL,
             stage=stage,
@@ -776,6 +913,7 @@ class RunContext:
             subject_id=finding.finding_id,
             grade=result.grade.value,
             **dict(result.predicates),
+            **measured,
         )
         if result.ambiguous:
             self.trace.emit(
@@ -789,10 +927,16 @@ class RunContext:
         return result
 
     def record_critic_normalized(self, decision: Decision, *, stage: Stage) -> None:
-        """근거 없는 `rebut` → `uphold` 정규화를 지표에 남긴다 (agent-contracts.md §2.3).
+        """근거 없는 `rebut` → `need_evidence` 정규화를 사유와 함께 지표에 남긴다
+        (agent-contracts.md §2.3 · ADR 0015).
 
-        분모가 `model_call(role=critic)`이므로 판정과 별개의 이벤트로 남긴다.
+        분모가 `model_call(role=critic)`이므로 판정과 별개의 이벤트로 남긴다. 키:
+        `original_verdict`(= `rebut`) · `reason`(`empty_axis` | `invalid_axis`) ·
+        `invalid_axes`(어휘 밖 원문의 JSON 배열 문자열 - `TraceValue`가 스칼라라서다.
+        최대 `_INVALID_AXES_KEPT`개, 값마다 `_INVALID_AXIS_CHARS`자. `empty_axis`면 `"[]"`).
         """
+        offending = decision.invalid_axes[:_INVALID_AXES_KEPT]
+        invalid = [axis[:_INVALID_AXIS_CHARS] for axis in offending]
         self.trace.emit(
             EventKind.CRITIC_NORMALIZED,
             stage=stage,
@@ -800,6 +944,8 @@ class RunContext:
             subject_id=decision.decision_id,
             finding_id=decision.finding_id,
             original_verdict=decision.verdict.value,
+            reason=decision.ungrounded_reason,
+            invalid_axes=json.dumps(invalid, ensure_ascii=False),
         )
 
     def record_critic_verdict_unmapped(

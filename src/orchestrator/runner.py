@@ -26,7 +26,8 @@
 **심볼 단위다(W2).** 1단계 인덱서 산출물에서 심볼마다 `Location(file, symbol,
 line_start, line_end)`을 만든다. 인덱스가 없는 프로필(`dev_fake`)은 **파일 단위로
 되돌아가고 그 사실이 `target_plan`에 남는다.** `--slices`로 돈 run은 **슬라이스 1개가 대상
-하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를, Auditor는 슬라이스가
+하나다**(ADR 0012 결정 1 — `_plan_slice_targets`) — Scout는 그 렌더를(`input: slice` 프롬프트일
+때만 — `input: source`면 entry를 품는 함수 본문, #529), Auditor는 슬라이스가
 걸친 함수들의 원본을 entry 함수부터 문자 수 상한 안에서 본다(`_step_scout`·`_auditor_source`).
 
 ⚠ **그 `Location` 하나가 후보 **몇 개**가 되는지는 Scout 자리 수가 정한다.** 단일
@@ -121,6 +122,7 @@ from src.interfaces.model_client import (
     ModelSwapError,
     SchemaParseError,
     error_detail,
+    is_size_rejection,
     truncate_detail,
 )
 from src.interfaces.oracle import Oracle
@@ -130,7 +132,13 @@ from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.orchestrator import gate, oracle_log, source_gate, state_machine
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
-from src.orchestrator.context import RunContext
+from src.orchestrator.context import TAIL_WHITESPACE_CHARS, RunContext
+from src.orchestrator.entry_scope import (
+    ENTRY_WINDOW_LINES,
+    enclosing_scope,
+    narrowest_symbol,
+    spans,
+)
 from src.orchestrator.heartbeat import Heartbeat
 from src.orchestrator.nodes import (
     auditor,
@@ -159,7 +167,15 @@ from src.orchestrator.source_definitions import (
 )
 from src.orchestrator.source_guards import scan_guards
 from src.orchestrator.stages import MAX_STAGE, Stage
-from src.orchestrator.trace import EventKind, TraceValue, TraceWriter
+from src.orchestrator.trace import (
+    EventKind,
+    TraceEvent,
+    TraceValue,
+    TraceWriter,
+    pov_inspect_max_run_by_finding,
+    schema_failure_max_run_by_role,
+    schema_recovered_calls_by_role,
+)
 from src.schemas.artifact import Artifact
 from src.schemas.candidate import Candidate, SliceRef
 from src.schemas.capsule import ContextCapsule
@@ -167,6 +183,7 @@ from src.schemas.common import PLACEHOLDER_DIGEST, Location
 from src.schemas.decision import Decision
 from src.schemas.enums import (
     ArtifactKind,
+    AuditorStopReason,
     CapsuleLevel,
     EvidenceGrade,
     EvidenceKind,
@@ -280,16 +297,11 @@ _REASON_OVER_MAX = "over_candidate_max"
 _REASON_GATEWAY = "gateway_error"
 _REASON_SCHEMA = "schema_parse_failed"
 
-# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만 「이 후보가
-# 크다」다** — 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
-# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다(`_is_size_rejection`).
-#
-# **400은 크기만의 값이 아니다(#296).** vLLM 0.27.1은 요청 모양(본문 검증)·서버 설정
-# (`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이 모르는 `reasoning_effort`, 출력
-# 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같으므로 첫 건에서 멈춘다(`_drop`). 이 문구는
-# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
-# 400은 크기로 읽지 않는다** — 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
-_CONTEXT_OVERFLOW = "maximum context length"
+# 크기 거절의 판정(`_is_size_rejection`)과 그 문구는 `interfaces.model_client`에 있다 - Auditor
+# 노드가 같은 판정을 써야 하는데 노드는 러너를 import할 수 없다(#514). **413과 컨텍스트 초과 문구가
+# 실린 400만 「이 후보가 크다」다** - 다음 후보는 작을 수 있으므로 이 후보에 대한 사실이고, 아래
+# `_MAX_CONSECUTIVE_DROPS`가 세지 않는다. 크기가 아닌 400(#296)은 `_rejects_every_request`가 받는다.
+_is_size_rejection = is_size_rejection
 
 # 후보만 버리고 계속 가도 되는 HTTP 상태 — **서버는 살아 있고 요청 하나에 답했다.** 그 거절이
 # 이 후보에 대한 사실(크기)인지 run에 대한 사실(크기가 아닌 400)인지는 상태만으로 못 가른다 —
@@ -350,17 +362,6 @@ def _is_droppable(exc: ModelGatewayError) -> bool:
     if exc.generating is True:
         return True
     return exc.status is not None and exc.status in _DROPPABLE_STATUS
-
-
-def _is_size_rejection(exc: Exception) -> bool:
-    """이 실패가 **이 후보가 크다**인가 — 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
-
-    413(본문 초과)과, vLLM의 컨텍스트 초과 문구(`_CONTEXT_OVERFLOW`)가 실린 400뿐이다.
-    게이트웨이 오류가 아니면(스키마 실패) 크기가 아니다.
-    """
-    if not isinstance(exc, ModelGatewayError):
-        return False
-    return exc.status == 413 or (exc.status == 400 and _CONTEXT_OVERFLOW in exc.detail)
 
 
 def _rejects_every_request(exc: Exception) -> bool:
@@ -515,7 +516,12 @@ class Dependencies(Protocol):
     slice_refs: tuple[SliceRef, ...] | None
     # `RunRecord.slicer`가 될 슬라이서 요약. 러너가 만들지 않고 받는다(`tool_images`와 같은 이유).
     slicer: dict[str, str | int | None] | None
-    # 슬라이스 id → 렌더(gutter·배너). 슬라이스 타깃의 Scout `SOURCE`다. 어댑터가 run 전에 전부
+    # `RunRecord.serving_launch_intended`가 될 장비 파일의 의도한 기동 인자(#99). 교대 프로필 +
+    # 장비가 아니면 `None`. 러너는 장비 파일을 읽지 않고 받는다 - 이 값은 의도지 실제 argv의 증거가
+    # 아니다.
+    serving_launch_intended: dict[str, list[str]] | None
+    # 슬라이스 id → 렌더(gutter·배너). `input: slice` 프롬프트의 슬라이스 타깃 Scout `SOURCE`다
+    # (`input: source`면 함수 본문 — #529). 어댑터가 run 전에 전부
     # 렌더해 둔 것을 콜러블로 받는다 — `read_source`와 같이 러너는 렌더러를 import 하지 않는다.
     read_slice: Callable[[str], str]
     # 역할 → 그 역할 모델의 실 토크나이저 카운터(#96 (b)). `None`이면 기본 카운터
@@ -725,7 +731,8 @@ class _Target:
     # (등급 아님). `_symbol_signal_rank`가 매긴다.
     signal_rank: int
     # 슬라이스 타깃이면 그 슬라이스(ADR 0012 결정 1). id만이 아니라 통째로 드는 것은 4·5단계가
-    # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`)를, Auditor는
+    # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`, ⏵ 2026-10-13
+    # #529 `input: slice` 판만 — `source` 판은 entry를 품는 함수 본문을 받는다)를, Auditor는
     # entry 줄(감싸는 함수를 찾는 데)과 슬라이스 줄(걸친 함수를 찾는 데 — `_auditor_source`)을 본다.
     slice: SliceRef | None = None
 
@@ -807,6 +814,13 @@ class _Accumulator:
     # 한 번뿐이고 인덱스 조회도 한 번뿐이다). 비슬라이스도 Auditor의 최초 읽기를 캐시한다.
     # Critic·PoV의 재읽기로 파일 변경이나 새 읽기 실패를 끌어들이지 않는다.
     finding_sources: dict[str, "_Once"] = field(default_factory=dict)
+    # 7단계 Critic이 받을 **Auditor 도구 루프의 홉 관측** — finding_id → 홉 관측의
+    # Critic용 사본(Auditor가 홉마다 본 관측에서 모델이 고른 식별자를 가린 것 - 가림에 실패한 홉은
+    # 빠진다. 모델 응답 턴은 없다).
+    # `auditor.run(observations=...)`가 채우고, 홉 0(한 방 판·도구 루프 꺼짐)이면 빈 튜플이다.
+    # `finding_sources`와 같은 자리에 두는 이유가 같다 — Finding을 만든 5단계가 본 것을 7단계가
+    # 물려받는다(#600 H2ⓐ). 8단계 PoV는 안 읽는다.
+    finding_observations: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # 4단계에 못 올라간 수 (W2). 예산에 잘린 것과 호출이 실패한 것을 가른다.
     # ⚠ **둘의 단위가 다르다** — `deferred`는 **대상**(`candidate_max` 컷이 팬아웃 전이다),
     # `dropped`는 **시도**(`대상 × Scout 자리`). 단일 `scout`에서만 둘이 같다.
@@ -865,6 +879,25 @@ class _Accumulator:
 
     def in_state(self, state: FindingState) -> list[Finding]:
         return [f for f in self.findings.values() if f.state is state]
+
+
+def _count_trace(
+    key: str,
+    count: Callable[[Sequence[TraceEvent]], dict[str, int] | None],
+    events: Sequence[TraceEvent],
+    warnings: list[str],
+    failures: dict[str, str],
+) -> dict[str, int] | None:
+    """`RunRecord.<key>`의 trace 집계 하나를 센다 - 던지면 `None`(안 쟀다)을 돌려주고 사유를
+    `warnings`(stderr)와 `failures`(매니페스트·리포트 - 「행이 없다」와 「집계가 죽었다」가 같은
+    `None`이라 갈라 읽는 자리)에 싣는다."""
+    try:
+        return count(events)
+    except Exception as exc:  # noqa: BLE001 - 계측이 run의 결과·원 예외를 덮으면 안 된다
+        reason = f"{type(exc).__name__}: {exc}"
+        warnings.append(f"trace 집계 {key}를 못 셌다: {reason}")
+        failures[key] = reason
+        return None
 
 
 def run_pipeline(
@@ -958,6 +991,7 @@ def run_pipeline(
         deps.model_sampling,
         deps.compile_flags,
         slicer=deps.slicer,
+        serving_launch_intended=deps.serving_launch_intended,
     )
     ctx.record = record
     ctx.store.put(record)
@@ -1088,6 +1122,49 @@ def run_pipeline(
     if oracle_summary is not None:
         # 어느 카나리 보고서에 기댔는지(#487) - 안 기댄 run은 키를 새로 만들지 않는다.
         record = record.transition(oracle={**oracle_summary, **(deps.canary_ref or {})})
+    # 6단계 위치 겹침 횟수(#563) - 같은 이유로 여기서 한 번 싣고, 리포트도 같은 값을 읽는다.
+    location_overlap = _location_overlap(trace.events)
+    if location_overlap is not None:
+        record = record.transition(location_overlap=location_overlap)
+
+    # trace에서 센 분모 전용 집계 셋(#613·#618·#619) — 행이 없으면 `None`이다(안 쟀다 - 0이 아니다).
+    # `unforeseen` 경로의 매니페스트도 같은 `record`를 쓰므로 여기서 한 번 바꾼다. 리포트도 읽는다.
+    # 🔴 **집계가 던져도 `unforeseen`을 덮지 않는다** — 이 줄은 아래 `raise unforeseen` 앞이라 새는
+    # 예외가 원 예외와 매니페스트를 통째로 가린다(위 `finally`·아래 방어선 주석과 같은 이유).
+    # 못 센 키는 `None`(안 쟀다)이고 사유는 경고로 남는다 - 예상 밖 경로에서는 원 예외의 노트로도.
+    aggregate_warnings: list[str] = []
+    aggregate_failures: dict[str, str] = {}
+    schema_failure_runs = _count_trace(
+        "schema_failure_max_run_by_role",
+        schema_failure_max_run_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    schema_recovered = _count_trace(
+        "schema_recovered_calls_by_role",
+        schema_recovered_calls_by_role,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    pov_inspect_runs = _count_trace(
+        "pov_inspect_max_run_by_finding",
+        pov_inspect_max_run_by_finding,
+        trace.events,
+        aggregate_warnings,
+        aggregate_failures,
+    )
+    warnings.extend(aggregate_warnings)
+    if unforeseen is not None:
+        for note in aggregate_warnings:
+            unforeseen.add_note(note)
+    record = record.transition(
+        schema_failure_max_run_by_role=schema_failure_runs,
+        schema_recovered_calls_by_role=schema_recovered,
+        pov_inspect_max_run_by_finding=pov_inspect_runs,
+        trace_aggregate_failures=aggregate_failures or None,
+    )
 
     if unforeseen is not None:
         # 🔴 **후처리를 건너뛴다 — 매니페스트만 쓰고 원 예외를 던진다**(적대적 리뷰 2026-10-02
@@ -1183,6 +1260,32 @@ def run_pipeline(
     probe_warning = _auditor_zero_probe_warning(trace)
     if probe_warning is not None:
         warnings.append(probe_warning)
+    # **8단계가 재현을 시도하지 못한 `validated` Finding도 같은 자리에 올린다 (#326).** 상태를 안
+    # 바꾸므로(`validate.run`) 보고서에서는 멀쩡한 `validated`로 보이고 사유는 trace에만 있다.
+    not_measured_warning = _repro_not_measured_warning(
+        trace, has_pov_seat=Role.POV.value in ctx.config.profile.roles
+    )
+    if not_measured_warning is not None:
+        warnings.append(not_measured_warning)
+    # **공백 폭주 꼬리도 같은 자리다 (#79).** 이 키가 `true`인 것은 닫힌 #79의 재개 조건이라
+    # trace를 열지 않고도 run 결과에서 보여야 한다.
+    tail_warning = _whitespace_tail_warning(trace)
+    if tail_warning is not None:
+        warnings.append(tail_warning)
+    # **빈 `answer`로 거절된 Auditor 호출도 같은 자리에 올린다 (#602).** 후보가 C-6으로 버려지는데
+    # 사유(`error_detail`)와 원문은 호출 단위 이벤트에만 있어 빈도를 아무도 세지 않았다.
+    empty_answer_warning = _auditor_empty_answer_warning(trace)
+    if empty_answer_warning is not None:
+        warnings.append(empty_answer_warning)
+    # **Critic에 실은 홉 관측이 이 좌석의 입력 몫을 넘을 수 있다는 사실도 같은 자리에 올린다 (#600
+    # H2ⓐ).** 하네스는 그 절을 자르지 않으므로(저자 결정 — 자동 절단 없음) 경고가 없으면 크기 거절
+    # (`critic_failed`)이 나기 전까지 trace에만 있다.
+    hop_obs_warning = _critic_hop_observations_warning(trace)
+    if hop_obs_warning is not None:
+        warnings.append(hop_obs_warning)
+    # **그리고 크기 거절로 버린 후보도 (#514).** 러너가 그 후보를 `_drop`으로 받아 run은 가므로
+    # 조용히 넘어가기 쉽다.
+    warnings.extend(_auditor_overflow_warnings(trace))
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1190,8 +1293,9 @@ def run_pipeline(
 
     findings = list(state.findings.values())
     # 후보 위치를 얻는다 (#101 a·candidate_location). Finding은 `candidate_id`만 들고
-    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이라
-    # `null`일 수 있어 dedupe 키에는 파일만 쓴다.
+    # 파일은 `Candidate.location`에 있다. `Candidate.location.symbol`은 모델이 쓴 값이고
+    # (⏵ 2026-10-13 — `null`이면 하네스가 후보 줄을 품는 함수로 채운다, 이슈 #633) 그 도장이
+    # 못 도는 경우가 있어 여전히 `null`일 수 있다 — dedupe 키에는 파일만 쓴다.
     by_cand = {c.candidate_id: c.location for c in state.candidates}
     files = {
         f.finding_id: (by_cand[f.candidate_id].file if f.candidate_id in by_cand else None)
@@ -1216,8 +1320,18 @@ def run_pipeline(
     grades = {fid: grade.value for fid, grade in _grades_by_finding(state).items()}
     # 「모든 자리가 실패해 분석되지 않은 대상 수」(#193 ①). 팬아웃된 대상 중 후보를 하나도
     # 못 낸 것 — 형제 멤버가 같은 대상을 보므로 `dropped`(시도)로는 못 세던 값이다.
-    analyzed_targets = {_target_key(c.location, c.slice_id) for c in state.candidates}
-    unanalyzed_targets = len(state.dispatched_targets - analyzed_targets)
+    # 슬라이스 타깃은 `slice_id`로만 맞춘다 — 후보 `location`은 모델이 `FACTS.target`에서 복사하는데
+    # `input: source` 판은 그것이 entry가 아니라 넓힌 함수 범위라 dispatched 키(entry)와 안 맞는다
+    # (#529).
+    analyzed_slices = {c.slice_id for c in state.candidates if c.slice_id is not None}
+    analyzed_targets = {
+        _target_key(c.location, None) for c in state.candidates if c.slice_id is None
+    }
+    unanalyzed_targets = sum(
+        1
+        for key in state.dispatched_targets
+        if (key[-1] not in analyzed_slices if key[-1] is not None else key not in analyzed_targets)
+    )
     rendered = report.run(
         ctx,
         findings=findings,
@@ -1230,6 +1344,11 @@ def run_pipeline(
         grades=grades,
         ne_absorbed=state.ne_absorbed,
         pov_results=state.pov_results,
+        location_overlap=location_overlap,
+        schema_failure_max_run=schema_failure_runs,
+        schema_recovered_calls=schema_recovered,
+        pov_inspect_max_run=pov_inspect_runs,
+        trace_aggregate_failures=record.trace_aggregate_failures,
     )
     finished = state_machine.finish_run(
         record,
@@ -1292,6 +1411,9 @@ def _analyze(
                 missings=state.missings.get(finding.finding_id, ()),
                 # _Once가 저장한 문자열이라 Critic 뒤 PoV도 같은 소스를 받는다.
                 source=state.finding_sources.get(finding.finding_id),
+                # Auditor가 도구 루프에서 본 관측 — 추론은 안 간다(#600 H2ⓐ · critic.py 모듈
+                # docstring).
+                hop_observations=state.finding_observations.get(finding.finding_id, ()),
             )
         except SchemaParseError as exc:
             # **Finding 하나의 실패로 run을 잃지 않는다 (해소).** `_triage_all`이 후보에 대해
@@ -1433,7 +1555,9 @@ def _pov_targets(
 
     **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
     ① **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
-    반박은 `uphold`로 정규화돼 정책이 `QUEUED`로 안 보내므로 **든다**). 보류(`need_evidence`, F-7)는
+    반박은 `need_evidence`로 정규화돼 보류(F-7)와 같은 길을 가므로 **든다** - ⏵ 2026-10-13, ADR
+    0015:
+    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는
     **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
     5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
     보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
@@ -1540,12 +1664,14 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     아니면 `None`(#617).
 
     홉 이벤트가 1건도 없으면 말할 것이 없다 — 루프가 꺼졌거나, 켰어도 첫 모델 호출이
-    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석). 못 가른다.
+    전부 실패한 run이다(이벤트는 호출 성공 뒤에만 나간다 - `EventKind.AUDITOR_HOP` 주석. 크기 거절만
+    예외라 첫 호출이 전부 크기 거절이면 `context_overflow` 홉만 남는데 그것은 `action`이 없는
+    홉이라 아래에서 뺀다 - 도구가 안 돈 것이 아니라 모델이 한 번도 못 답한 것이다). 못 가른다.
 
     `stop_reason`이 달린 `probe` 홉(`MAX_HOP`·`REPEAT_REQUEST`)은 세지 않는다 - 그 홉의 조사는
     안 돌았다(`_run_hops`). 도구 실패(`observation_error`)로 끝난 probe 홉은 세고, 왜 안 골랐는지는
     이 run이 가르지 못한다."""
-    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP]
+    hops = [e.data for e in trace.events if e.kind is EventKind.AUDITOR_HOP and "action" in e.data]
     ran = sum(1 for d in hops if d.get("action") == "probe" and "stop_reason" not in d)
     if not hops or ran:
         return None
@@ -1557,11 +1683,168 @@ def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
     )
 
 
+def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> str | None:
+    """8단계 `validate.run`이 재현 결과를 내지 않은 Finding이 있으면 run 경고, 없으면 `None`(#326).
+
+    `repro_not_measured`의 `reason`으로 둘을 가른다. **`poc` 신호**는 이 노드가 안 돌리는 것이고,
+    그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 루프의 몫이고 없으면 **어디서도 안 돈다.**
+    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)와 컴파일·링크 실패(#507)는
+    원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수 없다."""
+    events = [e for e in trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
+    if not events:
+        return None
+    poc = sum(1 for e in events if e.data.get("reason") == validate.NOT_MEASURED_POC)
+    codes = Counter(
+        e.data.get("exit_code")
+        for e in events
+        if e.data.get("reason") == validate.NOT_MEASURED_TOOL
+    )
+    parts: list[str] = []
+    if poc:
+        where = (
+            "PoV 풀에 들었는지는 PoV 단계 이벤트가 든다"
+            if has_pov_seat
+            else "이 프로필엔 pov 좌석이 없어 어디서도 실행되지 않았다"
+        )
+        parts.append(f"poc 신호 {poc}건 - 8단계는 poc를 실행하지 않는다, {where}")
+    if codes:
+        by_code = " · ".join(
+            f"{code}{'(시간 초과)' if code == validate.TIMEOUT_EXIT else ''} {count}건"
+            for code, count in sorted(codes.items())
+        )
+        parts.append(f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code})")
+    return (
+        f"8단계가 재현 결과를 내지 않은 validated Finding {len(events)}건 - {' / '.join(parts)}. "
+        f"상태는 그대로이고 도구 검증 제거율에 안 든다 (#326)"
+    )
+
+
+def _whitespace_tail_warning(trace: TraceWriter) -> str | None:
+    """공백뿐인 꼬리의 `length` 시도가 1건 이상이면 run 경고, 아니면 `None`(#79).
+
+    `model_call.attempt_tail_whitespace_only`의 `true` 칸을 센다(역할별). `false`·`null`(해당
+    없음·원문 없음)은 세지 않는다 - 경고가 없다는 것은 「공백 꼬리가 없었다」가 아니라 「판정할 수
+    있었던 시도에 없었다」다. 칸의 `null` 두 뜻은 `trace.py`에 있다.
+    """
+    by_role: dict[str, int] = {}
+    for event in trace.events:
+        if event.kind is not EventKind.MODEL_CALL:
+            continue
+        raw = event.data.get("attempt_tail_whitespace_only")
+        hits = sum(1 for cell in json.loads(raw) if cell is True) if isinstance(raw, str) else 0
+        if hits:
+            role = str(event.data.get("role"))
+            by_role[role] = by_role.get(role, 0) + hits
+    if not by_role:
+        return None
+    detail = ", ".join(f"{role} {count}시도" for role, count in sorted(by_role.items()))
+    # 창 크기는 `TAIL_WHITESPACE_CHARS`에서 포매팅해 넣는다 - 숫자를 문구에 박으면 상수가
+    # 움직일 때 경고가 거짓을 말한다(CLAUDE.md §2.3).
+    return (
+        f"length 절단 시도의 꼬리 {TAIL_WHITESPACE_CHARS}자가 전부 공백인 시도: {detail} - "
+        "이슈 #79 재개봉 조건. trace model_call의 attempt_tail_whitespace_only가 어느 호출인지 "
+        "가리킨다"
+    )
+
+
+# `schemas/auditor.py`의 `_check_action` 거절 문구 앞부분 - 봉투마다 payload 이름(`finding` ↔
+# `procedure`)이 달라 그 앞에서 끊는다. 다른 액션의 같은 검사(`lookup 액션은 …`)와 다른 액션의
+# 필드가 실린 거절(`… 다른 액션의 필드가 실렸다`)은 이 문구가 아니다.
+_EMPTY_ANSWER_PHRASE = "answer 액션은 비지 않은"
+
+
+def _auditor_empty_answer_warning(trace: TraceWriter) -> str | None:
+    """비어 있는 `answer`를 스키마가 거절한 Auditor 호출이 있으면 run 경고, 아니면 `None`(#602).
+    재시도가 소진돼 `SchemaParseError`로 끝난 호출만 센다.
+
+    **호출 단위다** - 시도(`attempts`)가 아니라 `model_call` 이벤트 한 건이 한 번이다(한 호출이
+    두 시도 모두 거절돼도 버려진 후보는 하나). 홉 번호를 보지 않으므로 hop 0도 센다.
+
+    ⚠ **마지막 시도의 오류만 본다** - `error_detail`이 소진 시점의 `last_error`를 싣는다
+    (`openai_compat`). 첫 시도가 빈 `answer`였다가 둘째 시도가 다른 이유로 거절되면 세지 않고,
+    재시도로 살아난 호출(`ok: true`)도 세지 않는다. 그래서 이 수는 「후보를 잃은 호출」의 하한이다.
+    `error_detail`은 512자에서 잘리지만 이 문구는 그 앞(모델 이름 · 스키마 이름 바로 뒤)에 있다."""
+    dropped = sum(
+        1
+        for event in trace.events
+        if event.kind is EventKind.MODEL_CALL
+        and event.data.get("role") == Role.AUDITOR.value
+        and event.data.get("ok") is False
+        and event.data.get("error") == SchemaParseError.__name__
+        and _EMPTY_ANSWER_PHRASE in str(event.data.get("error_detail", ""))
+    )
+    if not dropped:
+        return None
+    return (
+        f"Auditor answer에 procedure/finding이 비어 거절된 호출 {dropped}건(#602) — "
+        f"후보가 C-6으로 버려졌다; 원문은 model_call.response_refs"
+    )
+
+
+def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
+    """Critic에 Auditor 홉 관측을 실은 요청이 (a) 추정 입력 몫을 넘을 수 있거나 (b) 크기 거절을
+    받아 관측 절을 빼고 다시 물은 건이 있거나 (c) 홉의 Critic 사본을 못 만든 건
+    (`observation_sanitize_failed`)이 있으면 run 경고, 아니면 `None`(#600 H2ⓐ).
+
+    `critic_hop_observations`는 두 모양이다: 관측을 실은 호출마다 1건(`over_input_share`)과, 그
+    호출이 400/413으로 거절돼 `critic.run`이 절을 통째로 빼고 한 번 다시 물었다는 표지
+    (`observations_dropped`).
+    (a)는 글자 수 ÷ 최악 비 1.22의 **계산값**이라 「넘을 수 있다」이지 「넘었다」가 아니다 - 서버의
+    크기 거절은 (b)가 실제로 센다. 관측 절을 뺀 프롬프트도 넘는 건(`over_without_observations`)은
+    원인이 관측이 아니라 따로 센다."""
+    events = [e.data for e in trace.events if e.kind is EventKind.CRITIC_HOP_OBSERVATIONS]
+    dropped = [d for d in events if d.get("observations_dropped")]
+    carried = [d for d in events if not d.get("observations_dropped")]
+    over = [d for d in carried if d.get("over_input_share")]
+    # 가림에 실패해 Critic 사본을 못 만든 홉 - Critic 절의 사본 수가 돈 홉 수보다 작은 이유다.
+    unsanitized = sum(
+        1
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP and "observation_sanitize_failed" in e.data
+    )
+    if not over and not dropped and not unsanitized:
+        return None
+    parts = [f"Critic 요청 {len(carried)}건이 Auditor 홉 관측을 실었다"]
+    if unsanitized:
+        parts.append(f"Critic 사본을 만들지 못한 홉 {unsanitized}건(가림 실패 · 사유는 trace)")
+    if over:
+        alone = sum(1 for d in over if d.get("over_without_observations"))
+        parts.append(
+            f"그중 {len(over)}건의 추정 입력이 입력 몫({over[0].get('input_share_tokens')}토큰)을 "
+            f"넘을 수 있다 - 글자/토큰 최악 비 1.22로 센 계산값이고 하네스는 자르지 않았다"
+            f"(관측 절 없이도 넘는 건 {alone})"
+        )
+    if dropped:
+        parts.append(
+            f"{len(dropped)}건은 서버가 크기로 거절해 관측 절을 통째로 빼고 한 번 다시 물었다 "
+            "(실측한 거절이다)"
+        )
+    return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
+
+
+def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
+    """크기 거절당한 Auditor 도구 루프 홉마다 run 경고 한 줄(#514) - 후보 id와 홉.
+
+    그 후보는 버려졌고(`queued` + `target_skipped`) run은 갔다. 연속 폐기 카운터가 크기 거절을
+    안 세므로(`_drop`) 이 줄이 없으면 호출 실패 총계 한 줄 말고는 어느 후보가 몇 번째 홉에서
+    잘렸는지 `trace.jsonl`을 열어야 안다. 홉이 많을수록 잘릴 확률이 오르는 상한
+    `auditor_tool_hops`의 근거가 이 줄들이다.
+    """
+    return [
+        f"후보 {e.subject_id}의 Auditor 홉 {e.data['hop']}에서 크기 거절 — 후보를 버렸다(#514)"
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP
+        and e.data.get("stop_reason") == AuditorStopReason.CONTEXT_OVERFLOW.value
+    ]
+
+
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
     왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
-    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류는
-    K>0에서 풀에 들므로(PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
+    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
+    모델이 낸 `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된
+    반박**(ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. 보류는 K>0에서 풀에 들므로
+    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
     정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
 
     ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
@@ -1596,7 +1879,8 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
     )
     return (
         f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
-        f" · 보류(파서 폴백 포함) {hold} · 판정 실패 {failed} · Critic 미경유 {unjudged}{rest}"
+        f" · 보류(파서 폴백·정규화된 반박 포함) {hold} · 판정 실패 {failed}"
+        f" · Critic 미경유 {unjudged}{rest}"
         f" · pov_attempt_top_n {limit}. "
         f"8단계 PoV는 한 건도 시도되지 않았다({why})"
     )
@@ -2020,7 +2304,8 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     # `(ModelGatewayError, SchemaParseError)`뿐이고, 그 밖의 형이 올라가면
     # `_pov_finish_and_record`가 안 불려 사유가 **0건**이었다.
     # 적대적 리뷰가 설정만으로 닿는 둘을 재현했다 — pov 좌석 `prompt_template_version` 오타의
-    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부른다)와 잠긴 `state.db`의
+    # `PromptError`(`run()`은 `_check_prompts`를 안 부르고 `doctor()`만 부르던 때의 사례다 —
+    # ⏵ 2026-10-13 #600 H3: 이제 `run()`도 시작 전에 부른다)와 잠긴 `state.db`의
     # `sqlite3.OperationalError`(`call_tool`의 `store.put`은 `try` 밖이고 `OSError`가 아니다).
     # ⏵ 2026-10-10 도구 호출 둘레의 `except BudgetExhausted`(#394)는 홉 이벤트를 낸 뒤 그대로
     # 올리므로 사유 0건은 여전하고 이 `finally`가 메운다.
@@ -2223,6 +2508,24 @@ def _grades_by_finding(state: _Accumulator) -> dict[str, EvidenceGrade]:
             candidate_location=by_cand.get(f.candidate_id),
         ).grade
         for f in state.findings.values()
+    }
+
+
+def _location_overlap(events: Iterable[TraceEvent]) -> dict[str, int] | None:
+    """6단계 `gate_eval` 행에서 센 위치 겹침 (이슈 #563 선택지 4) -> `RunRecord.location_overlap`.
+
+    **6단계 행만 센다.** 7·8단계는 `candidate_location`을 안 넘겨 `location_ok`가 구조상 거짓이라
+    섞으면 겹침률이 깎인다. `location_ok` 키가 없는 행(`p0` 단락)은 `gated`에서 빠진다.
+    6단계 행이 0건이면 `None`이다 - 0이 아니라 「안 쟀다」.
+    """
+    rows = [e for e in events if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.GATE)]
+    if not rows:
+        return None
+    judged = [e for e in rows if "location_ok" in e.data]
+    return {
+        "gated": len(judged),
+        "static_ok": sum(1 for e in judged if e.data["static_ok"] is True),
+        "location_ok": sum(1 for e in judged if e.data["location_ok"] is True),
     }
 
 
@@ -2531,8 +2834,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5는 형제 `PovActionNamed`)을 내고
-    도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6은 형제
+    `PovActionNamed`)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -2560,14 +2863,27 @@ def _run_pov_hops(
     `pov_tool_hops + 1`번까지 묻는다(이슈 #613이 쫓는다).
     게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
-    — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). hop0 재질문은 본문 **끝**에
-    홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이 아니라 노트다. 서술은 후속 판의
-    몫이다(미정)(이 PR은 프롬프트를 안 건드린다 — 행동 어휘·스키마는 불변).
+    — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
+    (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
+    v6이다**(`config/models.yaml` · S19 Phase 6-2) — 이 한계는 v5로 되돌린 설정에만 남는다.
+    hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
+    아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
     ⏵ **2026-10-12 (#619) — `inspect`는 이미 돌린 도구를 다시 안 돌린다**(`ran` — 키는 도구뿐:
     `inspect`는 늘 직전 gen의 바이트를 싣고 gen이 `poc` 키를 덮는다). 옛 결과에
     `inspect_repeat …` 줄을 달아 되먹이고 루프는 안 선다 — 모델 홉은 쓴다(`MAX_HOP` 유효). 인프라
     실패(`pov.INFRA_FAILURE_EXITS`)는 기억하지 않아 재시도를 막지 않는다.
+    ⏵ **2026-10-13 (#572) — 첫 `gen` 전의 `inspect poc`도 도구를 안 돌린다**(돌릴 PoC가 없다):
+    `_POV_INSPECT_WITHOUT_POC` 관측을 되먹이고 홉을 소비하며(`MAX_HOP` 유효) `ran`에 넣지 않는다.
+    홉 이벤트는 `inspect_without_poc: true`로 가른다. **0바이트 gen 뒤의 `inspect poc`는 이 분기가
+    아니다** — `poc`는 `b""`로 이미 돌았으니 #619 반복이다(`is None`으로 가른다 — 아래 분기 주석).
+    `v6` prefix는 이 거절의 첫 gen 전 몫을 서술하고 0바이트 몫은 서술하지 않는다(그쪽이 반복이라
+    `inspect_repeat`로 답한다). `v5` prefix는 둘 다 서술하지 않는다.
+
+    ⏵ **2026-10-13 (#507) — 2단계 컴파일 실패는 hop0 본문 끝의 하네스 노트로 알린다**
+    (`compile_note` — 코드를 읽는 판만 · 실패 Evidence가 없으면 `None`이고 바이트가 종전과 같다).
+    `inspect build`·`asan`·`gdb`를 거절하지는 않는다. hop 0의 `pov_hop`이 `compile_note`·
+    `compile_note_tools`를 싣는다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -2625,6 +2941,18 @@ def _run_pov_hops(
             ctx.config.model_for(Role.POV.value).prompt_template_version
             in pov._WIDE_INPUT_VERSIONS
         )
+        # ⏵ 2026-10-13 (이슈 #507) — 2단계가 이미 잰 컴파일 실패를 hop0 본문에 알리는 노트. 코드를
+        # 읽는 판(`pov_wide`)에만 싣는다(v2는 이 PR 전과 바이트가 같다 — `fuzz_entrypoint`와 같은
+        # 경계). 실패 Evidence가 없으면 `None`이라 본문도 trace도 종전 그대로다. 도구는 거절하지
+        # 않는다.
+        compile_failures = ctx.compile_failures.get(workdir, ()) if pov_wide else ()
+        compile_note = signals.compile_note(compile_failures, workdir)
+        # hop0 `pov_hop` 이벤트에만 싣는 계측 — 노트를 붙인 호출이 있었다는 사실과 그것이 짚은
+        # 도구들(`build`가 실패했을 때만 `build,asan,gdb`). 이 키가 있는 run에서
+        # hop ≥ 0의 `tool`이 그 도구들인 비율이 「노트 뒤 재선택률」이다.
+        note_trace = (
+            signals.compile_note_trace(compile_failures) if compile_note is not None else None
+        )
         while True:
             started = ctx.monotonic_ms()
             try:
@@ -2654,6 +2982,7 @@ def _run_pov_hops(
                         source=wide_source,
                         fuzz_entrypoint=entrypoint,
                         retry_note=retry_note,
+                        compile_note=compile_note,
                         hop=hop,
                     )
                 else:
@@ -2673,6 +3002,7 @@ def _run_pov_hops(
                     _emit_pov_hop(
                         ctx, finding, hop=hop, failed=(exc, latency_s),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     hop += 1
                     version = (
@@ -2693,18 +3023,21 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, stop_reason=reason.value,
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     parse_truncated=truncated,
                 )
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                named = getattr(action, "poc_sha256", None)  # v5 봉투(`PovActionNamed`)만 든다
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6(서빙 판)이 그것을 선언한다.
+                named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action="submit",
                     stop_reason=PovStopReason.SUBMITTED.value,
                     fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                     submit_digest=submit_digest,
                 )
                 return _pov_finish_and_record(
@@ -2725,6 +3058,7 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action="gen", poc=hop_poc,
                         stop_reason=PovStopReason.REPEAT_SPEC.value,
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                     # 서게 한 gen이 마지막 gen이다 — A→B→A면 A(직전 `last_poc`는 B)다.
                     return _pov_finish_and_record(
@@ -2743,11 +3077,22 @@ def _run_pov_hops(
                 tool, tool_poc = "poc", hop_poc
             else:  # inspect — 새 PoC 없이 **직전 gen의** PoC로 진단(아직 gen이 없으면 `None`)
                 tool, tool_poc = action.tool, last_poc
+            # ⏵ 2026-10-13 (#572) — `poc`는 PoC 바이트를 입력으로 **요구**하는 도구라(ADR 0014) 첫
+            # `gen` 전의 `inspect poc`는 돌릴 것이 없다. 도구를 안 돌리고(`tool_call` 없음) 모델에게
+            # 알려 홉만 소비한다 — `ran`에 넣지 않는다(안 돌았다). 아래 꼬리(이벤트 · MAX_HOP ·
+            # 관측 · 홉 줄)는 평소와 같은 코드를 `evidence=None`으로 쓴다.
+            # `asan`·`gdb`·`build`는 입력을 안 받으니 이 분기 밖이다.
+            # 🔴 `is None`으로 가른다 — `not tool_poc`가 아니다. 0바이트(`b""`) gen은 `poc`를 빈
+            # 입력으로 실제로 돌렸고 관측이 `last_gen_bytes=0`을 말한다: 뒤따른 `inspect poc`는
+            # 「없음」이 아니라 #619 반복이다(사이드카도 `b""`를 「PoC 있음」으로 적는다).
+            no_poc = action.action == "inspect" and tool == "poc" and tool_poc is None
             # ⚠ `asan`·`gdb`·`build`가 PoC를 받게 바뀌면 키에 바이트를 넣어라(container_tools 핀).
             prior = ran.get(tool) if action.action == "inspect" else None
             try:
                 evidence = (
-                    prior[1]
+                    None
+                    if no_poc
+                    else prior[1]
                     if prior is not None
                     else pov.run_tool(
                         ctx, finding=finding, tool=tool, workdir=workdir, poc=tool_poc
@@ -2769,13 +3114,20 @@ def _run_pov_hops(
                         ctx, finding, hop=hop, action=action.action, poc=hop_poc,
                         failed=(exc, None), wall_ms=max(0, ctx.monotonic_ms() - started),
                         fuzz=fuzz if hop == 0 else None,
+                        hop0_note=note_trace if hop == 0 else None,
                     )
                 except Exception as emit_exc:
                     exc.add_note(
                         f"pov_hop을 내지 못했다: {type(emit_exc).__name__}: {emit_exc}"
                     )
                 raise
-            if prior is None:
+            # `evidence is None` ⟺ `no_poc`다 — 아래 두 자리가 `no_poc` 대신 `evidence`를
+            # 보는 것이 같은 축인 이유는 타입이다: `pov.run_tool`의 반환형이
+            # `Evidence`(옵셔널 아님)이고 `prior[1]`도 Evidence라, 위 삼항에서 `None`이
+            # 나오는 갈래는 `no_poc` 하나뿐이다. **`run_tool`을 옵셔널로 바꾸면 이 두 자리를
+            # `no_poc`로 바꿔야 한다** — 안 바꾸면 도구가 Evidence를 못 낸 홉이 「PoC 없음」
+            # 관측을 받는다.
+            if prior is None and evidence is not None:
                 if evidence.exit_code in pov.INFRA_FAILURE_EXITS:
                     ran.pop(tool, None)  # 인프라 실패는 기억하지 않는다 — 재시도를 막지 않는다
                 else:
@@ -2787,7 +3139,8 @@ def _run_pov_hops(
                 _emit_pov_hop(
                     ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
                     stop_reason=PovStopReason.MAX_HOP.value, inspect_repeat_of=repeat_of,
-                    fuzz=fuzz if hop == 0 else None,
+                    inspect_without_poc=no_poc, fuzz=fuzz if hop == 0 else None,
+                    hop0_note=note_trace if hop == 0 else None,
                 )
                 return _pov_finish_and_record(
                     ctx, state, finding, PovStopReason.MAX_HOP, last_poc,
@@ -2795,15 +3148,21 @@ def _run_pov_hops(
                 )
             _emit_pov_hop(
                 ctx, finding, hop=hop, action=action.action, evidence=fresh, poc=hop_poc,
-                inspect_repeat_of=repeat_of, fuzz=fuzz if hop == 0 else None,
+                inspect_repeat_of=repeat_of, inspect_without_poc=no_poc,
+                fuzz=fuzz if hop == 0 else None,
+                hop0_note=note_trace if hop == 0 else None,
             )
             # 도구 요청에 실은 PoC를 싣는다 — gen이면 `last_poc`는 방금 이 홉이 조립한 것이다.
-            followup = _pov_observation(
-                action.action,
-                evidence,
-                read_payload=ctx.read_payload,
-                wide=pov_wide,
-                poc=last_poc,
+            followup = (
+                _POV_INSPECT_WITHOUT_POC
+                if evidence is None
+                else _pov_observation(
+                    action.action,
+                    evidence,
+                    read_payload=ctx.read_payload,
+                    wide=pov_wide,
+                    poc=last_poc,
+                )
             )
             if prior is not None:
                 why = (
@@ -2830,6 +3189,12 @@ def _run_pov_hops(
             prev = current
             hop += 1
 
+
+# 돌릴 PoC가 없는 `inspect poc`에 도구 대신 되먹이는 관측(#572). 운영 문구라 철자를 핀한다.
+_POV_INSPECT_WITHOUT_POC = (
+    "inspect_without_poc tool=poc ran=false — poc는 당신의 PoC를 돌리는 도구인데 돌릴 "
+    "바이트가 없다(gen을 낸 적이 없다) — 이 홉에서 도구는 돌지 않았다. 먼저 gen을 내라."
+)
 
 # 접두 지명의 최소 길이 — 짧은 접두가 우연히 맞아 엉뚱한 gen을 가리키는 것을 막는다.
 _MIN_DIGEST_PREFIX = 8
@@ -2957,6 +3322,9 @@ def _pov_observation(
     도구가 받은 것으로 읽힌다. 입력이 없으면(hop0 `inspect`) 줄 자체가 없다 —
     `b""`는 입력이다(`last_gen_bytes=0`). `error=`는 자유 문구라 **맨 끝**이다.
     `wide=False`면 안 싣는다(꼬리와 같은 경계).
+
+    ⏵ 2026-10-13 (#573) — `Evidence.harness_note`(`poc` `exit=1` 모호성 줄)가 있으면 머리줄 바로
+    뒤 **별도 줄**로 붙는다(로그를 거치지 않는다). `wide=False`에서는 이것도 안 싣는다.
     """
     detail = f" error={evidence.error}" if evidence.error else ""
     head = (
@@ -2968,6 +3336,10 @@ def _pov_observation(
     if poc is not None:
         head += f" last_gen_bytes={len(poc)} last_gen_sha256={hashlib.sha256(poc).hexdigest()}"
     head += detail
+    # ⏵ 2026-10-13 (#573) — 하네스가 만든 줄(`poc` `exit=1` 모호성)은 로그를 거치지 않고 여기서
+    # 붙는다. 로그 끝에 두면 읽기 상한(200,000자)에 잘려 v5 prefix의 약속이 깨졌다.
+    if evidence.harness_note:
+        head = f"{head}\n{evidence.harness_note}"
     # `payload_ref`는 `NonEmptyStr`이라 **항상 있다**(`schemas/evidence.py:35`) — 참조가 없는
     # 경우를 가르지 않는다. 없는 것은 **로그**이고 그것은 `read_payload`가 `None`으로 답한다.
     body = read_payload(evidence.payload_ref)
@@ -3023,9 +3395,11 @@ def _emit_pov_hop(
     failed: tuple[Exception, float | None] | None = None,
     wall_ms: int | None = None,
     fuzz: Mapping[str, object] | None = None,
+    hop0_note: Mapping[str, TraceValue] | None = None,
     submit_digest: str | None = None,
     parse_truncated: bool = False,
     inspect_repeat_of: tuple[str, int] | None = None,
+    inspect_without_poc: bool = False,
 ) -> None:
     """`POV_HOP` 이벤트 하나 — hop0 포함 홉마다. `failed`면 그 홉의 호출 자체가 실패한 것이다
     (`_emit_scout_hop`의 `failed_hop`과 같은 자리 — 성공한 응답이 없어 따로 채운다). 그 홉의
@@ -3043,16 +3417,25 @@ def _emit_pov_hop(
     이유는 「진입점 탐색 성공률」이 미실측으로 남지 않게 하는 것이고, **새 EventKind를 만들지 않는
     이유**는 홉 수를 세는 검사들이 `POV_HOP` 개수를 단언하기 때문이다(이벤트를 더하면 깨진다).
 
+    `hop0_note`도 **hop0에만** 준다 — hop0 본문에 컴파일 실패 노트를 붙인 호출이었다는 계측이다
+    (`compile_note`·`compile_note_tools` — 이슈 #507). 키가 없으면 노트가 없었다.
+
     `submit_digest`는 `submit` 홉에만 준다 — `poc_sha256` 지명의 결과(`absent`·`matched`·`unknown`).
 
     `inspect_repeat_of`는 `(도구, 옛 홉)`이다 — 같은 (도구, 입력)을 이미 돌려 **이번엔 안 돌린**
     `inspect` 홉(#619)이라 `tool`·`inspect_repeat_of_hop`만 싣고 도구 결과 키(`tool_ok`…)는 없다.
+
+    `inspect_without_poc`는 돌릴 PoC가 없어 `poc` 도구를 **안 돌린** `inspect` 홉(#572)이라
+    `tool`(요청한 도구 - `inspect_repeat_of`와 같은 뜻)과 `inspect_without_poc: true`만 싣는다 —
+    `tool_ok`·`exit_code`·`evidence_kind`는 이 홉에서 잰 값이 아니라 없다.
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
         data["fuzz_found"] = bool(fuzz["found"])
         data["fuzz_file"] = str(fuzz["file"])
         data["fuzz_reason"] = str(fuzz["reason"])
+    if hop0_note is not None:
+        data.update(hop0_note)
     if action is not None:
         data["action"] = action
     if evidence is not None:
@@ -3062,6 +3445,8 @@ def _emit_pov_hop(
         data["evidence_kind"] = evidence.kind.value
     if inspect_repeat_of is not None:
         data["tool"], data["inspect_repeat_of_hop"] = inspect_repeat_of
+    if inspect_without_poc:
+        data["tool"], data["inspect_without_poc"] = "poc", True
     if poc is not None:
         data["poc_sha256"] = hashlib.sha256(poc).hexdigest()
     if stop_reason is not None:
@@ -3518,8 +3903,10 @@ def _step_retrieval(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bo
         ctx.record_cache(_cache_key_str(key), hit=True, counted_by=state.capsule_counter.get(key))
         return True
     with using_counter(ctx.counter_for_role(item.role.value)):
-        # 슬라이스 타깃이면 slice id를 넘긴다 — LIGHT 캡슐의 `target_function`이 Scout가 받는
-        # 렌더를 세고, Retriever의 캐시가 entry가 같은 두 슬라이스를 가른다(#220 ②).
+        # 슬라이스 타깃이면 slice id를 넘긴다 — LIGHT 캡슐의 `target_function`이 슬라이스 렌더를
+        # 세고, Retriever의 캐시가 entry가 같은 두 슬라이스를 가른다(#220 ②). ⚠ `input: source`
+        # 선언(서빙 v4)의 Scout는 프롬프트에 함수 본문을 받으므로 이 토큰 수는 그 프롬프트와 다른
+        # 것을 센다 — 캡슐 예산이 `SOURCE`를 안 묶는 것과 같은 한계다(#529).
         item.capsule = retrieval.run(
             ctx,
             target=item.target.location,
@@ -3625,6 +4012,9 @@ def _ne_visible(
 
     슬라이스가 없는 target(`--slices` 없이 돈 run)은 `{}`다 — resolver가 "이미 SOURCE에
     있다"를 가를 근거가 없다는 뜻이지, 빈 파일 목록이 아니다.
+
+    `input: source` 선언(#529)은 `shown`이 늘 있고 그 값은 **함수 본문 범위**의 줄이다 — 슬라이스가
+    걸치지 않은 줄도 모델이 봤으니 `visible`이 되고, `SliceRef.lines` 전체는 쓰지 않는다.
 
     `shown`은 Scout 창 트림(`scout._fit_slice`, `scout_slice_trim`)이 실제로 보낸 (file, line)
     집합이다(세션의 `shown_lines`). 트림이 돌았으면 `SliceRef.lines` 전체가 아니라 이 집합을 써야
@@ -3887,6 +4277,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
 
     도구 루프(이슈 #419)가 Finding 없이 서면(`AuditorHopLimit`) **그 후보만 `False`로 멈춘다**(아래
     `except`) — Finding이 없으니 6단계 게이트로 갈 것이 없고, 후보는 노드가 이미 `queued`로 내렸다.
+    ⏵ 2026-10-13(#514) 루프 안의 모델 호출이 크기 거절당하면(`context_overflow`) 노드가 그 홉
+    이벤트와 C-5를 단 뒤 **게이트웨이 예외를 그대로 올린다** - 이 함수는 받지 않고 호출자의
+    `_drop`이 그 후보만 버린다(`target_skipped`).
     """
     item.reached.stage = Stage.AUDITOR
     candidate = item.candidate
@@ -3903,6 +4296,8 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         if ref is None
         else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
     )
+    # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
+    observations: list[str] = []
     try:
         finding, missings = auditor.run(
             ctx,
@@ -3910,6 +4305,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             capsule=expanded,
             evidences=evidences,
             source=source,
+            observations=observations,
             # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
@@ -3941,13 +4337,13 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     # 포맷을 담은 함수가 entry 밖에 있으면 PoV가 영영 못 봤다.
     # 비슬라이스도 Auditor가 처음 읽은 문자열을 재사용한다(사용자 선택 B 보완안, 2026-10-05).
     state.finding_sources[finding.finding_id] = source
+    state.finding_observations[finding.finding_id] = tuple(observations)
     return True
 
 
-# entry를 품는 심볼을 모를 때 Auditor가 읽는 entry 앞뒤 줄 수. **잰 값이 아니라 설계 상수다** —
-# 함수 하나 정도를 덮고(대개 수십 줄) 프롬프트를 파일 크기와 무관하게 묶는 폭이다. 헤더의
-# `static inline` 함수는 2026-09-26부터 인덱서가 받아 여기로 오지 않는다(`_INDEX_SUFFIXES`).
-_AUDITOR_WINDOW_LINES = 50
+# entry를 품는 심볼을 모를 때 Auditor가 읽는 entry 앞뒤 줄 수. 값과 근거는 `entry_scope`가 든다 —
+# Scout(#529)와 같은 상수다. 테스트가 이 이름을 가져다 쓰고 `_auditor_target`이 호출 때 읽는다.
+_AUDITOR_WINDOW_LINES = ENTRY_WINDOW_LINES
 
 
 def _auditor_target(ctx: RunContext, target: _Target) -> Location:
@@ -3972,17 +4368,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
     if target.slice is None:
         return target.location
     entry = target.slice.entry
-    line = entry.line_start
-    if line is None:  # `slice_refs`가 entry 줄을 늘 채운다 — 줄이 없으면 창을 세울 자리가 없다
-        return Location(file=entry.file)
-    enclosing = _narrowest_symbol(ctx.symbols_for(entry.file) or [], line)
-    if enclosing is not None:
-        return enclosing
-    return Location(
-        file=entry.file,
-        line_start=max(1, line - _AUDITOR_WINDOW_LINES),
-        line_end=line + _AUDITOR_WINDOW_LINES,
-    )
+    # 공용 헬퍼(`entry_scope`) — Scout `_ask_model`(#529)도 같은 규칙으로 entry를 넓힌다.
+    return enclosing_scope(ctx.symbols_for(entry.file), entry, _AUDITOR_WINDOW_LINES)
 
 
 # Auditor `SOURCE`의 문자 수 상한 — 슬라이스가 걸친 함수를 앞에서부터 넣다가 넘치는 함수는 뺀다
@@ -4046,6 +4433,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-11 — 서빙 판은 v14다(이슈 #67 — v12 + FACTS에서 `source` 사본을 뺀다). hop0 user 턴은
 # v13과
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
+# 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -4208,10 +4597,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     uncovered = 0
     in_anchor = [ref.entry.line_start] if ref.entry.file == anchor.file else []
     for file, line in ref.lines:
-        if file == anchor.file and _spans(anchor, line):
+        if file == anchor.file and spans(anchor, line):
             in_anchor.append(line)
             continue
-        symbol = _narrowest_symbol(symbols[file], line)
+        symbol = narrowest_symbol(symbols[file], line)
         if symbol is None:
             uncovered += 1
         else:
@@ -4656,7 +5045,7 @@ def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
     자른다. 호출자 머리를 넘어 앞 함수까지 싣지 않게 하려는 것이다."""
     line = site.line_start or 1
     start, end = line - lines, line + lines
-    enclosing = _narrowest_symbol(ctx.symbols_for(site.file) or [], line)
+    enclosing = narrowest_symbol(ctx.symbols_for(site.file) or [], line)
     if enclosing is not None and enclosing.line_start is not None:
         start = max(start, enclosing.line_start)
         end = min(end, enclosing.line_end or end)
@@ -4705,20 +5094,6 @@ def _overlaps(a: Location, b: Location) -> bool:
     return a.line_start <= (b.line_end or b.line_start) and b.line_start <= (
         a.line_end or a.line_start
     )
-
-
-def _narrowest_symbol(symbols: list[Location], line: int) -> Location | None:
-    """`line`을 품는 심볼 중 가장 좁은 것. 없으면 `None`. `symbols`는 한 파일의 것이다."""
-    return min(
-        (symbol for symbol in symbols if _spans(symbol, line)),
-        key=lambda symbol: (symbol.line_end or symbol.line_start or 0) - (symbol.line_start or 0),
-        default=None,
-    )
-
-
-def _spans(location: Location, line: int) -> bool:
-    start = location.line_start
-    return start is not None and start <= line <= (location.line_end or start)
 
 
 def _definitions_by_file(
@@ -4927,8 +5302,9 @@ def _swap(ctx: RunContext, keys: tuple[str, ...], *, stage: Stage | None) -> Non
     ctx.record_model_swap(
         keys, stage=stage, ok=True, wall_ms=ctx.monotonic_ms() - started, report=report
     )
-    # 기동 조건은 명령의 보고로만 기록에 남는다 — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로
-    # 본다(그대로 둔 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
+    # 실제로 띄운 기동 조건은 명령의 보고로만 기록에 남는다(의도한 인자는
+    # `serving_launch_intended`) — 키별로 어떤 필드든 하나라도 있으면 보고한 것으로 본다(그대로 둔
+    # 서버는 `action`만 보고할 수 있다). 기동 인자를 실제로 실었는지는 보지 않는다.
     ctx.swap_unreported.update(
         key for key in keys if not any(name.startswith(f"server.{key}.") for name in report)
     )
@@ -5474,6 +5850,7 @@ def _new_record(
     model_sampling: dict[str, ModelSampling],
     compile_flags: CompileFlags | None,
     slicer: dict[str, str | int | None] | None = None,
+    serving_launch_intended: dict[str, list[str]] | None = None,
 ) -> tuple[RunRecord, list[str]]:
     """재현성 기록을 만든다. 빈 필수 항목은 경고로 남긴다.
 
@@ -5520,6 +5897,8 @@ def _new_record(
         # 달리 어댑터를 안 거친다 — config에서 바로 유도되므로 `deps`를 탈 이유가 없다.
         model_reasoning_effort=config.reasoning_efforts(),
         model_request_params=config.request_params(),
+        # 장비 파일이 의도한 기동 인자(#99) - 어댑터가 읽어 `deps`로 나른다. 의도지 증거가 아니다.
+        serving_launch_intended=serving_launch_intended,
         # 어댑터가 낸 컴파일 조건 (#74). `tool_images`와 같은 경로로 받는다 — 러너는
         # `src/adapters/`를 import 하지 않으므로 `_STD_ARGS`를 여기서 읽을 수 없고, 읽을 수
         # 있더라도 읽으면 안 된다: 값을 두 곳에 두면 갈라진다.

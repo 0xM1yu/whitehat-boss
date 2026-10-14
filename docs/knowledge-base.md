@@ -89,7 +89,9 @@ Auditor는 슬라이스가 아니라 원본 소스를 받는다(결정 1-b = 넓
 `target_function`이 그 렌더를 센다(Phase 3c). Auditor의 `SOURCE`는 슬라이스가 걸친 함수들의 원본이다 — entry를
 감싸는 함수(품는 함수를 모르면 entry 앞뒤 고정 창)가 먼저이고 나머지는 문자 수 상한 안에서 함수째 붙는다. EXPANDED
 캡슐의 `target_function`은 entry 함수만 센다 — 상한이 뺀 함수와 못 본 줄은 trace `auditor_source`가 든다.
-`--slices` 없는 run은 앞 문장 그대로다.)
+`--slices` 없는 run은 앞 문장 그대로다.
+⏵ 2026-10-13 #529 — 앞 문장의 「Scout는 슬라이스 렌더를 받고」는 프롬프트가 `input: slice`를 선언했을 때만이다. 서빙 v4
+(`input: source`)는 `--slices` run에서도 entry를 품는 함수 본문을 받는다.)
 
 ```json
 {
@@ -180,6 +182,7 @@ light capsule (callers/callees 1-hop 포함)
 > `config/budgets.yaml`의 thresholds 블록). 그 값을 세고 강제하는 루프는 그대로 Phase 5다. ⏵ 이 변경이
 > 세고 강제한다 — `src/orchestrator/runner.py`의 `_run_ne_hops`가 `session.hop >= max_hops`에서
 > `NeStopReason.MAX_HOP`으로 선다.)
+> ⏵ 2026-10-13 - 이 사다리의 확장 경로(`nodes/retrieval.expand()`)는 러너 호출이 0이고(위 「사다리의 첫 칸」 절), 그래서 "예산이 캡슐을 실제로 묶었는지"([D41](open-questions/D/D41.md), 닫힘)는 `search` 시점 절단 하나로 좁아졌다 - 그 절단은 플래그가 없고 영향은 미측정이다(낮을 것으로 본다). `capsule_expansion_max`를 읽는 정책 결정점은 코드에 남아 있으나 어느 run도 부르지 않는다.
 
 ### 사다리의 첫 칸을 기본값으로 올렸다 (2026-08-23, D20을 (a)로 확정)
 

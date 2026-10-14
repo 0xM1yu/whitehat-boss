@@ -168,6 +168,8 @@ class FixedThresholdPolicy:
 
         `verdict`는 **정규화된** 값이다(gate.normalize). 근거 없는 rebut을 여기서 다시
         판정하면 정규화 지점이 둘이 되고 `critic_normalized` 지표의 분자가 갈라진다.
+        ⏵ 2026-10-13 (ADR 0015) — 근거 없는 rebut은 `need_evidence`로 정규화되므로 여기서
+        모델이 낸 `need_evidence`와 같은 길(F-7)을 탄다.
         """
         verdict = Verdict(_signal(request, "verdict"))
         grade = EvidenceGrade(_signal(request, "grade"))

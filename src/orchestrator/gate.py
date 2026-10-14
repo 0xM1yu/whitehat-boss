@@ -23,13 +23,20 @@
 | E1 | `any(e.kind == STATIC)` **or** `any(e.location.overlaps(cand.location))` |
 | E2 | `{SOURCE, SINK} ⊆ path.steps` **and** `any(e.kind == GRAPH)` **and** `not any(m.blocking)` |
 | E3 | `p2` **and** `any(normalize(d) == UPHOLD)` **and** `repro_spec is not None` |
-| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` |
+| E4 | `any(e.kind in {SANITIZER, CRASH, POC_RUN} and e.exit_code not in {None, 0})` (대용 지표) |
 
 - **E0의 조건은 「모델이 인용을 안 했다」가 아니라 「붙일 관측이 없었다」다** (이슈 #552).
   `evidence_refs`는 모델이 쓰지만 **6단계가 판정 전에 그 타깃에서 관측한 Evidence를 붙인다**
   (`nodes/gate_node.attach_observed` — 8단계도 같은 함수를 쓴다). 그래서 이 단락에 걸리는 것은
   관측이 0건인 타깃이다. 붙이기 전에는 심사 대상의 자기 신고가 심사 여부를 정했다 —
   실측(`run_20261007_0001`): Finding 5건이 인용 0건이라 전부 E0였고 7단계 이벤트가 0건이었다.
+- **E2의 `GRAPH`는 run 전역 Evidence 하나다 — 이 Finding의 경로를 확인한 것이 아니다 (이슈 #576).**
+  러너가 1단계에서 `index.run`을 **한 번** 돌려 그 Evidence를 모든 타깃의 풀에 넣는다
+  (`runner._artifact_signals`의 `return (graph, *found)`). 그래서 `graph_ok`는 「인덱서가 돌았고
+  **심볼 0개로 보고되지 않았다**」를 말하고(심볼 0개는 어댑터 `judge()`가 `ok=False`로 내리지만 그
+  요약 줄이 없으면 `ok`를 그대로 둔다 · `FakeToolRunner`는 심볼을 안 센다), 인덱서가 서는 동안
+  **E2 ≡ `path_ok ∧ unblocked`** 이며 `path_ok`는 **모델이 쓴 `finding.path`** 다. 인덱서가 실패하면
+  전 타깃이 **동시에** E2를 잃는다 — 등급이 근거 품질이 아니라 인덱서 가동률을 섞어 잰다.
 - 등급 = `E4 if p4 else E3 if p3 else E2 if p2 else E1 if p1 else E0` (단조 하강)
 - **E3는 E2를 포함한다 (이슈 #154).** 단조 하강은 「위에서부터 처음 참인 것」이지 포함이
   아니므로 포함은 술어가 직접 든다 — `p3`가 `p2`를 요구한다. 없으면 E2를 못 넘은 Finding이
@@ -42,21 +49,38 @@
   술어 사이의 포함은 **`p3 ⟹ p2` 하나다** — `p2`는 `p1`을 요구하지 않고, `p4`는 경로도
   E2도 안 본다(E4는 이 포함 밖 — 도달 불가의 잠재다. F-10이 `validated`에서만 `proven`을
   허용하고 `validated`는 `path`를 강제한다. 이슈 #154는 2026-10-12 닫았다).
-- `normalize()`: `verdict == REBUT and not is_grounded` → `UPHOLD`.
-  이 정규화가 일어난 사건은 호출자가 `critic_normalized` trace로 남긴다
-  (agent-contracts.md §2.3 "근거 없는 반박은 uphold로 처리하되 지표에 기록한다").
-- `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다.
+- `normalize()`: `verdict == REBUT and not is_grounded` → `NEED_EVIDENCE`.
+  이 정규화가 일어난 사건은 호출자가 사유와 함께 `critic_normalized` trace로 남긴다
+  (agent-contracts.md §2.3 "근거 없는 반박은 need_evidence로 처리하되 지표에 기록한다").
+  ⏵ 2026-10-13 (ADR 0015) — 목적지가 `UPHOLD`였다. 근거 없는 반박이 `upheld`를 세우면 `p3`이 서서
+  Finding이 `validated`까지 올라갔다(PR #588 적대적 리뷰 2026-10-10, 사유 `critic_upheld`):
+  Critic이 **반박을 못 해서** 승격되는 길이다.
+- `need_evidence`는 반박 실패가 **아니다** — 정규화 대상도 아니다. 정규화된 `need_evidence`는
+  모델이 낸 `need_evidence`와 **같은 값**이라 정책·풀·게이트가 둘을 구별하지 않는다.
 - 게이트가 Evidence에서 읽는 것은 `ok`·`kind`·`location`, 그리고 **런타임 종류의 `exit_code`**
   (E4 — 0도 `None`도 아니어야 한다)다. ⚠ **`expected_signal`을 산출물과 대조하는 코드는 없다** —
   8단계 노드가 그 문자열로 하는 일은 `tool_for()`가 **도구 이름**을 고르는 것뿐이고, `Evidence.ok`는
   어댑터가 낸다 — 컨테이너는 `judge()`, Fake는 `_run_repro()`가 **대상 존재**로 낸다.
   그래서 `p4`가 참이어도 「기대한 신호가 관측됐다」는 아니다(#232).
 - **E4의 종료 코드 조건은 크래시의 대용 지표이고 그 이상이 아니다 (#232).** exit 0과 미측정
-  (`None`)을 크래시로 세지 않는다 — 거기까지다. 비-0은 asan·poc에서 **대상 바이너리**의 값이라
+  (`None`)을 크래시로 세지 않는다 — 거기까지다. ⏵ 2026-10-13(#232) **E4 = 「실행됐고 비-0으로
+  끝났다」이지 「재현됐다」가 아니다.** 판정은 오라클이 한다(ADR 0013·0014). `expected_signal`을
+  대조하는 선택지는 기각됐다 — `synthesize_repro_spec`이 켜진 run에서는 하네스가 그 신호를 직접
+  써서 대조가 순환한다. 비-0은 asan·poc에서 **대상 바이너리**의 값이라
   대상이 스스로 비-0을 돌려줘도 같고, gdb에서는 **gdb 프로세스**의 값이다(대상이 스스로 끝났을
-  때만 대상의 값 — `--return-child-result`). 「크래시했다」를 표현하는 필드는 `Evidence`에 없다.
+  때만 대상의 값 — `--return-child-result`). 종료 코드로 「크래시했다」를
+  표현하는 필드는 없다 — 배너 관측 `Evidence.crashed`가 있으나 `p4`는 안 읽는다(아래 ⏵).
   gdb를 8단계에 배선하기 전에 정상 종료인지 신호 정지인지를 `judge()` 밖으로 따로 내야 한다 —
   지금은 8단계가 gdb를 고르지 않는다(`validate.tool_for()`).
+- ⏵ 2026-10-13(#232) **`Evidence.crashed`(배너 관측)는 이 술어가 안 읽는다 — 기록뿐이다.**
+  컨테이너 러너가 대상 로그의 sanitizer 배너를 찾아 싣지만(`container_tools.observe_crash`) 철자가
+  문서에서 온 것이고 실제 로그 대조는 재생 14건(arvo 4·oss-fuzz 10)뿐이라 대부분 미검증이다.
+  `p4`가 그것을 읽게 하는 전환은
+  `poc_run` 크래시 녹음이 쌓인 뒤로 미뤘다. **환경이 낸 종료 코드는 `p4`에 거의 안 닿는다** —
+  `ok=False`인 것(타임아웃 124 · asan의 125~127 · `poc`의 124~127·137·255·>255·음수 · 수명주기 줄
+  없는 gdb)은 `usable`이 걸러 낸다(코드 대조 2026-10-13). ⚠ **남은 구멍: asan의 137·255·>255·음수는
+  `ok=True`로 올라와 `p4`를 참으로 만든다** — 환경의 SIGKILL과 대상 자신의 OOM이 갈리지 않고 255는
+  gdb 신호 정지의 값이기도 해서 여기서 일괄로 빼지 않았다.
 - **ambiguous(E1↔E2)**: `p1 and not p2 and (a and (not b or not c))`.
   경로는 이어졌는데 그래프 근거나 blocking 해소 중 하나가 빈 경우다.
   이때 `gate_ambiguous`를 기록하고 **E1으로 확정한다. 모델을 호출하지 않는다.**
@@ -124,12 +148,16 @@ def at_least(grade: EvidenceGrade, floor: EvidenceGrade) -> bool:
 
 
 def normalize(decision: Decision) -> Verdict:
-    """근거 없는 `rebut`을 `uphold`로 정규화한다 (agent-contracts.md §2.3).
+    """근거 없는 `rebut`을 `need_evidence`로 정규화한다 (agent-contracts.md §2.3 · ADR 0015).
 
-    `need_evidence`는 반박이 아니므로 건드리지 않는다.
+    `uphold`·`need_evidence`는 반박이 아니므로 건드리지 않는다.
+
+    ⏵ 2026-10-13 — 목적지가 `uphold`였다. `uphold`는 「Critic이 반박을 시도해 실패했다」는 판정이라
+    `p3`을 세우지만, 근거 없는 `rebut`은 그런 판정이 아니다. 「확인 못 했다」가 맞고 그것은
+    `need_evidence`다.
     """
     if decision.verdict is Verdict.REBUT and not decision.is_grounded:
-        return Verdict.UPHOLD
+        return Verdict.NEED_EVIDENCE
     return decision.verdict
 
 
@@ -158,6 +186,9 @@ def evaluate(
     path_steps = {step.step for step in finding.path}
 
     static_ok = any(ev.kind is EvidenceKind.STATIC for ev in usable)
+    # `location_ok`는 6단계 행만 겹침의 뜻이 있다 - 7·8단계는 `candidate_location`을 안 넘긴다.
+    # run마다의 횟수는 `RunRecord.location_overlap`(이슈 #563). 거짓은 「안 겹쳤다」·「위치 있는
+    # Evidence가 없다」·「후보 위치가 없다」를 가르지 않는다.
     location_ok = candidate_location is not None and any(
         ev.location is not None and ev.location.overlaps(candidate_location) for ev in usable
     )
