@@ -57,6 +57,12 @@ Enum 멤버 추가·삭제와 중첩 모델(`Location` 등)의 필드 변경도 
 
 게이트는 **이 코드부터** 돈다 — 게이트 전 코드는 판을 안 읽으므로, 그 코드로 이 판의
 파일을 여는 것은 여전히 막지 못한다.
+
+판 3에 든 것은 아래다. 기본값이 있어 이 코드는 판 2 행도 읽지만 옛 코드는 새 행을 못
+읽는다(`extra="forbid"`). 그래서 판 2 파일은 이제 거부된다.
+
+- `ContextCapsule.cuts`(#663) — `search` 시점 캡슐 예산 절단 표지(`CapsuleCuts`). `None`이
+  「기록 안 했다」이고 안 잘린 캡슐은 빈 `CapsuleCuts`다.
 """
 
 import json
@@ -78,7 +84,7 @@ CREATE INDEX IF NOT EXISTS objects_by_run ON objects (kind, run_id);
 """
 
 # 저장 형태 판. 올리는 규칙은 모듈 docstring. 0은 「판을 안 적은 파일」(게이트 전)이라 쓰지 않는다.
-STATE_DB_SCHEMA_VERSION = 2
+STATE_DB_SCHEMA_VERSION = 3
 
 # 판을 올린 변경 — 오류 문구가 이 표를 읽어, 옛 파일을 만난 사람이 **어느 체크아웃이 그 판을
 # 읽는지** 안다. 판을 올리는 PR은 여기에 한 줄을 더한다. 커밋 해시는 squash로 바뀔 수 있어
@@ -94,6 +100,7 @@ _VERSION_INTRODUCED_BY = {
         "main `f0cdba76`의 `RunRecord.keep_responses`(#618·#612), "
         "#580의 `Finding.audit` 확대도 든다 — 뒤 둘은 판을 안 올렸다(#594)"
     ),
+    3: "이슈 #663 — `ContextCapsule.cuts` 추가(`search` 시점 캡슐 예산 절단 표지)",
 }
 
 

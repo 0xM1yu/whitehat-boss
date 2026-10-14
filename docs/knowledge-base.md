@@ -155,6 +155,9 @@ config에서 온다** — `capsule_expansion_max`가 정책값이고 초과 판�
 (초과 시 후보를 폐기하지 않고 `queued`로 둔다). (→ §5 머리 2026-09-24 ⚠ — ADR 0012 결정 6이 이
 상한을 `max_hops`로 대체한다)
 
+`cuts`는 **`search`(최초 조립)의 예산 절단 표지**다(이슈 #663 · 위 예시에는 없다 — 기본값 `null`).
+`null`은 「기록 안 했다」(이 필드가 생기기 전 캡슐)이고 안 잘렸으면 빈 객체 `{"dropped_sections": [], "graph_stopped": false, "graph_skipped": 0, "related_skipped": 0}`다. 내용이 실제로 갈린 자리만 센다 - 예산 `break`로 못 만든 섹션(**상한** - break 뒤는 시도 안 해 원래 없었을 것이 섞인다)·그래프 `stop`·그래프 섹션에서 못 담은 항목(**하한** - break 뒤 섹션은 안 센다)·`related`에 안 든 선별 조각. `min(cost, remaining)`는 내용을 안 바꿔 세지 않고, 청크 개수 절단(`retrieval_truncated`)·채움률은 다른 질문이다. 확장(`expand`)이 붙인 섹션은 반영하지 않는다. **프롬프트에는 실리지 않는다.**
+
 > 이 예시는 `tests/test_doc_examples.py`가 `ContextCapsule`로 실제 파싱해 본다.
 > 스키마와 어긋나면 테스트가 깨진다.
 
@@ -182,7 +185,7 @@ light capsule (callers/callees 1-hop 포함)
 > `config/budgets.yaml`의 thresholds 블록). 그 값을 세고 강제하는 루프는 그대로 Phase 5다. ⏵ 이 변경이
 > 세고 강제한다 — `src/orchestrator/runner.py`의 `_run_ne_hops`가 `session.hop >= max_hops`에서
 > `NeStopReason.MAX_HOP`으로 선다.)
-> ⏵ 2026-10-13 - 이 사다리의 확장 경로(`nodes/retrieval.expand()`)는 러너 호출이 0이고(위 「사다리의 첫 칸」 절), 그래서 "예산이 캡슐을 실제로 묶었는지"([D41](open-questions/D/D41.md), 닫힘)는 `search` 시점 절단 하나로 좁아졌다 - 그 절단은 플래그가 없고 영향은 미측정이다(낮을 것으로 본다). `capsule_expansion_max`를 읽는 정책 결정점은 코드에 남아 있으나 어느 run도 부르지 않는다.
+> ⏵ 2026-10-13 - 이 사다리의 확장 경로(`nodes/retrieval.expand()`)는 러너 호출이 0이고(위 「사다리의 첫 칸」 절), 그래서 "예산이 캡슐을 실제로 묶었는지"([D41](open-questions/D/D41.md), 닫힘)는 `search` 시점 절단 하나로 좁아졌다 - 그 절단은 플래그가 없고 영향은 미측정이다(낮을 것으로 본다 - ⏵ 2026-10-14 이슈 #663이 플래그를 달았다: `ContextCapsule.cuts`와 trace `capsule_cut`. 표지는 생겼고 **영향은 아직 미측정이다** - 첫 run이 그 이벤트로 센다). `capsule_expansion_max`를 읽는 정책 결정점은 코드에 남아 있으나 어느 run도 부르지 않는다.
 
 ### 사다리의 첫 칸을 기본값으로 올렸다 (2026-08-23, D20을 (a)로 확정)
 
