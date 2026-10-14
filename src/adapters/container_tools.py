@@ -1706,7 +1706,16 @@ class ContainerToolRunner:
         exit_code: int,
         error: str,
     ) -> Evidence:
-        """실행 전에 거절된 경우. 프로세스를 띄우지 않는다."""
+        """실행 전에 거절된 경우. 프로세스를 띄우지 않는다.
+
+        `ok=False`에 정수 `exit_code`를 적으므로 `validate._not_measured`가 「측정 못 함」
+        (`validated` 보류)으로 센다 - 명세 실패(F-11, `exit_code=None`)가 아니다. `validate`
+        경로에서는 그 분류가 맞다(#670): 모델이 쓴 요청(`repro_spec.steps` -> `args.argv`)은
+        `plan()`에 닿지 않고 도구는 `tool_for` 대응표가 고른다. 거절 사유는 대상 내용이나 하네스
+        쪽 사정이다 - 정책 밖 도구(127 - 그 대응표로는 닿지 않는다) · 네트워크 요청 · 경로 이탈 ·
+        workdir 없음 · SIF 없음 · `plan()`의 `ValueError`(C·C++ 혼합 대상 · 컴파일할 C 소스 없음 ·
+        과제 id · `poc_target` 없음 · 조립 규칙 없는 도구) · 스크래치 쓰기 실패 · 입력 없는 `poc`.
+        """
         return self._write(
             evidence_id,
             tool,
