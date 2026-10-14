@@ -123,7 +123,7 @@ class SliceRef(HarnessModel):
     # 그 사이에 `entry_scope.enclosing_scope`가 끼어 FACTS `target`이 품는 함수 범위가 되므로
     # 이 등식이 깨진다(위 `slice_id` ⏵).
     location: Location
-    # v3 `FACTS.slice_criterion.given_end` — Case A는 `source`, B는 `sink`.
+    # v3 `FACTS.slice_criterion.given_end` — Case A와 F(slicer_v2 정방향)는 `source`, B는 `sink`.
     given_end: Literal["source", "sink"]
     # 슬라이서가 준 entry **그대로**(file·line·symbol) — `FACTS.slice_criterion.given`이 된다.
     # `location`과 따로 드는 이유: Case B의 entry `symbol`은 감싸는 함수가 아니라 sink 호출
