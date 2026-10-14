@@ -1436,8 +1436,8 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # (`tests/test_auditor_v14_facts.py`).
 # ⏵ 2026-10-13 v15도 같다 — 그 약속 문장(§5 CWE and reproduction)을 안 건드렸다
 # (`tests/test_auditor_v15.py`가 v14와의 차이에 그 줄이 없음을 문다).
-# ⏵ 2026-10-14 v16도 같다 — 그 약속 문장을 안 건드렸다(`tests/test_auditor_v16.py`가 v15와의 차이가
-# `Build contract` 목록뿐임을 문다).
+# ⏵ 2026-10-14 v16도 같다 — 그 약속 문장을 안 건드렸다(`tests/test_auditor_v16.py`가 v15와의 차이를
+# prefix 다섯 군데로 바이트 등식으로 묶는다 - 그 다섯 밖은 한 글자도 다르지 않다).
 _V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14", "v15", "v16"})
 
 

@@ -790,8 +790,7 @@ def _require(active: bool, pr: str, what: str) -> None:
     if active:
         return
     # ⏵ 2026-10-14 - v16은 v15의 그 문장들을 그대로 물려받았다(`tests/test_auditor_v16.py`가 차이를
-    # `Build contract`
-    # 목록뿐으로 문다) - 서빙 판이 v16이어도 그 창은 그대로 열려 있다.
+    # prefix 다섯 군데로 바이트 등식으로 묶는다) - 서빙 판이 v16이어도 그 창은 그대로 열려 있다.
     if _SERVED_AUDITOR_VERSION in ("v15", "v16"):
         pytest.fail(
             f"{pr}가 아직 main에 없는데 `config/models.yaml`의 Auditor 좌석이 이미 "
