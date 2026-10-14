@@ -478,6 +478,17 @@ class EventKind(StrEnum):
     # 어긋날 수 있다) · `bare_cr`(원본 바이트에 `\n`을 안 단 `\r`이 함수 앞·안에 있다 — 텍스트
     # 읽기가 `\r`을 `\n`으로 접어 인덱서와 줄 번호가 어긋난다) · `no_sink`(sink 줄이 원문 밖이거나
     # sink에서 이름을 못 뽑았다). GUARDS는 함수가 아니라 `functions`에 안 든다.
+    # `auditor_input_context`가 1이면(S20 Phase 13) `input_context`가 더 실린다 -
+    # `absent`(슬라이스에 키가 없다: 수는 **안 적는다**, 0이 아니라 모름) · `none_selected` ·
+    # `selected`. 키가 있으면 `input_context_basis`(`cpg`/`syntax`) · `_cap_hit`(슬라이서가 쓴
+    # 그대로 - `none_selected`에 서 있으면 잘린 탐색일 수 있어 0이 아니라 모름) ·
+    # `_cap_reasons`(쉼표로 이은 문자열) · `_listed` (슬라이서가 고른 함수 수) · `_added`(SOURCE에
+    # 붙인 수) · `_chars`(러너가 잰 SOURCE 길이 증가 — 블록을 붙이며 entry 배너가 새로 생기면
+    # 포함) · 건너뜀 넷이 더 실린다:
+    # `_skipped_syntax`(`syntax` 근거라 안 읽음) · `_skipped_carried`(함수 전체가 이미 든 범위
+    # 안이다 - 일부만 겹치면 붙인다) · `_skipped_size`(상한에 넘침) · `_skipped_empty`(읽은 본문이
+    # 비었다). 그리고 이 판이 싣지 않는 `_carried_decoders`·
+    # `_dispatches`의 수다. 붙인 본문은 `functions`에 안 든다 - `input_context_added`가 센다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
