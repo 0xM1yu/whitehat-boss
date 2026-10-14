@@ -81,7 +81,7 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
-v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16도)은 그 블록에 `source`가 없고 body 머리 문장도
+v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 그 블록에 `source`가 없고 body 머리 문장도
 「전부」라 하지 않는다 — 분석 대상 코드는 산문 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈
 #67). ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
@@ -120,15 +120,17 @@ FACTS_TOKEN = "FACTS"
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
 #
-# **opt-in은 셋이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
-# ⏵ 2026-10-13 셋째 `auditor_hops`):
+# **opt-in은 넷이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
+# ⏵ 2026-10-13 셋째 `auditor_hops` · ⏵ 2026-10-14 넷째 `slice_state`):
 #   - `slice_criterion` — 슬라이스 타깃이고 `input: slice`를 선언한 Scout 프롬프트에만(ADR 0012
 #     결정 1, Scout v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `source`는 안 받는다 — #529).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
 #   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
 #     (아래 그 항목의 주석 · #600 H2ⓐ).
+#   - `slice_state` — **Auditor만, `auditor_slice_state`가 켜졌고 슬라이스가 있는 후보에만**(이슈
+#     #438 (b) · 아래 그 항목의 주석).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판
-# (v13·v14·v15·v16)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기
+# (v13·v14·v15·v16·v17)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기
 # 전과 **글자가 같다** — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
@@ -149,6 +151,11 @@ FACT_KEYS = (
     # (사본 0이면 키 자체가 없다 — `0`을 적지 않는다, 바이트 동일), 본문은 EVIDENCE 블록
     # (`critic._describe_hop_observations`)에 있다.
     "auditor_hops",
+    # 슬라이스의 정적 상태(`analysis_kind` · `degraded` · `truncated` + 사유 · 경계 사유 —
+    # #438 (b)). **Auditor만, `thresholds.auditor_slice_state`가 켜졌고 슬라이스가 있는
+    # 후보에만** 싣는다 — 안 주면 키 자체가 없다(바이트 동일). 값은
+    # `orchestrator/slice_state.facts`가 만든다. 모름은 `null`이다(`false`가 아니다).
+    "slice_state",
 )
 
 
@@ -665,6 +672,7 @@ def build_facts(
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     auditor_hops: int | None = None,
+    slice_state: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
@@ -682,13 +690,19 @@ def build_facts(
 
     `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
     `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14
-    v16도 — 서빙 판)에만 노드가 `False`를 준다. 그때 키가 **없다** — `""`나 `null`로 남기지 않는다.
+    v16·v17도 — 서빙 판)에만 노드가 `False`를 준다. 그때 키가 **없다** — `""`나 `null`로
+    남기지 않는다.
     빈 문자열은 「원문이 비었다」로, `null`은 「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문
     SOURCE 블록에 있다. 다른 역할·판은 바이트 그대로다.
 
     `auditor_hops`도 같은 opt-in이다 — **Critic만**, Critic용 홉 관측 사본이 1개 이상인
     Finding일 때만 준다(**사본 수** - 돈 홉 수가 아니다). 사본이 없으면 `None`이라 키가 없다 —
     `0`으로 적으면 사본 0 Finding의 FACTS 바이트가 바뀐다(#600 H2ⓐ).
+
+    `slice_state`도 같은 opt-in이다 — **Auditor만**, `thresholds.auditor_slice_state`가 켜졌고
+    후보에 슬라이스가 있을 때만 준다(#438 (b)). 안 주면 키가 없다 — 슬라이스 없는 후보와 끈 run의
+    FACTS 바이트가 그대로다. 값 안의 모름은 `null`이다(`slice_state.facts`가 `false`·`[]`와
+    가른다).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -703,9 +717,9 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
-        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16)은 `source`를 여기 안 싣고
-        # body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도
-        # 싣는다.
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17)은 `source`를 여기
+        # 안 싣고 body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은
+        # 그 판도 싣는다.
         "capsule_sections": [
             {
                 "kind": section.kind,
@@ -783,6 +797,7 @@ def build_facts(
         **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
         **({"fuzz_entrypoint": dict(fuzz_entrypoint)} if fuzz_entrypoint is not None else {}),
         **({"auditor_hops": auditor_hops} if auditor_hops is not None else {}),
+        **({"slice_state": dict(slice_state)} if slice_state is not None else {}),
     }
 
 

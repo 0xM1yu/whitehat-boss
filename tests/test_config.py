@@ -575,8 +575,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v16(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v16`을 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v17(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v17`을 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -608,10 +608,13 @@ def test_the_canonical_auditor_selects_prompt_v16(profile: str) -> None:
     봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
     바뀌었다(같은 규칙 1). ⏵ **v16**(2026-10-14 · S20 Phase 13) = v15 + 입력 맥락 함수 블록의 서술 -
     새 옵션 `auditor_input_context`(`prompts/auditor/v16/meta.yaml`)를 켜 두려고 올렸다. 봉투·body는
-    v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1)."""
+    v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1). ⏵ **v17**(2026-10-14 · S20 Phase 14) =
+    v16 + `FACTS.slice_state` 서술(이슈 #438 (b)) · 「배너 없으면 첫 블록 하나」 정정(이슈 #669) -
+    새 옵션 `auditor_slice_state`(`prompts/auditor/v17/meta.yaml`)는 꺼 둔 채 선언한다. 봉투·body는
+    v16과 같고 v16 파일은 한 글자도 안 바뀌었다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v16"
+    assert config.model_for("auditor").prompt_template_version == "v17"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -721,11 +724,12 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
         "v14": "not a generated summary",
         "v15": "is bounded: some execution-header lines are removed",
         "v16": "is bounded: some execution-header lines are removed",
+        "v17": "is bounded: some execution-header lines are removed",
     }
     assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
     assert excerpt_sentence[version] in flat
     has_old = "not a generated summary" in flat
-    assert has_old == (version == "v14"), "v15·v16이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
+    assert has_old == (version == "v14"), "v15~v17이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
         "`truncated` is false",
         "line containing only `...`",
@@ -2784,11 +2788,20 @@ def test_the_older_auditor_prompts_describe_no_source_option(version: str) -> No
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
 def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(profile: str) -> None:
     """서빙 판이 선언한 옵션 == `budgets.yaml`이 켠 옵션. `cli`는 켰는데 선언 안 한 쪽만 막으므로
-    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349)."""
+    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349). 예외는
+    하나다 - 측정 대기로 **끈 채 선언하는** `auditor_slice_state`(v17 · 아래 본문)."""
     config = load_config(profile)
     version = config.model_for("auditor").prompt_template_version
     described = set(load_prompt(Role.AUDITOR, version).source_options)
-    assert described == set(config.thresholds.auditor_source_options_on())
+    # ⏵ 2026-10-14 — 예외는 하나다: `auditor_slice_state`(v17)는 **끈 채로 선언한다** — 켜는 것은
+    # 측정 결정이고, 켠 run ↔ 끈 run 짝 비교(D101)는 같은 판이 둘을 다 서술해야 선다. 그 서술은 키가
+    # 없을 때도 참이라 거짓 서술이 아니다(`tests/test_auditor_v17.py`). 다른 끈 옵션을 선언하면
+    # 여기서 죽는다.
+    pending = {"auditor_slice_state"}
+    assert described - pending == set(config.thresholds.auditor_source_options_on())
+    assert not (set(config.thresholds.auditor_source_options_on()) & pending), (
+        "끈 채 선언하는 예외는 꺼져 있을 때만 예외다 - 켜면 위 등식이 그대로 걸려야 한다"
+    )
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:
