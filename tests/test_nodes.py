@@ -2439,12 +2439,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_v5_and_v6() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_v6_and_v7() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6"})
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6", "v7"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -2612,11 +2612,14 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
 
     출처: prompts/{auditor,critic}/v5/prefix.md의 절단 계약 문단. 의미가 다른 문장을 덧붙이는
     변이는 못 잡는다. 실제 모델의 근거 사용·과보류는 별도 측정 대상이며
-    배선된 v6 활성화 전에 그 측정을 했다는 기록은 없다(agent-contracts §4).
+    배선된 v6·v7 활성화 전에 그 측정을 했다는 기록은 없다(agent-contracts §4).
+    v7(2026-10-14 서빙)은 v5의 규칙 문장을 다시 써서 절단 규칙·rationale 인용·반박 ID 셋의
+    철자가 다르다 - 그 셋만 판별로 가른다.
     """
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
+    is_v7 = role == "critic" and version == "v7"
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
@@ -2630,15 +2633,20 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
         "without that marker",
         "may also occur in the original log",
         "not a clean result",
-        "truncation alone is not a reason",
     ):
         assert text in normalized
+    assert ("Truncation alone is not a reason for `need_evidence`" if is_v7
+            else "truncation alone is not a reason") in normalized
     if role == "critic":
         assert "`[truncated]`" in prefix
-        assert "supporting retained text in `rationale`" in normalized
         assert "For a non-empty body with `truncated: true`" in normalized
         assert "Empty bodies have no snippet or suffix" in normalized
-        assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
+        if is_v7:
+            assert "retained body text that shows the fault in `rationale`" in normalized
+            assert "Set rebuttal_axis=[] and evidence_refs=[]" in normalized
+        else:
+            assert "supporting retained text in `rationale`" in normalized
+            assert "Set rebuttal_axis=[] and use non-empty evidence_refs" in normalized
 
 
 @pytest.mark.parametrize("role", ["auditor", "critic", "wired_critic"])
@@ -2667,6 +2675,8 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     위 v5 핀은 절단 안내 문장만 묻는다 — 규칙 3의 「Otherwise decide」를 「Otherwise defer」로
     바꾸는 한 단어 변이도 그 핀들로는 안 잡힌다. 여기서는 규칙 2·3과 Critic §1 범위 문단을
     각각 **연속 구 하나**로 묶어 전제절(「requires an unshown fact …」)·갈래·문장 순서까지 묻는다.
+    v7(2026-10-14 서빙)은 규칙 3과 §1 범위 문단을 다시 써서 규칙 2와 step 5의 `- need_evidence is
+    required when …` 불릿(Check A·절단·가정의 guard/caller 문장)만 문다.
     철자만 묻는다: 연속 구 **밖에** 반대 문장을 덧붙이는 변이(예: 규칙 3 뒤에 「a truncated
     body always requires …」)와 구를 통째로 파일의 다른 자리로 옮기는 변이는 못 잡고, 규칙 1은
     안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
@@ -2675,6 +2685,7 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
+    is_v7 = role == "critic" and version == "v7"
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
@@ -2700,6 +2711,13 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
             "use `need_evidence`",
         ),
     }
+    if is_v7:  # v7은 증거 규칙 3(`prefix.md:54` 근처)을 다시 썼다 -
+        # 대신 step 5 판정 규칙 불릿 중 `need_evidence` 불릿
+        per_role["critic"] = (
+            "need_evidence is required when the path is not reviewable (step 3) or the sink "
+            "cannot be confirmed in SOURCE (Check A). Truncation that does not hide the deciding "
+            "code, a hypothetical unseen guard, or a hypothetical unseen caller is not enough.",
+        )
     for text in (*common, *per_role[role]):
         assert text in normalized, text
 
@@ -2715,10 +2733,16 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(versio
     """
     prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
-    assert "cannot be checked from supplied content and the verdict depends on" in normalized
-    condition = "unresolved fact that could change the verdict and required material is absent"
-    assert condition in normalized
-    assert "Mere truncation or a hypothetical unseen guard is not enough" in normalized
+    if version == "v7":  # v7(2026-10-14 서빙)은 이 조건을 SOURCE 검증 문장으로 다시 썼다
+        assert "need_evidence is required when the path is not reviewable (step 3)" in normalized
+        assert "a hypothetical unseen guard, or a hypothetical unseen caller is not enough" in (
+            normalized
+        )
+    else:
+        assert "cannot be checked from supplied content and the verdict depends on" in normalized
+        condition = "unresolved fact that could change the verdict and required material is absent"
+        assert condition in normalized
+        assert "Mere truncation or a hypothetical unseen guard is not enough" in normalized
     assert "need_evidence is required when a rebuttal is plausible" not in normalized
 
 

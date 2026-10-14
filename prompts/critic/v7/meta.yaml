@@ -1,5 +1,5 @@
-# 미배선(disk-only): 어느 registry 엔트리도 이 버전을 고르지 않는다.
-# 배선 선행: 게이트 `is_grounded` 결정(S10) · `cli run` 프롬프트 가드.
+# 2026-10-14 - `config/models.yaml`의 gpt-oss-20b(Critic 좌석)에 배선됐다. 배선 선행이던 게이트 `is_grounded` 결정
+# (ADR 0015)과 `cli run` 프롬프트 가드는 main에 있다. 이 판으로 돈 이 저장소 run은 0건이다.
 role: critic
 version: v7
 output_schema: DecisionDraft
