@@ -4,7 +4,8 @@
 두 가지를 한 판에 묻었다. ① 새 옵션 `auditor_slice_state`(`config/budgets.yaml` 0 - 켜는 것은
 측정 결정)가 켜지면 FACTS에 붙는 `slice_state` 키의 서술. ② v16 prefix의 「배너가 없으면 `SOURCE`는
 첫 블록 하나」가 쓰기 창이 전부 크기 상한에 떨어진 경우에 거짓이던 문장의 정정(이슈 #669 -
-Critic v7·PoV v6 몫은 이 판이 안 고친다). 묶는 것은 다섯이다.
+Critic v7·PoV v6 몫은 이 판이 안 고친다 - ⏵ 2026-10-15 후속 Critic v8·PoV v7이 서술한다).
+묶는 것은 다섯이다.
 
 1. **v16은 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/feat/p13-input-context`
    (`4e3790a`)의 값이다(규칙 1).
