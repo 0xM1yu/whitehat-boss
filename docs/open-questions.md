@@ -68,7 +68,7 @@
 | D9 | ~~1차 분석 대상의 범위~~ (1차는 C/C++ 소스 · 바이너리·펌웨어는 2차 — ADR 0010 §5) | 닫힘 | [본문](open-questions/D/D9.md) |
 | D10 | ~~재평가 횟수를 어디에 보관하는가~~ (ADR 0012 결정 6이 재평가 경로를 폐기 · resume 잔여는 D86) | 닫힘 | [본문](open-questions/D/D10.md) |
 | D11 | ~~Evidence에 "발견 건수"가 없다~~ ((c) 관례 + 컴파일 실패 마커·진단 0줄 가드로 서빙 성립 · clang 표기 변경 회귀와 clang-tidy 경고 경로는 서빙 미관측) | 닫힘 | [본문](open-questions/D/D11.md) |
-| D13 | ~~캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가~~ (index_graph가 채움 · types는 NE resolver · 빈 그래프 E2는 #576 · 예산 소멸은 후속 이슈 #663(#78에서 이어짐)) | 닫힘 | [본문](open-questions/D/D13.md) |
+| D13 | ~~캡슐의 그래프 파생 섹션(`callers`/`callees`/`types`)을 무엇이 채우는가~~ (index_graph가 채움 · types는 NE resolver · 빈 그래프 E2는 #576 · 예산 절단 표지는 #663이 닫음) | 닫힘 | [본문](open-questions/D/D13.md) |
 | D12 | ~~build를 몇 단계에서 실행하는가~~ (선택지 (a) — 문서를 코드에 맞춤) | 닫힘 | [본문](open-questions/D/D12.md) |
 | D14 | ~~재현성 비교가 `data` 안의 시간 파생값을 빼지 않는다~~ (확장 안 함 · 바이트 동일은 Fake 경로) | 닫힘 | [본문](open-questions/D/D14.md) |
 | D15 | ~~`Budget.tool_seconds`의 값에 실대상 근거가 없다~~ (정한 상한 18,000 s · 서빙 도구 시간 7~16 s로 안 걸린다 · 실대상 규모는 미실측) | 닫힘 | [본문](open-questions/D/D15.md) |
@@ -97,7 +97,7 @@
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
 | D39 | **심볼 단위 후보에서 캡슐 캐시는 원리상 무효다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D39.md) |
 | D40 | ~~8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다~~ (validate.run은 점수 경로 밖(#326 c) · (a)는 8단계 등급 대표 때문에 못 한다 · 실 대상 비용·Finding 사이 재사용 필요는 미실측) | 닫힘 | [본문](open-questions/D/D40.md) |
-| D41 | ~~예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다~~ (확장 경로 폐기로 `search` 시점 절단만 남음 · 영향 미측정 · 낮을 것으로 봄 · 잔여는 후속 이슈 #663) | 닫힘 | [본문](open-questions/D/D41.md) |
+| D41 | ~~예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다~~ (확장 경로 폐기로 `search` 시점 절단만 남음 · 영향 미측정 · 낮을 것으로 봄 · 표지는 #663이 닫음) | 닫힘 | [본문](open-questions/D/D41.md) |
 | D42 | ~~요청당 출력 상한이 없다 — 하네스가 `max_tokens`를 안 보낸다~~ | 닫힘 | [본문](open-questions/D/D42.md) |
 | D43 | ~~캡슐 재검증이 `using_counter` 밖에서 돌아 저장과 로드가 갈린다~~ (확장 경로 폐기 · 유일한 조회 지점은 감쌈 · 구조 해법 (c)는 미구현) | 닫힘 | [본문](open-questions/D/D43.md) |
 | D44 | ~~critic 단계의 파싱 실패가 run 전체를 죽인다~~ | 닫힘 | [본문](open-questions/D/D44.md) |
