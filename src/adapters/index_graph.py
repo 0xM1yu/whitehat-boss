@@ -21,10 +21,11 @@
 | 있고, 간선 0개 | `[]` | `tokens=0, items=0` |
 | 있고, 간선 N개 | `[...]` | `tokens=실측, items=k` |
 
-**네 번째 갈래가 하나 더 있고 그것은 구별되지 않는다**: index.json이 멀쩡한데
+**네 번째 갈래가 하나 더 있고 섹션 모양만으로는 구별되지 않는다**: index.json이 멀쩡한데
 `target_function`이 레벨 예산을 통째로 먹으면 그래프 섹션이 발행되지 못해 1행과 같은
-모양이 된다. 실측 임계는 focused(8,000토큰) 32KB / expanded(24,000토큰) 96KB다
-(`src/tokens.CHARS_PER_TOKEN`=4 기준).
+모양이 된다(⏵ 2026-10-14 #663 — 그 구별은 `ContextCapsule.cuts`가 든다: 이 갈래는
+`graph_stopped=True`이고 index.json 없음은 아니다). 실측 임계는 focused(8,000토큰) 32KB /
+expanded(24,000토큰) 96KB다(`src/tokens.CHARS_PER_TOKEN`=4 기준).
 
 **W2가 그 갈래를 좁혔다. 없애지는 못했다.** 심볼 단위 target에서는 `target_function`이
 함수 하나라 저 임계에 닿는 일이 거의 없다. 그러나 인덱스가 없는 프로필(`dev_fake`)은
@@ -1098,8 +1099,8 @@ def graph_section(
     target: Location,
     remaining: int,
     body: SliceBody | None = None,
-) -> tuple[CapsuleSection | None, bool]:
-    """그래프 섹션 하나를 만든다. `(섹션, 멈춰야 하는가)`.
+) -> tuple[CapsuleSection | None, bool, int]:
+    """그래프 섹션 하나를 만든다. `(섹션, 멈춰야 하는가, 못 담은 항목 수)`.
 
     **두 Retriever가 같은 함수를 부른다.** 예전에는 이 분기가 `fake_retriever`와
     `hybrid_retriever`에 각각 복사돼 있었고, 양쪽 docstring이 "갈리면 안 된다"고 서로에게
@@ -1108,9 +1109,13 @@ def graph_section(
 
     | 반환 | 뜻 | 호출자가 할 일 |
     | --- | --- | --- |
-    | `(None, False)` | 그래프 자체가 없다 (없음·버전 모름·깨짐) | 섹션을 **만들지 않고** 다음으로 |
-    | `(None, True)` | 실을 것은 있는데 예산이 없다 | 섹션 구성을 **멈춘다** |
-    | `(섹션, False)` | 실었다. 간선 0건이면 `tokens=0, items=0, body=[]` | 붙이고 계속 |
+    | `(None, False, 0)` | 그래프 자체가 없다 (없음·버전 모름·깨짐) | 섹션 **없이** 다음으로 |
+    | `(None, True, n)` | 실을 것은 있는데 예산이 없다 | 섹션 구성을 **멈춘다** |
+    | `(섹션, False, n)` | 실었다. 간선 0건이면 `tokens=0, items=0, body=[]` | 붙이고 계속 |
+
+    **셋째 값 `n`은 `len(names) - items`다**(#663) — 일부만 담긴 섹션과 `(None, True, n)`(전부)에서
+    0보다 크고, 그래프가 없을 때는 0이다. 호출자가 `CapsuleCuts.graph_skipped`로 옮긴다.
+    ⚠ **하한이다** - 구성이 멈춘 뒤의 그래프 섹션은 이 함수를 부르지 않아 안 세어진다.
 
     2행과 3행의 0건을 섞지 않는 것이 이 모듈의 원칙이다 — 0건 섹션으로 위장하면
     "예산이 없었다"가 "그래프가 비었다"로 기록된다.
@@ -1121,14 +1126,15 @@ def graph_section(
     """
     names = graph.names_for(kind, target, body)
     if names is None:
-        return None, False
+        return None, False, 0
     # `fitted`로 받는다 — 매개변수 `body`(SliceBody: (file, line) 집합)와 섹션의 `body`
     # (담은 줄 `list[str]`)는 **다른 것**이다. 한 이름에 둘을 담으면 `names_for` 아래에
     # 슬라이스 본문을 다시 쓰는 코드가 들어왔을 때 조용히 틀린다(#288 리뷰 LOW-1).
     tokens, items, fitted = fit_names(names, remaining)
+    skipped = len(names) - items
     if names and items == 0:
-        return None, True
-    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=fitted), False
+        return None, True, skipped
+    return CapsuleSection(kind=kind, tokens=tokens, items=items, body=fitted), False, skipped
 
 
 def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
@@ -1147,9 +1153,9 @@ def fit_names(names: list[str], remaining: int) -> tuple[int, int, list[str]]:
     **반환하는 토큰 합은 `remaining` 이하임이 보장된다.** 호출자가 여기에 다시 `min()`을
     걸면 안 된다 — 줄은 그대로 두고 토큰만 깎는 것이 되어 스키마 검증기에서 죽는다.
 
-    **`items=k`가 `k < len(names)`인지는 캡슐만 봐서는 구별되지 않는다.** `_fit_related`도
-    지금 같은 상태이고, 절단을 캡슐에 남기는 것은 별건이다 - #78(2026-10-13 닫힘)이 `search` 시점
-    절단만 남는 형태로 좁혀 후속 이슈 #663으로 넘겼다.
+    **`items=k`가 `k < len(names)`인지는 섹션만 봐서는 구별되지 않는다.** 그 구별은
+    `ContextCapsule.cuts`가 든다(#663) — `graph_section`이 `len(names) - items`를 돌려주고 두
+    Retriever의 `_sections_for`가 `CapsuleCuts.graph_skipped`에 옮긴다.
     """
     total = 0
     fitted: list[str] = []
