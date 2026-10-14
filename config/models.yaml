@@ -229,12 +229,14 @@ models:
     # ⚠ **위 「지금(4,096 · 순차)은 기본 300 s로도 든다」는 이제 전이다** — 그 문단의 93 s·71.8 s·95 s는
     # 전부 `max_tokens 4096`에서 잰 값이고 상한이 8배가 됐다. 같은 보고서 §3.3의 16,384토큰 382초를
     # 비율로 쓰면 ≈42.9 tok/s이고 32,768은 ≈764초다(계산값) — 3,600은 그 위에 네 배 여유를 둔 값이다.
-    # ⏵ 2026-10-14 — v7에서 **v8**로 올렸다(S20 Phase 14 · 이슈 #669). v8은 v7의 SOURCE 계약 절에 SOURCE의 새 블록 둘
+    # ⏵ 2026-10-14 — v7에서 **v8**로 올렸다(S20 Phase 14 · 이슈 #669). v8은 v7 prefix에 편집 넷을 했다 - ① SOURCE 계약 절에 SOURCE의 새 블록 둘
     # (`auditor_input_context`가 붙이는 입력 디코더 함수 · #650 끝 줄 표지 `/* ... +N more write windows not shown ... */`)의
-    # 서술만 더했다 - body는 v7과 바이트 동일이고 판정 절차·출력 규칙은 안 바꿨다(`prompts/critic/v8/meta.yaml`). 입력 데이터는
+    # 서술 ②③ 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절과 FACTS `auditor_hops`의 서술 ④ 「별도 호출」 문장을 그 절과
+    # 맞게 고침(FACTS.source 밖 맥락 중 관측 절은 있다고 적되 Evidence도 SOURCE도 아니다). body는 v7과 바이트 동일이고
+    # 판정 절차(step 1~5 · Check A~E)·출력 규칙은 안 바꿨다(`prompts/critic/v8/meta.yaml`). 입력 데이터는
     # 그대로이고 `nodes/critic._CONTENT_AWARE_VERSIONS`·`_SOURCE_INPUT_VERSIONS`에 v8을 더했다. **v8로 돈 이 저장소 run은 0건 =
     # 미실측** - v7 이하의 run과 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4). 위 v7 문단의 prefix 글자 수(19,291)는
-    # v7의 값이다. v8 prefix는 21,287자다(`len(prefix)`로 직접 센 값 · ⏵ 2026-10-15 Auditor 도구 관측 절·`auditor_hops` 서술을 더한 뒤) -
+    # v7의 값이다. v8 prefix는 21,471자다(`len(prefix)`로 직접 센 값 · ⏵ 2026-10-15 Auditor 도구 관측 절·`auditor_hops` 서술과 「별도 호출」 문장 정정 뒤) -
     # **토큰 수는 미실측**이다.
     request_timeout_s: 3600
     prompt_template_version: "v8"
