@@ -1156,7 +1156,7 @@ def test_the_scout_pool_shares_one_prompt_version_on_disk() -> None:
 # 지나간다.
 _POOL_PROFILE_ROLES = {
     "scout_memory": "qwen3-14b",
-    "scout_boundary": "seccoderx-8b",
+    "scout_boundary": "qwen3-14b",
     "scout_injection": "qwen3-14b",
     "auditor": "qwen3.8-27b",
     "critic": "gpt-oss-20b",
@@ -1383,7 +1383,7 @@ def test_a_declared_role_cap_reaches_the_gateway_and_the_run_record(tmp_path: Pa
         # auditor·critic은 계열이 달라야 한다(`_check_family_split`) — qwen × gpt-oss.
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
@@ -1430,7 +1430,7 @@ def test_a_cap_declared_for_a_role_that_does_not_exist_fails_at_load(tmp_path: P
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
@@ -1454,7 +1454,7 @@ def test_a_non_positive_role_cap_fails_at_load(tmp_path: Path, cap: int) -> None
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
@@ -1508,7 +1508,7 @@ def test_a_role_cap_one_below_the_window_still_loads(tmp_path: Path) -> None:
 def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: Path) -> None:
     """역할별 선언이 없는 역할은 전역 `output_max`가 실효 상한이다 — 그 값도 같은 대조를 받는다.
 
-    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b`·`seccoderx-8b`)에 앉는다.
+    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b`·`qwen3-14b`)에 앉는다.
     """
     _copy_config(
         tmp_path,
@@ -1605,7 +1605,7 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
         # 그대로를 잰다(2026-09-24 전에는 옛 키 `qwen3-8b`에 패치로 선언시켰다).
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "gpt-oss-20b",
                 "critic": "qwen3-14b",
             }
@@ -1665,7 +1665,7 @@ def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
         # 키는 registry 그대로의 `gpt-oss-20b`(high)다(위 검사와 같은 배치).
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "gpt-oss-20b",
                 "critic": "qwen3-14b",
             }
@@ -1791,11 +1791,11 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     models = (CONFIG_DIR / "models.yaml").read_text(encoding="utf-8")
-    # **`seccoderx-8b` 블록만** 채운다. registry의 첫 블록은 `fake`이므로 앞에서부터
+    # **`qwen3-14b` 블록만** 채운다. registry의 첫 블록은 `fake`이므로 앞에서부터
     # 치환하면 엉뚱한 모델이 부분 측정이 되고, 이 검사가 보려던 것을 못 본다.
     # (2026-09-24 전에는 `qwen3-4b` 블록이었다 — 그 키를 지우며 로스터 키로 옮겼다.)
-    head, marker, tail = models.partition("  seccoderx-8b:")
-    assert marker, "registry에 seccoderx-8b 블록이 없다 — 이 검사의 전제가 무너졌다"
+    head, marker, tail = models.partition("  qwen3-14b:")
+    assert marker, "registry에 qwen3-14b 블록이 없다 — 이 검사의 전제가 무너졌다"
     patched = (
         head
         + marker
@@ -1809,9 +1809,9 @@ def test_partially_measured_models_are_named_with_what_is_missing(tmp_path: Path
 
     config = load_config("harness_pool", config_dir=tmp_path)
 
-    assert config.partially_measured_models() == {"seccoderx-8b": ("mem_gb_ctx8k",)}
+    assert config.partially_measured_models() == {"qwen3-14b": ("mem_gb_ctx8k",)}
     # 부분 측정은 "아직 안 쟀다"와 다르다 — 두 목록이 겹치면 안 된다.
-    assert "seccoderx-8b" not in config.unmeasured_models()
+    assert "qwen3-14b" not in config.unmeasured_models()
 
 
 # --- 계열 규칙 (ADR 0010 §4 · 이슈 #121) ---------------------------------------
@@ -2421,19 +2421,19 @@ def test_declared_model_knobs_reach_the_gateway_and_the_run_record_together(
 
     `request_timeout_s`는 요청 본문이 아니라 클라이언트 쪽 값이라 payload·기록 맵에 안 간다.
 
-    `scout` 자리는 「선언 안 한 모델」 대조군이다. registry의 `seccoderx-8b`가 2026-09-29부터
+    `scout` 자리는 「선언 안 한 모델」 대조군이다. registry의 `qwen3-14b`가 2026-09-29부터
     `request_timeout_s`를 선언하므로(#261) 이 복사본에서만 그 필드를 비운다.
     """
     _copy_config(
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"qwen3.8-27b": _KNOBS, "seccoderx-8b": {"request_timeout_s": None}},
+        model_patch={"qwen3.8-27b": _KNOBS, "qwen3-14b": {"request_timeout_s": None}},
     )
     config = load_config("dev_fake", config_dir=tmp_path)
 
@@ -2483,12 +2483,12 @@ def test_a_bad_model_knob_fails_at_load(tmp_path: Path, patch: dict | None) -> N
         tmp_path,
         profile_patch={
             "roles": {
-                "scout": "seccoderx-8b",
+                "scout": "qwen3-14b",
                 "auditor": "qwen3.8-27b",
                 "critic": "gpt-oss-20b",
             }
         },
-        model_patch={"seccoderx-8b": patch or {}},
+        model_patch={"qwen3-14b": patch or {}},
     )
     if patch is None:
         load_config("dev_fake", config_dir=tmp_path)
@@ -2688,7 +2688,6 @@ def test_each_thinking_seat_takes_its_decode_speed_from_its_own_device() -> None
 # 동시 상주 경합 아래). 2026-09-24 스모크의 critic은 이 모델이 아니었다(스모크 한정
 # `qwen3.6-35b-a3b` — 그 보고서 §2).
 _MEASURED_DECODE_TOK_S = {
-    "seccoderx-8b": 13.3,
     "qwen3-14b": 8.1,
     "gpt-oss-20b": 16384 / 382,
 }
@@ -2698,7 +2697,7 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
     """실서빙 Scout·Critic 좌석마다 `request_timeout_s`가 있고, 속도를 아는 좌석은 벽시계가
     출력 상한보다 먼저 끊지 않는다(#261).
 
-    ATOM 09-24 실측 단일 요청 속도로는 `seccoderx-8b` 13.3 · `qwen3-14b` 8.1 tok/s라
+    ATOM 09-24 실측 단일 요청 속도로는 `qwen3-14b` 13.3 · `qwen3-14b` 8.1 tok/s라
     전역 `output_max` 4,096에 각각 ≈308 s · ≈506 s가 걸려 어댑터 기본 300 s를 넘는다.
     #274 뒤에는 그 후보만 버리지만, 연속 셋이면 `_MAX_CONSECUTIVE_DROPS`가 run을 세운다.
 

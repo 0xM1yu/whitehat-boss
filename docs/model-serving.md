@@ -263,7 +263,9 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
 전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
 모델이 리포지터리마다 다르다**(⏵ 2026-09-24 — 가중치를 bf16 원본 그대로 쓰기로 해(조민규) 지금 로스터에서 서드파티
 산출물은 `seccoderx-8b`(`hf://SecCoderX/…`) 하나이고 나머지는 제작사 리포다 — `config/models.yaml`의 `source`. 리비전을
-적어야 하는 이유는 그대로다) — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
+적어야 하는 이유는 그대로다. ⏵ 2026-10-14 — 그 키가 로스터에서 내려왔다. **지금 제작사 리포가 아닌 것은
+`feyospace-v1-small`**(`hf://feyospace/…` — Qwen3.8-27B를 post-train한 것) **하나다** — 나머지 다섯은
+`hf://Qwen/…`·`hf://openai/…`다) — checksum이 안 맞을 때 이 필드가 없으면 어느 리포의 어느
 리비전이었는지 답할 수 없다. 형식은 강제하지 않는다(ADR 0006이 `--device` 라벨 집합을
 열어 둔 것과 같은 판단).
 
@@ -291,16 +293,20 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
-> | **8000** | `seccoderx-8b` ← 풀 둘(scout_boundary) |
-> | **8001** | `qwen3-14b` ← 풀 둘(scout_memory·scout_injection) |
-> | **8002** | `qwen3.8-27b` ← `harness_pool`·`_hybrid`(auditor) |
-> | **8003** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
-> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
-> | **8005** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
-> | **8006** | `feyospace-v1-small` ← `harness_pool`·`_hybrid`(pov — 8단계 · 서빙 호스트 미확보라 실측 전) |
+> | **8000** | `qwen3-14b` ← 풀 둘(scout_memory·scout_boundary·scout_injection) |
+> | **8001** | `qwen3.8-27b` ← `harness_pool`·`_hybrid`(auditor) |
+> | **8002** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
+> | **8003** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
+> | **8004** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |
+> | **8005** | `feyospace-v1-small` ← `harness_pool`·`_hybrid`(pov — 8단계 · 서빙 호스트 미확보라 실측 전) |
+>
+> ⏵ **2026-10-14 — 번호가 한 칸씩 당겨졌다.** `scout_boundary`가 `qwen3-14b`로 옮겨 Scout 단계의 키가
+> 둘에서 하나가 되었고(`seccoderx-8b`는 로스터에서 내려와 registry에서 지웠다 — PROJECT-CONTEXT.md §1),
+> 아래 「빈틈없이」 규칙이 뒤 단계를 전부 한 칸 당겼다. 그 전 번호는 8000=`seccoderx-8b` …
+> 8006=`feyospace-v1-small`이었다 — 이 날짜 앞의 보고서가 드는 번호는 그 판이다.
 >
 > **번호가 곧 띄우는 순서다 (2026-09-24).** 교대가 canonical run에서 모델을 올리는 순서(Scout 풀 → Auditor →
-> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에, 8단계 PoV(`feyospace-v1-small`)를 그 뒤 8006에 뒀다. 그 전에는 로스터를 바꿀 때마다
+> Critic)대로 8000부터 매겼고, hybrid에서만 뜨는 검색 둘을 그 뒤에, 8단계 PoV(`feyospace-v1-small`)를 그 뒤에 뒀다. 그 전에는 로스터를 바꿀 때마다
 > 빈 번호에 끼워 넣어 8009 → 8010 → 8008 → 8006 순서로 떴다. `tests/test_config.py`의
 > `test_served_ports_count_up_from_8000_in_launch_order`가 이 순서를, `tests/test_docs_format.py`의
 > `test_the_model_serving_port_table_matches_the_registry`가 이 표와 registry의 일치를 고정한다.
@@ -311,7 +317,8 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⚠ **한 프로필 안에서 한 포트로 두 모델이 오는 자리도 지금 없다 — 있으면 「주의」가 아니라
 > 블로커다.** 확정 로스터 배선 때 `seccoderx-8b`(Scout)가 `gpt-oss-20b`(Critic)와 같은 :8006이었는데
-> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2 — 지금 번호는 위 표의 :8000·:8003이다). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
+> (#234 골격 포트) :8009로 갈랐다(#234 리뷰 HIGH-2 — ⏵ 2026-10-14 그 Scout 키는 로스터에서 내려왔고
+> Critic은 지금 위 표의 :8002다). 그 자리가 다시 생기면 — 한 프로필이 한 포트로
 > 두 모델을 요구하면 — 프로필을 골라 피할 수 없다. `tests/test_docs_format.py`의
 > `test_model_serving_calls_the_within_profile_port_clash_unavoidable`이 `config/`를 파싱해 그
 > 자리를 세고, 있으면 그 포트 번호와 선언을 여기서 요구한다 — **지금은 0건이라 이 문단이 선언을

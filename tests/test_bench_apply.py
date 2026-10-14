@@ -27,7 +27,7 @@ MEASURED_AT = "2026-08-17T00:00:00Z"
 
 # 실서빙 역할이 있는 프로필. registry 갱신 대상 모델이 실재해야 apply 검사가 공허하지 않다.
 # (2026-09-24 전에는 scout만 실서빙인 `single_gpu_12g`·갱신 대상 `qwen3-4b`였다 — 로스터 밖 정리로
-# 둘 다 지워 canonical `harness_pool`과 그 Scout 키 `seccoderx-8b`로 옮겼다.)
+# 둘 다 지워 canonical `harness_pool`과 그 Scout 키 `qwen3-14b`로 옮겼다.)
 SERVED_PROFILE = "harness_pool"
 
 
@@ -50,7 +50,7 @@ def test_apply_preserves_the_comments_that_are_the_documentation(tmp_path: Path)
     path = _models_copy(tmp_path)
     before = _comments(path)
 
-    bench_report.apply_benchmarks(path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT)
+    bench_report.apply_benchmarks(path, {"qwen3-14b": {"tok_s_single": 12.5}}, MEASURED_AT)
 
     assert _comments(path) == before
     assert "tok_s_single: 12.5" in path.read_text(encoding="utf-8")
@@ -80,7 +80,7 @@ def _role_report(throughput: dict[str, object]) -> dict[str, object]:
     return {
         "roles": {
             "scout": {
-                "model_key": "seccoderx-8b",
+                "model_key": "qwen3-14b",
                 "skipped": None,
                 # `_is_measured`가 요구한다 — 없으면 이 역할이 통째로 건너뛰어져
                 # 기능 부재가 아니라 픽스처 결손으로 실패한다.
@@ -116,7 +116,7 @@ def test_pending_updates_carries_the_batch32_hit_ratio() -> None:
     """`--apply`가 쓸 값에 적중률이 함께 실린다 (#128)."""
     updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.7776)))
 
-    assert updates["seccoderx-8b"]["prefix_hit_ratio_batch32"] == 0.7776
+    assert updates["qwen3-14b"]["prefix_hit_ratio_batch32"] == 0.7776
 
 
 def test_a_zero_hit_ratio_is_still_written(tmp_path: Path) -> None:
@@ -127,14 +127,14 @@ def test_a_zero_hit_ratio_is_still_written(tmp_path: Path) -> None:
     """
     updates, _ = bench_report.pending_updates(_role_report(_throughput(hit_ratio=0.0)))
 
-    assert updates["seccoderx-8b"]["prefix_hit_ratio_batch32"] == 0.0
+    assert updates["qwen3-14b"]["prefix_hit_ratio_batch32"] == 0.0
 
 
 def test_an_unreadable_hit_ratio_is_not_invented() -> None:
     """카운터를 못 읽었으면 그 자리는 비워 둔다 (#128). 0으로 접으면 적극적인 거짓말이다."""
     updates, skipped = bench_report.pending_updates(_role_report(_throughput(hit_ratio=None)))
 
-    assert "prefix_hit_ratio_batch32" not in updates["seccoderx-8b"]
+    assert "prefix_hit_ratio_batch32" not in updates["qwen3-14b"]
     assert any("prefix_hit_ratio_batch32" in reason for reason in skipped)
 
 
@@ -143,12 +143,12 @@ def test_apply_writes_the_hit_ratio_into_the_registry(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_batch32": 68.64, "prefix_hit_ratio_batch32": 0.7776}},
+        path, {"qwen3-14b": {"tok_s_batch32": 68.64, "prefix_hit_ratio_batch32": 0.7776}},
         MEASURED_AT,
     )
 
     loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
-    assert loaded["models"]["seccoderx-8b"]["benchmark"]["prefix_hit_ratio_batch32"] == 0.7776
+    assert loaded["models"]["qwen3-14b"]["benchmark"]["prefix_hit_ratio_batch32"] == 0.7776
 
 
 def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
@@ -159,7 +159,7 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
     report = {
         "roles": {
             "scout": {
-                "model_key": "seccoderx-8b",
+                "model_key": "qwen3-14b",
                 "startup": {"ok": True},
                 "skipped": None,
                 "throughput": {
@@ -182,7 +182,7 @@ def test_apply_never_writes_a_zero(tmp_path: Path) -> None:
 
     updates, skipped = bench_report.pending_updates(report)
 
-    assert updates == {"seccoderx-8b": {"tok_s_single": 30.0}}
+    assert updates == {"qwen3-14b": {"tok_s_single": 30.0}}
     assert any("tok_s_batch32" in reason for reason in skipped)
 
     path = _models_copy(tmp_path)
@@ -197,7 +197,7 @@ def test_apply_refuses_memory_without_gpu_memory_utilization() -> None:
     report = {
         "roles": {
             "scout": {
-                "model_key": "seccoderx-8b",
+                "model_key": "qwen3-14b",
                 "startup": {"ok": True},
                 "skipped": None,
                 "throughput": {
@@ -217,7 +217,7 @@ def test_apply_refuses_memory_without_gpu_memory_utilization() -> None:
 
     updates, skipped = bench_report.pending_updates(report)
 
-    assert "mem_gb_ctx8k" not in updates["seccoderx-8b"]
+    assert "mem_gb_ctx8k" not in updates["qwen3-14b"]
     assert any("재현 불가" in reason for reason in skipped)
 
 
@@ -240,7 +240,7 @@ def test_apply_is_all_or_nothing_across_models(tmp_path: Path) -> None:
     with pytest.raises(BenchApplyError):
         bench_report.apply_benchmarks(
             path,
-            {"seccoderx-8b": {"tok_s_single": 12.5}, "없는-모델": {"tok_s_single": 1.0}},
+            {"qwen3-14b": {"tok_s_single": 12.5}, "없는-모델": {"tok_s_single": 1.0}},
             MEASURED_AT,
         )
 
@@ -254,11 +254,11 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_single": 12.5, "mem_gb_ctx8k": 8.25}}, MEASURED_AT
+        path, {"qwen3-14b": {"tok_s_single": 12.5, "mem_gb_ctx8k": 8.25}}, MEASURED_AT
     )
 
     config = load_config(SERVED_PROFILE, config_dir=tmp_path)
-    benchmark = config.models["seccoderx-8b"].benchmark
+    benchmark = config.models["qwen3-14b"].benchmark
     assert benchmark.is_measured
     assert benchmark.tok_s_single == 12.5
     assert benchmark.measured_at is not None
@@ -267,7 +267,7 @@ def test_applied_registry_still_loads(tmp_path: Path) -> None:
 # --- measured_on -------------------------------------------------------------
 
 
-def _loaded(tmp_path: Path, key: str = "seccoderx-8b") -> Benchmark:
+def _loaded(tmp_path: Path, key: str = "qwen3-14b") -> Benchmark:
     """갱신 결과를 실제 로더로 되읽는다. 문자열 검사만으로는 스키마 통과를 못 본다."""
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
@@ -284,7 +284,7 @@ def test_apply_does_not_touch_the_source_field(tmp_path: Path) -> None:
     before = path.read_text(encoding="utf-8").count("source:")
 
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"qwen3-14b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     text = path.read_text(encoding="utf-8")
@@ -309,7 +309,7 @@ def test_registry_loads_without_a_source_line(tmp_path: Path) -> None:
 
     config = load_config(SERVED_PROFILE, config_dir=tmp_path)
 
-    assert config.models["seccoderx-8b"].source is None
+    assert config.models["qwen3-14b"].source is None
 
 
 def test_a_source_value_survives_the_round_trip(tmp_path: Path) -> None:
@@ -349,7 +349,7 @@ def test_apply_records_which_device_measured_it(tmp_path: Path) -> None:
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"qwen3-14b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     benchmark = _loaded(tmp_path)
@@ -365,7 +365,7 @@ def test_an_unknown_device_is_written_as_null_not_guessed(tmp_path: Path) -> Non
     """
     path = _models_copy(tmp_path)
 
-    bench_report.apply_benchmarks(path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT)
+    bench_report.apply_benchmarks(path, {"qwen3-14b": {"tok_s_single": 12.5}}, MEASURED_AT)
 
     assert "measured_on: null" in path.read_text(encoding="utf-8")
     assert _loaded(tmp_path).measured_on is None
@@ -386,7 +386,7 @@ def test_a_hostile_label_neither_breaks_nor_silently_changes(tmp_path: Path, lab
     path = _models_copy(tmp_path)
 
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
+        path, {"qwen3-14b": {"tok_s_single": 1.0}}, MEASURED_AT, measured_on=label
     )
 
     assert _loaded(tmp_path).measured_on == label
@@ -514,7 +514,7 @@ def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     path = _models_copy(tmp_path)
     bench_report.apply_benchmarks(
-        path, {"seccoderx-8b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
+        path, {"qwen3-14b": {"tok_s_single": 12.5}}, MEASURED_AT, measured_on="atom"
     )
 
     same = doctor_lines(device="atom", config_dir=tmp_path)
@@ -523,7 +523,7 @@ def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -
     assert not [line for line in same if "다른 장비 기준" in line]
     mismatch = [line for line in other if "다른 장비 기준" in line]
     assert len(mismatch) == 1
-    assert "seccoderx-8b(atom)" in mismatch[0]
+    assert "qwen3-14b(atom)" in mismatch[0]
 
 
 def test_an_unmeasured_registry_is_not_reported_as_a_mismatch() -> None:
