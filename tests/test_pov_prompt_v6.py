@@ -67,9 +67,10 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
 
     🔴 **판 올림 경보기이기도 하다.** 서빙 판이 `PINNED_VERSION`과 다르면 실패한다 — 새 판의 문장을
     읽고 이 파일의 핀을 의도적으로 다시 만들어야 초록이 된다(모듈 docstring 1).
-    ⏵ 2026-10-14 — 서빙 판 v7은 예외로 받는다: v7 = v6 + 고정된 편집 둘이라(`tests/test_pov_v7.py`가
-    바이트 등식으로 묶는다) v6의 핀이 그대로 v7을 덮는다. v8 이상이 배선되면 이 경보기가
-    다시 운다."""
+    ⏵ 2026-10-14 — 서빙 판 v7은 예외로 받는다: v7 = v6 + 고정된 편집 셋이라(`tests/test_pov_v7.py`가
+    바이트 등식으로 묶는다) 편집 밖 덩어리는 v6의 핀이 그대로 덮는다. 편집 안(SOURCE 서술 ·
+    `why-non-crash-not-submitted`의 최종 지정 문장 · body Facts 문장)은 v6 핀이 v7을 덮지
+    않는다 - 그 셋은 `test_pov_v7.py`가 문다. v8 이상이 배선되면 이 경보기가 다시 운다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
     assert selected in (PINNED_VERSION, "v7"), (
@@ -153,6 +154,7 @@ _PINNED_BLOCKS: dict[str, str] = {
         'the scorer and cannot become a candidate. Naming an earlier non-zero `gen` with '
         '`poc_sha256` is still allowed.'
     ),
+    # ⚠ v6의 문장이다 - #637(2026-10-14) 뒤 거짓이라 서빙 판 v7은 다시 썼다(`tests/test_pov_v7.py`).
     "why-non-crash-not-submitted": (
         "- Why a non-crash is not submitted: the final candidate competes with other Findings' "
         "PoCs (which may be scorer-confirmed) for the run's single slot, and the harness does "
