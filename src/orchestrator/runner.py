@@ -131,6 +131,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.orchestrator import gate, oracle_log, source_gate, state_machine
+from src.orchestrator import slice_state as slice_state_module
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import TAIL_WHITESPACE_CHARS, RunContext
 from src.orchestrator.entry_scope import (
@@ -4294,6 +4295,14 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
     anchor, ref = _auditor_target(ctx, item.target), item.target.slice
+    # 슬라이스의 정적 상태(`auditor_slice_state` · 이슈 #438 (b)) — 노드(FACTS)와 `auditor_source`
+    # 이벤트가 **같은 값**을 쓰도록 한 번만 만든다. 꺼졌거나 슬라이스가 없으면 `None`이라 키도
+    # 이벤트 필드도 없다.
+    exposed = (
+        slice_state_module.facts(ref)
+        if ref is not None and ctx.config.thresholds.auditor_slice_state
+        else None
+    )
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
     # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
@@ -4301,7 +4310,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     source = (
         _Once(partial(ctx.read_source, expanded.target))
         if ref is None
-        else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
+        else _Once(
+            partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id, slice_state=exposed)
+        )
     )
     # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
     observations: list[str] = []
@@ -4316,6 +4327,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
+            slice_state=exposed,
         )
     except auditor.AuditorHopLimit:
         # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
@@ -4444,6 +4456,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
 # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + prefix 다섯 군데 — body는 v15와 바이트 동일). 위
 # 상한은 다시 안 셌다.
+# ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + prefix 두 군데 — body는 v16과 바이트 동일). 옵션
+# `auditor_slice_state`는 꺼져 있어 hop0 user 턴은 v16과 같다. 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -4513,14 +4527,23 @@ def _is_short(location: Location) -> bool:
     return location.line_end - location.line_start + 1 <= _AUDITOR_WRAPPER_LINES
 
 
-def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
+def _auditor_source(
+    ctx: RunContext,
+    ref: SliceRef,
+    anchor: Location,
+    candidate_id: str,
+    *,
+    slice_state: Mapping[str, object] | None = None,
+) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
     타깃이 아니면 부르지 않고 노드가 캡슐 대상(`anchor`)을 그대로 읽는다.
 
     결정 1-b = 넓은 (i)(2026-09-25 팀 합의): **슬라이스가 걸친 함수의 원본을 전부** 준다. 맨 앞이
     entry 함수(`anchor` — `_auditor_target`)이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은
     인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다. 둘 이상이면 함수마다 `파일:시작-끝` 배너를 단다 —
-    하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다.
+    하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다. 단 그 하나 뒤에 #650 표지 줄
+    (`_WRITE_WINDOWS_MORE`)이 붙을 수 있고(쓰기 창이 전부 못 실렸을 때) 줄인 entry 함수
+    (`auditor_entry_trim`)는 혼자여도 배너를 단다 — 아래 `source = ...` 줄 근처 주석.
 
     상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
     뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
@@ -4617,6 +4640,11 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     포함). 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을 때와 바이트 동일이다.
     ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로 - Critic은
     `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때).
+
+    **슬라이스 상태(`auditor_slice_state`, 이슈 #438 (b))** — `slice_state`(`orchestrator/
+    slice_state.facts`가 낸 값 — `_step_auditor`가 켜졌을 때만 준다)가 있으면 이벤트에
+    `slice_state_*`가 더 실린다. 같은 값이 노드를 거쳐 FACTS `slice_state`로 모델에 간다 — 이
+    함수는 `SOURCE`를 안 바꾸고 모델에 **무엇을 보였는지**만 남긴다.
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -5073,6 +5101,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             if input_context
             else {}
         ),
+        **(slice_state_module.event_fields(slice_state) if slice_state is not None else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
