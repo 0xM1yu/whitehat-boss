@@ -91,7 +91,8 @@ v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형�
 ADR 0015가 예측한 실패 양상 (2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가
 이 지표라서 그 한계를 같이 적는다.
 ⚠ **그 분모는 trace에 없다** — `rebut` 총수는
-`state.db`의 `decision` 표(`decision.verdict = rebut`)로 센다(ADR 0015 「첫 v7 run이 셀 것」 표).
+`state.db`의 `objects` 표 `kind='decision'` 행(`verdict = rebut`)으로
+센다(ADR 0015 「첫 v7 run이 셀 것」 표).
 정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —
 그래서 이 사건은 F-5가 아니라 F-7로 이어진다.
 
