@@ -167,7 +167,10 @@ class World:
         self.image_sha = _local_indexer_sha()
         self.python_missing = False
         self.listening = {("127.0.0.1", port) for port in _script_ports()}
-        self.listening |= {("127.0.0.1", 8004), ("127.0.0.1", 8005), ("127.0.0.1", 8666)}
+        # 터널 스크립트가 안 드는 포트 — 검색 둘(hybrid에서만 뜬다)과 채점기.
+        # ⏵ 2026-10-14 검색이 8004·8005에서 8003·8004로 내려왔다(`scout_boundary`가 `qwen3-14b`로
+        # 옮겨 Scout 서버가 하나가 되며 뒤 단계 포트가 당겨졌다 — PROJECT-CONTEXT.md §1).
+        self.listening |= {("127.0.0.1", 8003), ("127.0.0.1", 8004), ("127.0.0.1", 8666)}
         self.ssh_exit = 0
         self.uncached: set[str] = set()  # 원격 HF 캐시에 없는 `repo@rev` (#571)
         self.weights_ssh_exit = 0

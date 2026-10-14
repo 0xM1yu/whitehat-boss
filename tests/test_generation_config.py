@@ -295,12 +295,17 @@ def test_a_file_whose_keys_are_all_outside_the_schema_is_still_a_read(
 def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path) -> None:
     """맵은 프롬프트를 쓰는 실서빙 역할만, **읽을 수 있었던 것만** 담는다 (D29 · #99 ③).
 
-    `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout_memory·scout_injection(같은 키
-    `qwen3-14b`)·critic·auditor(2026-09-26부터 `qwen3.8-27b`)이고, auditor는
-    `_without_source`가 합성으로 비운다. 두 모델에만 파일을
-    깔면 그 모델을 쓰는 세 역할만 맵에 들어오고 나머지는 빠진다 — "이 역할은 선언 샘플링을 못
-    읽었다"가 부재로 드러난다. `seccoderx-8b`의 scout_boundary가 그 부재다 — #294로 `@rev`가
-    생겨 경로는 풀리지만 이 테스트가 그 스냅샷에 파일을 안 깔아 `file_absent`로 빠진다.
+    `harness_pool`에서 `@rev`로 읽히는 프롬프트 역할은 scout 셋(⏵ 2026-10-14 — memory·boundary·
+    injection이 **같은 키 `qwen3-14b`**다)·critic·auditor(2026-09-26부터 `qwen3.8-27b`)·pov이고,
+    auditor는 `_without_source`가 합성으로 비운다. 두 모델에만 파일을
+    깔면 그 모델을 쓰는 네 역할만 맵에 들어오고 나머지는 빠진다 — "이 역할은 선언 샘플링을 못
+    읽었다"가 부재로 드러난다. **`file_absent` 대조군은 `pov`(`feyospace-v1-small`)다** — `@rev`가
+    있어 경로는 풀리지만 이 테스트가 그 스냅샷에 파일을 안 깔아 빠진다.
+    ⏵ **2026-10-14 — 그 대조군이 scout_boundary에서 pov로 옮겨졌다.** boundary 좌석이
+    `seccoderx-8b`에서 `qwen3-14b`로 바뀌어 **scout 셋이 한 키가 되었고**(PROJECT-CONTEXT.md §1)
+    scout 안에는 파일을 안 깐 모델이 더는 없다. `pov`도 `PROMPTED_ROLES`에 있고 실서빙
+    `source`를 들어 **읽기를 시도하고 `None`을 받는** 같은 갈래다
+    (`generation_config` docstring의 (b)).
     (2026-09-24 전에는 `local_balanced`의 scout·auditor가 읽히는 쪽, critic이 대조군이었다.
     2026-09-25 scout_memory가 `qwen3-14b`로 옮겨 셋이 됐다.)
 
@@ -319,10 +324,13 @@ def test_by_role_covers_served_prompted_roles_and_skips_the_rest(tmp_path: Path)
 
     by_role = declared_sampling_by_role(config, hub_cache=tmp_path)
 
-    assert set(by_role) == {"scout_memory", "scout_injection", "critic"}
+    assert set(by_role) == {"scout_memory", "scout_boundary", "scout_injection", "critic"}
     assert by_role["scout_injection"].top_k == 20
-    assert by_role["scout_memory"] == by_role["scout_injection"]  # 같은 키 — 같은 선언
-    assert "scout_boundary" not in by_role  # seccoderx-8b: 파일 미설치 → file_absent
+    # 셋이 같은 키라 같은 선언이 그대로 간다(⏵ 2026-10-14 boundary가 합류했다)
+    assert by_role["scout_memory"] == by_role["scout_injection"] == by_role["scout_boundary"]
+    # 파일 미설치 대조군 — `pov`는 source가 있어 읽기를 시도하고 `None`을 받는다
+    assert "pov" not in by_role
+    assert config.models[served["pov"]].source, "전제 — pov가 읽기를 시도할 source를 든다"
     assert by_role["critic"].repetition_penalty == 1.05
     assert "auditor" not in by_role  # source 없음
     assert "embedding" not in by_role  # PROMPTED_ROLES 아님

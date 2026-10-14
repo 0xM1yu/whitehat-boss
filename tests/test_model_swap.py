@@ -88,7 +88,7 @@ def test_record_model_swap_emits_one_event_that_keeps_the_script_report_apart() 
     ctx = _ctx()
 
     ctx.record_model_swap(
-        ("qwen3-14b", "seccoderx-8b"),
+        ("qwen3-14b", "qwen3.8-27b"),
         stage=Stage.SCOUT,
         ok=True,
         wall_ms=1234,
@@ -99,7 +99,7 @@ def test_record_model_swap_emits_one_event_that_keeps_the_script_report_apart() 
     swap, teardown = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_SWAP]
     assert (swap.stage, swap.wall_ms) == (int(Stage.SCOUT), 1234)
     assert swap.data == {
-        "models": "qwen3-14b seccoderx-8b",
+        "models": "qwen3-14b qwen3.8-27b",
         "ok": True,
         "error": None,
         "report.ok": True,
@@ -164,10 +164,10 @@ def test_swap_to_runs_the_command_with_the_keys_and_the_harness_env(tmp_path: Pa
     하네스와 **같은 파이썬**으로 읽고, 마감 안에 끝내고, 자기 run의 서버만 내리게 한다."""
     seen: list[tuple[str, str]] = []
 
-    _swap(_command(tmp_path), _probe(seen=seen))(("seccoderx-8b", "qwen3-14b"))
+    _swap(_command(tmp_path), _probe(seen=seen))(("qwen3.8-27b", "qwen3-14b"))
 
     (call,) = _calls(tmp_path)
-    assert call["argv"] == ["seccoderx-8b", "qwen3-14b"]
+    assert call["argv"] == ["qwen3.8-27b", "qwen3-14b"]
     assert call["env"] == {
         "HARNESS_PYTHON": sys.executable,
         "SWAP_DEADLINE_S": "600",
@@ -175,7 +175,7 @@ def test_swap_to_runs_the_command_with_the_keys_and_the_harness_env(tmp_path: Pa
         "HARNESS_DEVICE": "rig",
     }
     assert seen == [
-        (MODELS["seccoderx-8b"].endpoint, "seccoderx-8b"),
+        (MODELS["qwen3.8-27b"].endpoint, "qwen3.8-27b"),
         (MODELS["qwen3-14b"].endpoint, "qwen3-14b"),
     ]
 
@@ -186,22 +186,22 @@ def test_the_last_stdout_line_is_flattened_into_scalars(tmp_path: Path) -> None:
     report = {
         "ok": True,
         "stage": 4,
-        "models": ["seccoderx-8b"],
-        "server": {"seccoderx-8b": {"action": "launch", "util": 0.3, "args": ["--x"]}},
+        "models": ["qwen3-14b"],
+        "server": {"qwen3-14b": {"action": "launch", "util": 0.3, "args": ["--x"]}},
         "memavail_before": 100.5,
         "error": None,
     }
     body = f"print('기동 로그 한 줄')\nprint({json.dumps(json.dumps(report))})"
 
-    got = _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+    got = _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
 
     assert got == {
         "ok": True,
         "stage": 4,
-        "models": '["seccoderx-8b"]',
-        "server.seccoderx-8b.action": "launch",
-        "server.seccoderx-8b.util": 0.3,
-        "server.seccoderx-8b.args": '["--x"]',
+        "models": '["qwen3-14b"]',
+        "server.qwen3-14b.action": "launch",
+        "server.qwen3-14b.util": 0.3,
+        "server.qwen3-14b.args": '["--x"]',
         "memavail_before": 100.5,
         "error": None,
     }
@@ -230,10 +230,10 @@ def test_a_report_too_deep_to_parse_is_an_empty_report_not_a_crash(
 
     if failing:
         with pytest.raises(ModelSwapError) as caught:
-            swap_to(("seccoderx-8b",))
+            swap_to(("qwen3-14b",))
         assert caught.value.report == {}
     else:
-        assert swap_to(("seccoderx-8b",)) == {}
+        assert swap_to(("qwen3-14b",)) == {}
 
 
 class _Unforeseen(Exception):
@@ -267,7 +267,7 @@ def test_an_unexpected_error_inside_the_swap_is_a_swap_error(
         raise error
 
     with pytest.raises(expected) as caught:
-        _swap(_command(tmp_path), probe)(("seccoderx-8b",))
+        _swap(_command(tmp_path), probe)(("qwen3-14b",))
 
     if expected is ModelSwapError:
         assert caught.value.__cause__ is error
@@ -284,7 +284,7 @@ def test_a_failed_command_raises_with_its_partial_report_and_output_tail(tmp_pat
     )
 
     with pytest.raises(ModelSwapError, match="exit 3") as caught:
-        _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
 
     assert caught.value.report == {"ok": False, "error": "no mem"}
     assert "out of memory" in caught.value.detail
@@ -302,9 +302,9 @@ def test_a_command_past_its_deadline_is_torn_down_before_raising(
     body = "if keys:\n    time.sleep(60)"
 
     with pytest.raises(ModelSwapError, match="마감"):
-        _swap(_command(tmp_path, body), _probe(), deadline_s=2)(("seccoderx-8b",))
+        _swap(_command(tmp_path, body), _probe(), deadline_s=2)(("qwen3-14b",))
 
-    assert [call["argv"] for call in _calls(tmp_path)] == [["seccoderx-8b"], []]
+    assert [call["argv"] for call in _calls(tmp_path)] == [["qwen3-14b"], []]
 
 
 def test_a_window_other_than_the_context_limit_stops_the_swap(tmp_path: Path) -> None:
@@ -316,16 +316,16 @@ def test_a_window_other_than_the_context_limit_stops_the_swap(tmp_path: Path) ->
     """
     body = "print(json.dumps({'ok': True}))"
 
-    with pytest.raises(ModelSwapError, match=r"seccoderx-8b.*16384.*40960") as caught:
-        _swap(_command(tmp_path, body), _probe({"seccoderx-8b": 16384}))(("seccoderx-8b",))
+    with pytest.raises(ModelSwapError, match=r"qwen3-14b.*16384.*40960") as caught:
+        _swap(_command(tmp_path, body), _probe({"qwen3-14b": 16384}))(("qwen3-14b",))
 
     assert caught.value.report == {"ok": True}
 
 
 def test_a_window_the_server_does_not_report_also_stops_the_swap(tmp_path: Path) -> None:
     """창을 못 읽으면 대조를 못 한 것이지 맞은 것이 아니다(CLAUDE.md §0)."""
-    with pytest.raises(ModelSwapError, match="seccoderx-8b"):
-        _swap(_command(tmp_path), _probe({"seccoderx-8b": None}))(("seccoderx-8b",))
+    with pytest.raises(ModelSwapError, match="qwen3-14b"):
+        _swap(_command(tmp_path), _probe({"qwen3-14b": None}))(("qwen3-14b",))
 
 
 def test_a_model_missing_after_the_swap_stops_it(tmp_path: Path) -> None:
@@ -424,11 +424,11 @@ def test_the_command_head_is_resolved_on_path_before_it_runs(
     monkeypatch.setattr(model_swap.shutil, "which", which)
     script = _command(tmp_path)[1]
 
-    report = _swap(("harness-test-shell", script), _probe())(("seccoderx-8b",))
+    report = _swap(("harness-test-shell", script), _probe())(("qwen3-14b",))
 
     assert seen == ["harness-test-shell"]
     assert report == {}  # 기본 가짜 명령은 보고를 안 낸다 — 성공 경로만 본다
-    assert _calls(tmp_path)[0]["argv"] == ["seccoderx-8b"]
+    assert _calls(tmp_path)[0]["argv"] == ["qwen3-14b"]
 
 
 def test_a_command_head_with_a_path_or_not_on_path_is_left_as_is() -> None:
@@ -489,7 +489,7 @@ def test_a_bash_that_resolves_to_the_wsl_launcher_is_refused_when_the_swap_is_at
             probe=_probe(),
         )  # 만들기는 성공한다
 
-        for keys in (("seccoderx-8b",), ()):  # 교대, 그리고 run 끝 내림(키 없음)
+        for keys in (("qwen3-14b",), ()):  # 교대, 그리고 run 끝 내림(키 없음)
             with pytest.raises(ModelSwapError) as refused:
                 swap_to(keys)
 
@@ -527,7 +527,7 @@ def test_the_launcher_refusal_is_recorded_by_the_runner_as_a_failed_swap(
         )
 
         with pytest.raises(ModelSwapError):
-            runner_swap(ctx, ("seccoderx-8b",), stage=Stage.SCOUT)
+            runner_swap(ctx, ("qwen3-14b",), stage=Stage.SCOUT)
 
     (event,) = [e for e in ctx.trace.events if e.kind is EventKind.MODEL_SWAP]
     assert event.data["ok"] is False
@@ -738,7 +738,7 @@ def test_a_command_that_cannot_start_names_the_executable_it_tried(
     monkeypatch.setattr(model_swap.subprocess, "run", fake_run)
 
     with pytest.raises(ModelSwapError) as caught:
-        _swap((head, "tools/serve/swap.sh"), _probe())(("seccoderx-8b",))
+        _swap((head, "tools/serve/swap.sh"), _probe())(("qwen3-14b",))
 
     assert str(caught.value) == (
         f"교대 명령을 실행하지 못했다({shown}): [Errno 2] The system cannot find the file specified"
@@ -759,7 +759,7 @@ def test_a_failed_command_details_the_reason_then_stderr_then_stdout(tmp_path: P
     )
 
     with pytest.raises(ModelSwapError) as caught:
-        _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
 
     shown = error_detail(caught.value)
     parts = ("사유: no mem", "stderr: ABORT", "stdout: log")
@@ -773,9 +773,9 @@ def test_a_blank_error_field_is_not_a_reason(tmp_path: Path) -> None:
     )
 
     with pytest.raises(ModelSwapError) as caught:
-        _swap(_command(tmp_path, body), _probe())(("seccoderx-8b",))
+        _swap(_command(tmp_path, body), _probe())(("qwen3-14b",))
 
-    assert str(caught.value).endswith("(exit 2): seccoderx-8b")
+    assert str(caught.value).endswith("(exit 2): qwen3-14b")
     assert error_detail(caught.value).startswith("stderr: boom")
 
 
