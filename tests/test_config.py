@@ -785,8 +785,9 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         ("critic", "gpt-oss-20b", "v4", ["critic/v4"]),
         # 실물 형제 문형 — prompts/critic/v3/meta.yaml:1 「아직 미활성: v3 자체는 미배선이다」.
         ("critic", "gpt-oss-20b", "v3", ["critic/v3"]),
-        # 실물 — prompts/critic/v7/meta.yaml:1-2가 첫째·셋째 철자를 함께 든다(critic/v4 모양).
-        ("critic", "gpt-oss-20b", "v7", ["critic/v7"]),
+        # 음성 통제 — prompts/critic/v7/meta.yaml:1-2는 배선된 판의 문형이다(2026-10-14 v7 배선으로
+        # 양성에서 옮겨 왔다 - 그 전에는 첫째·셋째 철자를 함께 든 미배선 판이었다).
+        ("critic", "gpt-oss-20b", "v7", []),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
@@ -850,7 +851,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
     음성 통제가 되어 아홉 · ⏵ 2026-10-09 v11 배선으로 v10이 양성으로 옮겨가고 v11이 새 음성 통제가
     되어 열 · ⏵ 2026-10-10 critic/v7(미배선)과 미선택 판 v12가 양성으로 더해져 열둘 ·
     ⏵ 같은 날 v13 배선으로 v11이 양성으로 옮겨가고 v13이 새 음성 통제가 되어 열셋 ·
-    ⏵ 2026-10-11 v14 배선으로 v13이 양성으로 옮겨가고 v14가 새 음성 통제가 되어 열넷) —
+    ⏵ 2026-10-11 v14 배선으로 v13이 양성으로 옮겨가고 v14가 새 음성 통제가 되어 열넷 ·
+    ⏵ 2026-10-14 critic/v7 배선으로 그 행이 음성 통제로 옮겨가 열셋(+음성 통제 셋)) —
     새 철자로 적은 meta는 목록에 넣어야 잡힌다."""
     roles = {"scout": "fake", "auditor": "fake", "critic": "fake", role: model_key}
     _copy_config(
@@ -872,8 +874,8 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v4", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/critic/v3/meta.yaml:1
         ("critic", "v3", {"아직 미활성"}),
-        # prompts/critic/v7/meta.yaml:1-2 — critic/v4처럼 첫째·셋째 철자를 함께 든다(미배선 판).
-        ("critic", "v7", {"미배선(disk-only)", "어느 registry 엔트리도 이 버전을 고르지 않는다"}),
+        # 음성 통제 — prompts/critic/v7/meta.yaml:1-2는 배선된 판의 문형이다(2026-10-14 v7 배선).
+        ("critic", "v7", set()),
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
@@ -916,10 +918,10 @@ def test_the_known_metas_match_exactly_these_claim_spellings(
     """각 meta가 **어느 철자에** 걸리는지를 철자 단위로 단언한다. 판독기 결과(걸렸나)만 보면
     한 meta가 철자를 둘 들 때 하나가 깨져도 다른 하나가 대신 잡아 드러나지 않는다 —
     critic/v4 meta가 첫째·셋째 철자를 함께 들어, 첫째 철자는 이 검사 없이는 홀로 고정되지
-    않는다(#341 R2). ⚠ 이 열네 meta(+음성 통제 둘)의(⏵ 2026-10-04 v8을 더해 일곱 ·
+    않는다(#341 R2). ⚠ 이 열세 meta(+음성 통제 셋)의(⏵ 2026-10-04 v8을 더해 일곱 ·
     ⏵ 2026-10-06 v10을 더해 여덟 · ⏵ 2026-10-08 pov/v3를 더해 아홉 · ⏵ 2026-10-09 v11을 더해 열 ·
     ⏵ 2026-10-10 critic/v7과 v12를 더해 열둘 · ⏵ 같은 날 v13을 더해 열셋 · ⏵ 2026-10-11 v14를
-    더해 열넷) 오늘 문구에 묶인다 —
+    더해 열넷 · ⏵ 2026-10-14 critic/v7이 배선돼 양성에서 빠져 열셋) 오늘 문구에 묶인다 —
     머리 주석을 고치면 기대값도 고친다."""
     assert {s for s in _UNSELECTED_CLAIM_SPELLINGS if s in _meta_text(role, version)} == expected
 

@@ -112,12 +112,13 @@ def _facts(body: str) -> dict:
 # --- (a) 홉이 돈 Finding - 관측이 실리고 FACTS에 수가 든다 -------------------------------
 
 
-def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_v6_critic_prompt(
-    ctx, monkeypatch, tmp_path  # noqa: ANN001
+@pytest.mark.parametrize("version", ["v6", "v7"])
+def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_critic_prompt(
+    ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
     finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, _hopped_actions())
     assert len(sink) == 2, "전제 - 조사 홉 둘(lookup, probe)"
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
 
     critic.run(ctx, finding=finding, hop_observations=tuple(sink))
 

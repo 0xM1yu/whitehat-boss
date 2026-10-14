@@ -85,9 +85,10 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
 `count(reason=invalid_axis) / count(rebut)`.
 ⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
-`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는 서빙 v6에서
-규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** — ADR 0015가 예측한 실패 양상
-(2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가 이 지표라서 그 한계를 같이 적는다.
+`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는
+v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** —
+ADR 0015가 예측한 실패 양상 (2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가
+이 지표라서 그 한계를 같이 적는다.
 ⚠ **그 분모는 trace에 없다** — `rebut` 총수는
 `state.db`의 `decision` 표(`decision.verdict = rebut`)로 센다(ADR 0015 「첫 v7 run이 셀 것」 표).
 정규화 목적지는 `uphold`가 아니라 `need_evidence`다 —

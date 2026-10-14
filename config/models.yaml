@@ -193,6 +193,21 @@ models:
     # ⏵ 2026-10-13 (#600 H2ⓐ) — v6 요청에 Auditor 도구 루프의 홉 관측도 실린다(홉이 돈 Finding만 · 판 번호는
     # 그대로). 입력 몫 131,072 − 32,768 = 98,304토큰(계산값)을 넘을 수 있고 자르지 않는다 -
     # `config/budgets.yaml`의 같은 날 ⏵과 trace `critic_hop_observations`.
+    #
+    # ⏵ 2026-10-14 — v6에서 **v7**로 올렸다(S20 Phase 11). 입력 데이터(SOURCE·FACTS·근거 본문·위치·홉 관측)는 그대로이고
+    # (`nodes/critic._CONTENT_AWARE_VERSIONS`·`_SOURCE_INPUT_VERSIONS`에 v7을 더했다) `body.md`의 정적 문장 두 곳(14-15행 ·
+    # 30행의 「when non-empty」 삭제)과 prefix가 v6과 다르다. v7은 SOURCE로 직접 검증하는 5-check 절차(Check A~E)를 들고,
+    # rebut이 `evidence_refs` 없이 축 + SOURCE 인용으로 선다(게이트가 받는 쪽: `docs/decisions/0015-rebut-grounding.md`).
+    # **규칙이 뒤집혔다**: v6은 본문 없음 → need_evidence, v7은 본문 없음 → SOURCE로 판정(prefix step 1 끝·step 3) - 입력이 같아도
+    # 판정 경로가 달라질 수 있다(미실측). 반대로 SOURCE가 비면 v7은 Check A에서 전부 need_evidence이고 v6은 Evidence 본문으로
+    # 판정할 수 있었다 - 서빙에서 SOURCE가 빌 가능성은 미측정이다. **v7로 돈 이 저장소 run은 0건이다 = 미실측** - 프롬프트가
+    # 바뀌었으므로 v6 이하의 run과 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4). 출력 한도
+    # (`output_max_by_role.critic`)와 `request_timeout_s`는 안 바꿨다. prefix는 v6보다 길다: 파일을 디코드해 센
+    # 글자 수가 v6 13,323 → v7 19,291이다(직접 센 값 · `wc -c` 바이트로는 13,329 → 19,305). **토큰 수는 미실측**이고
+    # 입력 몫 계산(위 98,304토큰)은 그대로다. ⚠ v7 step 1(`sanitizer`/`crash`/`poc_run`)은 지금 발동하지 않는다 - Critic이 받는 Evidence는
+    # 1단계 `graph`와 2단계 `static`·`build` 신호 도구뿐이다(5단계가 `state.evidences`로 넘길 뿐이다 `runner.py:4284`·`stages.py:15-19`;
+    # `critic.run` 호출은 `:1400` 한 곳). 런타임 Evidence는 8단계 뒤 `:1476-1480`이고 연결은 H1 ⓑ 미구현이다(ADR 0015 `:49`·`:51`).
+    # ⚠ v7 `uphold`는 SOURCE만으로 서고 `evidence_refs=[]`일 수 있는데 게이트가 그것을 안 본다(`gate.py:198`·`:204`) - ADR 0015 끝 ⏵.
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
@@ -214,7 +229,7 @@ models:
     # 전부 `max_tokens 4096`에서 잰 값이고 상한이 8배가 됐다. 같은 보고서 §3.3의 16,384토큰 382초를
     # 비율로 쓰면 ≈42.9 tok/s이고 32,768은 ≈764초다(계산값) — 3,600은 그 위에 네 배 여유를 둔 값이다.
     request_timeout_s: 3600
-    prompt_template_version: "v6"
+    prompt_template_version: "v7"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
