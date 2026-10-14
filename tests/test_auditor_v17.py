@@ -77,7 +77,7 @@ def test_v16_is_byte_identical_to_the_branch_it_was_cut_from(name: str) -> None:
 
 # 기록된 sha - v17도 불변 기록이다. 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 _V17_SHA = {
-    "prefix.md": "e7326fae6e995f691a81ef1840607a8125a1f6222e4791db6e8ef8d2bcc4fb61",
+    "prefix.md": "e8b07c6c442283f0b369c215960801ea811c6435a2adeafb4547eb2e359ab29d",
     "body.md": _V16_SHA["body.md"],
 }
 
@@ -98,14 +98,22 @@ _NO_BANNER_NEW = (
     "lines located by text). `truncated: true` means the slicer cut its analysis at a limit; "
     "`truncation_reasons` names what cut it (for example `backward_depth`, `backward_states`, "
     "`call_depth`) and is `null` when the slicer records no reasons for that analysis, even if "
-    "`truncated` is true; `[]` means it recorded reasons and found none. `boundary_reasons` "
+    "`truncated` is true; `[]` means it recorded reasons and found none. `truncated: false` "
+    "only means no such limit was reached; other caps are reported by their own keys below, "
+    "not by `truncated`. `sinks_capped: true` means a `parameter_paths` analysis cut the set "
+    "of program-wide sinks it follows flows to at a cap (the candidate function's own sinks "
+    "are always kept), so flows to sinks beyond it are absent; "
+    "`cross_method_flow_truncated: true` means a targeted-mode analysis kept only a bounded "
+    "number of its cross-method flow edges. Each of the two is `true` or `false` only when the "
+    "slicer records it for that analysis, and `null` otherwise. `boundary_reasons` "
     "lists the distinct reasons for which a dependency trace stopped, for example "
     "`entry_parameter` (a function parameter was reached and the code property graph holds no "
     "call to that function — the graph did not link a caller; it does not show that no caller "
     "exists or that the value is unchecked), `external_or_unresolved_call` (a call the graph "
     "could not resolve to a function body) or `dependency_root` (no earlier dependency to "
-    "follow); the slicer may write other reasons, and it is `null` when the analysis records no "
-    "boundaries at all, which is not a finding. A `null` value means the slicer did not record "
+    "follow); the slicer may write other reasons, and it is `null` when the slicer does not "
+    "record boundaries for that analysis, which is not a finding; `[]` means it recorded them "
+    "and none were reached. A `null` value means the slicer did not record "
     "that fact for this slice: unknown, not `false`, not an empty list and not complete. When "
     "`FACTS.slice_state` is absent the harness did not report the slice state; absence is not "
     "evidence that the slice is complete. A truncated or degraded slice may lack lines that "
@@ -284,6 +292,10 @@ def test_the_spellings_the_bullet_uses_are_the_ones_the_slicer_writes() -> None:
     assert "`forward_ddg`" in bullet
     assert '"degraded_lexical"' in targeted and "`degraded_lexical`" in bullet
     assert "for example `parameter_paths`" in bullet, "값 집합이 닫혀 있다고 쓰지 않는다"
+    queries = (_REPO / "tools/slicer/slicer_queries.py").read_text(encoding="utf-8")
+    assert '"sinks_capped" ->' in queries and "`sinks_capped: true`" in bullet
+    assert '"cross_method_flow_truncated" ->' in targeted
+    assert "`cross_method_flow_truncated: true`" in bullet
     for reason in ("backward_depth", "backward_states", "call_depth"):
         assert f'"{reason}"' in backward and f"`{reason}`" in bullet, reason
     for reason in ("entry_parameter", "external_or_unresolved_call", "dependency_root"):
@@ -305,7 +317,13 @@ def test_the_bullet_makes_no_claim_stronger_than_the_facts() -> None:
     assert "which is not a finding" in bullet
     assert "is `null` when the slicer records no reasons for that analysis, even if" in bullet
     assert "`[]` means it recorded reasons and found none" in bullet
-    assert "it is `null` when the analysis records no boundaries at all" in bullet
+    assert "it is `null` when the slicer does not record boundaries for that analysis" in bullet
+    assert "`[]` means it recorded them and none were reached" in bullet
+    # `truncated: false`는 흐름 수 상한 하나에 안 닿았다는 뜻일 뿐이다 - 다른 상한은 제 키가 말한다
+    # (리뷰 MEDIUM-1: Case A 싱크 cap이 모델에게 `truncated: false`로 보이던 구멍).
+    assert "`truncated: false` only means no such limit was reached" in bullet
+    assert "other caps are reported by their own keys below, not by `truncated`" in bullet
+    assert "`true` or `false` only when the slicer records it for that analysis" in bullet
     assert "the slicer may write other reasons" in bullet
     assert "that gap is unobserved, not absent" in bullet
     for stronger in ("no caller exists." , "is safe", "is unreachable", "proves"):

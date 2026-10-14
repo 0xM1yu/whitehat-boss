@@ -19,6 +19,10 @@
   `entry_parameter`는 CPG에 호출 간선이 없는 함수의 파라미터에 닿았다는 뜻이다 - 호출자가
   **없다**는 뜻이 아니다. 슬라이서가 쓰는 다른 사유(`external_or_unresolved_call` ·
   `dependency_root` 등)도 그대로 나간다.
+- `sinks_capped` - Case A flows 질의가 전역 싱크 집합을 `FLOWS_SINK_CAP`에서 잘랐나(그 질의만
+  적는다). `cross_method_flow_truncated` - 대상 지정 모드가 교차 메서드 간선을
+  `CROSS_EDGE_LIMIT`에서 잘랐나(그 모드만 적는다). 둘 다 `truncated`와 별개의 상한이다 -
+  `truncated: false`는 흐름 수 상한에 안 닿았다는 뜻일 뿐 슬라이스가 완전하다는 뜻이 아니다.
 
 ## 「모름」은 `false`가 아니다 (CLAUDE.md §0)
 
@@ -28,9 +32,11 @@
 있는 목록)는 적었는지와 무관하게 지우지 않는다 - 모름은 「없다」는 단언만 막는다.
 
 적었는지는 **키마다 로더가 센다**(`SliceRef.truncated_recorded` ·
-`truncation_reasons_recorded` · `boundaries_recorded`) - 종류 목록을 여기 박지 않는다. 실제로
-Case A(`parameter_paths`)는 사유·경계를 둘 다 안 적고 `degraded_anchor_only`는 경계를 안 적는다
-(`slicer_pipeline.py`) - 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이다.
+`truncation_reasons_recorded` · `boundaries_recorded` · `sinks_capped_recorded` ·
+`cross_method_flow_truncated_recorded`) - 종류 목록을 여기 박지 않는다. 실제로
+Case A(`parameter_paths`)와 `degraded_anchor_only`는 사유·경계를 둘 다 안 적고
+(`slicer_pipeline.py`) 상한 둘(`sinks_capped` · `cross_method_flow_truncated`)도 해당 슬라이서
+종류만 적는다 - 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이다.
 
 `degraded`만 예외다: 슬라이서는 `degraded`를 **대체 슬라이스에만** 적고 정상 슬라이스에는 키가
 없다. 그래서 키 부재가 「아니다」이려면 슬라이서가 분석 사실을 적는 판이어야 하고(`analysis_kind`가
@@ -49,7 +55,7 @@ _EVENT_PREFIX = "slice_state_"
 
 
 def facts(ref: SliceRef) -> dict[str, object]:
-    """`ref`가 든 정적 사실을 FACTS `slice_state` 값으로 낸다. 키는 늘 다섯이다(`None`은 모름)."""
+    """`ref`가 든 정적 사실을 FACTS `slice_state` 값으로 낸다. 키는 늘 일곱이다(`None`은 모름)."""
     boundary_reasons = sorted({reason for reason, _file, _line in ref.boundaries})
     return {
         "analysis_kind": ref.analysis_kind or None,
@@ -61,6 +67,11 @@ def facts(ref: SliceRef) -> dict[str, object]:
             list(ref.truncation_reasons), ref.truncation_reasons_recorded
         ),
         "boundary_reasons": _reasons(boundary_reasons, ref.boundaries_recorded),
+        # 상한 둘 - `truncated`와 별개다. 그 키를 적는 슬라이서 종류만 `true`·`false`를 낸다.
+        "sinks_capped": _flag(ref.sinks_capped, ref.sinks_capped_recorded),
+        "cross_method_flow_truncated": _flag(
+            ref.cross_method_flow_truncated, ref.cross_method_flow_truncated_recorded
+        ),
     }
 
 

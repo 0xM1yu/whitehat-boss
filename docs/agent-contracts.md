@@ -223,14 +223,15 @@ agent:
   ⏵ **2026-10-14 — 열째 옵션 `auditor_slice_state`**(S20 Phase 14 · 이슈 #438 선택지 (b) · `budgets.yaml` **0 — 꺼져 있다. 켜는 것은 측정 결정이다**: [D101](open-questions/D/D101.md)의 닫히는 조건이
   켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정 분포가 움직일 방향은 안 쟀다). `SOURCE`가 아니라 **FACTS**를 넓힌다: 켜면 슬라이스가 있는 후보의 hop0 FACTS에 opt-in 키
   `slice_state`가 붙는다(`prompt_loader.FACT_KEYS` · **Auditor만** — `build_facts`에 그 인자를 넘기는 곳은 `nodes/auditor.py`의 `_render_hop0` 하나다. Scout·Critic·PoV의 FACTS는 옵션과 무관하게 바이트 그대로다).
-  값은 슬라이서가 `slices.json`에 쓴 **정적 사실**을 그대로 옮긴 다섯이다(`orchestrator/slice_state.facts` — LLM이 만든 주장은 없다): `analysis_kind` · `degraded` · `truncated` · `truncation_reasons` ·
+  값은 슬라이서가 `slices.json`에 쓴 **정적 사실**을 그대로 옮긴 일곱이다(`orchestrator/slice_state.facts` — LLM이 만든 주장은 없다): `analysis_kind` · `degraded` · `truncated` · `truncation_reasons` ·
+  `sinks_capped`(Case A flows 질의가 전역 싱크 집합을 `FLOWS_SINK_CAP`에서 잘랐나) · `cross_method_flow_truncated`(대상 지정 모드가 교차 메서드 간선을 `CROSS_EDGE_LIMIT`에서 잘랐나 — 둘 다 `truncated`와 별개의 상한이라 `truncated: false`는 완전하다는 뜻이 아니다) ·
   `boundary_reasons`(의존 역추적이 끝난 자리의 사유 — `entry_parameter`는 CPG에 호출 간선이 없는 함수의 파라미터에 닿았다는 뜻이지 호출자가 **없다**는 뜻이 아니다. 슬라이서가 쓰는 다른 사유도 그대로 나간다). `analysis_kind`의 값 집합은 닫혀 있지 않다(`tools/slicer`의 `parameter_paths`·`backward_ddg`·`degraded_anchor_only`에 더해 대상 지정 모드 `tools/slicer_v2`가 `forward_ddg`·`degraded_lexical`을 쓴다 — 프롬프트는 「for example」로 적는다). **「모름」은 `false`가 아니라 `null`이다**
-  ([CLAUDE.md](../CLAUDE.md) §0): `false`·`[]`는 슬라이서가 **그 키를 실제로 적었을 때만** 나간다 — 로더가 키마다 센다(`SliceRef.truncated_recorded` · `truncation_reasons_recorded` · `boundaries_recorded`).
-  그래서 Case A `parameter_paths`(사유·경계를 안 적는다)와 `degraded_anchor_only`(경계를 안 적는다)의 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이고, `analysis_kind`가 빈 옛 슬라이스는 `degraded`도 `null`이다
+  ([CLAUDE.md](../CLAUDE.md) §0): `false`·`[]`는 슬라이서가 **그 키를 실제로 적었을 때만** 나간다 — 로더가 키마다 센다(`SliceRef.truncated_recorded` · `truncation_reasons_recorded` · `boundaries_recorded` · `sinks_capped_recorded` · `cross_method_flow_truncated_recorded`). 상한 둘은 그 키를 적는 슬라이서 종류에서만 `true`·`false`고 나머지는 `null`이다.
+  그래서 Case A `parameter_paths`와 `degraded_anchor_only`(둘 다 사유·경계를 안 적는다)의 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이고, `analysis_kind`가 빈 옛 슬라이스는 `degraded`도 `null`이다
   (슬라이서는 `degraded`를 대체 슬라이스에만 적는다). 서 있는 신호(`true`·사유가 있는 목록)는 적었는지와 무관하게 그대로 나간다. ⚠ `[]`는 「적었는데 사유가 없다」이지 슬라이스가 완전하다는 뜻이 아니다. 같은 값이 `auditor_source` 이벤트에 `slice_state_*`로 남는다(`slice_state_analysis_kind` · `_degraded` · `_truncated` ·
-  `_truncation_reasons` · `_boundary_reasons` — 사유는 쉼표로 이은 문자열, 모름은 `None`) — **이벤트는 모델에게 보인 값이다**(러너가 한 번 만들어 노드와 이벤트가 같이 쓴다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
+  `_truncation_reasons` · `_boundary_reasons` · `_sinks_capped` · `_cross_method_flow_truncated` — 사유는 쉼표로 이은 문자열, 모름은 `None`) — **이벤트는 모델에게 보인 값이다**(러너가 한 번 만들어 노드와 이벤트가 같이 쓴다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
   이벤트가 이 옵션이 생기기 전과 **바이트 동일**하다(`tests/test_slice_state.py`). `degraded`·`truncated`·경계는 선택지 (a)의 `gate_reasons`(`auditor_source_gate`)와 같은 신호의 다른 출구다 — 사후 집계는 이벤트가, 모델 입력은 이 키가 든다.
-  **v17부터 서술·선언한다**(v16 이하를 고르고 켜면 `cli` run·doctor가 막는다). 아직 안 쓴 것: `sinks_capped`(Case A 전역 싱크 cap)는 싣지 않았다 · 켠 run 짝 비교는 0건이다. ⚠ `analysis_kind`는 슬라이서의 방법 이름이다 —
+  **v17부터 서술·선언한다**(v16 이하를 고르고 켜면 `cli` run·doctor가 막는다). 아직 안 쓴 것: 켠 run 짝 비교는 0건이다. ⚠ `analysis_kind`는 슬라이서의 방법 이름이다 —
   `slice_criterion`(어느 끝을 쥐여 줬는가)이 아니고 그 키는 Auditor에 안 간다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는

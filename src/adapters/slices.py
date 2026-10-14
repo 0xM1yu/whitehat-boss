@@ -43,6 +43,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from src.paths import PathEscape, safe_join
 from src.schemas.candidate import InputContext, InputContextFunction, SliceRef
@@ -118,6 +119,10 @@ class Slice:
     truncated_recorded: bool = False
     truncation_reasons_recorded: bool = False
     boundaries_recorded: bool = False
+    # 슬라이서의 또 다른 상한 둘 - 값과 적었는지(`SliceRef`에 같은 이름으로 든다 - 뜻은 거기).
+    sinks_capped_recorded: bool = False
+    cross_method_flow_truncated: bool = False
+    cross_method_flow_truncated_recorded: bool = False
     # `analysis.input_context` - `None`은 키가 없다. `SliceRef`가 같은 이름으로 들고 간다.
     input_context: InputContext | None = None
 
@@ -352,44 +357,62 @@ def _input_context(item: dict) -> InputContext | None:
     )
 
 
-def _analysis_facts(
-    item: dict,
-) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool, bool, bool]:
+class _AnalysisFacts(NamedTuple):
+    truncation_reasons: tuple[str, ...]
+    boundaries: tuple[tuple[str, str, int], ...]
+    sinks_capped: bool
+    reasons_recorded: bool
+    boundaries_recorded: bool
+    sinks_capped_recorded: bool
+    cross_method_flow_truncated: bool
+    cross_method_flow_truncated_recorded: bool
+
+
+def _analysis_facts(item: dict) -> _AnalysisFacts:
     """`analysis`의 절단 사유(`truncation_reasons`) · 역추적이 멈춘 자리(`boundaries`) · flows의
-    싱크 cap(`sinks_capped`).
+    싱크 cap(`sinks_capped`) · 대상 지정 모드의 교차 메서드 흐름 cap(`cross_method_flow_truncated`).
 
     클러스터링이 합친 슬라이스의 `analysis`는 **대표 후보의 것**이고 구성원별 분석은
     `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
-    구성원의 OR이라 셋 다 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 · 사유·경계를
-    안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는 처음 나온
-    순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이 아니다 · cap이
-    불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
+    구성원의 OR이라 이 값들도 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 ·
+    사유·경계를 안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는
+    처음 나온 순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이
+    아니다 · cap이 불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이
+    사실처럼 읽힌다.
 
-    ⏵ 2026-10-14(이슈 #438 (b)) — 뒤의 두 불리언은 **사유 목록·경계 키를 슬라이서가 적었나**다
-    (구성원 중 하나라도 `null`이 아닌 키를 들었으면 참). 빈 튜플만으로는 「적었는데 비었다」와
-    「안 적었다」가 안 갈린다(Case A `parameter_paths`는 둘 다 안 적고 `degraded_anchor_only`는
-    경계를 안 적는다).
+    ⏵ 2026-10-14(이슈 #438 (b)) — `*_recorded`는 **그 키를 슬라이서가 적었나**다(구성원 중
+    하나라도 `null`이 아닌 키를 들었으면 참). 빈 튜플·`False`만으로는 「적었는데 비었다」와 「안
+    적었다」가 안 갈린다(Case A `parameter_paths`와 `degraded_anchor_only`는 사유·경계를 둘 다 안
+    적는다 · `sinks_capped`는 Case A만, `cross_method_flow_truncated`는 대상 지정 모드만 적는다).
     """
     members = _object(item.get("member_analysis"), "member_analysis")
     reasons: dict[str, None] = {}
     boundaries: dict[tuple[str, str, int], None] = {}
-    sinks_capped = False
-    reasons_recorded = boundaries_recorded = False
+    sinks_capped = cross_truncated = False
+    reasons_recorded = boundaries_recorded = sinks_recorded = cross_recorded = False
     for raw in list(members.values()) or [item.get("analysis")]:
         analysis = _object(raw, "analysis")
         reasons_recorded = reasons_recorded or analysis.get("truncation_reasons") is not None
         boundaries_recorded = boundaries_recorded or analysis.get("boundaries") is not None
+        sinks_recorded = sinks_recorded or analysis.get("sinks_capped") is not None
+        cross_recorded = (
+            cross_recorded or analysis.get("cross_method_flow_truncated") is not None
+        )
         for reason in _array(analysis.get("truncation_reasons"), "truncation_reasons"):
             if not isinstance(reason, str):
                 raise TypeError(f"truncation_reasons: 문자열이 아니다 — {type(reason).__name__}")
             reasons[reason] = None
         sinks_capped = _flag(analysis.get("sinks_capped"), "sinks_capped") or sinks_capped
+        cross_truncated = (
+            _flag(analysis.get("cross_method_flow_truncated"), "cross_method_flow_truncated")
+            or cross_truncated
+        )
         for boundary in _array(analysis.get("boundaries"), "boundaries"):
             where = boundary["location"]
             boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
-    return (
+    return _AnalysisFacts(
         tuple(sorted(reasons)), tuple(boundaries), sinks_capped, reasons_recorded,
-        boundaries_recorded,
+        boundaries_recorded, sinks_recorded, cross_truncated, cross_recorded,
     )
 
 
@@ -402,9 +425,7 @@ def _slice(item: dict) -> Slice:
     code = item["code"]
     if not isinstance(code, str):
         raise TypeError("code")
-    truncation_reasons, boundaries, sinks_capped, reasons_recorded, boundaries_recorded = (
-        _analysis_facts(item)
-    )
+    facts = _analysis_facts(item)
     return Slice(
         id=str(item["id"]),
         candidate_key=str(item["candidate_key"]),
@@ -417,12 +438,15 @@ def _slice(item: dict) -> Slice:
         provenance=_provenance(item.get("line_provenance")),
         analysis_kind=_kind(item.get("analysis_kind")),
         truncated=_flag(item.get("truncated"), "truncated"),
-        truncation_reasons=truncation_reasons,
-        sinks_capped=sinks_capped,
-        boundaries=boundaries,
+        truncation_reasons=facts.truncation_reasons,
+        sinks_capped=facts.sinks_capped,
+        boundaries=facts.boundaries,
         truncated_recorded=item.get("truncated") is not None,
-        truncation_reasons_recorded=reasons_recorded,
-        boundaries_recorded=boundaries_recorded,
+        truncation_reasons_recorded=facts.reasons_recorded,
+        boundaries_recorded=facts.boundaries_recorded,
+        sinks_capped_recorded=facts.sinks_capped_recorded,
+        cross_method_flow_truncated=facts.cross_method_flow_truncated,
+        cross_method_flow_truncated_recorded=facts.cross_method_flow_truncated_recorded,
         input_context=_input_context(item),
     )
 
@@ -467,6 +491,9 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 truncated_recorded=item.truncated_recorded,
                 truncation_reasons_recorded=item.truncation_reasons_recorded,
                 boundaries_recorded=item.boundaries_recorded,
+                sinks_capped_recorded=item.sinks_capped_recorded,
+                cross_method_flow_truncated=item.cross_method_flow_truncated,
+                cross_method_flow_truncated_recorded=item.cross_method_flow_truncated_recorded,
                 input_context=item.input_context,
             )
         )
