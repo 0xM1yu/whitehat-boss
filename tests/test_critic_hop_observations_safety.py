@@ -448,24 +448,29 @@ _SIZE_400 = ModelGatewayError(
 )
 
 
-def _gateway_run(ctx, monkeypatch, tmp_path, *, exc, hopped, fail_if=None):  # noqa: ANN001, ANN202
+def _gateway_run(  # noqa: ANN202
+    ctx, monkeypatch, tmp_path, *, exc, hopped, fail_if=None, version="v6"  # noqa: ANN001
+):
     finding, sink, _ = _audit(
         ctx, monkeypatch, tmp_path, _hopped_actions() if hopped else [_answer()]
     )
     assert bool(sink) is hopped, "전제"
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
     gateway = _CriticGateway(ctx.models, fail_if or (lambda p: True), exc)
     ctx.models = gateway
     return finding, tuple(sink), gateway
 
 
+@pytest.mark.parametrize("version", ["v6", "v7"])
 def test_a_size_rejection_with_observations_is_retried_once_without_them(
     ctx,
     monkeypatch,
     tmp_path,  # noqa: ANN001
+    version,  # noqa: ANN001
 ) -> None:
     finding, sink, gateway = _gateway_run(
-        ctx, monkeypatch, tmp_path, exc=_SIZE_400, hopped=True, fail_if=lambda p: HEADER in p.body
+        ctx, monkeypatch, tmp_path, exc=_SIZE_400, hopped=True,
+        fail_if=lambda p: HEADER in p.body, version=version,
     )
 
     _, decision = critic.run(ctx, finding=finding, hop_observations=sink)

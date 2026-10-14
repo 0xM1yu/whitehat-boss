@@ -2675,6 +2675,8 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     위 v5 핀은 절단 안내 문장만 묻는다 — 규칙 3의 「Otherwise decide」를 「Otherwise defer」로
     바꾸는 한 단어 변이도 그 핀들로는 안 잡힌다. 여기서는 규칙 2·3과 Critic §1 범위 문단을
     각각 **연속 구 하나**로 묶어 전제절(「requires an unshown fact …」)·갈래·문장 순서까지 묻는다.
+    v7(2026-10-14 서빙)은 규칙 3과 §1 범위 문단을 다시 써서 규칙 2와 step 5의 `- need_evidence is
+    required when …` 불릿(Check A·절단·가정의 guard/caller 문장)만 문다.
     철자만 묻는다: 연속 구 **밖에** 반대 문장을 덧붙이는 변이(예: 규칙 3 뒤에 「a truncated
     body always requires …」)와 구를 통째로 파일의 다른 자리로 옮기는 변이는 못 잡고, 규칙 1은
     안 묻는다. 모델이 그 방향을 따르는지도 묻지 않는다(고정 표본 회귀의 몫 — agent-contracts
@@ -2709,7 +2711,8 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
             "use `need_evidence`",
         ),
     }
-    if is_v7:  # v7이 규칙 3을 다시 썼다 - `## Review procedure` 5단계 끝의 need_evidence 문장
+    if is_v7:  # v7은 증거 규칙 3(`prefix.md:54` 근처)을 다시 썼다 -
+        # 대신 step 5 판정 규칙 불릿 중 `need_evidence` 불릿
         per_role["critic"] = (
             "need_evidence is required when the path is not reviewable (step 3) or the sink "
             "cannot be confirmed in SOURCE (Check A). Truncation that does not hide the deciding "

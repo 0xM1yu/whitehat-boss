@@ -1,7 +1,8 @@
 """디스크에 판이 서면 노드의 입력 집합에도 선다.
 
 Critic v7은 디스크에만 있는 동안 `_SOURCE_INPUT_VERSIONS`·`_CONTENT_AWARE_VERSIONS`에 없었다.
-`_CONTENT_AWARE_VERSIONS`에서 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라지고,
+`_CONTENT_AWARE_VERSIONS`에서 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라지고(서빙 판이면
+`cli`의 `_check_prompts`가 모델 호출 전에 ERROR로 막는다),
 `_SOURCE_INPUT_VERSIONS`에서 빠지면 body의 `{{SOURCE}}` 슬롯이 안 채워져 `render`가
 `PromptError`로 선다.
 

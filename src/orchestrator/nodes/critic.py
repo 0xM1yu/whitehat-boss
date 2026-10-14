@@ -54,6 +54,8 @@ OUTPUT_SCHEMA = DecisionDraft
 # v3~v6은 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이고 v7은 본문이 없으면
 # SOURCE로 판정한다(prefix step 1 끝·step 3) - 모두 본문을 읽도록 쓰여 여기 든다.
 # v7이 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라진다(요청이 본문 없는 모양이 된다).
+# 서빙 판이면 `cli run`·doctor의 `_check_prompts`(`_check_prompt_version`)가
+# 모델 호출 전에 ERROR로 막는다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
 _CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7"})
 # SOURCE 입력을 서술하는 판. 본문 인식과 별도 계약이며 앞 판은 SOURCE를 읽지 않는다.
