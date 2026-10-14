@@ -568,10 +568,12 @@ def test_the_slice_entry_names_the_sink_and_every_other_case_is_skipped_with_a_r
     scan = scan_guards(_ref(sink), anchor, _BASIC, _raw(_BASIC))
     assert scan.skipped is None and scan.shown == 1
     assert scan.event_fields() == {"guards": 1, "guards_dropped": ""}
-    # Case A: 하네스가 아는 것은 entry 함수뿐이고 sink는 모른다 — 훑지 않고, 안 훑은 사유를 남긴다
-    case_a = scan_guards(_ref(sink, given_end="source"), anchor, _BASIC, _raw(_BASIC))
-    assert (case_a.skipped, case_a.block) == ("case_a", "")
-    assert case_a.event_fields() == {"guards_skipped": "case_a"}
+    # 쥐여 준 끝이 source면(Case A·F) 하네스가 아는 것은 entry 함수뿐이고 sink는 모른다 —
+    # 훑지 않고, 안 훑은 사유를 남긴다. 사유는 케이스 이름이 아니다 — `SliceRef`에 `case`가
+    # 없어 A와 F가 안 갈린다(`src/adapters/slices.py`의 `_GIVEN_END`).
+    given_source = scan_guards(_ref(sink, given_end="source"), anchor, _BASIC, _raw(_BASIC))
+    assert (given_source.skipped, given_source.block) == ("given_source", "")
+    assert given_source.event_fields() == {"guards_skipped": "given_source"}
     # sink 줄이 원문 밖이거나 sink에서 이름을 못 뽑으면 훑을 수 없다
     assert scan_guards(_ref(999), anchor, _BASIC, _raw(_BASIC)).skipped == "no_sink"
 
@@ -813,7 +815,7 @@ def test_guards_on_case_a_adds_no_block_and_says_why_in_the_event() -> None:
     ref = _ref(_SINK, given_end="source", entry_symbol="parse")
     assert runner._auditor_source(ctx, ref, _ANCHOR, "cand") == _BASIC
     guard_keys = {key: value for key, value in events[-1].items() if key.startswith("guards")}
-    assert guard_keys == {"guards_skipped": "case_a"}
+    assert guard_keys == {"guards_skipped": "given_source"}
 
 
 def test_guards_on_a_window_anchor_adds_no_block_and_says_why_in_the_event() -> None:
@@ -953,7 +955,7 @@ def test_guards_on_leave_a_case_a_slice_as_it_was(tmp_path: Path) -> None:
     assert facts["source"] == "\n".join(_PARSER[18:26])
     (event,) = _source_events(trace_path)
     assert {k: v for k, v in event.items() if k.startswith("guards")} == {
-        "guards_skipped": "case_a"
+        "guards_skipped": "given_source"
     }
 
 
@@ -1433,10 +1435,11 @@ def test_guards_off_never_scans_and_matches_a_scan_that_was_skipped(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """꺼진 run은 훑지 않고(`scan_guards`가 불리면 터진다) 이벤트에 `guards*`가 없다. 켠 채 안 훑은
-    run(Case A — 사유 `case_a`)과 **SOURCE가 바이트 같고** 이벤트가 `guards*` 말고는 같다 — 나머지
-    옵션이 켜진 채로. 블록을 안 끼우면 `size`·`blocks`·`functions`가 옛 모양 그대로라는 뜻이다."""
+    run(쥐여 준 끝이 source — 사유 `given_source`)과 **SOURCE가 바이트 같고** 이벤트가 `guards*`
+    말고는 같다 — 나머지 옵션이 켜진 채로. 블록을 안 끼우면 `size`·`blocks`·`functions`가 옛 모양
+    그대로라는 뜻이다."""
     skipped, skipped_event = _stack(given_end="source", auditor_guards=1, **_GW_BLOCKS)
-    assert skipped_event["guards_skipped"] == "case_a"
+    assert skipped_event["guards_skipped"] == "given_source"
 
     def refuse(*_args: object, **_kwargs: object) -> object:
         raise AssertionError("auditor_guards가 꺼졌는데 scan_guards가 불렸다")
