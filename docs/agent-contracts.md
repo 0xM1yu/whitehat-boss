@@ -211,14 +211,14 @@ agent:
   `pov._WIDE_INPUT_VERSIONS`인 판에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
   ⏵ **2026-10-14 — 아홉째 옵션 `auditor_input_context`**(S20 Phase 13 · council + 사용자 최종 승인 · `budgets.yaml` 1 · **켠 효과는 미실측이다**).
   슬라이서가 `--index`로 낸 `analysis.input_context`(`docs/slicer-README.md`)의 `functions[]` 중 `status: selected` ∧ `basis: cpg`인 선택만,
-  그 함수 **본문**을 쓰기 지점 창 **뒤**(`SOURCE` 맨 끝)에 같은 상한(`auditor_source_tokens`)·같은 `seen` 규칙으로 붙인다(`orchestrator/source_input_context.py`
+  그 함수 **본문**을 쓰기 지점 창 **뒤**의 마지막 블록(#650 표지 줄이 있으면 그 앞)에 같은 상한(`auditor_source_tokens`)·같은 `seen` 규칙으로 붙인다(`orchestrator/source_input_context.py`
   · `runner._auditor_source`). 새 수치 상한은 없다. 함수 **전체**가 이미 `SOURCE`에 실린 범위 안(한 범위, 또는 여러 범위의 합집합)에 들면 건너뛴다(슬라이서의 `identical_to_auditor_input`은 믿지 않는다).
   호출자 창·쓰기 지점 창 조각과 **일부만 겹치면 건너뛰지 않고** 완전한 함수를 붙인다(창과 몇 줄이 겹쳐 중복되는 것은 받아들인다). 상한에 넘치면 통째로 뺀다. `basis: syntax` 선택·`dispatches`·`carried_decoders`는 안 싣고 수만 남긴다. 슬라이스에 키가 없으면(`--index` 없이 돈 슬라이서)
   아무것도 안 붙고 `SOURCE`는 옵션이 없을 때와 바이트 동일이다. `functions`(이벤트)에는 안 들고 `input_context_added`가 센다. 이벤트 필드는 `input_context`
   (`absent` · `none_selected` · `selected` - **`absent`는 수를 0으로 채우지 않는다**) · `input_context_basis` · `input_context_cap_hit`(슬라이서가 쓴 그대로 -
   `none_selected`에 서 있으면 0이 아니라 모름) · `_cap_reasons` · `_listed` · `_added` · `_chars` · `_skipped_syntax`(`syntax` 근거) · `_skipped_carried`(전체가 이미 SOURCE에 **실린** 범위 안) ·
   `_skipped_size`(상한) · `_skipped_empty`(읽은 본문이 비었다 - 없는 파일) · `_carried_decoders` · `_dispatches`다. **v16부터 서술·선언한다** - v15 이하를 고르고 켜면 `cli` run·doctor가 막는다.
-  ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
+  ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
   상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수·enum은 일부만 보여 `shown`에 안 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
@@ -1350,7 +1350,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > v15로 돈 run은 0건이다. 모델이 `spec`을 보내는지·`probe`를 `triggerable` 앞에 두는지는 미실측이다.
 >
 > ⏵ **2026-10-14 — v15 → v16 (S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인).** v16 = v15 + `SOURCE` 블록 하나의 서술. 새 옵션 `auditor_input_context`가
-> 켜지면 슬라이서가 CPG 근거로 고른 입력 디코더 함수의 본문이 `SOURCE` 맨 뒤에 붙는데(위 「SOURCE」 절의 아홉째 옵션), v15는 그 옵션을 서술하지 않아
+> 켜지면 슬라이서가 CPG 근거로 고른 입력 디코더 함수의 본문이 쓰기 창 뒤의 마지막 블록으로 붙는데(#650 표지 줄이 있으면 그 앞 - 위 「SOURCE」 절의 아홉째 옵션), v15는 그 옵션을 서술하지 않아
 > 켠 채 고르면 `cli` run·doctor가 막는다 - 그래서 새 판이다. body·봉투(`AuditorProcedureProbeInputAction`)·도구·다른 옵션 여덟은 v15와 같고 v15는 한 글자도
 > 안 바뀌었다(규칙 1). prefix는 다섯 군데만 다르다(`tests/test_auditor_v16.py`가 바이트 등식으로 묶는다): ① 「Trust boundary」의 하네스 생성 텍스트 목록에 `SOURCE` **맨 끝**의
 > `/* ... +N more write windows not shown ... */` 줄을 더한다(이슈 #650 · PR #667 - 그 PR이 main에 들어와야 맞다) ② 「Original-source input contract」 머리의 「banners and the GUARDS block」 예외에

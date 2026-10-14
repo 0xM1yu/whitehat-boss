@@ -71,9 +71,9 @@ def _locations(built) -> list[Location]:  # noqa: ANN001
     ]
 
 
-def _load(tmp_path: Path, context: dict | None, points=None):  # noqa: ANN202
+def _load(tmp_path: Path, context: dict | None, points=None, sources=None):  # noqa: ANN202
     """`slices.json` 한 슬라이스를 로더로 읽어 `SliceRef`를 낸다 — 러너가 받는 모양 그대로다."""
-    sources = {FILE: fixture_lines(EXCERPT)}
+    sources = sources or {FILE: fixture_lines(EXCERPT)}
     extra = {} if context is None else {"input_context": context}
     item = _slice(
         "slice_0001", "B", points or {(FILE, eatsize_call_line()), (FILE, hextoint_line() + 1)},
@@ -342,7 +342,7 @@ _SETUP_LINES = [f"s{i} t{i}" for i in range(1, 16)]  # other.c 1~15 - 심볼 `se
 _SETUP = Location(file="other.c", symbol="setup", line_start=1, line_end=15)
 
 
-def _window_world(built, tmp_path, decoder, context, *, status="selected", cap=0):  # noqa: ANN001, ANN202
+def _window_world(built, tmp_path, decoder, context, *, status="selected", cap=0, **opts):  # noqa: ANN001, ANN202
     """`other.c`의 `setup`(1~15)에 쓰기 지점 창(8줄 → 5~11줄)이 서고, 슬라이서가 고른 함수 `decoder`
     (심볼 표에는 없다)가 그 창 안이나 밖에 있다. `(SOURCE, 이벤트)`."""
     symbols = [*_locations(built), _SETUP]
@@ -350,10 +350,8 @@ def _window_world(built, tmp_path, decoder, context, *, status="selected", cap=0
     files = {**_files(), "other.c": _SETUP_LINES}
     tokens = {"auditor_source_tokens": cap} if cap else {}
     site = Location(file="other.c", symbol="setup", line_start=8, line_end=8)
-    ctx, events, _, _ = _unit(
-        files, symbols, auditor_input_context=1, auditor_write_sites=6, writes={"l": [site]},
-        **tokens,
-    )
+    options = {"auditor_input_context": 1, "auditor_write_sites": 6, "writes": {"l": [site]}}
+    ctx, events, _, _ = _unit(files, symbols, **{**options, **tokens, **opts})
     context = json.loads(json.dumps(context))
     context["status"] = status
     context["functions"] = [decoder]
@@ -428,6 +426,88 @@ def test_a_body_that_reads_empty_is_skipped_and_counted(
     got, event = _window_world(index, tmp_path, _function(40, 50), contexts["cpg"])
     assert "other.c:40-50" not in got
     assert (event["input_context_added"], event["input_context_skipped_empty"]) == (0, 1)
+
+
+def _shown_world(built, tmp_path, decoder, context, **opts):  # noqa: ANN001, ANN202
+    """`_window_world`에서 쓰기 지점 창을 끄고 `opts`(`auditor_*` 옵션 · `callees` · `sites` ·
+    `definitions`)로 **한 가지** 블록만 세운다 - 그 블록이 `shown`에 들었는지가 묻는 것이다."""
+    return _window_world(
+        built, tmp_path, decoder, context, auditor_write_sites=0, writes={}, **opts
+    )
+
+
+def test_a_decoder_equal_to_the_untrimmed_anchor_is_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """줄이지 않은 entry 함수는 통째로 보인다 - 디코더가 그 범위면 건너뛴다(`shown`의 첫 항목)."""
+    entry = next(s for s in _locations(index) if s.symbol == "parse_op_modifier")
+    own = {**_function(entry.line_start, entry.line_end, FILE), "symbol": entry.symbol}
+    got, event = _shown_world(index, tmp_path, own, contexts["cpg"])
+    assert got.count(f"{FILE}:{entry.line_start}-{entry.line_end} =====") <= 1
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
+
+
+def test_a_decoder_equal_to_a_shown_definition_is_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    define = Location(file="other.c", symbol="DEF", line_start=3, line_end=4)
+    got, event = _shown_world(
+        index, tmp_path, _function(3, 4), contexts["cpg"],
+        auditor_definitions=1, definitions=lambda _names, _file: [define],
+    )
+    assert event["definitions"] == 1, "전제 - 정의가 실렸다"
+    assert got.count("/* ===== other.c:3-4 ===== */") == 1
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
+
+
+def test_a_decoder_equal_to_a_shown_callee_is_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    callee = Location(file="other.c", symbol="helper", line_start=3, line_end=5)
+    got, event = _shown_world(
+        index, tmp_path, _function(3, 5), contexts["cpg"],
+        auditor_callee_hops=1, callees={"parse_op_modifier": [callee]},
+    )
+    assert event["callees"] == 1, "전제 - 피호출 함수가 실렸다"
+    assert got.count("/* ===== other.c:3-5 ===== */") == 1
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
+
+
+def test_a_decoder_equal_to_a_shown_caller_window_is_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    site = Location(file="other.c", symbol="setup", line_start=8, line_end=8)
+    got, event = _shown_world(
+        index, tmp_path, _function(5, 11), contexts["cpg"],
+        auditor_caller_lines=3, sites={"parse_op_modifier": [site]},
+    )
+    assert event["callers"] == 1, "전제 - 호출자 창(5~11)이 실렸다"
+    assert got.count("/* ===== other.c:5-11 ===== */") == 1
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
+
+
+_BIG_LINES = [f"b{i} c{i}" for i in range(1, 121)]  # other.c 1~120 - 함수 `big` 하나
+
+
+def test_a_trimmed_entry_function_does_not_count_as_shown(tmp_path, contexts) -> None:  # noqa: F811
+    """entry 함수가 상한을 넘어 줄었다(1~39·81~120줄을 뺐다). 줄인 함수는 일부만 보이므로 그 안의
+    디코더(10~20줄 - 빠진 구간)는 **실린 것이 아니다**: 건너뛰지 않고 붙는다."""
+    big = Location(file="other.c", symbol="big", line_start=1, line_end=120)
+    ctx, events, _, _ = _unit(
+        {"other.c": _BIG_LINES}, [big], auditor_input_context=1, auditor_entry_trim=1,
+        auditor_source_tokens=150,
+    )
+    context = json.loads(json.dumps(contexts["cpg"]))
+    context["functions"] = [_function(10, 20)]
+    ref = _load(
+        tmp_path, context, points={("other.c", 60)}, sources={"other.c": _BIG_LINES}
+    )
+    got = runner._auditor_source(ctx, ref, big, "cand")
+    event = events[-1]
+    assert event["entry_omitted_lines"] > 0, "전제 - entry 함수가 줄었다"
+    assert "b15 c15" not in got.split("other.c:10-20")[0], "전제 - 10~20줄은 줄인 본문에 없다"
+    assert "/* ===== other.c:10-20 ===== */" in got
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (1, 0)
 
 
 def test_a_body_over_the_shared_cap_is_skipped_and_counted(
