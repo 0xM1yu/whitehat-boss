@@ -663,6 +663,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
+⏵ **2026-10-13 (이슈 #326)** - `validate.run`은 `build`·`asan`을 우리 clang으로 컴파일하고(ADR 0014가 기각한 대상 빌드), CyberGym 번들은 그것이 컴파일되지 않아(#507) **그 경로는 서빙 점수 경로 밖이다** - 점수 경로는 이 절의 `poc`(과제 이미지)이다. `validate.run`은 `poc` 신호를 돌리지 않고, 도구가 측정을 못 낸 건은 재현 실패가 아니라 미시도(`repro_not_measured`)로 `validated`에 둔다.
+
 - 목적: Auditor가 세운 `Finding`에서 취약 경로를 치는 PoC를 **매 홉 `PovAction`(gen/inspect/submit)으로**
   만든다 — `gen`이 **PoC 입력의 구성 스펙**(`PovSpec`)을 싣는다.
 - 입력: `Finding` + 대상 원문(source) + 직전 홉의 도구 관측(되먹임 — v3 이상은 직전 `gen`의 PoC가 있으면
@@ -724,7 +726,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (2026-10-05 v3 배선). `D92`(`docs/open-questions/D/D92.md`)는 ASAN 실행 경로 수리·검증(#326)이
   **프롬프트에 gdb 사용 규칙을 넣는 일**의 선행 조건이라고 적는다 — 코드 배선은 그 조건이
   아니므로(D92 본문) `gdb`를 도구 목록·enum에는 넣되, v3·v4 prefix에는 "언제 쓰라"는 지시를
-  두지 않고 도구의 입력 한계만 적는다.
+  두지 않고 도구의 입력 한계만 적는다. ⏵ 2026-10-13 - #326은 선택지 (c) 선언으로 닫혔다(`validate.run`은 서빙 점수 경로 밖 - `nodes/validate.py` 모듈 docstring). 자체 링크 경로의 E4 도달성은 이제 D92 / #507(e)가 든다.
 
   ⏵ **2026-10-09 ([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)) — 넷이 둘로 갈렸다.**
   **`poc`는 PoC를 먹인다** — 과제 자신의 `-vul` 이미지를 돌리고 쓴 파일을 `/tmp/poc`로 읽기 전용

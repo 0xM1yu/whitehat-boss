@@ -65,6 +65,14 @@ graph LR
 | 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4). ⏵ 2026-10-13(#232) 여기서 「재현 성공」은 **도구가 떴다**이고 E4는 **비-0 종료의 대용 지표**다 — 재현 확정이 아니며 판정은 오라클이 한다(ADR 0013·0014, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
 
+> **⏵ 2026-10-13 (이슈 #326) — 8단계 `validate.run`은 서빙 점수 경로 밖이다.** `nodes/validate.py`는 `build`·`asan`을
+> 우리 clang으로 대상에 직접 컴파일한다([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)가 대상 빌드를 우리가 짓지
+> 않기로 했다). CyberGym 번들은 우리 clang으로 컴파일되지 않으므로(#507) **그 번들에서 이 경로는 E4를 못 낸다.**
+> 서빙 점수 경로는 PoV 루프의 `poc`(과제 이미지에 PoC를 먹인다)이고, `validate.run`은 `poc` 신호를 **돌리지 않는다.** 컴파일·링크가
+> 안 되거나, 대상이 안 뜨거나, 떴다가 시간 초과로 끊긴(`124`) 건과 `poc` 신호는 재현 실패(F-11)가
+> 아니라 **미시도**로 `validated`에 두고 trace
+> `repro_not_measured`를 남긴다. 고쳤다는 뜻이 아니다 - 이 경로의 E4 도달성은 그대로 미해결이다(D92).
+
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
 >
 > **분석 대상 범위 — 1차는 C/C++ 소스 저장소다** ([ADR 0010](decisions/0010-harness-structure-and-model-roster.md) §5, 2026-09-09 승인). 킥오프 발표자료 04-1이 대상을 "펌웨어의 취약점 분석"으로 명시했고 이 문단도 그에 따라 ~~"바이너리·펌웨어도 1급 입력이므로 0·1단계는 두 경로를 **둘 다** 갖춰야 한다"~~고 적었다. 중간발표 슬라이드 8의 "C/C++ 오픈소스 Zero-Day"가 팀의 현재 목표이고, **확정된 슬라이서가 소스 기반**(Joern CPG — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2)이라 펌웨어를 1급 입력으로 두면 1단계가 성립하지 않는다. **바이너리·펌웨어는 2차다** — 위 표 0·1단계의 바이너리 경로는 책임 정의로 남되 구현 순서에서 뒤다. 등재는 [open-questions.md](open-questions.md) D9(닫힘).
@@ -142,8 +150,11 @@ graph LR
 > [D12](open-questions/D/D12.md) 선택지 (a)). 2단계가 오늘 돌리는 도구는 `SIGNAL_TOOLS` = semgrep ·
 > clang-tidy · build 셋이다(`src/orchestrator/nodes/signals.py` — 러너 `_plan_targets`가 artifact마다
 > 부른다). build 신호는 Auditor가 `repro_spec`을 쓸 수 있는지를 가른다 — 빌드되는지 모르는 채 지어낸
-> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). 8단계는 재현 명세의 `steps`로 다시 빌드한 뒤
-> sanitizer·PoC를 돌린다(`nodes/validate.py`의 `BUILD_TOOL`). 위 2단계 칸의 나머지(sanitizer log·stack
+> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). ⏵ **2026-10-13 정정 — 8단계는 `steps`로
+> 빌드하지 않는다.** `container_tools.plan`이 노드 argv(`[tool, *spec.steps]`)를 로그 헤더로만
+> 남기고 `build`는 `clang -c`, `asan`은 `clang -o`로 소스를 직접 컴파일·링크한다(`plan` docstring
+> *"노드가 만든 argv는 자리표시자다"*). 돌리는 것은 `build`와 sanitizer뿐이고 `poc` 신호는 안
+> 돌린다(`nodes/validate.py`의 `BUILD_TOOL` · 위 §3 표 뒤 주석). 위 2단계 칸의 나머지(sanitizer log·stack
 > trace 파싱, fuzz coverage, diff 분석)는 책임 정의이고, 오늘 2단계에서 그 일을 하는 도구는 없다.
 
 **Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. ~~새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.~~ (⏵ 2026-09-25 — ADR 0012 결정 6으로 폐기 — 아래 ⚠)
@@ -276,7 +287,11 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 대상의 판정으로 읽을 수 없는 경우(asan은 종료 코드 `_EXEC_FAILED` = 125·126·127로, `poc`는 더 넓은
 > `_poc_is_harness_failure`로 — ADR 0014 · #513 · `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지 않는다, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
-> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다.
+> ⏵ 2026-10-14 (#326) — **`judge()` 밖에 둘이 더 있다.** 시간 초과(124)와 실행 자체가 못 난
+> 경우(`OSError` → 127)는 `judge()`를 안 거치고 `container_tools._execute`가 `ok=False`와
+> 그 코드를 직접 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리(`nodes/validate.py`·
+> `trace.py`·위 §4)는 셋이 아니라 그 둘까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
 > E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
 > Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은

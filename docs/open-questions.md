@@ -96,7 +96,7 @@
 | D37 | ~~`run_manifest.json`에 `profile`이 없다~~ | 닫힘 | [본문](open-questions/D/D37.md) |
 | D38 | **E4는 컨테이너 러너 + Fake auditor에서 원리상 도달 불가다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D38.md) |
 | D39 | **심볼 단위 후보에서 캡슐 캐시는 원리상 무효다 — 조건 명시 항목** | 결함 아님 | [본문](open-questions/D/D39.md) |
-| D40 | **8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다** | 열림 | [본문](open-questions/D/D40.md) |
+| D40 | ~~8단계가 dedupe 이전이라 같은 파일에 도구를 반복 실행한다~~ (validate.run은 점수 경로 밖(#326 c) · (a)는 8단계 등급 대표 때문에 못 한다 · 실 대상 비용·Finding 사이 재사용 필요는 미실측) | 닫힘 | [본문](open-questions/D/D40.md) |
 | D41 | ~~예산이 실제로 캡슐을 묶었는지 run이 남기지 않는다~~ (확장 경로 폐기로 `search` 시점 절단만 남음 · 영향 미측정 · 낮을 것으로 봄 · 잔여는 후속 이슈 #663) | 닫힘 | [본문](open-questions/D/D41.md) |
 | D42 | ~~요청당 출력 상한이 없다 — 하네스가 `max_tokens`를 안 보낸다~~ | 닫힘 | [본문](open-questions/D/D42.md) |
 | D43 | ~~캡슐 재검증이 `using_counter` 밖에서 돌아 저장과 로드가 갈린다~~ (확장 경로 폐기 · 유일한 조회 지점은 감쌈 · 구조 해법 (c)는 미구현) | 닫힘 | [본문](open-questions/D/D43.md) |
