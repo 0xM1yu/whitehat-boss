@@ -21,7 +21,12 @@ from slicer_source import assemble
 from src.adapters.slices import SliceInputError, split_source
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.orchestrator.prompt_log import BODY_MARK
-from src.orchestrator.runner import _AUDITOR_SOURCE_CHARS, _AUDITOR_WINDOW_LINES, RunSpec
+from src.orchestrator.runner import (
+    _AUDITOR_SOURCE_CHARS,
+    _AUDITOR_WINDOW_LINES,
+    RunSpec,
+    _shown_ranges,
+)
 from src.schemas.common import Location
 from src.schemas.enums import Role
 from src.tokens import estimate_tokens
@@ -3187,21 +3192,51 @@ def test_an_omitted_window_is_clipped_before_it_hides_a_later_site() -> None:
     assert source.endswith("/* ... +2 more write windows not shown ... */")
 
 
-def test_a_write_site_inside_a_trimmed_entry_is_not_counted_as_hidden() -> None:
-    """줄인 entry 함수는 `shown`에 없지만 그 안의 지점(2행의 `p->len`)을 「못 본 창」으로 세면
-    보이는 줄을 두고 「더 있다」고 말하게 된다 — 숨은 쓰기 창은 0이고 줄도 없다."""
+def _trimmed_entry_write(at: int, **opts):  # noqa: ANN202
+    """f(1-81) · 슬라이스 줄 2 · `len` 쓰기가 `at`행 · entry 줄이기 켬. 슬라이스 줄 앞뒤 20줄 + 닫는
+    줄만 남아 22행 뒤는 뺀 구간이다(40행은 사라진다)."""
     lines = {
         "t.c": [
             "int f(struct pkt *p) {", "  use(p->len);",
-            *[f"  w{i} x{i};" for i in range(3, 30)], "}",
+            *[f"  w{i} x{i};" for i in range(3, 81)], "}",
         ]
     }
-    entry = Location(file="t.c", symbol="f", line_start=1, line_end=29)
+    entry = Location(file="t.c", symbol="f", line_start=1, line_end=81)
     ctx, events, _, _ = _unit(
-        lines, [entry], auditor_write_sites=6, auditor_source_tokens=20, auditor_entry_trim=1,
-        auditor_write_window_marker=1,
-        field_writes={"len": [Location(file="t.c", symbol="f", line_start=2, line_end=2)]},
+        lines, [entry], auditor_write_sites=6, auditor_source_tokens=60, auditor_entry_trim=1,
+        field_writes={"len": [Location(file="t.c", symbol="f", line_start=at, line_end=at)]},
+        **{"auditor_write_window_marker": 1, **opts},
     )
     source, event = _unit_run(ctx, events, entry, [("t.c", 2)])
     assert event["entry_omitted_lines"] > 0 and "lines omitted" in source
+    return source, event
+
+
+def test_a_write_site_in_the_lines_a_trimmed_entry_dropped_is_counted_as_hidden() -> None:
+    """뺀 구간 안의 쓰기 지점(40행)은 SOURCE에 없다 — 안 셌을 때는 `write_windows_omitted` 0에 줄도
+    없어 모델이 그 쓰기를 「없다」로 읽었다(#650 2차 리뷰 MEDIUM). 옵션 0이면 수만 남는다."""
+    source, event = _trimmed_entry_write(40)
+    assert "w40 x40" not in source
+    assert event["write_windows_omitted"] == 1
+    assert source.endswith("/* ... +1 more write windows not shown ... */")
+    off_source, off = _trimmed_entry_write(40, auditor_write_window_marker=0)
+    assert off["write_windows_omitted"] == 1 and "more write windows" not in off_source
+
+
+def test_the_kept_ranges_of_a_trimmed_entry_skip_every_omitted_gap() -> None:
+    """뺀 구간이 둘이면 남은 범위는 셋이다 — 각 표시가 말하는 줄 수만큼 원래 번호를 건너뛴다.
+    줄 끝 `\\r`이 붙은 표시도 표시로 읽는다(`read_source`는 지금 `\\r`을 접지만 기대지 않는다)."""
+    anchor = Location(file="t.c", symbol="f", line_start=10, line_end=29)
+    text = "\n".join([
+        "a", "b", "/* ... 5 lines omitted ... */\r", "c", "/* ... 9 lines omitted ... */", "d",
+    ])
+    got = [(r.line_start, r.line_end) for r in _shown_ranges(anchor, text)]
+    assert got == [(10, 11), (17, 17), (27, 27)]
+
+
+def test_a_write_site_in_a_kept_line_of_a_trimmed_entry_is_not_counted_as_hidden() -> None:
+    """줄인 entry 함수에 **남은** 줄의 지점(2행의 `p->len`)을 「못 본 창」으로 세면 보이는 줄을 두고
+    「더 있다」고 말하게 된다 — 숨은 쓰기 창은 0이고 줄도 없다."""
+    source, event = _trimmed_entry_write(2)
+    assert "  use(p->len);" in source
     assert event["write_windows_omitted"] == 0 and "more write windows" not in source
