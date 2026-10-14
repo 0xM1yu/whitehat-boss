@@ -3270,3 +3270,48 @@ def test_a_window_stays_counted_when_the_decoder_covers_only_its_first_site(monk
     assert "  return;" not in source, "전제 - 23행은 SOURCE에 없다"
     assert event["write_windows_omitted"] == 1
     assert source.endswith(_WS_MORE)
+
+
+def _decoder_over(monkeypatch, first: int, last: int, len_writes: list[int]):  # noqa: ANN001, ANN202
+    """setup(20-24)의 `len` 쓰기가 `len_writes`행이고 상한 1이라 `init`만 실린다. 입력 맥락 디코더가
+    `first`-`last`행을 품는다 - 숨은 쓰기 창을 디코더 블록에 대고 다시 세는 곳을 돌린다."""
+    from src.orchestrator import runner
+    from src.orchestrator.source_input_context import InputContextCarry
+
+    def carry(ref, *, read_source, block, measure, seen, shown, size, cap):  # noqa: ANN001, ANN202
+        where = Location(file="w.c", symbol="dec", line_start=first, line_end=last)
+        shown.append(where)
+        seen.append(where)
+        return InputContextCarry((block(where, read_source(where)),), {"input_context": "selected"})
+
+    monkeypatch.setattr(runner, "carry_input_context", carry)
+    ctx, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=1,
+        auditor_write_window_marker=1, auditor_input_context=1,
+        writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
+        field_writes={"len": [
+            Location(file="w.c", symbol="setup", line_start=at, line_end=at) for at in len_writes
+        ]},
+    )
+    return _unit_run(ctx, events, _WS_F, [("w.c", 2)])
+
+
+def test_a_decoder_inside_a_hidden_window_splits_it_into_counted_pieces(monkeypatch) -> None:  # noqa: ANN001
+    """setup의 쓰기가 21 · 23 · 24행이고 디코더가 22행만 품는다. 21의 창 20-21, 23의 창 23-24가 따로
+    서고 24의 창은 23-24에 든다 - 셋 중 둘이다. `len(hidden)`(3)로 세거나 깎은 조각을 다시 세는 곳에
+    안 넣으면(24가 23-24로 또 서서 3) 틀린다."""
+    source, event = _decoder_over(monkeypatch, 22, 22, [21, 23, 24])
+    assert "  p->len = k;" in source, "전제 - 22행은 디코더가 싣는다"
+    assert "  int k = n * 2;" not in source and "  return;" not in source, "전제 - 21 · 23행은 없다"
+    assert event["write_windows_omitted"] == 2
+    assert source.endswith("/* ... +2 more write windows not shown ... */")
+
+
+def test_a_decoder_over_both_sites_of_a_hidden_window_leaves_nothing(monkeypatch) -> None:  # noqa: ANN001
+    """setup의 쓰기가 21 · 23행이고 디코더가 21-23행을 다 품는다 - 두 지점 다 모델이 본다. 숨은
+    창은 0이고 줄도 없다. `len(hidden)`(2)로 세거나 디코더 블록을 안 보면 「더 있다」고 잘못 말한다.
+    """
+    source, event = _decoder_over(monkeypatch, 21, 23, [21, 23])
+    assert "  int k = n * 2;" in source and "  return;" in source, "전제 - 21 · 23행은 실린다"
+    assert event["write_windows_omitted"] == 0
+    assert "more write windows" not in source
