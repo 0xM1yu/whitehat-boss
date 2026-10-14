@@ -197,7 +197,7 @@ agent:
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다. ⏵ 2026-10-14 (#650) -> 쓰기 창은 못 실은 창이 있고 새 옵션 `auditor_write_window_marker`가 1이면 SOURCE 끝에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(옵션은 기본 꺼짐이고 `budgets.yaml`도 0이다 — 이 줄을 서술·선언한 Auditor 판이 아직 없다).
   ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 ⏵ 2026-10-06 **켜져 있다** —
   `budgets.yaml`이 키를 `1`로 둔다. **v9·v10이 이 옵션을 서술하고 meta `source_options`로 선언한다.** v7·v8은 선언하지 않아 켜고 그
   둘을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다. 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
@@ -1348,6 +1348,15 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 10-12 보고서 「타깃 넷은 10-11과 같다」(`slice_0001`·`0002`·`0003`·`0006`)가 10-11도 같은 슬라이스 타깃이었다고
 > 적으므로 **영향받은 run은 셋일 수 있다**(10-11 쪽은 10-12 보고서의 서술이고 10-11 원천 `s14-results`는
 > 저장소 밖이라 미확인). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는 이번에도 돌지 않았다.
+>
+> ⏵ **2026-10-14 — 쓰기 창 생략 표지 줄(#650)은 옵션 `auditor_write_window_marker` 뒤에 있다.** 이 줄이
+> 판 번호 없이 모두의 요청에 들어가지 않게 위 #529의 선례를 피했다. 옵션은 기본 0이고 `config/budgets.yaml`도
+> 0이라 이 변경이 들어가도 Auditor 요청 바이트는 안 바뀐다. **Auditor v15 이하는 이 옵션을 선언하지 않으므로
+> 요청 바이트가 그대로이고, 같은 `SOURCE` 문자열을 함께 받는 Critic v6·v7(`critic._SOURCE_INPUT_VERSIONS`)과
+> PoV v3~v6(`pov._WIDE_INPUT_VERSIONS`)의 요청도 그대로다.** 선언하는 첫 판은 다음 Auditor 판이다(#668의 v16 ·
+> #674의 v17 — 각자 meta `source_options`에 넣어야 켤 수 있다). 켜면 같은 `SOURCE`가 Critic·PoV에도 가는데
+> 그 프롬프트는 이 줄을 서술하지 않는다. 그런 판 조합(옵션을 켠 Auditor 판 + 줄을 모르는 Critic·PoV 판)을
+> `cli`가 추가로 막는 가드는 #676이 넣는다.
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

@@ -2781,6 +2781,27 @@ def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(pro
     assert described == set(config.thresholds.auditor_source_options_on())
 
 
+def test_the_write_window_marker_is_off_and_no_auditor_prompt_declares_it_yet() -> None:
+    """#650 쓰기 창 생략 줄은 `auditor_write_window_marker` 뒤에 있다 - 꺼 두고 선언한 판이 없다(이
+    줄을 서술한 판이 서빙 판이 되기 전에 켜면 `cli`가 막아야 한다). 선언하는 판이 생기면 이 검사를
+    그 판에 맞게 고친다."""
+    from src.cli import _undescribed_source_options
+
+    config = load_config("harness_pool")
+    version = config.model_for("auditor").prompt_template_version
+    assert config.thresholds.auditor_write_window_marker == 0
+    assert "auditor_write_window_marker" not in config.thresholds.flatten()
+    assert all(
+        "auditor_write_window_marker" not in load_prompt(Role.AUDITOR, path.name).source_options
+        for path in (PROMPTS_DIR / "auditor").iterdir()
+        if path.is_dir()
+    )
+    on = config.transition(
+        thresholds=config.thresholds.transition(auditor_write_window_marker=1)
+    )
+    assert _undescribed_source_options(on) == [f"auditor_write_window_marker(auditor/{version})"]
+
+
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:
     """meta의 `source_options`는 아는 키만 — 오타는 가드를 조용히 끄므로 거절한다."""
     root = tmp_path / "prompts"
