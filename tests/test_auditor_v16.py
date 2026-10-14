@@ -1,23 +1,22 @@
 """Auditor v16 - v15에 입력 맥락 함수 블록의 서술을 더한 판 (S20 Phase 13 · council 2026-10-14).
 
-새 옵션 `auditor_input_context`(`config/budgets.yaml` 1)가 슬라이서의 `analysis.input_context`가 CPG
-근거로 고른
-함수 본문을 `SOURCE` 맨 뒤에 붙인다. v15는 그 옵션을 서술하지 않아 켠 채 고르면 `cli`가 막는다
-(`tests/test_source_input_context.py`) - 그래서 새 판이다. 묶는 것은 여섯이다.
+새 옵션 `auditor_input_context`(`config/budgets.yaml` 1)가 켜지면 슬라이서의
+`analysis.input_context`가 CPG 근거로 고른 함수 본문이 `SOURCE`의 블록 맨 끝에 붙는다. v15는 그
+옵션을 서술하지 않아 켠 채 고르면 `cli`가 막는다(`tests/test_source_input_context.py`) - 그래서 새
+판이다. 묶는 것은 다섯이다.
 
-1. **v15는 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/main`(`e074774`)의
-값이다(규칙 1).
+1. **v15는 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/main`(`e074774`)의 값이다
+   (규칙 1).
 2. **v16 산문 = v15 + 이 편집들** - body는 바이트 동일이고 prefix는 `_EDITS`를 v15에 적용한 결과와
-바이트 동일이다.
-3. **문장이 코드와 맞는다** - 새 항목이 말하는 셋(CPG 근거가 선 선택만 · 이미 실린 범위는 건너뜀 ·
-상한에 넘치면
-   통째로 뺌)은 러너 동작과 같다(`tests/test_source_input_context.py`가 동작을 문다. 여기서는 산문
-   철자를 문다).
+   바이트 동일이다. 편집은 다섯 군데다: 하네스 생성 텍스트 목록(19줄) · 원문 계약 머리(45줄) ·
+   쓰기 지점 창 항목(「Then」 + 표지 줄 설명) · 새 항목 · 보조 문맥 목록.
+3. **문장이 코드와 맞는다** - 새 항목이 말하는 셋(CPG 근거가 선 선택만 · 전체가 실린 함수만 건너뜀 ·
+   상한에 넘치면 통째로 뺌)은 러너 동작과 같다(`tests/test_source_input_context.py`가 동작을 문다.
+   여기서는 산문 철자를 문다).
 4. **배선** - `_CONTENT_AWARE_VERSIONS` · meta(봉투는 v15와 같다 · 옵션은 v15의 여덟 + 이 키) ·
-`config/models.yaml` ·
-   doctor(디스크 새 판 WARN 0) · Fake.
+   `config/models.yaml` · doctor(디스크 새 판 WARN 0) · Fake.
 5. **meta가 켜진 옵션과 같다** - 서빙 판 선언 == `budgets.yaml`이 켠 옵션(`tests/test_config.py`도
-묻는다).
+   묻는다).
 
 ⚠ 철자·구조 핀이다 - 모델이 디코더 본문을 판정에 쓰는지는 미측정이다.
 """
@@ -75,7 +74,7 @@ def test_v15_is_byte_identical_to_origin_main(name: str) -> None:
 
 # 기록된 sha - v16도 불변 기록이다. 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 _V16_SHA = {
-    "prefix.md": "b9e058bbf2a0005d22caf8c43ae6ca811a1a08b0554f9a45aac095f314a4e7c2",
+    "prefix.md": "b9e4106a21be8ae1bb763a3eec9adaa230cefdd056eab5af12ea609530ea4aa7",
     "body.md": _V15_SHA["body.md"],
 }
 
@@ -94,19 +93,25 @@ _EDITS: tuple[tuple[str, str], ...] = (
         "instructions;",
     ),
     (
+        "Apart from banners and the `GUARDS` block, `SOURCE` is exact original-source text",
+        "Apart from banners, the `GUARDS` block, and the marker lines named under Trust "
+        "boundary, `SOURCE` is exact original-source text",
+    ),
+    (
         "- Last, write-site windows: for names on the slice lines",
         "- Then write-site windows: for names on the slice lines",
     ),
     (
         _WRITE_ENTRY_TAIL,
-        _WRITE_ENTRY_TAIL
-        + "- Last, input-context functions: the slicer's input-context analysis can pick "
+        _WRITE_ENTRY_TAIL[:-1]
+        + " When more write-site windows existed than are shown, the final line of `SOURCE` "
+        "says how many are not shown (`/* ... +N more write windows not shown ... */`).\n"
+        "- Last, input-context functions: the slicer's input-context analysis can pick "
         "functions near the slice that read or convert the program's input bytes. Only a "
         "selection backed by code property graph evidence is appended: each picked function "
-        "not already carried "
-        "in full is appended complete, with its own banner (it may repeat lines of a window "
-        "shown above), while the total stays within the same cap; one that would exceed it is "
-        "omitted whole. These blocks may be absent altogether — the "
+        "not already carried in full is appended complete, with its own banner (it may repeat "
+        "lines of a window shown above), while the total stays within the same cap; one that "
+        "would exceed it is omitted whole. These blocks may be absent altogether — the "
         "slicer was not given the index, nothing was picked, or the selection was not backed "
         "by that evidence — and an absent block is not evidence that no such function "
         "exists. A function appended here was picked as a likely reader of the input; being "

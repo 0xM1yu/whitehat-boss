@@ -729,7 +729,7 @@ models:
     # 관측을 받는다 - 이슈 #600)이 main에 들어와야 코드와 맞는다.
     # 머지 순서는 #642 → #644 → #648 → #660 → 이 PR이다 - 이 엔트리가 이미 v15를 서빙하므로 이 PR이 먼저 들어가면 안 된다. 이 판으로 돈 run은 0건이다.
     # ⏵ 2026-10-14 — **v16**으로 올렸다(S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인). v16 = v15 + 입력 맥락 함수 블록 하나의
-    # 서술(`Build contract` 목록 세 군데 - `prompts/auditor/v16/meta.yaml`). 새 옵션 `auditor_input_context`(`config/budgets.yaml`이
+    # 서술과 쓰기 지점 창 표지 줄의 설명(prefix 다섯 군데 - `prompts/auditor/v16/meta.yaml`). 새 옵션 `auditor_input_context`(`config/budgets.yaml`이
     # 켠다)가 슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문을 `SOURCE` 맨 뒤에 붙이고, v15는 그
     # 옵션을 서술하지 않아 켠 채 v15를 고르면 `cli`의 run·doctor가 막는다. body·봉투·도구·다른 옵션 여덟은 v15와 같다(v15는
     # 한 글자도 안 고쳤다 - 규칙 1). 이 판으로 돈 run은 0건이고 켠 옵션의 효과는 미실측이다.

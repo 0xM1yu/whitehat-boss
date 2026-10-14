@@ -4436,7 +4436,7 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
 # ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
 # 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
-# ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 — body는 v15와 바이트 동일). 위
+# ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + prefix 다섯 군데 — body는 v15와 바이트 동일). 위
 # 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
@@ -4602,7 +4602,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     규칙을 쓴다. 함수 **전체**가 이미 든 범위 안이면 건너뛰고(`skipped_carried`) 창 조각과 일부만
     겹치면 완전한 함수를 붙인다. 상한에 넘치면 통째로 뺀다. 붙인 블록은 `functions`에 안 들고
     `input_context_added`가 센다. 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을
-    때와 바이트 동일이다. ⚠ **PoV도 이 본문을 받는다**(위 GUARDS와 같은 경로).
+    때와 바이트 동일이다. ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로).
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -4656,6 +4656,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
+    # 실제로 `SOURCE`에 **실린** 범위 — `seen`은 상한에 걸려 못 실은 범위도 들지만 이것은 블록을
+    # 붙인 자리에서만 는다. 줄인 entry 함수·줄인 enum은 일부만 보이므로 안 든다. 읽는 곳은 입력 맥락
+    # 함수의 「이미 실렸나」 하나다(`source_input_context._contained`).
+    shown = [] if omitted else [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         seen.append(symbol)
         text = ctx.read_source(symbol)
@@ -4664,6 +4668,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             dropped += 1
             continue
         blocks.append(block)
+        shown.append(symbol)
         bodies.append((symbol, text))
         carried.append(symbol)
         size += 1 + measure(block)
@@ -4750,6 +4755,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         blocks.append(block)
         size += 1 + measure(block)
         definitions += 1
+        if not is_trimmed:
+            shown.append(definition)
         if is_trimmed:  # 실린 것만 센다 — 줄여 놓고 상한에 걸려 못 실은 enum은 위에서 dropped다
             definitions_trimmed += 1
             trimmed_enums[key] = _TrimmedEnum(text, end, [definition.symbol or ""], len(blocks) - 1)
@@ -4811,6 +4818,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callees_dropped += 1
                 return False
             blocks.append(block)
+            shown.append(callee)
             size += 1 + measure(block)
             callees += 1
             return True
@@ -4880,6 +4888,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callers_dropped += 1
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             callers += 1
     # 쓰기 지점 창(C5(a) — #304)은 호출자 창 **뒤**다 — 앞이면 쓰기 창이 먼저 `seen`에 들어가 그와
@@ -4920,6 +4929,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 write_windows_dropped += 1
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             write_windows += 1
     # 슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문(`auditor_input_context`)은 쓰기 지점 창
@@ -4927,7 +4937,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     input_context = (
         carry_input_context(
             ref, read_source=ctx.read_source, block=_block, measure=measure,
-            seen=seen, size=size, cap=cap,
+            seen=seen, shown=shown, size=size, cap=cap,
         )
         if ctx.config.thresholds.auditor_input_context
         else None

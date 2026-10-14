@@ -774,8 +774,8 @@ class Thresholds(HarnessModel):
     # 상한(`auditor_source_tokens`)·`seen` 기계로 붙인다(`orchestrator/source_input_context`). 새
     # 수치 상한은 없다. `syntax` 근거·`dispatches`· `carried_decoders`는 싣지 않고 이벤트에 수만
     # 남긴다. 키가 없는 슬라이스(`--index` 없이 돈 슬라이서)는 아무것도 안 붙는다. 필드 기본은 끈다
-    # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은
-    # SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
+    # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)·
+    # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다.
     auditor_input_context: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
@@ -846,7 +846,7 @@ class Thresholds(HarnessModel):
     # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
     # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 · ⏵
     # 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
-    # 더해져 더 길다, 글자 수는 안 쟀다 · ⏵ 2026-10-14 v16 — v15에 블록 서술 한 항목, 글자 수는 안
+    # 더해져 더 길다, 글자 수는 안 쟀다 · ⏵ 2026-10-14 v16 — v15에 prefix 다섯 군데, 글자 수는 안
     # 쟀다)을 넣으면 167,775가 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비
     # 1.22에서 `lookup` 관측 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의
     # `_LOOKUP_MAX_CHARS`
