@@ -199,7 +199,6 @@ v4가 못 잡는 것:
 
 import argparse
 import json
-import re
 import sys
 from pathlib import Path
 
@@ -273,13 +272,6 @@ _SCOPE_KEYWORDS = frozenset({"class", "namespace"})
 # `types`에서 본문 있는 태그 행의 `kind` — 앞선 선언 typedef 행(`kind: "typedef"`)을 뺄 근거다.
 _TAG_KINDS = frozenset(_TYPE_SPECIFIERS.values())
 
-# 정의 기록·필드 owner 추적에 쓰는 지정자. C++ `class`(`class_specifier`)는 멤버를 소유하고
-# `struct`처럼 타입 이름으로도 쓰이지만 tree-sitter가 따로 태그해서 지금까지 전혀 기록되지
-# 않았다 — 클래스 멤버가 owner 없이 `fields`에서 누락됐다(C++로 파싱되는 `.cc`/`.cpp`/`.hpp`,
-# 그리고 `.h`를 C++로 올린 뒤의 헤더). `struct`로 기록하면 그 멤버가 잡히고 클래스가 타입으로
-# 풀린다. `_TYPE_SPECIFIERS`의 다른 용도(`_TAG_KINDS`·`_forward_tag`)는 건드리지 않는다.
-_RECORD_SPECIFIERS = {**_TYPE_SPECIFIERS, "class_specifier": "struct"}
-
 _MACROS = frozenset({"preproc_def", "preproc_function_def"})
 
 # 이름 → 기록 목록 모양의 v2~v4 표. `locals`·`assigns`는 파일 → 함수 → 이름 모양이라 따로 다룬다.
@@ -300,32 +292,13 @@ _NAMED_TABLES = (
 _WRITE_FORMS = {"subscript_expression": "element", "pointer_expression": "deref"}
 
 
-# `.h`는 C 문법에 고정돼 있지만 C++ 프로젝트는 클래스·네임스페이스·템플릿을 `.h` 헤더에 둔다.
-# C 문법은 그것들을 ERROR로 만들어 클래스 본문과 그 안의 멤버·타입이 통째로 유실된다. 강한
-# C++ 구조 마커가 있을 때만 그 헤더를 C++ 문법으로 올린다 — 마커가 없는 순수 C 헤더는 C 그대로라
-# C 프로젝트 회귀가 없다.
-_CPP_HEADER_MARKERS = re.compile(
-    rb"\bnamespace\s+[\w:]+\s*\{|\bclass\s+\w+\s*[:{]|\btemplate\s*<|^\s*(?:public|private|protected)\s*:",
-    re.MULTILINE,
-)
-
-
-def _grammar_module(suffix: str, source: bytes) -> str:
-    """파싱에 쓸 tree-sitter 문법 모듈 이름. `.h`에 C++ 구조 마커가 있으면 C++로 올린다."""
-    module = _GRAMMARS[suffix]
-    if module == "tree_sitter_c" and suffix == ".h" and _CPP_HEADER_MARKERS.search(source):
-        return "tree_sitter_cpp"
-    return module
-
-
-def _parser_for(module_or_suffix: str):
-    """파서. 인자는 문법 모듈 이름(`tree_sitter_c`)이거나, 하위호환으로 확장자(`.c`)다 —
-    확장자면 `_GRAMMARS`로 모듈 이름을 찾는다. 문법 모듈은 이미지에 함께 설치돼 있다."""
+def _parser_for(suffix: str):
+    """확장자에 맞는 파서. 문법 모듈은 이미지에 함께 설치돼 있다."""
     from importlib import import_module
 
     from tree_sitter import Language, Parser
 
-    module = import_module(_GRAMMARS.get(module_or_suffix, module_or_suffix))
+    module = import_module(_GRAMMARS[suffix])
     return Parser(Language(module.language()))
 
 
@@ -568,11 +541,11 @@ def _lookup_tables(root, relative: str) -> dict:
             func = _function_name(node) or ""
             for param in _params(node) if func else ():
                 _add_line(scoped["locals"], func, _text(param), param)
-        elif kind in _RECORD_SPECIFIERS and node.child_by_field_name("body") is not None:
+        elif kind in _TYPE_SPECIFIERS and node.child_by_field_name("body") is not None:
             name = node.child_by_field_name("name")
             span = _span(node, relative)
             if name is not None:
-                _add(tables["types"], _text(name), {**span, "kind": _RECORD_SPECIFIERS[kind]})
+                _add(tables["types"], _text(name), {**span, "kind": _TYPE_SPECIFIERS[kind]})
                 owner = (_text(name), span)
             elif not _lends_owner(node):
                 owner = (None, span)
@@ -965,77 +938,13 @@ def _record_field_call(node, func: str, relative: str, field_calls: dict) -> Non
     )
 
 
-# 선언 앞 한정자로 쓰이는 object-like 매크로의 본문이 비었거나 한정자 키워드뿐이면 중립화 대상이다.
-# `BE_NCONST`(빈 것/`const`)처럼 타입 앞에 붙는 매크로가 tree-sitter에서 타입 지정자 두 개로 보여
-# 선언을 깨뜨리고(`_declared_name`이 매크로·네임스페이스 토큰을 이름으로 잡음), 멤버·지역·전역이
-# fields/locals/file_vars에서 누락되거나 엉뚱하게 기록된다. 파싱 전에 같은 길이 공백으로 지우면
-# 전처리기가 하는 것과 같아져(빈 매크로) 선언이 깨끗이 파싱된다.
-_MACRO_QUALIFIERS = frozenset({b"const", b"volatile", b"restrict", b"__restrict", b"__restrict__"})
-_DEFINE_RE = re.compile(rb"^[ \t]*#[ \t]*define[ \t]+([A-Za-z_]\w*)([^\n]*)$", re.MULTILINE)
-_COMMENT_TAIL = re.compile(rb"//.*$|/\*.*?\*/", re.DOTALL)
-
-
-def _macro_body_is_qualifier_only(rest: bytes) -> bool:
-    """`#define NAME` 뒤 나머지가 중립화 가능한가 — object-like(이름 뒤 `(` 아님)에 본문이 비었거나
-    한정자 키워드뿐일 때만 True. 함수형·값·여러 줄은 False(안전하게 제외)."""
-    if rest[:1] == b"(":
-        return False
-    if rest.rstrip().endswith(b"\\"):
-        return False
-    body = _COMMENT_TAIL.sub(b"", rest).strip()
-    return not body or all(tok in _MACRO_QUALIFIERS for tok in body.split())
-
-
-def collect_neutral_macros(paths: list[Path]) -> frozenset:
-    """저장소 전체에서 「빈/한정자-only object-like」 매크로 이름을 모은다(중립화 대상).
-
-    한 이름이라도 값·함수형으로 정의된 곳이 있으면(같은 이름의 충돌 정의) 제외한다 — 그
-    파일에서는 매크로가 의미를 가지므로 지우면 안 된다.
-    """
-    candidate: set = set()
-    exclude: set = set()
-    for path in paths:
-        if path.suffix not in _GRAMMARS:
-            continue
-        try:
-            text = path.read_bytes()
-        except OSError:
-            continue
-        for match in _DEFINE_RE.finditer(text):
-            target = candidate if _macro_body_is_qualifier_only(match.group(2)) else exclude
-            target.add(match.group(1))
-    return frozenset(candidate - exclude)
-
-
-def _neutralize_macros(source: bytes, names: frozenset) -> bytes:
-    """`names`의 매크로를 같은 길이 공백으로 지운다 — 바이트 오프셋(줄·열) 보존.
-
-    `#`로 시작하는 전처리 지시 줄은 건드리지 않아 정의(`#define`)·`#include`·`#if`가 남는다
-    (매크로 표·조건부 컴파일 보존). 단어 경계로만 지운다.
-    """
-    if not names:
-        return source
-    present = [n for n in names if n in source]
-    if not present:
-        return source
-    pattern = re.compile(rb"\b(?:" + b"|".join(re.escape(n) for n in present) + rb")\b")
-    out = []
-    for line in source.split(b"\n"):
-        if line.lstrip()[:1] == b"#":
-            out.append(line)
-        else:
-            out.append(pattern.sub(lambda m: b" " * len(m.group(0)), line))
-    return b"\n".join(out)
-
-
-def index_file(path: Path, relative: str, neutral_macros: frozenset = frozenset()) -> dict:
+def index_file(path: Path, relative: str) -> dict:
     """파일 하나의 심볼·호출과 v2 조회 표.
 
-    읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다. `neutral_macros`는 파싱 전에 같은
-    길이 공백으로 지울 「빈/한정자」 매크로 이름(오프셋 보존).
+    읽거나 파싱하지 못하면 `OSError`/`KeyError`가 올라간다.
     """
-    source = _neutralize_macros(path.read_bytes(), neutral_macros)
-    tree = _parser_for(_grammar_module(path.suffix, source)).parse(source)
+    source = path.read_bytes()
+    tree = _parser_for(path.suffix).parse(source)
 
     symbols: list[dict] = []
     calls: list[dict] = []
@@ -1118,16 +1027,12 @@ def build_index(paths: list[Path], root: Path) -> dict:
     indexed: list[str] = []
     skipped: list[str] = []
 
-    # 1차: 빈/한정자 object-like 매크로(BE_NCONST 등)를 저장소 전체에서 모아, 2차에서 파싱 전에
-    # 중립화한다 — 이것들이 `MACRO Type *var` 선언을 깨뜨려 이름 캡처가 어긋나기 때문이다.
-    neutral_macros = collect_neutral_macros(paths)
-
     for path in sorted(paths):
         relative = _relative(path, root)
         if path.suffix not in _GRAMMARS:
             skipped.append(relative)
             continue
-        result = index_file(path, relative, neutral_macros)
+        result = index_file(path, relative)
         symbols += result["symbols"]
         calls += result["calls"]
         for name, table in named.items():
