@@ -223,7 +223,7 @@ def test_the_new_block_is_listed_last_and_the_write_windows_are_no_longer_last()
     flat = _flat()
     assert flat.index("Then write-site windows") < flat.index("Last, input-context functions")
     assert "Last, write-site windows" not in flat
-    assert flat.count("Last, ") == 1, "맨 끝은 하나"
+    assert flat.count("Last, ") == 1, "「Last」 항목은 하나(표지 줄은 SOURCE의 끝 줄이다)"
 
 
 # === 4. 배선 =====================================================================================
@@ -239,7 +239,9 @@ def test_v16_is_wired_in_every_place_a_new_prompt_version_has_to_be() -> None:
     assert (template.tools, template.input, template.facts_source) == (
         v15.tools, v15.input, v15.facts_source,
     )
-    assert template.source_options == (*v15.source_options, "auditor_input_context")
+    assert template.source_options == (
+        *v15.source_options, "auditor_write_window_marker", "auditor_input_context",
+    )
     assert auditor.loop_problem(template, 16, is_fake=False) is None
     assert auditor.tool_hops_in_effect("v16", 16) == 16
 

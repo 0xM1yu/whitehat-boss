@@ -585,9 +585,10 @@ class CapsuleBudgets(HarnessModel):
 # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와 바이트
 # 동일, 이슈 #67).
 # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술은 v14와 같다).
-# ⏵ 2026-10-14 — 아홉째 `auditor_input_context`(슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문,
-# S20 Phase 13)는 v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가
-# 막는다).
+# ⏵ 2026-10-14 — 아홉째 `auditor_write_window_marker`(쓰기 창 생략 표지 줄, 이슈 #650)와 열째
+# `auditor_input_context`(슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문, S20 Phase 13)는 둘 다
+# v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가 막는다). 표지 줄은
+# #667이 옵션 0으로 들였고 v16이 선언하면서 `budgets.yaml`이 1로 켠다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -598,6 +599,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_indirect_callees",
     "auditor_write_sites",
     "auditor_guards",
+    "auditor_write_window_marker",
     "auditor_input_context",
 )
 
@@ -751,6 +753,15 @@ class Thresholds(HarnessModel):
     # 0(끔) — `budgets.yaml`이 켠다. v3 표가 없으면 아무것도 안 붙는다. 위 ⚠와 같은 프롬프트 판
     # 문제 — v7이 서술한다.
     auditor_write_sites: int = Field(default=0, ge=0)
+    # 쓰기 지점 창(`auditor_write_sites`)이 상한·크기 상한에 못 붙었으면 SOURCE 끝에 `/* ... +N
+    # more write windows not shown ... */` 한 줄을 다는가(이슈 #650). 0이면 안 단다 — SOURCE는
+    # 이 옵션이 생기기 전과 바이트 동일이고, trace `write_windows_omitted`의 수는 0이어도
+    # 기록한다. 쓰기 창이 꺼져 있으면(`auditor_write_sites` 0) 효과가 없다. 같은 SOURCE 문자열을
+    # 받는 Critic·PoV 판도 이 줄을 받는데(`critic._SOURCE_INPUT_VERSIONS` ·
+    # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
+    # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
+    # (`AUDITOR_SOURCE_OPTIONS`). `budgets.yaml`은 v16이 서빙 판이라 1로 켠다.
+    auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
     # dominate)` 블록을 붙인다(`source_guards`) — sink 호출의 인자 이름을 언급하는 if·while·for·
@@ -772,7 +783,8 @@ class Thresholds(HarnessModel):
     # 2026-10-14). 0이면 안 붙인다 -
     # `SOURCE`·이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 `SliceRef.input_context`가
     # `status == "selected"`이고 `basis == "cpg"`일 때 그 `functions[]`의 본문을 같은
-    # 상한(`auditor_source_tokens`)·`seen` 기계로 붙인다(`orchestrator/source_input_context`). 새
+    # 상한(`auditor_source_tokens`)으로 붙인다 - 이미 실린 범위(`shown`)에 통째로 든 함수는 건너뛴다
+    # (`orchestrator/source_input_context`). 새
     # 수치 상한은 없다. `syntax` 근거·`dispatches`· `carried_decoders`는 싣지 않고 이벤트에 수만
     # 남긴다. 키가 없는 슬라이스(`--index` 없이 돈 슬라이서)는 아무것도 안 붙는다. 필드 기본은 끈다
     # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)·

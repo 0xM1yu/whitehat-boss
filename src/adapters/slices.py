@@ -503,6 +503,13 @@ def render_slices(loaded: SliceSet, root: Path) -> dict[str, str]:
         except OSError as exc:
             raise SliceInputError(f"{relative}: 하네스 사본에 없다 — drift ({exc})") from exc
 
+    # `analysis.input_context.functions[].file`도 같은 못 믿는 경로다 — 5단계의 `read_source`가
+    # 읽는데 거기서 `PathEscape`가 나면 run 전체가 죽는다(Scout가 GPU를 쓴 뒤). 그래서 여기서 먼저
+    # 막는다.
+    for item in loaded.slices:
+        if item.input_context is not None:
+            for function in item.input_context.functions:
+                _under(root, function.file)
     return {
         item.id: render(item, read_bytes)
         for item in loaded.slices
