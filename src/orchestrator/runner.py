@@ -5113,7 +5113,7 @@ def _shown_ranges(anchor: Location, text: str) -> list[Location]:
             ))
 
     for line in text.split("\n"):
-        gap = _OMITTED_LINE.fullmatch(line)
+        gap = _OMITTED_LINE.fullmatch(line.removesuffix("\r"))
         if gap is None:
             first = at if first is None else first
             at += 1

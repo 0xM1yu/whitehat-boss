@@ -21,7 +21,12 @@ from slicer_source import assemble
 from src.adapters.slices import SliceInputError, split_source
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.orchestrator.prompt_log import BODY_MARK
-from src.orchestrator.runner import _AUDITOR_SOURCE_CHARS, _AUDITOR_WINDOW_LINES, RunSpec
+from src.orchestrator.runner import (
+    _AUDITOR_SOURCE_CHARS,
+    _AUDITOR_WINDOW_LINES,
+    RunSpec,
+    _shown_ranges,
+)
 from src.schemas.common import Location
 from src.schemas.enums import Role
 from src.tokens import estimate_tokens
@@ -3210,6 +3215,17 @@ def test_a_write_site_in_the_lines_a_trimmed_entry_dropped_is_counted_as_hidden(
     assert source.endswith("/* ... +1 more write windows not shown ... */")
     off_source, off = _trimmed_entry_write(40, auditor_write_window_marker=0)
     assert off["write_windows_omitted"] == 1 and "more write windows" not in off_source
+
+
+def test_the_kept_ranges_of_a_trimmed_entry_skip_every_omitted_gap() -> None:
+    """뺀 구간이 둘이면 남은 범위는 셋이다 — 각 표시가 말하는 줄 수만큼 원래 번호를 건너뛴다.
+    줄 끝 `\\r`이 붙은 표시도 표시로 읽는다(`read_source`는 지금 `\\r`을 접지만 기대지 않는다)."""
+    anchor = Location(file="t.c", symbol="f", line_start=10, line_end=29)
+    text = "\n".join([
+        "a", "b", "/* ... 5 lines omitted ... */\r", "c", "/* ... 9 lines omitted ... */", "d",
+    ])
+    got = [(r.line_start, r.line_end) for r in _shown_ranges(anchor, text)]
+    assert got == [(10, 11), (17, 17), (27, 27)]
 
 
 def test_a_write_site_in_a_kept_line_of_a_trimmed_entry_is_not_counted_as_hidden() -> None:
