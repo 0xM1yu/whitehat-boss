@@ -3186,10 +3186,11 @@ def test_a_timeout_holds_the_finding_like_a_compile_failure(ctx: RunContext) -> 
     )
 
 
-def test_a_judge_with_no_commands_is_a_spec_failure_not_an_unmeasured_one(ctx: RunContext) -> None:
-    """`judge()`가 명령이 하나도 안 돈 건에 종료 코드를 지어내면(127) `_not_measured`가 그것을
-    「대상이 안 떴다」로 읽어 보류한다. 돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 종전대로
-    F-11이다. 127로 되돌리면 두 단언이 같이 빨개진다."""
+def test_a_judge_with_no_commands_invents_no_exit_code_so_it_is_not_held(ctx: RunContext) -> None:
+    """`judge()`의 빈 명령 갈래는 도달 불가 방어 갈래다(`plan()`은 명령을 늘 하나 이상 낸다) -
+    그래도 종료 코드를 지어내면(127) `_not_measured`가 그것을 「대상이 안 떴다」로 읽어 보류한다.
+    돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 F-11이다. 127로 되돌리면 두 단언이 같이
+    빨개진다."""
     from src.adapters.container_tools import judge
 
     ok, exit_code, error = judge("asan", [], 2)
@@ -3210,7 +3211,8 @@ def test_the_adapter_still_reports_a_failed_build_as_not_ok_with_an_exit_code() 
     """`_not_measured`는 어댑터 문구가 아니라 **`ok=False` + 종료 코드 있음**을 본다. 어댑터가
     컴파일·링크 실패·대상 미기동에 그 모양을 계속 내는지 실제 `judge()`로 문다 -
     문구가 바뀌어도 안 깨지고,
-    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다."""
+    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다. 시간 초과(`_execute`)와 실행 전 거절
+    (`_fail`)도 같은 모양이지만 `judge()`를 안 거치므로 여기서는 묻지 않는다."""
     from src.adapters.container_tools import Step, judge
 
     for tool, steps, total in (
