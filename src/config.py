@@ -585,6 +585,8 @@ class CapsuleBudgets(HarnessModel):
 # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와 바이트
 # 동일, 이슈 #67).
 # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술은 v14와 같다).
+# ⏵ 2026-10-14 — 아홉째 `auditor_write_window_marker`(쓰기 창 생략 표지 줄, 이슈 #650)는 **꺼져 있고
+# 이 변경(#667) 시점에 선언한 판이 없다** — v15 이하는 이 줄을 서술하지 않아서다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -595,6 +597,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_indirect_callees",
     "auditor_write_sites",
     "auditor_guards",
+    "auditor_write_window_marker",
 )
 
 
@@ -747,6 +750,17 @@ class Thresholds(HarnessModel):
     # 0(끔) — `budgets.yaml`이 켠다. v3 표가 없으면 아무것도 안 붙는다. 위 ⚠와 같은 프롬프트 판
     # 문제 — v7이 서술한다.
     auditor_write_sites: int = Field(default=0, ge=0)
+    # 쓰기 지점 창(`auditor_write_sites`)이 상한·크기 상한에 못 붙었으면 SOURCE 끝에 `/* ... +N
+    # more write windows not shown ... */` 한 줄을 다는가(이슈 #650). 0이면 안 단다 — SOURCE는
+    # 이 옵션이 생기기 전과 바이트 동일이고, trace `write_windows_omitted`의 수는 0이어도
+    # 기록한다. 쓰기 창이 꺼져 있으면(`auditor_write_sites` 0) 효과가 없다. 같은 SOURCE 문자열을
+    # 받는 Critic·PoV 판도 이 줄을 받는데(`critic._SOURCE_INPUT_VERSIONS` ·
+    # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본이 0이고
+    # `budgets.yaml`도 끈다 — 이 줄을 서술·선언하지 않는 **Auditor 판**으로 켜면 `cli`의
+    # run·doctor가 막는다(`cli._undescribed_source_options`는 Auditor meta만 읽는다
+    # — `AUDITOR_SOURCE_OPTIONS`). Critic·PoV 판이 이 줄을 서술하지 않는 조합을 막는 가드는
+    # Critic v8 / PoV v7을 넣는 #676이 넣는다(docs/agent-contracts.md §4). 켜는 것은 그 판의 몫이다.
+    auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
     # dominate)` 블록을 붙인다(`source_guards`) — sink 호출의 인자 이름을 언급하는 if·while·for·
