@@ -124,6 +124,12 @@ def _broken(kind: str, context: dict) -> object:
         bad["basis"] = "guess"
     elif kind == "cap_hit_string":
         bad["cap_hit"] = "false"
+    elif kind == "cap_hit_missing":
+        del bad["cap_hit"]  # 없는 키를 `false`로 읽으면 「상한에 안 닿았다」는 안 잰 사실이 된다
+    elif kind == "cap_hit_null":
+        bad["cap_hit"] = None
+    elif kind == "cap_reasons_missing":
+        del bad["cap_reasons"]
     elif kind == "cap_reasons_int":
         bad["cap_reasons"] = [3]
     elif kind == "functions_string":
@@ -143,7 +149,8 @@ def _broken(kind: str, context: dict) -> object:
 
 @pytest.mark.parametrize(
     "kind",
-    ["not_an_object", "version", "status", "basis", "cap_hit_string", "cap_reasons_int",
+    ["not_an_object", "version", "status", "basis", "cap_hit_string", "cap_hit_missing",
+     "cap_hit_null", "cap_reasons_missing", "cap_reasons_int",
      "functions_string", "function_no_file", "line_start_string", "line_start_bool",
      "range_reversed", "dispatches_string"],
 )
@@ -329,6 +336,98 @@ def test_containment_is_decided_by_the_union_of_the_seen_ranges() -> None:
     assert not _contained(target, [at(1, 100, "other.c")])
     assert _contained(target, [Location(file=FILE)])
     assert not _contained(target, [])
+
+
+_SETUP_LINES = [f"s{i} t{i}" for i in range(1, 16)]  # other.c 1~15 - 심볼 `setup` 하나
+_SETUP = Location(file="other.c", symbol="setup", line_start=1, line_end=15)
+
+
+def _window_world(built, tmp_path, decoder, context, *, status="selected", cap=0):  # noqa: ANN001, ANN202
+    """`other.c`의 `setup`(1~15)에 쓰기 지점 창(8줄 → 5~11줄)이 서고, 슬라이서가 고른 함수 `decoder`
+    (심볼 표에는 없다)가 그 창 안이나 밖에 있다. `(SOURCE, 이벤트)`."""
+    symbols = [*_locations(built), _SETUP]
+    entry = next(s for s in symbols if s.symbol == "parse_op_modifier")
+    files = {**_files(), "other.c": _SETUP_LINES}
+    tokens = {"auditor_source_tokens": cap} if cap else {}
+    site = Location(file="other.c", symbol="setup", line_start=8, line_end=8)
+    ctx, events, _, _ = _unit(
+        files, symbols, auditor_input_context=1, auditor_write_sites=6, writes={"l": [site]},
+        **tokens,
+    )
+    context = json.loads(json.dumps(context))
+    context["status"] = status
+    context["functions"] = [decoder]
+    ref = _load(tmp_path, context, points={(FILE, eatsize_call_line())})
+    return runner._auditor_source(ctx, ref, entry, "cand"), events[-1]
+
+
+def _function(first: int, last: int, file: str = "other.c") -> dict:
+    return {
+        "kind": "decoder", "file": file, "symbol": "tiny", "line_start": first, "line_end": last,
+    }
+
+
+def test_a_decoder_inside_a_shown_window_is_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """창(5~11)이 SOURCE에 **실렸고** 디코더(6~8)가 그 안에 든다 - 전체가 이미 보이니 건너뛴다."""
+    got, event = _window_world(index, tmp_path, _function(6, 8), contexts["cpg"])
+    assert "/* ===== other.c:5-11 ===== */" in got and "other.c:6-8" not in got
+    assert event["write_windows"] == 1
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
+
+
+def test_a_decoder_inside_a_size_dropped_window_is_not_carried(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """같은 배치에서 상한이 창(7줄)만 못 싣게 조인다. 창은 안 보이는데 `seen`에는 든다 -
+    디코더(3줄)가 그 안에 들어도 **실린 것이 아니다**: 건너뛴 것(carried)으로 세지 않고 붙는다.
+    상한이 디코더도 못 싣게 더 조이면 `skipped_size`로 센다."""
+    words = lambda text: len(text.split())  # noqa: E731
+    join = "\n".join
+    entry = Location(file=FILE, line_start=13, line_end=28)
+    tiny = Location(file="other.c", line_start=6, line_end=8)
+    wide = Location(file="other.c", line_start=5, line_end=11)
+    entry_block = runner._block(entry, join(fixture_lines(EXCERPT)[12:28]))
+    decoder_block = runner._block(tiny, join(_SETUP_LINES[5:8]))
+    window_block = runner._block(wide, join(_SETUP_LINES[4:11]))
+    assert words(decoder_block) < words(window_block), "전제 - 디코더가 창보다 작다"
+    fits = words(entry_block) + 1 + words(decoder_block)
+
+    got, event = _window_world(index, tmp_path, _function(6, 8), contexts["cpg"], cap=fits)
+    assert (event["write_windows"], event["write_windows_dropped"]) == (0, 1), "전제 - 창이 잘렸다"
+    assert "/* ===== other.c:6-8 ===== */" in got
+    assert (event["input_context_added"], event["input_context_skipped_carried"]) == (1, 0)
+
+    _, tight = _window_world(index, tmp_path, _function(6, 8), contexts["cpg"], cap=fits - 1)
+    assert (
+        tight["input_context_added"],
+        tight["input_context_skipped_carried"],
+        tight["input_context_skipped_size"],
+    ) == (0, 0, 1)
+
+
+def test_a_none_selected_status_adds_nothing_even_if_functions_are_listed(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """합성 입력 - 생산자는 `none_selected`에 함수를 안 싣지만 상태가 판정이다. 목록에 있어도 안
+    붙인다."""
+    decoder = _function(12, 14)  # 어느 창에도 안 든다 - 상태를 안 보면 붙는다
+    got, event = _window_world(index, tmp_path, decoder, contexts["cpg"], status="none_selected")
+    assert "other.c:12-14" not in got
+    selected, _ = _window_world(index, tmp_path, decoder, contexts["cpg"])
+    assert "/* ===== other.c:12-14 ===== */" in selected, "전제 - selected면 붙는다"
+    assert event["input_context"] == "none_selected"
+    assert (event["input_context_listed"], event["input_context_added"]) == (1, 0)
+
+
+def test_a_body_that_reads_empty_is_skipped_and_counted(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """파일 끝을 넘는 범위는 빈 문자열을 읽는다 - 배너만 싣지 않고 `skipped_empty`로 센다."""
+    got, event = _window_world(index, tmp_path, _function(40, 50), contexts["cpg"])
+    assert "other.c:40-50" not in got
+    assert (event["input_context_added"], event["input_context_skipped_empty"]) == (0, 1)
 
 
 def test_a_body_over_the_shared_cap_is_skipped_and_counted(

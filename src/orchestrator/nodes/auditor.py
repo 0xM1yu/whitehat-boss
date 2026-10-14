@@ -281,7 +281,7 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # 나머지(`FACTS.evidence[].body`·`truncated`를 읽는 규칙)와 `evidence_refs: only …` 줄은
 # 그대로라 본문 전제는 유지된다(`tests/test_auditor_v15.py`가 v14와의 차이를 묶는다).
 # v16(2026-10-14 · S20 Phase 13)은 v15에 입력 맥락 함수 블록의 서술을 더한 판이다 - 위 구절은 v15와
-# 바이트 동일이다(`tests/test_auditor_v16.py`가 차이를 `Build contract` 목록 세 군데로 묶는다).
+# 바이트 동일이다(`tests/test_auditor_v16.py`가 차이를 prefix 다섯 군데로 묶는다).
 _CONTENT_AWARE_VERSIONS = frozenset(
     {
         "v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
@@ -347,7 +347,7 @@ CALLERS_SECTION = "callers"
 # hop0 user 턴은 FACTS의 `source` 사본만큼 짧다 — `tests/test_auditor_v13_facts.py` · ⏵ 2026-10-11
 # 서빙 판 v14는 v12에서 한 조각만 빠졌고 user 턴은 v13과 같다 — `tests/test_auditor_v14_facts.py` ·
 # ⏵ 2026-10-13 서빙 판 v15의 prefix는 v14 + 계약 문장 여섯이라 더 길다 — 글자 수는 안 쟀고 user
-# 턴(body)은 v14와 바이트 동일이다 · ⏵ 2026-10-14 서빙 판 v16은 v15에 블록 서술 한 항목을 더했고
+# 턴(body)은 v14와 바이트 동일이다 · ⏵ 2026-10-14 서빙 판 v16은 v15에 prefix 다섯 군데를 더했고
 # 글자 수는 안 쟀다) ↔ v4 13,405자라 hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰
 # 넘는다(계산값 — v4 기준이다. hop0가 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은

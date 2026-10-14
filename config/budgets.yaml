@@ -224,7 +224,7 @@ thresholds:
   #   ⏵ 2026-10-11 — 서빙 판 v14도 같다(`facts_source: false` — v12 + FACTS `source` 제거).
   #   ⏵ 2026-10-13 — 서빙 판 v15도 같다(`facts_source: false` · body는 v14와 바이트 동일). prefix는 계약 문장 여섯만
   #   다르다(`docs/agent-contracts.md` §2.2 「v14 → v15」) — 위 hop0 수를 다시 안 셌다.
-  #   ⏵ 2026-10-14 — 서빙 판 v16도 같다(`facts_source: false` · body는 v15와 바이트 동일). prefix는 블록 서술 한 항목만 더 든다 — 다시 안 셌다.
+  #   ⏵ 2026-10-14 — 서빙 판 v16도 같다(`facts_source: false` · body는 v15와 바이트 동일). prefix는 다섯 군데만 더 든다(입력 맥락 함수 서술 · 쓰기 창 표지 줄) — 다시 안 셌다.
   # - 16홉을 다 쓰면 17호출 × 30,924 ≈ 525,700토큰/후보. 거기에 `lookup` 관측이 매번 15,000자
   #   (`_LOOKUP_MAX_CHARS`, 위 낙관 비 3.28이면 4,574토큰)로 오면 홉 k의 요청에 k개가 쌓여
   #   136 × 4,574 ≈ 622,100이 더해진다 → 약 1,147,800토큰/후보(어시스턴트 턴 열여섯은 안 셌다).
@@ -684,7 +684,7 @@ thresholds:
   # ⏵ 2026-10-11 — 정본은 **v14**다(이슈 #67 — v12 + FACTS에서 `source` 사본을 뺀다). 옵션 여덟의 서술·선언은
   # v12와 바이트 동일이다(`tests/test_auditor_v14_facts.py`가 v12와의 차이를 두 줄로 묶는다).
   # ⏵ 2026-10-13 — 정본은 **v15**다(v14 + 계약 문장 여섯). 옵션 여덟의 서술·선언은 v14와 같다(`tests/test_auditor_v15.py`).
-  # ⏵ 2026-10-14 — 정본은 **v16**이다(v15 + 입력 맥락 함수 블록 서술). 옵션은 아홉째 `auditor_input_context`가 더해져 아홉이다(맨 아래).
+  # ⏵ 2026-10-14 — 정본은 **v16**이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명). 옵션은 아홉째 `auditor_input_context`가 더해져 아홉이다(맨 아래).
   # 고른 근거는 둘 다 로컬 소표본이다(run ID 없음 · 원자료 저장소 밖):
   # - 20,000토큰 + 정의 + 피호출 -> 2026-10-01 s500 실패 표본 9개(GT 보는 슬라이스 35)에서 정의 누락
   #   97.9 -> 69.4% · 피호출 누락 56.3 -> 47.2% · 입력 토큰 중앙값 347 -> 1,106(`measure_results/
@@ -737,10 +737,11 @@ thresholds:
   auditor_guards: 1
   # 슬라이서의 입력 디코더 함수 본문(`analysis.input_context` · S20 Phase 13 · 2026-10-14 · 사용자 결정 - 켠다). 슬라이스에
   # `--index`로 만든 선택이 있고(`status: selected`) 그 근거가 CPG 호출 경로(`basis: cpg`)면, 고른 함수의 본문을
-  # **맨 뒤**(쓰기 지점 창 다음)에 같은 상한·`seen`으로 붙인다(`orchestrator/source_input_context`). `syntax` 근거·
-  # `dispatches`·`carried_decoders`는 안 싣는다. 키가 없는 슬라이스는 아무것도 안 바뀐다. 서술·선언은 Auditor **v16**
+  # **맨 뒤**(쓰기 지점 창 다음)에 같은 상한으로 붙인다(`orchestrator/source_input_context`). `syntax` 근거·
+  # `dispatches`·`carried_decoders`는 안 싣는다. 키가 없는 슬라이스는 `SOURCE`가 그대로이고
+  # `auditor_source` 이벤트에 `input_context: absent` 하나만 는다. 서술·선언은 Auditor **v16**
   # 이 든다(`prompts/auditor/v16/`) - v15 이하를 고르고 켜면 `cli`의 run·doctor가 막는다.
-  # **켠 효과는 미실측이다** - 이 옵션으로 돈 run은 0건이고, 디코더 본문이 PoV 입력(`finding_sources`)에도 간다.
+  # **켠 효과는 미실측이다** - 이 옵션으로 돈 run은 0건이고, 디코더 본문이 PoV·Critic 입력(`finding_sources`)에도 간다.
   auditor_input_context: 1
 
   # 🔴 ⏵ 2026-10-05 — 아래 셋은 선언이 없어 필드 기본값 0(= 꺼짐)으로 돌던 스위치다. 켠다(사용자 결정).
