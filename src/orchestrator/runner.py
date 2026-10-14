@@ -2285,8 +2285,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
     모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓪Critic 판정 ①내부 근거 등급
-    ②`confidence` ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓿후보 자기 `vul` 응답 코드
+    (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은
+    바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
     그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
@@ -2693,8 +2694,9 @@ def _designate_final(
     후보 자격이고 판정이 아니다), 위 한 코드, 그리고 **하네스가 만든 값**(Critic 판정 계단 ·
     내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)이다. 내부 등급은 하네스가 도구를 돌려 낸
     근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
-    **코드를 크래시로 세는 것은 환경이 낸 값을 거른 뒤다** — 124~127·137·255·음수·255 초과·`None`은
-    모름이고 크래시로 안 센다(`oracle_log.ENV_FAILURE_VUL_EXIT_CODES`). 모름은 크래시와 크래시
+    **코드를 크래시로 세는 것은 환경 값으로 보는 코드를 거른 뒤다** — 124~127·137·255·음수·255 초과·
+    `None`은 모름이고 크래시로 안 센다(`oracle_log.ENV_FAILURE_VUL_EXIT_CODES` — 근거는 로컬 `poc`
+    도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다). 모름은 크래시와 크래시
     아님 **사이**다(§0). 1은 크래시로 센다 — 실제 ASan 종료일 수도, 인프라 값일 수도 있어 둘이
     안 갈린다(ADR 0013 · 0014). 300(채점기의 제외 코드이자 255 초과 — 모름)은 **응답 경로로는
     닿지 않는다**: 서버가 300을 응답에서 0으로 덮는다(#384). 방어적으로만 모름에 둔다.
@@ -2809,8 +2811,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_unknown`)은 `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 같은 바이트를 접은 뒤
-    ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는
-    2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
+    ⓿자기 `vul` 응답 코드 ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로
+    하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다
+    (`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
