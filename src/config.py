@@ -760,7 +760,9 @@ class Thresholds(HarnessModel):
     # 받는 Critic·PoV 판도 이 줄을 받는데(`critic._SOURCE_INPUT_VERSIONS` ·
     # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
     # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
-    # (`AUDITOR_SOURCE_OPTIONS`). `budgets.yaml`은 v16이 서빙 판이라 1로 켠다.
+    # (`cli._undescribed_source_options`는 Auditor meta만 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
+    # `budgets.yaml`은 v16이 서빙 판이라 1로 켠다. Critic·PoV 판이 이 줄을 서술하지 않는 조합을
+    # 막는 가드는 Critic v8 / PoV v7을 넣는 #676이 넣는다(docs/agent-contracts.md §4).
     auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
