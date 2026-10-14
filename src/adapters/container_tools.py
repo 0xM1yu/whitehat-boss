@@ -1445,13 +1445,15 @@ class ContainerToolRunner:
                 sif = sif_path(self.sif_dir, image)
                 if not sif.exists():
                     # 자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다.
+                    # 오류 문구에는 호스트 경로를 안 싣는다 — `Evidence.error`는 PoV·Auditor 관측
+                    # 머리줄로 모델에 가고 로그 본문도 같은 문구다. SIF 파일 이름만 든다.
                     return self._fail(
                         evidence_id,
                         tool,
                         kind,
                         args,
                         127,
-                        f"SIF가 없다: {sif} (변환 절차는 tools/README.md)",
+                        f"SIF가 없다: {sif.name} (변환 절차는 tools/README.md)",
                     )
         try:
             commands = self._plan_for(tool, resolved)
@@ -1832,12 +1834,19 @@ def _in_container(root: Path, path: Path) -> str:
     """호스트 경로 → 컨테이너 안 경로. 마운트 밖은 `safe_join`이 이미 걸렀다.
 
     **루트 밖으로 풀리는 소스(루트 안 심링크)는 `safe_join`이 못 본다** - 그 경로는 `ValueError`로
-    거절한다. 문구에 호스트 경로를 안 싣는다(`relative_to`의 기본 문구는 두 경로를 다 든다).
+    거절한다. 문구에는 **풀기 전** 경로의 루트 기준 상대 이름만 싣는다(어느 소스인지 알려야
+    한다) - 호스트 경로는 안 싣는다(`relative_to`의 기본 문구는 두 경로를 다 든다). 풀기 전
+    경로도 루트 밑이 아니면 파일 이름만 싣는다.
     """
+    base = Path(root).resolve()
     try:
-        relative = path.resolve().relative_to(Path(root).resolve()).as_posix()
+        relative = path.resolve().relative_to(base).as_posix()
     except ValueError:
-        raise ValueError("대상 루트 밖으로 풀리는 소스 경로가 있다") from None
+        try:
+            shown = path.relative_to(base).as_posix()
+        except ValueError:
+            shown = path.name
+        raise ValueError(f"대상 루트 밖으로 풀리는 소스 경로가 있다: {shown}") from None
     return MOUNT if relative == "." else f"{MOUNT}/{relative}"
 
 

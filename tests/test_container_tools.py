@@ -183,6 +183,8 @@ def test_workdir_outside_root_is_absorbed_into_evidence(tmp_path: Path, spy: _Sp
 
     assert evidence.ok is False
     assert "밖을 가리킨다" in evidence.error
+    assert "../../etc" in evidence.error  # 거절된 상대 경로는 든다
+    assert tmp_path.name not in evidence.error, f"호스트 경로가 관측에 실렸다: {evidence.error!r}"
     assert spy.calls == []
 
 
@@ -309,8 +311,12 @@ def test_sif_path_maps_image_tag_to_a_file() -> None:
 # --- 6. SIF 부재 ---------------------------------------------------------------
 
 
-def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> None:
-    """자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다."""
+def test_missing_sif_is_reported_by_file_name_without_a_host_path(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다.
+
+    문구는 모델 관측 머리줄에 실리므로 **파일 이름만** 든다 - SIF 디렉터리(호스트 경로)는 뺀다."""
     runner = _runner(tmp_path, runtime="singularity", sif_dir=tmp_path / "sif")
 
     evidence = runner.run("semgrep", ToolArgs(argv=["semgrep", "."], workdir="."), SANDBOX)
@@ -318,6 +324,7 @@ def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> Non
     assert evidence.ok is False
     assert "SIF가 없다" in evidence.error
     assert "harness-tools_v3.sif" in evidence.error
+    assert tmp_path.name not in evidence.error, f"호스트 경로가 관측에 실렸다: {evidence.error!r}"
     assert spy.calls == []
 
 
@@ -343,6 +350,9 @@ def test_a_source_resolving_outside_the_root_is_refused_without_a_host_path(
     # 예외 문구가 경로를 `repr`로 싣는 탓에 Windows에서는 역슬래시가 겹쳐 전체 경로 부분 문자열
     # 비교가 샌다 - 경로의 고유 성분(pytest 임시 디렉터리 이름)으로 문다.
     assert tmp_path.name not in evidence.error, f"호스트 경로가 관측에 실렸다: {evidence.error!r}"
+    # 어느 소스인지는 알려야 한다 - 풀기 전 경로의 루트 기준 상대 이름.
+    assert "evil.c" in evidence.error, f"소스 신원이 문구에 없다: {evidence.error!r}"
+    assert outside.parent.name not in evidence.error, "루트 밖 대상 경로가 관측에 실렸다"
 
 
 # --- 7. 타임아웃 ---------------------------------------------------------------
