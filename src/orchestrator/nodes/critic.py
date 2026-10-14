@@ -53,7 +53,8 @@ OUTPUT_SCHEMA = DecisionDraft
 # 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
 # v3~v6은 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이고 v7은 본문이 없으면
 # SOURCE로 판정한다(prefix step 1 끝·step 3) - 모두 본문을 읽도록 쓰여 여기 든다.
-# v8(2026-10-14)은 v7에 SOURCE 새 블록 둘의 서술만 더했다(입력·판정 절차는 v7과 같다).
+# v8(2026-10-14)은 v7 prefix에 SOURCE 새 블록 둘 · 홉 관측 절 · `auditor_hops`의 서술을 더하고
+# 그 절과 어긋나는 한 문장을 고쳤다(편집 넷 · 입력·판정 절차는 v7과 같다).
 # v7·v8이 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라진다(요청이 본문 없는 모양이 된다).
 # 서빙 판이면 `cli run`·doctor의 `_check_prompts`(`_check_prompt_version`)가
 # 모델 호출 전에 ERROR로 막는다.

@@ -1289,7 +1289,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > ⏵ **2026-10-14 — Critic v6 → v7**(S20 Phase 11). 현재 판은 v7이다. 입력은 그대로이고 지시가 SOURCE 직접 검증(5-check)으로
 > 바뀌었다. 규칙 1이 걸린다 — v7 뒤 run은 v6 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v7 run 0건, 미실측).
 >
-> ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 현재 판은 Critic v8 · PoV v7이다. 입력 데이터는 그대로이고 **서술만** 더했다 - Critic v8은 SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
+> ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 현재 판은 Critic v8 · PoV v7이다. 입력 데이터는 그대로이고 **서술만** 더하거나 고쳤다 - Critic v8은 v7 prefix에 편집 넷을 했다: SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고, 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절(Evidence도 SOURCE도 아닌 맥락)과 FACTS `auditor_hops`의 서술을 더했고(편집 둘), 「별도 호출」 문장이 그 절과 어긋나 고쳤다(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·

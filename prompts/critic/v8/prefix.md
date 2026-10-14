@@ -39,7 +39,9 @@ The current Critic call transforms the Auditor Finding as follows:
 - FACTS contains run_id, ids.decision_id, ids.finding_id, and Evidence IDs/kind/ok. An Evidence entry may also contain `body`, `truncated`, and `location`; a present body field can be empty. FACTS.source contains the cached source string supplied to the Auditor. artifact_id, target, capsule_sections, and callers remain default-empty or null in this call. When the tool observations section is present, FACTS also contains the top-level integer `auditor_hops`, equal to the N in that section's header (copies shown, not hops run). When there are no copies, the section and the key are both absent; the key is never 0.
 
 This is a separate review call, not a continuation of Scout's or Auditor's conversation. Do not
-assume access to earlier retrieved context or source beyond the supplied FACTS.source.
+assume access to earlier retrieved context or source beyond FACTS.source and the observations
+section shown in EVIDENCE. That section is context only: it is not Evidence and not SOURCE, so
+code that appears only there is not quoted or located as SOURCE (Checks A and B).
 EVIDENCE and FACTS may show the same Evidence in two formats; matching evidence IDs identify one record, not independent corroboration.
 
 Payload references are not included. A supplied body is a bounded excerpt of a tool log, not a
