@@ -219,7 +219,7 @@ agent:
   `none_selected`에 서 있으면 0이 아니라 모름) · `_cap_reasons` · `_listed` · `_added` · `_chars`(`SOURCE`가 **실제로 늘어난 길이** — 디코더 블록만 붙인 자리에 entry 함수 배너가 새로 생기면 그 배너도 든다) · `_skipped_syntax`(`syntax` 근거) · `_skipped_carried`(전체가 이미 SOURCE에 **실린** 범위 안) ·
   `_skipped_size`(상한) · `_skipped_empty`(읽은 본문이 비었다 - 없는 파일) · `_carried_decoders` · `_dispatches`다. **v16부터 서술·선언한다** - v15 이하를 고르고 켜면 `cli` run·doctor가 막는다.
   ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
-  상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수·enum은 일부만 보여 `shown`에 안 든다.
+  상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수는 남은 줄 범위만 `shown`에 들고(`_shown_ranges`), 줄여 실은 enum은 일부만 보여 안 든다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -1008,7 +1008,7 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
 > ⏵ 2026-10-13 — **지금 고르는 것은 v15**다(v14 + 계약 문장 여섯 — 아래 「v14 → v15」). 출력 계약은 v12와 같다. 위 Finding 예시의
 > `prompt_version`도 v15로 고쳤다.
-> ⏵ 2026-10-14 — **지금 고르는 것은 v16**이다(v15 + 입력 맥락 함수 블록 서술 — 아래 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
+> ⏵ 2026-10-14 — **지금 고르는 것은 v16**이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 — 아래 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
 > `prompt_version`도 v16으로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
@@ -1118,7 +1118,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
 ⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 · S19). 봉투는 v12의 넷째를 상속한 `AuditorProcedureProbeInputAction`이라 이 절의 `cwe`·`audit` 규칙은 그대로 선다. v12 자체는 여전히 미선택이다.
-⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다.
+⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
@@ -1349,7 +1349,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 텍스트 충돌(`git merge-tree` 스크래치 병합, 2026-10-13): **이 PR과** — #642는 `nodes/auditor._run_hops`의 `key = _request_key(action)` · `_stop_without_finding(key, previous, …)` 두 줄에서 충돌한다(이 PR은 `key = _input_aware_key(action)`; 해소는 `key = _input_aware_key(action)` + `_stop_without_finding(key, seen, …)`이다 - #642가 `previous`를 `seen`으로 바꾼다). #648은 `src/orchestrator/trace.py`의 **주석만 바뀐 hunk**에서 충돌한다(코드 충돌이 아니다). #660은 `prompt_loader.py`의 `FACT_KEYS` 주석(이 PR이 `facts_source: false` 판 목록에 v15를 더한 줄)과 같은 자리를 건드려 충돌한다 - 이 PR이 마지막이므로 거기서 푼다(목록에 v15를 유지). #644는 이 PR과 충돌하지 않는다. **의존 PR끼리도 충돌한다** — #642↔#644는 네 파일(`docs/agent-contracts.md` · `nodes/auditor.py` · `schemas/auditor.py` · `tests/test_auditor_loop.py`)에서, #642↔#660은 `runner.py`에서만(2026-10-13 재검 — `nodes/auditor.py`는 아님), #644↔#648은 `nodes/auditor.py` 모듈 docstring의 `probe`의 `spec` 불릿과 `docs/agent-contracts.md`에서, #648↔#660은 `run`·`_run_hops`의 `hop0_note`·`observations` 인자에서 충돌한다. 그래서 **#642 → #644 → #648 → #660 → 이 PR 사슬은 뒤 PR마다 앞 PR이 main에 들어온 뒤 main을 다시 병합해야 선다**(CLAUDE.md §4.3).
 > v15로 돈 run은 0건이다. 모델이 `spec`을 보내는지·`probe`를 `triggerable` 앞에 두는지는 미실측이다.
 >
-> ⏵ **2026-10-14 — v15 → v16 (S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인).** v16 = v15 + `SOURCE` 블록 하나의 서술. 새 옵션 `auditor_input_context`가
+> ⏵ **2026-10-14 — v15 → v16 (S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인).** v16 = v15 + `SOURCE` 블록 하나의 서술 · 쓰기 창 표지 줄의 설명(아래 ①②③). 입력 맥락 옵션 `auditor_input_context`가
 > 켜지면 슬라이서가 CPG 근거로 고른 입력 디코더 함수의 본문이 쓰기 창 뒤의 마지막 블록으로 붙는데(#650 표지 줄이 있으면 그 앞 - 위 「SOURCE」 절의 열째 옵션), v15는 그 옵션을 서술하지 않아
 > 켠 채 고르면 `cli` run·doctor가 막는다 - 그래서 새 판이다. body·봉투(`AuditorProcedureProbeInputAction`)·도구·다른 옵션 여덟은 v15와 같고 v15는 한 글자도
 > 안 바뀌었다(규칙 1). prefix는 다섯 군데만 다르다(`tests/test_auditor_v16.py`가 바이트 등식으로 묶는다): ① 「Trust boundary」의 하네스 생성 텍스트 목록에 `SOURCE` **맨 끝**의

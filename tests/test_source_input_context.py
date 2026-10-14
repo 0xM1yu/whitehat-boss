@@ -189,6 +189,27 @@ def test_a_decoder_path_that_escapes_the_target_root_stops_before_the_run(
         render_slices(loaded("../../outside.c"), root)
 
 
+@pytest.mark.parametrize("change", [{"basis": "syntax"}, {"status": "none_selected"}])
+def test_an_escaping_decoder_path_on_a_context_nobody_reads_does_not_stop_the_run(
+    tmp_path, contexts, change  # noqa: F811
+) -> None:
+    """`carry_input_context`는 `selected` + `cpg`만 읽는다 - 약한 선택(`syntax`)이나 고르지 않은
+    (`none_selected`) 맥락의 경로는 읽히지 않으니 루트 밖이어도
+    run을 세우지 않는다(#668 2차 리뷰)."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / FILE).write_bytes(EXCERPT.read_bytes())
+    context = json.loads(json.dumps(contexts["cpg"]))
+    context["functions"][0]["file"] = "../../outside.c"
+    context.update(change)
+    item = _slice(
+        "slice_0001", "B", {(FILE, eatsize_call_line()), (FILE, hextoint_line() + 1)},
+        {FILE: fixture_lines(EXCERPT)}, analysis=_backward(input_context=context),
+    )
+    loaded = load_slices(_write(tmp_path, _document([item])))
+    assert set(render_slices(loaded, root)) == {"slice_0001"}
+
+
 # === 2~5. `_auditor_source` =====================================================================
 
 
@@ -349,9 +370,10 @@ def test_a_decoder_that_is_already_the_anchor_is_skipped_as_carried(
     assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
 
 
-def test_containment_is_decided_by_the_union_of_the_seen_ranges() -> None:
-    """한 범위가 덮으면 건너뛰고, 이어 붙은 여러 범위의 합집합이 덮어도 건너뛴다. 틈이 있거나 일부만
-    겹치면 건너뛰지 않는다. 파일 전체(범위 없음)가 든 파일은 다 든 것이다."""
+def test_containment_is_decided_by_the_union_of_the_shown_ranges() -> None:
+    """`shown`(SOURCE에 실제로 붙은 블록의 범위 - `seen`이 아니다)에 대고, 한 범위가 덮으면 건너뛰고
+    이어 붙은 여러 범위의 합집합이 덮어도 건너뛴다. 틈이 있거나 일부만 겹치면 건너뛰지 않는다. 파일
+    전체(범위 없음)가 든 파일은 다 든 것이다."""
     from src.orchestrator.source_input_context import _contained
 
     def at(first: int, last: int, file: str = FILE) -> Location:
@@ -574,9 +596,9 @@ def test_a_decoder_equal_to_a_shown_caller_window_is_carried(
 _BIG_LINES = [f"b{i} c{i}" for i in range(1, 121)]  # other.c 1~120 - 함수 `big` 하나
 
 
-def test_a_trimmed_entry_function_does_not_count_as_shown(tmp_path, contexts) -> None:  # noqa: F811
-    """entry 함수가 상한을 넘어 줄었다(1~39·81~120줄을 뺐다). 줄인 함수는 일부만 보이므로 그 안의
-    디코더(10~20줄 - 빠진 구간)는 **실린 것이 아니다**: 건너뛰지 않고 붙는다."""
+def test_a_decoder_in_the_lines_a_trimmed_entry_dropped_is_carried(tmp_path, contexts) -> None:  # noqa: F811
+    """entry 함수가 상한을 넘어 줄었다(1~39·81~120줄을 뺐다). `shown`에는 **남은 줄 범위**만 든다
+    (`_shown_ranges`) - 빠진 구간의 디코더(10~20줄)는 실린 것이 아니라 건너뛰지 않고 붙는다."""
     big = Location(file="other.c", symbol="big", line_start=1, line_end=120)
     ctx, events, _, _ = _unit(
         {"other.c": _BIG_LINES}, [big], auditor_input_context=1, auditor_entry_trim=1,

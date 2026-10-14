@@ -4911,18 +4911,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # `shown`에는 없는 범위(크기 상한에 못 실은 함수·창) 안의 지점. 겹치면 하나로 센다.
     # `write_sites_found - write_windows`가 아니다 — 찾은 수는 실린 코드 안의 지점도 센다. 줄인
     # entry 함수는 남은 줄 범위만 `shown`에 있어, 뺀 구간 안의 지점은 세고 남은 줄의 지점은 안 센다.
-    # `hidden`은 (겹치지 않게 깎은 창, 그 창이 못 보인 쓰기 줄) 쌍이다 — 줄을 같이 들어 두는 것은
-    # 아래 입력 맥락 블록이 붙은 뒤 「이제 보이는 지점」을 다시 걸러 내기 위해서다.
+    # `hidden`은 (깎지 않은 창, 그 창이 못 보인 쓰기 줄) 쌍이다 — 지점마다 하나씩 든다. 창을 미리
+    # 깎거나 겹치는 지점을 버리면 아래 입력 맥락 블록이 첫 지점만 덮을 때 둘째 지점이 같이 사라진다
+    # (#668 리뷰 2차). 겹침은 그 블록을 붙인 뒤 실제 `shown`에 대고 차례로 걸러 하나로 센다.
     hidden: list[tuple[Location, int]] = []
 
     def hide(site: Location) -> None:
-        line = site.line_start or 1
-        cut = _clip_around(
-            _caller_window(ctx, site, _AUDITOR_WRITE_LINES), line,
-            [*shown, *(window for window, _ in hidden)],
-        )
-        if cut is not None:
-            hidden.append((cut, line))
+        hidden.append((_caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1))
 
     if write_sites:
         sites = _write_sites(ctx, ref, carried, anchor.file)
@@ -4972,9 +4967,13 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 아래에서 `source`에 붙인 뒤 잰다. 옵션이 0이면 줄을 안 달아도 수는 trace에 남는다.
     # 수는 입력 맥락 블록을 붙인 **뒤** 확정한다 — 그 블록이 `shown`에 든 범위 안의 지점은 모델이
     # 보므로 못 본 것으로 세면 안 된다(쓰기 창 루프는 그 블록보다 앞이라 그때는 몰랐다).
-    write_windows_omitted = sum(
-        _clip_around(window, line, shown) is not None for window, line in hidden
-    )
+    probe = list(shown)
+    write_windows_omitted = 0
+    for window, line in hidden:
+        cut = _clip_around(window, line, probe)
+        if cut is not None:
+            probe.append(cut)
+            write_windows_omitted += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.

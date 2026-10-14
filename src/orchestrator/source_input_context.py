@@ -36,8 +36,8 @@ S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인. 슬라이서(`tool
 프롬프트에 싣는다.
 
 ⚠ **한계**: `shown`은 실린 범위만 든다 - 상한에 걸려 못 실은 창·함수 안에 든 디코더는 건너뛰지 않고
-직접 상한에 견준다(`skipped_size`). 줄여 실은 entry 함수·enum은 일부만 보이므로 `shown`에 안 든다
-(디코더가 그 함수와 같으면 다시 붙는다).
+직접 상한에 견준다(`skipped_size`). 줄여 실은 entry 함수는 **남은 줄 범위만** `shown`에 든다(뺀 구간
+안의 디코더는 다시 붙는다). 줄여 실은 enum은 일부만 보이므로 `shown`에 안 든다.
 """
 
 from collections.abc import Callable
