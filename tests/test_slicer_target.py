@@ -377,6 +377,24 @@ def test_the_run_signature_covers_the_spec(monkeypatch, tree, tmp_path):
     assert sig5 != sig7
     assert signature(5)[0] == sig5
 
+    # ⏵ 2026-10-14 (적대적 리뷰) — **위 셋은 `line`의 철자만 문다.** 서명을 `file`·`line`만
+    # 담게 좁히는 한 줄 변이가 그 셋을 전부 통과했다(실측 189 passed). `symbol`은
+    # `pick_line`·`choose`·`relocation_lines`·`locate`가 읽어 **어느 노드를 자르는지를**
+    # 바꾸므로, 같은 `line`에 `symbol`만 다른 두 run이 서명을 공유하면 안 된다.
+    # 그리고 역할 객체를 **통째로** 담는지도 같이 문다 — 그것이 「노드 선택을 바꾸는
+    # 필드 전부」를 덮는 유일한 방법이다(필드를 열거하면 다음 필드를 못 막는다, §2.5).
+    def signature_with(sink):
+        where = tmp_path / f"alt_{sink['symbol']}"
+        where.mkdir(exist_ok=True)
+        result = run_target(monkeypatch, tree, where, mock_data(), spec={"sink": sink})[1]
+        return result["run_signature"], result["settings"]["spec"]["sink"]
+
+    base = {"file": "main.c", "line": 5, "function": "entry", "symbol": "x"}
+    other = {**base, "symbol": "y"}
+    (sig_x, kept_x), (sig_y, _) = signature_with(base), signature_with(other)
+    assert sig_x != sig_y, "같은 줄에 symbol만 다른 두 run이 서명을 공유한다"
+    assert kept_x == base, "역할 객체를 통째로 담아야 다음 필드도 덮인다"
+
 
 def test_the_output_is_deterministic(monkeypatch, tree, tmp_path):
     options = ("--index", str(index_file(tmp_path)))
