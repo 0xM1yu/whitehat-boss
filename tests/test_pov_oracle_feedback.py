@@ -180,11 +180,13 @@ def test_wired_pov_gets_source_and_feedback_separately(ctx):  # noqa: ANN001, F8
 def test_wired_prefix_explains_raw_observation_and_model_designation():
     version = load_config(profile="harness_pool").model_for("pov").prompt_template_version
     prefix = load_prompt(Role.POV, version).prefix
-    # ⏵ 2026-10-13 — 서빙 판이 v6(영어)이라 절 머리와 「중간 gen」을 말하는 낱말이 판마다 다르다.
+    # ⏵ 2026-10-13 — 서빙 판이 v6(영어, 2026-10-14부터 v7)이라 절 머리와 「중간 gen」을
+    # 말하는 낱말이 판마다 다르다.
     # 판이 또 올라가면 `KeyError`가 이 검사를 빨갛게 한다(새 판의 낱말을 읽고 표에 더한다).
     heading, intermediate = {
         "v5": ("## 채점기 vul 관측", "중간"),
         "v6": ("## Scorer vul observation", "intermediate"),
+        "v7": ("## Scorer vul observation", "intermediate"),  # 2026-10-14 - v6과 같은 절
     }[version]
     assert heading in prefix
     for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", intermediate):

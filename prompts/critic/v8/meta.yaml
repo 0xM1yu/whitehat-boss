@@ -1,0 +1,18 @@
+# 2026-10-14 - v7을 잇는 새 판(S20 Phase 14 · 이슈 #669). Auditor `SOURCE` 문자열에 새로 생긴 블록 둘을 SOURCE 계약 절이
+# 서술한다: ① 슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문(`auditor_input_context`가 켜져
+# 있을 때 쓰기 지점 창 뒤에 붙는다 - PR #668) ② 쓰기 지점 창이 보인 것보다 많았을 때 `SOURCE` 맨 끝에 붙는 표지 줄
+# `/* ... +N more write windows not shown ... */`(이슈 #650 · PR #667). 같은 SOURCE 문자열이 Critic에도 간다(`runner.finding_sources`).
+# - body는 v7과 바이트 동일이다. prefix는 「SOURCE contract and focused verification」의 첫 문단만 v7과 다르다 -
+#   블록 목록에 `input-context functions`를 더하고, 쓰기 창이 조각이라는 것 · 입력 맥락 함수가 맨 뒤 코드 블록이고 없을 수
+#   있다는 것(없음은 증거가 아니다) · 붙었다고 경로의 데이터가 그 함수를 지난다는 뜻이 아니라는 것 · 표지 줄이 하네스 생성
+#   텍스트라는 것을 적는다(Auditor v16 prefix와 같은 말이다). 판정 절차(step 1~5 · Check A~E)·출력 규칙은 한 글자도 안 바꿨다.
+# - 이 판의 서술은 `auditor_input_context`가 꺼져 있어도 거짓이 아니다(블록이 없을 수 있다고 적는다).
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `b85e9a7d53fe278e8dc81a4c7bbf4d5241ba73d372a6fa8661d03a7c3ecaa9fe`
+#   body.md   sha256 `44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2` (v7 body와 같다)
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 디코더 블록을 슬라이스 코드로 오인하는지 · 표지 줄을 코드로 읽는지는 미실측이다.
+# v7 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: critic
+version: v8
+output_schema: DecisionDraft
+description: Critic v7에 SOURCE의 새 블록 둘(입력 디코더 함수 블록 · 쓰기 지점 창 표지 줄)의 서술을 더한 판입니다. 판정 절차와 출력 규칙은 v7과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.

@@ -461,7 +461,7 @@ def _gateway_run(  # noqa: ANN202
     return finding, tuple(sink), gateway
 
 
-@pytest.mark.parametrize("version", ["v6", "v7"])
+@pytest.mark.parametrize("version", ["v6", "v7", "v8"])
 def test_a_size_rejection_with_observations_is_retried_once_without_them(
     ctx,
     monkeypatch,
