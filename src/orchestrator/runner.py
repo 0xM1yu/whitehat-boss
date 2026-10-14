@@ -166,6 +166,7 @@ from src.orchestrator.source_definitions import (
     slice_names_first,
 )
 from src.orchestrator.source_guards import scan_guards
+from src.orchestrator.source_input_context import carry_input_context
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import (
     EventKind,
@@ -4435,6 +4436,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
 # ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
 # 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 — body는 v15와 바이트 동일). 위
+# 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -4588,6 +4591,14 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
+
+    **입력 맥락 함수(`auditor_input_context`, S20 Phase 13)** — 1이면 쓰기 지점 창 다음, 블록의 맨
+    끝에 슬라이서의 `analysis.input_context`(`ref.input_context`)가 고른 함수 본문을 붙인다
+    (`source_input_context`). `status`가 `selected`이고 `basis`가 `cpg`일 때만이고, 같은 상한·`seen`
+    규칙을 쓴다. 함수 **전체**가 이미 든 범위 안이면 건너뛰고(`skipped_carried`) 창 조각과 일부만
+    겹치면 완전한 함수를 붙인다. 상한에 넘치면 통째로 뺀다. 붙인 블록은 `functions`에 안 들고
+    `input_context_added`가 센다. 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을
+    때와 바이트 동일이다. ⚠ **PoV도 이 본문을 받는다**(위 GUARDS와 같은 경로).
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -4894,6 +4905,18 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             blocks.append(block)
             size += 1 + measure(block)
             write_windows += 1
+    # 슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문(`auditor_input_context`)은 쓰기 지점 창
+    # **뒤**, 블록의 맨 끝이다. 켜지 않았으면 `None`이라 블록도 이벤트 필드도 없다.
+    input_context = (
+        carry_input_context(
+            ref, read_source=ctx.read_source, block=_block, measure=measure,
+            seen=seen, size=size, cap=cap,
+        )
+        if ctx.config.thresholds.auditor_input_context
+        else None
+    )
+    if input_context:
+        blocks += input_context.blocks
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
@@ -4907,8 +4930,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         slice_id=ref.slice_id,
         # 함수가 아닌 블록을 전부 뺀다 — 정의·호출자 창·쓰기 지점 창·GUARDS(0 또는 1). 래퍼·별칭·
         # 간접 피호출은 함수 본문이라 센다. 옵션마다 따로 더한 식이 합쳐질 때 하나가 빠지면
-        # `functions`가 조용히 틀린다.
-        functions=len(blocks) - definitions - callers - write_windows - len(guard_blocks),
+        # `functions`가 조용히 틀린다. 입력 디코더 본문(`auditor_input_context`)은 함수 본문이지만
+        # 슬라이서가 고른 것이라 `input_context_added`가 따로 센다 - 여기서 뺀다.
+        functions=(
+            len(blocks) - definitions - callers - write_windows - len(guard_blocks)
+            - (len(input_context.blocks) if input_context else 0)
+        ),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -4957,6 +4984,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             else {}
         ),
         **(guard_scan.event_fields() if guard_scan else {}),
+        **(input_context.event if input_context else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap

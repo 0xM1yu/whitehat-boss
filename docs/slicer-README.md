@@ -865,4 +865,14 @@ spec은 `{"sink": {...}, "source": {...} | null}`이고 각 끝은 `file`·`line
 
 한계: 함수 포인터 호출·구조체 필드를 거친 입력 경로는 이어지지 않을 수 있다(그러면 디코더가 안 붙는다). 이 모드의 산출물에는
 `pov-input.c`·`.c` 렌더가 **없다** — 포크의 `attach/`는 하네스 `runner._auditor_source`의 사본이라 들이지 않았다. 로더는 `analysis`의
-읽는 키 밖은 무시하므로 새 키가 로드를 막지 않는다(`tests/test_slices.py`). 하네스가 이 키를 소비하는 배선은 별도 PR이다.
+읽는 키 밖은 무시하므로 새 키가 로드를 막지 않는다(`tests/test_slices.py`).
+
+⏵ **2026-10-14 — 하네스가 이 키를 읽는다**(S20 Phase 13 · council + 사용자 최종 승인). 로더(`src/adapters/slices.py`의 `_input_context`)는
+**표의 읽는 키만** 엄격히 읽는다: `version`(1만 받는다) · `status` · `basis` · `cap_hit` · `cap_reasons` · `functions[]`의
+`file`·`symbol`·`line_start`·`line_end`, 그리고 `carried_decoders`·`dispatches`는 **개수만**. 읽는 키가 없거나 모양이 틀리면 **로드가 죽는다**
+(`cap_hit`이 없는 것을 `false`로 읽지 않는다). 키 자체가 없으면 `SliceRef.input_context`가 `None`이고 `status: none_selected`와
+다르다. 소비는 `auditor_input_context`(`config/budgets.yaml` 1)가 켜진 run의 `runner._auditor_source` 한 곳이다 -
+`status: selected` ∧ `basis: cpg`일 때 `functions[]`의 **본문**을 쓰기 지점 창 뒤에 같은 상한(`auditor_source_tokens`)으로 붙인다
+(`src/orchestrator/source_input_context.py`). `basis: syntax`·`dispatches`·`carried_decoders`는 싣지 않고 `auditor_source` 이벤트의
+`input_context_*` 수에만 남는다. 슬라이서의 `identical_to_auditor_input`은 하네스가 **믿지 않는다** - 이미 실린 범위인지는 러너의
+`seen`이 가른다(함수 **전체**가 이미 든 범위 안일 때만 건너뛴다 - 창 조각과 일부만 겹치면 완전한 함수를 붙인다). 이 서술은 Auditor v16이 든다(`docs/agent-contracts.md` 「v15 → v16」).

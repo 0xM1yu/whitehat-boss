@@ -575,8 +575,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v15`를 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v16(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v16`을 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -606,10 +606,12 @@ def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
     바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1). ⏵ **v15**(2026-10-13 · S19) =
     v14 + 계약 문장 여섯(`probe`가 `spec`을 `poc`에 싣는다 등 — `prompts/auditor/v15/meta.yaml`).
     봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
-    바뀌었다(같은 규칙 1)."""
+    바뀌었다(같은 규칙 1). ⏵ **v16**(2026-10-14 · S20 Phase 13) = v15 + 입력 맥락 함수 블록의 서술 -
+    새 옵션 `auditor_input_context`(`prompts/auditor/v16/meta.yaml`)를 켜 두려고 올렸다. 봉투·body는
+    v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v15"
+    assert config.model_for("auditor").prompt_template_version == "v16"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -687,6 +689,10 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
             f"the {_AUDITOR_WRITE_LINES} lines before and after the write, cut to the writing "
             f"function's own range, at most {thresholds.auditor_write_sites} windows" in flat
         )
+    # 입력 맥락 함수(S20 Phase 13) - 러너는 CPG 근거가 선 선택만 붙인다
+    if thresholds.auditor_input_context:
+        assert "Last, input-context functions" in flat
+        assert "Only a selection backed by code property graph evidence is appended" in flat
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
@@ -714,11 +720,12 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     excerpt_sentence = {
         "v14": "not a generated summary",
         "v15": "is bounded: some execution-header lines are removed",
+        "v16": "is bounded: some execution-header lines are removed",
     }
     assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
     assert excerpt_sentence[version] in flat
     has_old = "not a generated summary" in flat
-    assert has_old == (version == "v14"), "v15가 v14의 「생성 요약이 아니다」 문장을 되살렸다"
+    assert has_old == (version == "v14"), "v15·v16이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
         "`truncated` is false",
         "line containing only `...`",
