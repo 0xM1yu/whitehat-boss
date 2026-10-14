@@ -224,3 +224,18 @@ ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고
 다시 열린다. 되돌리려면 v7 배선이 **없어야** 한다 - 지금 서빙 중인 v6은 ID를 인용하므로 `uphold` 폴백이 사슬을
 거의 안 연다(v6 `rebut`이 규약을 지키는 한). 그러나 그것은 규약 순응에 기댄 것이라 이 ADR의 불변식보다 약하다.
 되돌리면 위 v6 뒤집힘 표도 함께 원래대로 돌아간다.
+
+⏵ 2026-10-14 - **v7 flip 완료.** 위 「v7을 켜기 전 선행」 둘은 충족됐다 - 이 ADR(게이트 정규화)과 H3(`cli run`의 Critic 프롬프트 가드, #651)가 main에 있다. S20 Phase 11이 `config/models.yaml`의 `gpt-oss-20b`를 v6에서 v7로 올렸고 `nodes/critic`의 두 집합에 v7을 더했다. 위 본문(「이 PR은 v7을 배선하지 않는다」·「서빙 v6」)은 이 ADR을 넣은 PR 시점의 서술이다. 그 PR이 미룬 **재측정은 이 flip으로도 돌지 않았다** - v7 run은 0건이고 위 「첫 v7 run이 셀 것」 지표는 전부 미측정이다.
+
+⏵ 2026-10-14 - **v7의 SOURCE만으로 한 `uphold`는 이 ADR의 불변식 밖이다.** 이 ADR은 근거 없는 *rebut*만 정규화한다. v7 `uphold`는
+SOURCE만으로 서고 `evidence_refs=[]`일 수 있다(`prompts/critic/v7/prefix.md:214`·`:258`) - v6은 본문 있는 등록 Evidence ID를 요구했다
+(`prompts/critic/v6/prefix.md:166-168`·`:206`). 게이트는 `uphold`의 `evidence_refs`를 안 본다: `gate.py:198` `upheld = any(normalize(d) is UPHOLD)`,
+`:204` `p3 = p2 and upheld and repro_spec`. `p2`의 graph 조건(`gate.py:196`)은 run 전역 GRAPH Evidence 하나의 `ok`라 Finding의 경로를 확인하지
+않는다(`nodes/index.py` 머리 · `runner.py:3610`이 모든 타깃의 근거 목록 맨 앞에 싣는다) - `ok`인 GRAPH Evidence가 하나라도 있으면 선다(`usable`
+`:185`·`:196`). 6단계가 관측 Evidence를 `evidence_refs`에 붙이므로(`gate_node.py:72` `attach_observed` · 이슈 #552) 모델의 인용과 무관하게 이 조건이
+선다. 열린 조건은 `path_ok`·`unblocked`(blocking 누락 없음)·`repro_spec`이다. 그래서 `repro_spec`이 있는 Finding의 v7 SOURCE-only `uphold`는 E3,
+`validated`(`policy.py:193` F-8 `critic_upheld`)까지 갈 수 있다 - Auditor의 협조에 달리지 않는다. 이 PR은 게이트를 바꾸지 않는다 - 인용한 코드가 SOURCE에 실재하는지 기계가 안 보는 것은
+P0b(보류) 그대로다. **추가 지표(첫 v7 run이 셀 것):** `uphold`이고 그 Decision의 `evidence_refs=[]`(Critic 출력 - `decision` 표의 값이고 부착과 무관하다)인데
+Finding이 `validated`가 된 수 - `decision` 표와 `policy_decision`으로 센다. ⚠ Finding의 `evidence_refs`는 6단계 부착 뒤 값이라 모델 인용 수가 아니다
+(`gate_node.py:32-41`) - 모델이 인용한 수는 `gate_eval.cited_by_model`(6단계 행)에 따로 남는다. 값은 미측정이다(v7 run 0건).
+v7이 서빙 중이므로 `normalize`를 `UPHOLD`로 되돌리는 것은 서빙을 v6으로 되돌린 뒤에만 안전하다 - 지금 되돌리면 v7 `rebut` 전부가 `validated` 사슬을 연다.
