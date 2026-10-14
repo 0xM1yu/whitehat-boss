@@ -23,10 +23,15 @@ stdlib `sqlite3`만 쓴다. 저장 형태는 종류별 컬럼 스키마가 아�
 
 **판을 올리는 것은 사람이다.** `store_common.KIND_MAP`의 모델이 **한쪽 방향이라도** 못 읽는
 행을 만들게 바뀌면 올린다 — 필드 추가(기본값이 있어도: `extra="forbid"`라 옛 코드가 새 행을 못
-읽는다)·삭제·값 집합을 넓히거나 좁히기·뜻만 바뀐 필드. docstring만 바뀐 것은 아니다.
-올리지 않고 바꾸면 게이트는 공회전한다 — 그것을 잡는 테스트는 없다(JSON 스키마 지문은 못
-문다: `Finding.cwe`는 검증이 `None`을 받는데 JSON 스키마는 종전 그대로다 —
-`src/schemas/finding.py`의 `_FindingCwe`).
+읽는다)·삭제·값 집합을 넓히거나 좁히기·뜻만 바뀐 필드 — 그리고 **DDL(`_SCHEMA`)이 바뀌어도**
+올린다. docstring만 바뀐 것은 아니다.
+올리지 않고 바꾸면 게이트는 공회전한다. `tests/test_adapters.py`의 두 짝이 그 자리를 문다 —
+`_PINNED_SCHEMA`(판 ↔ DDL 정규화 해시, 이슈 #594 (a))와 `_PINNED_KIND_FIELDS`(판 ↔ 종류별
+필드 지문 = 이름 집합·정규화한 타입 표기, 이슈 #594). 지문은 필드 추가·삭제·타입 변경에 더해
+Enum 멤버 추가·삭제와 중첩 모델(`Location` 등)의 필드 변경도 문다. **둘 다 「이 지문으로 바뀌면
+죽는다」까지다** — 타입 표기가 안 움직이는 변경(validator·기본값·`Annotated`의 `Field`/
+`StringConstraints` 제약만 바뀜)은 안 잡히고 그 경우도 올려야 할 수 있다: `Finding.cwe`는 검증이
+`None`을 받는데 JSON 스키마는 종전 그대로다(`src/schemas/finding.py`의 `_FindingCwe`).
 
 판 1 = 이 게이트가 들어온 시점의 모양이다(`Finding.cwe`가 `no_signal`에서 `None`일 수 있는 판,
 #525).

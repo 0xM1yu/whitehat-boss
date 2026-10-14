@@ -1005,10 +1005,11 @@ def compile_failure_reason(text: str, *, tagged_only: bool = False) -> str:
     return f" — 컴파일 오류 {len(found)}건, 첫 오류: {first}"
 
 
-def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | None]:
+def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int | None, str | None]:
     """실행 결과 → (ok, exit_code, error). `ok`와 `exit_code`의 의미를 섞지 않는다.
 
     - 도구가 죽음/실행 불가: `ok=False`
+    - 명령이 하나도 안 돎(`steps`가 빔): `ok=False, exit_code=None` - 돌려줄 코드가 없다
     - 돌았는데 아무것도 못 찾음: `ok=True, exit_code=0`
     - 돌아서 뭔가 찾음: `ok=True, exit_code!=0`
     - **예외 하나 — `index`가 심볼 0개를 냈다: `ok=False, exit_code=0`** (#576). 인덱서는 그것을
@@ -1031,7 +1032,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     `SIGNAL_TOOLS`는 `semgrep`·`clang-tidy`·`build` 셋이다.
     """
     if not steps:
-        return False, 127, f"{tool}: 실행된 명령이 없다"
+        # 명령이 하나도 안 돌았으면 돌려줄 종료 코드가 없다 - 127을 지어내면 「대상이 안 떴다」로
+        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). 명세의 실패다(`_refuse`와 같은 `None`).
+        return False, None, f"{tool}: 실행된 명령이 없다"
     last = steps[-1]
     code = last.exit_code
     if tool in _RUNTIME_TOOLS:
@@ -1724,7 +1727,7 @@ class ContainerToolRunner:
         sections: list[str],
         *,
         ok: bool,
-        exit_code: int,
+        exit_code: int | None,
         error: str | None,
         location: Location | None = None,
         harness_note: str | None = None,
