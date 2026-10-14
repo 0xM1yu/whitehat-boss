@@ -1,14 +1,15 @@
-"""PoV v7 - v6에서 둘을 고친 판 (S20 Phase 14 · 이슈 #649 선택지 (a) · #669).
+"""PoV v7 - v6에서 셋을 고친 판 (S20 Phase 14 · 이슈 #649 선택지 (a) · #669).
 
 ① body의 「The JSON below is the complete set of facts given as input.」는 거짓이었다 -
 Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 산문 블록(`{{FINDING}}`)에만 있고
 FACTS에는 `ids.finding_id`뿐이다.
 ② Auditor `SOURCE`가 PoV에도 가므로(`runner.finding_sources`) 새 블록 둘(입력 디코더 함수 ·
-#650 끝 줄 표지)을 prefix가 하네스 생성 텍스트·보조 문맥으로 서술한다. 묶는 것은 넷이다.
+#650 끝 줄 표지)을 prefix가 하네스 생성 텍스트·보조 문맥으로 서술한다.
+③ DEF-SUBMIT의 최종 지정 문장 - #637 뒤 v6 문장이 거짓이라 다시 썼다. 묶는 것은 다섯이다.
 
 1. **v6은 한 글자도 안 바뀌었다** - prefix·body sha256(`tests/test_pov_prompt_v6.py` 헤더의
    `7df25b5c…`와 같다).
-2. **v7 = v6 + 이 편집 둘** - prefix·body 모두 `_PREFIX_*`·`_BODY_*` 편집을 v6에 적용한 결과와
+2. **v7 = v6 + 이 편집 셋** - prefix·body 모두 `_PREFIX_*`·`_BODY_*` 편집을 v6에 적용한 결과와
    바이트 동일이다.
 3. **문장이 코드와 맞는다** - 「Finding 정보는 Vulnerability 절에만 있고 JSON은 Finding ID만
    든다」를 실제 렌더로 문다(산문에 제목·경로가 있고 FACTS JSON에는 없다). 표지 줄 철자는
@@ -67,7 +68,7 @@ def test_v6_is_byte_identical_to_the_recorded_values(name: str) -> None:
 # === 2. v7 = v6 + 이 편집 셋 ======================================================================
 
 _V7_SHA = {
-    "prefix.md": "38a155b6fd8da4c49d521615f586f695b7acaa84ba0840b894ad2e6f8a7dc031",
+    "prefix.md": "38be10c45410e26513817a807961faacd22c32959e9cb25b5c82403b8e6a72ce",
     "body.md": "962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443",
 }
 _BODY_OLD = (
@@ -102,8 +103,8 @@ _SLOT_NEW = (
     "ranks the candidates first by the scorer code each one's own submission received — a "
     "crash, then an unavailable or environment-failure code, then `0` or `71` — and only "
     "candidates in the same group fall back to its other ranking. So a PoC whose code is "
-    "inside the three can still become final when no other candidate has a better code, "
-    "and that code does not count as a reproduction."
+    "among the three excluded codes (DEF-EXIT) can still become final when no other "
+    "candidate has a better code, and such a code does not count as a reproduction."
 )
 _PREFIX_EDITS = ((_PREFIX_OLD, _PREFIX_NEW), (_SLOT_OLD, _SLOT_NEW))
 
