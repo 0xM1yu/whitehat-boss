@@ -2097,6 +2097,8 @@ def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
     split_sentences = {
         "v5": ("`poc`는 받는다", "셋은 안 받는다"),
         "v6": ("**`poc` receives your PoC.**", "do not receive your bytes"),
+        # 2026-10-14 - v7은 v6과 같은 절을 든다
+        "v7": ("**`poc` receives your PoC.**", "do not receive your bytes"),
     }[_POV_SERVED_VERSION]
     for sentence in split_sentences:
         assert sentence in prefix, sentence
@@ -2443,12 +2445,12 @@ def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
     ⚠ **이 표는 열거라 다음 판(v7…)을 못 막는다** — 그 축은 아래
     `test_the_served_pov_version_requests_the_named_envelope`가 본다."""
     declared = {
-        v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5", "v6")
+        v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5", "v6", "v7")
     }
 
     assert declared == {
         "v2": "PovAction", "v3": "PovAction", "v4": "PovAction",
-        "v5": "PovActionNamed", "v6": "PovActionNamed",
+        "v5": "PovActionNamed", "v6": "PovActionNamed", "v7": "PovActionNamed",
     }
     assert pov_node.resolve_output_schema("PovActionNamed") is PovActionNamed
     assert pov_node.resolve_output_schema("PovAction") is PovAction

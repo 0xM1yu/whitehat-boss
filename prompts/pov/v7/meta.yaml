@@ -1,0 +1,27 @@
+# 2026-10-14 — v6을 잇는 새 판(S20 Phase 14 · 이슈 #649 (a) · #669). 바뀐 것은 둘이다.
+# ① body의 「Facts」 문장 — v6은 *"The JSON below is the complete set of facts given as input."*이라 적었는데 거짓이었다:
+#    Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 산문 블록(`{{FINDING}}` — `nodes/pov._describe_finding`)에만 있고
+#    FACTS에는 `ids.finding_id`뿐이다(`build_facts`). v7은 Vulnerability·Target·Source 절과 JSON이 입력에 든다고 적고(전부라고 하지 않는다 -
+#    hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) JSON의 Finding 데이터는 `finding_id`뿐이라고 적는다. **FACTS 바이트는 안 바꿨다**(이슈의 선택지 (c)는 이 판 밖이다).
+# ② prefix의 「How to reach the vulnerable path」 머리 한 문단 — Auditor `SOURCE` 문자열에 새로 생긴 블록 둘(슬라이서가
+#    고른 입력 맥락 함수 · 쓰기 지점 창 표지 줄 `/* ... +N more write windows not shown ... */`)을 PoV가 코드로 읽지 않게 한다.
+#    같은 SOURCE 문자열이 PoV에도 간다(`runner.finding_sources`). v6 prefix는 SOURCE의 블록 종류를 열거하지 않아 거짓 문장은 없었다.
+# prefix의 나머지와 body의 나머지는 v6과 바이트 동일이다 — 홉 줄·봉투·도구·DEF 규칙은 안 바꿨다.
+# `hop_header: true`·`output_schema: PovActionNamed`는 v6과 같다 — 하네스 쪽 짝(`runner._pov_hop_line`·`_resolve_submit_digest`)이
+#    그대로 맞물린다.
+# 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다 — 없으면 `oracle_vul` 줄·출력 꼬리·`last_gen_*`이 **조용히 사라진다**
+#    (`tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`가 문다).
+# 제외 코드는 v6과 같은 셋(0·71·300)이다 — 정본은 `src/orchestrator/oracle_log.py` `NO_CRASH_VUL_EXIT_CODES`다.
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `8dd45c480819f1efbb4a1c0a66b062bdf3869f6541c2c6bbbf6e1aaf62238d4e`
+#   body.md   sha256 `962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443`
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 두 서술이 모델 행동을 바꾸는지(Finding 산문을 더 읽는지 · 디코더 블록을 어떻게 쓰는지)는 미실측이다.
+# v6 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: pov
+version: v7
+output_schema: PovActionNamed
+hop_header: true
+description: >-
+  PoV v6에 두 가지를 고친 판입니다. body의 「입력 사실은 JSON이 전부다」 문장을 사실대로 고쳤고(JSON의 Finding 데이터는 `finding_id`뿐이고 CWE·제목·경로·촉발 상태는
+  Vulnerability 절에만 있다), prefix에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트·보조 문맥이라는
+  한 문단을 더했습니다. 봉투·홉 줄·도구·DEF 규칙은 v6과 같습니다. 이 판으로 돈 run이 0건이라 효과는 미실측입니다.
