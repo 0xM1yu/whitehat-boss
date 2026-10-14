@@ -22,3 +22,9 @@ role: critic
 version: v8
 output_schema: DecisionDraft
 description: Critic v7에 SOURCE의 새 블록 둘(입력 디코더 함수 블록 · 쓰기 지점 창 표지 줄)과 Auditor 도구 관측 절·FACTS.auditor_hops의 서술을 더한 판입니다. 판정 절차와 출력 규칙은 v7과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
+# 2026-10-15 - 이 판이 서술하는 Auditor `SOURCE` 옵션 둘의 선언(PR #676 가드). 같은 SOURCE 문자열이 이 판에도 가므로
+# (`runner.finding_sources`) 두 옵션을 켠 run은 이 판이 그 블록을 서술해야 한다 - `cli._undescribed_relayed_options`가 run·doctor에서
+# 이 선언을 읽는다(v7 이하는 선언이 없어 서술하지 않는 판으로 본다). 이 목록은 `config.RELAYED_SOURCE_OPTIONS`의 부분집합만 든다:
+# Critic·PoV에는 그 둘만 판 번호로 갈린다(v6·v7 prefix는 정의·피호출 본문·호출자 창·가드·쓰기 창을 이미 한 문장으로 서술한다).
+# prefix·body는 안 바꿨다 - 이 선언은 meta 한 줄이라 위 sha 핀에 안 든다.
+source_options: [auditor_write_window_marker, auditor_input_context]

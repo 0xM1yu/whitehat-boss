@@ -92,6 +92,7 @@ from src.bench_report import apply_benchmarks, pending_updates, run_bench
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
+    RELAYED_SOURCE_OPTIONS,
     SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
@@ -643,22 +644,72 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     return [f"{key}(auditor/{version})" for key in on if key not in described]
 
 
+def _undescribed_relayed_options(
+    config: HarnessConfig, *, last_stage: Stage = MAX_STAGE
+) -> list[str]:
+    """켜진 `RELAYED_SOURCE_OPTIONS` 중 **Critic·PoV 좌석의 프롬프트 meta `source_options`가 안
+    든 것**(PR #676). 항목은 `옵션(역할/판)`이다 — 프로필에 Auditor가 없으면 `[]`다.
+
+    Auditor가 만든 `SOURCE` 문자열은 `runner.finding_sources`로 Critic
+    (`_SOURCE_INPUT_VERSIONS`)과 8단계 PoV(`_WIDE_INPUT_VERSIONS`)에도 같은 바이트로 간다.
+    `_undescribed_source_options`는 Auditor 판만 보므로 서빙 Auditor가 블록을 서술해도 그
+    문자열을 받는 Critic·PoV 판이 모르는 조합이 통과했다.
+
+    - SOURCE를 **받는 판만** 본다 — 받지 않는 판(Critic v1~v5 · PoV v2)은 문자열이 안 가서
+      서술이 필요 없다. 선언이 없는 판(v7 이하 · v6 이하)은 「서술하지 않는다」로 읽는다.
+    - Fake 좌석은 `[]`다(`_undescribed_source_options`와 같은 논법 - 정해진 답을 낸다).
+    - `last_stage`가 그 좌석의 첫 단계(`_PROMPT_FIRST_STAGE`)에 못 닿으면 건너뛴다
+      (`_check_prompts`와 같다 - `--stop-after 4` run이 8단계 PoV 판 때문에 막히지 않는다).
+    프롬프트를 못 읽으면 `PromptError`다.
+    """
+    on = [k for k in config.thresholds.auditor_source_options_on() if k in RELAYED_SOURCE_OPTIONS]
+    if not on or Role.AUDITOR.value not in config.profile.roles:
+        return []
+    receivers = {"critic": critic._SOURCE_INPUT_VERSIONS, "pov": pov._WIDE_INPUT_VERSIONS}
+    missing: list[str] = []
+    for role, versions in receivers.items():
+        if role not in config.profile.roles or _PROMPT_FIRST_STAGE[role] > last_stage:
+            continue
+        entry = config.model_for(role)
+        if entry.is_fake:
+            continue
+        version = entry.prompt_template_version
+        if version not in versions:
+            continue
+        described = load_prompt(Role(role), version).source_options
+        missing.extend(f"{key}({role}/{version})" for key in on if key not in described)
+    return missing
+
+
 def _check_source_options(config: HarnessConfig) -> list[Check]:
     """켜진 Auditor `SOURCE` 옵션을 프롬프트가 서술하지 않으면 ERROR — `--slices` 경고와 달리
-    설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다."""
+    설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다. 같은 `SOURCE`를 받는
+    Critic·PoV 판이 서술하지 않는 경우도 따로 ERROR다(`_undescribed_relayed_options`, PR #676)."""
+    checks: list[Check] = []
     try:
         missing = _undescribed_source_options(config)
+        relayed = _undescribed_relayed_options(config)
     except PromptError:
         return []  # 로드 실패는 `_check_prompts`가 이미 ERROR로 댄다
-    if not missing:
-        return []
-    return [
-        Check(
-            Severity.ERROR,
-            f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
-            "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+    if missing:
+        checks.append(
+            Check(
+                Severity.ERROR,
+                f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
+                "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+            )
         )
-    ]
+    if relayed:
+        checks.append(Check(Severity.ERROR, _relayed_options_message(relayed)))
+    return checks
+
+
+def _relayed_options_message(relayed: list[str]) -> str:
+    return (
+        f"SOURCE 옵션 {', '.join(relayed)}을 그 좌석의 프롬프트가 서술하지 않는다 — Auditor가 만든 "
+        "SOURCE가 Critic·PoV에도 같이 가므로(finding_sources) meta의 source_options에 넣은 판"
+        "으로 올리거나 옵션을 끈다 (#676)"
+    )
 
 
 def _auditor_loop_problem(config: HarnessConfig) -> str | None:
@@ -1773,6 +1824,7 @@ def run(args: argparse.Namespace) -> int:
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
             undescribed = _undescribed_source_options(config)
+            relayed = _undescribed_relayed_options(config, last_stage=Stage(spec.stop_at()[0]))
         except PromptError as exc:
             print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
             return 2
@@ -1782,6 +1834,10 @@ def run(args: argparse.Namespace) -> int:
                 "않는다 — meta의 source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
                 file=sys.stderr,
             )
+            return 2
+        # **같은 SOURCE를 받는 Critic·PoV 좌석도 같은 가드다**(PR #676) - 그 run이 닿는 좌석만 본다.
+        if relayed:
+            print(f"[ERROR] {_relayed_options_message(relayed)}", file=sys.stderr)
             return 2
     # **도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 시작하지 않는다**(#419). 위 가드와 같은
     # 모양· 같은 판단이다 — 켜 놓고 프롬프트가 안 알리면 모델이 도구를 영영 안 쓰는데 run은 정상
