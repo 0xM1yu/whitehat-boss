@@ -321,6 +321,30 @@ def test_missing_sif_is_reported_with_its_path(tmp_path: Path, spy: _Spy) -> Non
     assert spy.calls == []
 
 
+def test_a_source_resolving_outside_the_root_is_refused_without_a_host_path(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """루트 안 심링크가 루트 밖 소스를 가리키면 `_in_container`가 던진다 - `_fail`이 Evidence로 내되
+    그 문구는 모델 관측에 실리므로 **호스트 경로(루트 밖 대상·루트)를 안 든다**
+    (`_execute`의 입력 쓰기 실패와 같은 정책)."""
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside" / "evil.c"
+    outside.parent.mkdir()
+    outside.write_text("int main(void){return 0;}\n", encoding="utf-8")
+    plant_link("symlink", root / "evil.c", outside)
+
+    evidence = _runner(tmp_path, root=root).run(
+        "build", ToolArgs(argv=["build"], workdir="."), SANDBOX
+    )
+
+    assert evidence.ok is False and evidence.exit_code == 2
+    assert spy.calls == []
+    # 예외 문구가 경로를 `repr`로 싣는 탓에 Windows에서는 역슬래시가 겹쳐 전체 경로 부분 문자열
+    # 비교가 샌다 - 경로의 고유 성분(pytest 임시 디렉터리 이름)으로 문다.
+    assert tmp_path.name not in evidence.error, f"호스트 경로가 관측에 실렸다: {evidence.error!r}"
+
+
 # --- 7. 타임아웃 ---------------------------------------------------------------
 
 

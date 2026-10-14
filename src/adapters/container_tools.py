@@ -1033,7 +1033,8 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int | None, s
     """
     if not steps:
         # 명령이 하나도 안 돌았으면 돌려줄 종료 코드가 없다 - 127을 지어내면 「대상이 안 떴다」로
-        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). 명세의 실패다(`_refuse`와 같은 `None`).
+        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). `plan()`은 argv를 안 받고 명령을 늘 하나
+        # 이상 내므로 도달 불가 방어 갈래다 - 종료 코드를 지어내지 않으려고 `None`이다.
         return False, None, f"{tool}: 실행된 명령이 없다"
     last = steps[-1]
     code = last.exit_code
@@ -1713,10 +1714,12 @@ class ContainerToolRunner:
         경로에서는 그 분류가 맞다(#670): 모델이 쓴 요청(`repro_spec.steps` -> `args.argv`)은
         `plan()`에 닿지 않고 도구는 고정된 build 단계와 `tool_for` 대응표가 고른다. 거절 사유는
         대상 내용이나 하네스 쪽 사정이다 - 정책 밖 도구(127 - 그 대응표로는 닿지 않는다) ·
-        네트워크 요청 · 경로 이탈 · workdir 없음 · SIF 없음 · `plan()`의 `ValueError`(C·C++ 혼합
-        대상 · 컴파일할 C 소스 없음 · `poc_target` 없음 · 조립 규칙 없는 도구) · 스크래치 쓰기
-        실패 · 입력 없는 `poc`. 이 중 `poc_target` 없음·스크래치 쓰기 실패·입력 없는 `poc`는
-        `poc` 실행에서만 나는데 `validate`는 `poc`를 안 돌린다.
+        네트워크 요청 · 경로 이탈 · workdir 없음 · SIF 없음 · `_plan_for`의 `ValueError`(`plan()`의
+        넷 - C·C++ 혼합 대상 · 컴파일할 C 소스 없음 · `poc_target` 없음 · 조립 규칙 없는 도구 - 과
+        루트 밖으로 풀리는 소스 경로) · 스크래치 쓰기 실패 · 입력 없는 `poc`. 스크래치 쓰기
+        실패는 `input_bytes`를 실은 요청에서만 나는데 `validate._call`은 입력을 안 싣는다.
+        `poc_target` 없음·입력 없는 `poc`는 `poc` 실행에서만 나는데 `validate`는 `poc`를 안
+        돌린다.
         """
         return self._write(
             evidence_id,
@@ -1826,8 +1829,15 @@ def _by_language(compile_sources: list[str]) -> list[tuple[str, list[str]]]:
 
 
 def _in_container(root: Path, path: Path) -> str:
-    """호스트 경로 → 컨테이너 안 경로. 마운트 밖은 `safe_join`이 이미 걸렀다."""
-    relative = path.resolve().relative_to(Path(root).resolve()).as_posix()
+    """호스트 경로 → 컨테이너 안 경로. 마운트 밖은 `safe_join`이 이미 걸렀다.
+
+    **루트 밖으로 풀리는 소스(루트 안 심링크)는 `safe_join`이 못 본다** - 그 경로는 `ValueError`로
+    거절한다. 문구에 호스트 경로를 안 싣는다(`relative_to`의 기본 문구는 두 경로를 다 든다).
+    """
+    try:
+        relative = path.resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        raise ValueError("대상 루트 밖으로 풀리는 소스 경로가 있다") from None
     return MOUNT if relative == "." else f"{MOUNT}/{relative}"
 
 

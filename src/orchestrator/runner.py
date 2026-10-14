@@ -1688,8 +1688,11 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
 
     `repro_not_measured`의 `reason`으로 둘을 가른다. **`poc` 신호**는 이 노드가 안 돌리는 것이고,
     그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 루프의 몫이고 없으면 **어디서도 안 돈다.**
-    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)와 컴파일·링크 실패(#507)는
-    원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수 없다."""
+    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)·컴파일·링크 실패(#507)·
+    실행 전 거절(`ContainerToolRunner._fail`)은 원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수
+    없다. 다만 코드가 원인을 가르지는 못한다 - 실행 전 거절의 코드는 `_fail`이 정한 값(SIF 없음
+    127)이라 컨테이너 안 프로세스가 낸 값(대상 미기동 127)과 겹칠 수 있다. 원인은 trace의
+    `error`가 든다."""
     events = [e for e in trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
     if not events:
         return None
@@ -1712,7 +1715,10 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
             f"{code}{'(시간 초과)' if code == validate.TIMEOUT_EXIT else ''} {count}건"
             for code, count in sorted(codes.items())
         )
-        parts.append(f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code})")
+        parts.append(
+            f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code}"
+            " - 코드는 원인을 가르지 못한다, 원인은 trace repro_not_measured의 error)"
+        )
     return (
         f"8단계가 재현 결과를 내지 않은 validated Finding {len(events)}건 - {' / '.join(parts)}. "
         f"상태는 그대로이고 도구 검증 제거율에 안 든다 (#326)"
