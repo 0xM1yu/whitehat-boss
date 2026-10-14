@@ -77,7 +77,7 @@ def test_v16_is_byte_identical_to_the_branch_it_was_cut_from(name: str) -> None:
 
 # 기록된 sha - v17도 불변 기록이다. 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 _V17_SHA = {
-    "prefix.md": "e8b07c6c442283f0b369c215960801ea811c6435a2adeafb4547eb2e359ab29d",
+    "prefix.md": "8905905f4ab2fd1b744eb63696f613be0855eab2b83f74f11c5ea58ca465162a",
     "body.md": _V16_SHA["body.md"],
 }
 
@@ -99,8 +99,10 @@ _NO_BANNER_NEW = (
     "`truncation_reasons` names what cut it (for example `backward_depth`, `backward_states`, "
     "`call_depth`) and is `null` when the slicer records no reasons for that analysis, even if "
     "`truncated` is true; `[]` means it recorded reasons and found none. `truncated: false` "
-    "only means no such limit was reached; other caps are reported by their own keys below, "
-    "not by `truncated`. `sinks_capped: true` means a `parameter_paths` analysis cut the set "
+    "only means no such limit was reached (for `parameter_paths`, the flow-count limit). The "
+    "slicer has other caps and only the two named below are reported here, so `false` or "
+    "`null` in `slice_state` does not show that no cap was hit. `sinks_capped: true` means a "
+    "`parameter_paths` analysis cut the set "
     "of program-wide sinks it follows flows to at a cap (the candidate function's own sinks "
     "are always kept), so flows to sinks beyond it are absent; "
     "`cross_method_flow_truncated: true` means a targeted-mode analysis kept only a bounded "
@@ -113,10 +115,12 @@ _NO_BANNER_NEW = (
     "could not resolve to a function body) or `dependency_root` (no earlier dependency to "
     "follow); the slicer may write other reasons, and it is `null` when the slicer does not "
     "record boundaries for that analysis, which is not a finding; `[]` means it recorded them "
-    "and none were reached. A `null` value means the slicer did not record "
+    "and none were reached (a `degraded_lexical` fallback also records `[]`: it traced "
+    "nothing). A `null` value means the slicer did not record "
     "that fact for this slice: unknown, not `false`, not an empty list and not complete. When "
     "`FACTS.slice_state` is absent the harness did not report the slice state; absence is not "
-    "evidence that the slice is complete. A truncated or degraded slice may lack lines that "
+    "evidence that the slice is complete. A truncated or degraded slice, or one with "
+    "`sinks_capped` or `cross_method_flow_truncated` true, may lack lines that "
     "connect the input to the sink, and that gap is unobserved, not absent (Absence is not "
     "evidence).\n"
 )
@@ -319,10 +323,18 @@ def test_the_bullet_makes_no_claim_stronger_than_the_facts() -> None:
     assert "`[]` means it recorded reasons and found none" in bullet
     assert "it is `null` when the slicer does not record boundaries for that analysis" in bullet
     assert "`[]` means it recorded them and none were reached" in bullet
-    # `truncated: false`는 흐름 수 상한 하나에 안 닿았다는 뜻일 뿐이다 - 다른 상한은 제 키가 말한다
-    # (리뷰 MEDIUM-1: Case A 싱크 cap이 모델에게 `truncated: false`로 보이던 구멍).
+    assert "a `degraded_lexical` fallback also records `[]`: it traced nothing" in bullet
+    # `truncated: false`는 `truncated`를 켜는 상한에 안 닿았다는 뜻일 뿐이다(리뷰 MEDIUM-1:
+    # Case A 싱크 cap이 모델에게 `truncated: false`로 보이던 구멍).
     assert "`truncated: false` only means no such limit was reached" in bullet
-    assert "other caps are reported by their own keys below, not by `truncated`" in bullet
+    # 리뷰 라운드 2: 「제 키가 말한다」는 완전하다는 뜻으로 읽혔다 - Case B 싱크 후보 사전
+    # 절단(`CASE_B_*_CAP`)과 대상 지정 시작 노드 동점 절단(`tied_truncated`)은 안 실린다.
+    assert "only the two named below are reported here" in bullet
+    assert "`false` or `null` in `slice_state` does not show that no cap was hit" in bullet
+    assert "other caps are reported by their own keys" not in bullet
+    assert (
+        "or one with `sinks_capped` or `cross_method_flow_truncated` true, may lack lines" in bullet
+    )
     assert "`true` or `false` only when the slicer records it for that analysis" in bullet
     assert "the slicer may write other reasons" in bullet
     assert "that gap is unobserved, not absent" in bullet

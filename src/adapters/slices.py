@@ -87,9 +87,10 @@ def split_source(raw: bytes) -> list[str]:
 
 @dataclass(frozen=True)
 class Slice:
-    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·경계만
-    싣고 줄 목록·카운터 같은 나머지 세부는 버린다. `candidate_manifest`의 `sink_arguments`(후보마다
-    싱크 호출의 인자)는 아직 안 싣는다 — 미뤘다(#438)."""
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·
+    교차 메서드 간선 cap·경계만 싣고 줄 목록·카운터 같은 나머지 세부는 버린다.
+    `candidate_manifest`의 `sink_arguments`(후보마다 싱크 호출의 인자)는 아직 안 싣는다 —
+    미뤘다(#438)."""
 
     id: str
     candidate_key: str
