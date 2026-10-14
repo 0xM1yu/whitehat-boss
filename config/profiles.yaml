@@ -153,7 +153,7 @@ profiles:
     #   **v13으로 올렸다**(이슈 #67 — v11 + FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 —
     #   **v14로 올렸다**(v12 + FACTS `source` 제거 — v12 봉투, 이슈 #67 · #578). ⏵ 2026-10-13 —
     #   **v15로 올렸다**(v14 + 계약 문장 여섯 · 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction` ·
-    #   `facts_source: false`는 그대로다 — S19). ⏵ 2026-10-14 — **v16으로 올렸다**(v15 + `auditor_input_context` 서술 —
+    #   `facts_source: false`는 그대로다 — S19). ⏵ 2026-10-14 — **v16으로 올렸다**(v15 + `auditor_input_context` 서술 · 쓰기 창 표지 줄(`auditor_write_window_marker`) 설명 —
     #   S20 Phase 13 · 봉투·body·도구는 그대로다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
