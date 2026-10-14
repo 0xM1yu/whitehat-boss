@@ -1,6 +1,6 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`) — gen/inspect/submit 하나를
+매 홉 모델이 `PovAction`(v5와 서빙 판 v6·v7은 `PovActionNamed`) — gen/inspect/submit 하나를
 낸다. `gen`은
 `PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
 대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
@@ -38,7 +38,8 @@ OUTPUT_SCHEMA = PovAction
 # `PovActionNamed`(`submit`이 `poc_sha256`으로 앞선 gen을 지명한다 — 이슈 #549 ②). 어느 쪽인지는
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
-# 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6(서빙 판)도 `PovActionNamed`를 선언한다.
+# 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언한다.
+# ⏵ 2026-10-14 — v7(서빙 판)도 그렇다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
@@ -69,7 +70,7 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7"})  # v7: 2026-10-14
 
 # 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
 # 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다

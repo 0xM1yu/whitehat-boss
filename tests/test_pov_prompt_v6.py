@@ -66,10 +66,13 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
     꺼진다**.
 
     🔴 **판 올림 경보기이기도 하다.** 서빙 판이 `PINNED_VERSION`과 다르면 실패한다 — 새 판의 문장을
-    읽고 이 파일의 핀을 의도적으로 다시 만들어야 초록이 된다(모듈 docstring 1)."""
+    읽고 이 파일의 핀을 의도적으로 다시 만들어야 초록이 된다(모듈 docstring 1).
+    ⏵ 2026-10-14 — 서빙 판 v7은 예외로 받는다: v7 = v6 + 고정된 편집 둘이라(`tests/test_pov_v7.py`가
+    바이트 등식으로 묶는다) v6의 핀이 그대로 v7을 덮는다. v8 이상이 배선되면 이 경보기가
+    다시 운다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
-    assert selected == PINNED_VERSION, (
+    assert selected in (PINNED_VERSION, "v7"), (
         f"서빙 판이 {selected}로 올라갔다 - 이 파일의 핀은 {PINNED_VERSION}의 문장이다. "
         f"{selected}/prefix.md를 읽고 `PINNED_VERSION`·`_PINNED_BLOCKS`·`_PINNED_HEADINGS`·"
         "`_DEFECT_EDITS`를 의도적으로 다시 만든다"

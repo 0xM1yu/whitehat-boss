@@ -24,7 +24,7 @@ from src.orchestrator.nodes import critic, pov
 from src.orchestrator.stages import Stage
 from src.schemas import Role
 
-SOURCE_AWARE = ["v6", "v7"]
+SOURCE_AWARE = ["v6", "v7", "v8"]
 
 
 def _at(context, version):
@@ -42,9 +42,9 @@ def _v6(context):
     _at(context, "v6")
 
 
-def test_served_critic_is_wired_to_v7():
-    assert load_config("harness_pool").model_for("critic").prompt_template_version == "v7"
-    assert load_config("harness_pool_hybrid").model_for("critic").prompt_template_version == "v7"
+def test_served_critic_is_wired_to_v8():
+    assert load_config("harness_pool").model_for("critic").prompt_template_version == "v8"
+    assert load_config("harness_pool_hybrid").model_for("critic").prompt_template_version == "v8"
 
 
 def test_wired_served_critic_versions_are_content_aware():
@@ -56,7 +56,7 @@ def test_wired_served_critic_versions_are_content_aware():
     }
     assert versions <= {p.name for p in Path("prompts/critic").iterdir() if p.is_dir()}
     assert versions <= critic._CONTENT_AWARE_VERSIONS
-    assert {"v6", "v7"} <= critic._CONTENT_AWARE_VERSIONS
+    assert {"v6", "v7", "v8"} <= critic._CONTENT_AWARE_VERSIONS
 
 
 @pytest.mark.parametrize("version", SOURCE_AWARE)
@@ -227,8 +227,8 @@ def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
 @pytest.mark.parametrize(
     ("path", "required"),
     [
-        ("PROJECT-CONTEXT.md", "Critic v7 · 근거 본문·SOURCE"),
-        ("config/profiles.yaml", "프롬프트는 v7이다"),
+        ("PROJECT-CONTEXT.md", "Critic v8 · 근거 본문·SOURCE"),
+        ("config/profiles.yaml", "프롬프트는 v8이다"),
         ("config/budgets.yaml", "v1 metadata-only 경로의 수"),
         ("docs/agent-contracts.md", "Critic v1 → v6"),
         ("docs/build-plan.md", "#497 — Critic v6"),
@@ -267,7 +267,7 @@ def test_markup_witness_still_exists_in_the_actual_meta():
     ("path", "start", "end", "required", "forbidden"),
     [
         ("docs/agent-contracts.md", "### 2.3 Independent Critic", "### 2.4",
-         "서빙 Critic은 v7로 본문·위치·SOURCE를 받는다", "그 본문 싣기는 꺼져 있다"),
+         "서빙 Critic은 v8로 본문·위치·SOURCE를 받는다", "그 본문 싣기는 꺼져 있다"),
         ("docs/agent-contracts.md", "2026-10-04 — `location`도", "### 2.3 Independent Critic",
          "Critic v6 prefix는", "은 v1이라 바뀌지 않는다"),
         ("docs/agent-contracts.md", "### 2.3 Independent Critic", "### 2.4",
@@ -306,7 +306,7 @@ def test_budget_reasoning_does_not_conflate_two_probe_conditions():
     assert "§3.4" in block and "16콜" in block and "0건" in block
 
 
-@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7"])
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"])
 def test_bench_critic_source_tracks_the_template_slots(version):
     from src.bench import _render
     from src.orchestrator.prompt_loader import load_prompt
@@ -318,7 +318,7 @@ def test_bench_critic_source_tracks_the_template_slots(version):
         assert "```\nbench_source\n```" in prompt.body
 
 
-@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7"])
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"])
 def test_metadata_probe_renders_templates_without_claiming_live_source(version):
     from src.orchestrator.prompt_loader import load_prompt
     from tools.probe.critic_output_budget import _reconstruct
