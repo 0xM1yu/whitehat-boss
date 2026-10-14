@@ -1,9 +1,9 @@
 """Auditor v16 - v15에 입력 맥락 함수 블록의 서술을 더한 판 (S20 Phase 13 · council 2026-10-14).
 
 새 옵션 `auditor_input_context`(`config/budgets.yaml` 1)가 켜지면 슬라이서의
-`analysis.input_context`가 CPG 근거로 고른 함수 본문이 `SOURCE`의 블록 맨 끝에 붙는다. v15는 그
-옵션을 서술하지 않아 켠 채 고르면 `cli`가 막는다(`tests/test_source_input_context.py`) - 그래서 새
-판이다. 묶는 것은 다섯이다.
+`analysis.input_context`가 CPG 근거로 고른 함수 본문이 쓰기 창 뒤 마지막 블록(#650 표지
+줄이 있으면 그 앞)으로 붙는다. v15는 그 옵션을 서술하지 않아 켠 채 고르면 `cli`가
+막는다(`tests/test_source_input_context.py`) - 그래서 새 판이다. 묶는 것은 다섯이다.
 
 1. **v15는 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/main`(`e074774`)의 값이다
    (규칙 1).

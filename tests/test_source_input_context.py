@@ -443,7 +443,8 @@ def test_a_decoder_equal_to_the_untrimmed_anchor_is_carried(
     entry = next(s for s in _locations(index) if s.symbol == "parse_op_modifier")
     own = {**_function(entry.line_start, entry.line_end, FILE), "symbol": entry.symbol}
     got, event = _shown_world(index, tmp_path, own, contexts["cpg"])
-    assert got.count(f"{FILE}:{entry.line_start}-{entry.line_end} =====") <= 1
+    assert "entry_omitted_lines" not in event, "전제 - entry를 줄이지 않고 통째로 실었다"
+    assert got.count(f"{FILE}:{entry.line_start}-{entry.line_end} =====") <= 1, "두 번 안 붙는다"
     assert (event["input_context_added"], event["input_context_skipped_carried"]) == (0, 1)
 
 
