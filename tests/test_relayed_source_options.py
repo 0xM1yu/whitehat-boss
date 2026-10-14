@@ -209,3 +209,39 @@ def test_a_critic_prompt_load_failure_does_not_discard_the_auditor_error(
         and "auditor/v15" in c.message
         for c in checks
     )
+
+
+# === 6. run의 검사 순서 ====================================================================
+
+
+def test_run_prints_the_auditor_refusal_before_a_critic_prompt_load_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture
+) -> None:
+    """`run`은 Auditor 거절을 **먼저** 낸다 - Critic 판 로드 실패(`PromptError`)가 그 메시지를
+    가리면 안 된다(`cli.run`의 두 검사 블록 순서). 앞선 `_check_prompts`·`_slice_input_prompts`는
+    같은 실패를 다른 문구로 먼저 막으므로 비워 이 두 블록만 남긴다."""
+    config = _with_version("auditor", "v15")
+    assert cli._undescribed_source_options(config), "전제 - Auditor v15는 옵션을 서술하지 않는다"
+    real_load = cli.load_prompt
+
+    def load(role: Role, version: str):  # noqa: ANN202
+        if role == Role.CRITIC:
+            raise PromptError("critic 프롬프트를 못 읽었다")
+        return real_load(role, version)
+
+    monkeypatch.setattr(cli, "load_prompt", load)
+    monkeypatch.setattr(cli, "load_profile", lambda *a, **k: config)
+    monkeypatch.setattr(cli, "_check_prompts", lambda *a, **k: [])
+    monkeypatch.setattr(cli, "_slice_input_prompts", lambda *a, **k: [])
+    target = Path(__file__).resolve().parent / "fixtures" / "target"
+
+    rc = cli.main([
+        "run", "--profile", "harness_pool", "--target", str(target), "--seed", "1",
+        "--condition", "B3prime@pipeline", "--device", "atom", "--kb-snapshot", "kb-1",
+        "--artifacts-root", str(tmp_path / "arts"),
+    ])
+
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "Auditor SOURCE 옵션" in err and "auditor/v15" in err
+    assert "프롬프트 로드 실패" not in err
