@@ -12,9 +12,13 @@ trace는 재현성 기준이 있다 — 두 실행에서 `ts`·`wall_ms`만 빼�
 `cached`가 또 한 줄을 갈랐다). 채점기를 안 켠 run은 0줄이 갈렸다. 셋 다 그 PR의 적대적 리뷰가 실제
 CLI run으로 잰 것이다. 그래서 필드를 하나씩 갈랐다:
 
-- **trace — 하네스가 정하는 값(결정론).** `task_id`·`poc_sha256`·`poc_bytes`·`finding_id`·
-  `designation`(지정 근거 — 지정 못 한 run은 `null`)·`status`·`reason`. 예외 클래스 이름
-  (`error`)도 여기다 — 하네스가 무엇을 못 했는지(제어 흐름)이다.
+- **trace — 하네스가 정하는 값(결정론).** `task_id`·`poc_sha256`·`poc_bytes`·`finding_id`·`status`·
+  `reason`. 예외 클래스 이름(`error`)도 여기다 — 하네스가 무엇을 못 했는지(제어 흐름)이다.
+  ⚠ **단 `oracle_final`의 `designation`(지정 근거 — 지정 못 한 run은 `null`)·`subject_id`·
+  `poc_sha256`·`poc_bytes`는 ⏵ 2026-10-14부터 결정론이 아니다** — 지정이 후보 자기 `vul` 응답
+  종료 코드의 계단을 읽어서(이슈 #637) 어느 후보가 지정되는지가 그 응답 코드에 일부 달렸다. 응답
+  코드는 아래 「장비가 정하는 값」이다. Fake 경로(응답 코드가 고정이다)에서는 그대로 바이트
+  동일이다.
 - **사이드카 — 휘발하는 값.** `poc_id`(서버가 만드는 uuid4)·`cached`·`fix_cached`(서버 장부의 상태에
   달렸다).
 - **사이드카 — 장비가 정하는 값.** `vul_exit_code`·`fix_exit_code`·`success`·
@@ -58,6 +62,12 @@ run에서 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1
 run의 점수를 0으로 만들었다.
 ⏵ 2026-10-11 — 사슬 맨 앞에 **Critic 판정**이 붙어 다섯이다(`critic_verdict`: 보류 PoC는
 미경유 PoC 뒤, 미경유 PoC는 uphold PoC 뒤다 — ⏵ 2026-10-12 미경유를 uphold에서 떼었다).
+⏵ 2026-10-14 — 사슬 맨 앞에 **후보 자기 `vul` 응답 종료 코드의 계단**이 붙어 여섯이다(`vul_crash`:
+크래시 < 모름 < 크래시 아님 — `vul_code_tier`, 이슈 #637). ⚠ **그래서 `designation`·`subject_id`·
+`poc_*`(`oracle_final`)는 이제 응답 코드에 일부 달렸다** — 위 「trace — 하네스가 정하는 값」의
+단서가 그것이다. 응답 코드가 **같은 입력에서 실제로 갈리는지는 vul 쪽에서 잰 적이 없다**: 위
+`vm.mmap_rnd_bits` 실측은 `fix` 다리에서 나온 것이다. vul 응답 코드가 갈릴 수 있는 길은 서버 캐시가
+옛 코드를 돌려주는 것(#385)과 타임아웃 덮어쓰기(#384, 소스 판독)이고, 그 밖의 변동은 미실측이다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -139,20 +149,58 @@ _HTTP_TOO_MANY_REQUESTS = 429
 # 「크래시가 안 났다」로 세는 `vul` 코드 — 어댑터 `_NO_CRASH_EXIT_CODES`
 # (`src/adapters/cybergym_oracle.py`)의 사본이다(오케스트레이터는 어댑터를 못 읽는다).
 # 같다는 것은 `test_the_excluded_code_tuple_matches_the_adapter`가 문다.
-# **로그 전용이다** — `runner._terminal_fields`만 읽고 지정은 이 값을 안 읽는다.
+# 로그(`runner._terminal_fields`)와 지정의 첫 계단(`vul_code_tier`)이 읽는다 — 후자는 아래
+# 환경 실패 코드를 **먼저** 거른다(300은 둘 다에 든다 — 환경 쪽이 이긴다).
 NO_CRASH_VUL_EXIT_CODES = (0, 71, 300)
 
-# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로도 채점기 점수로도
-# 고르지 않는다** - 이 저장소가 2026-10-03에 정한 규칙이고 저자의 금지 문장이 아니다(조사
-# 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다).
+# **환경이 낸 종료 코드** — 대상의 판정이 아니다. 어댑터 `container_tools`의
+# `_POC_HARNESS_FAILURE`(124~127) ∪ `_POC_ENV_FATAL`(137·255)의 사본이고(오케스트레이터는 어댑터를
+# 못 읽는다), 음수와 255 초과는 `vul_code_tier`가 범위로 거른다(`_poc_is_harness_failure`와 같다).
+# 구간 전체에서 같다는 것은 `test_the_env_failure_codes_are_the_tool_adapters_…`가 문다.
+# 137은 대상 자신의 OOM과 갈리지 않아 환경 쪽으로 보낸다(그 상수의 주석).
+ENV_FAILURE_VUL_EXIT_CODES = frozenset({124, 125, 126, 127, 137, 255})
+
+# 지정 키의 첫 계단 — 후보의 **자기 `vul` 제출 응답** 코드(`VulSubmission.response_exit_code`)를
+# 셋으로 가른다. **작을수록 먼저**다: 크래시 < 모름 < 크래시 아님. ⏵ 2026-10-14 (이슈 #637 ·
+# ADR 0013 결정 2 개정).
+VUL_TIER_CRASH = 0
+VUL_TIER_UNKNOWN = 1
+VUL_TIER_NO_CRASH = 2
+
+
+def vul_code_tier(code: int | None) -> int:
+    """`vul` 응답 코드의 계단. **모름은 크래시도 크래시 아님도 아니다**(CLAUDE.md §0).
+
+    - 모름: `None` · 환경 실패(124~127·137·255 · 음수 · 255 초과). 환경 판별을 **먼저** 한다 —
+      300은 채점기의 제외 코드이기도 하지만 255 초과라 환경이다(타임아웃은 「크래시가 안 났다」가
+      아니라 「끝까지 못 돌았다」다). ⚠ **그 분기는 응답 경로로는 닿지 않는다** — 서버가 300을
+      응답에서 0으로 덮는다(아래 · #384). 어댑터 사본과 구간 전체가 같도록 둔 방어적 처리다.
+    - 크래시 아님: `NO_CRASH_VUL_EXIT_CODES`(0·71).
+    - 크래시: 그 밖.
+
+    ⚠ 응답 코드는 타임아웃(300)을 **응답에서만** 0으로 덮는다(어댑터 모듈 docstring, 이슈 #384 ·
+    소스 판독) — 그래서 응답의 0은 「안 터졌다」와 「타임아웃」을 못 가르고 여기서는 크래시
+    아님이다.
+    """
+    if code is None or code in ENV_FAILURE_VUL_EXIT_CODES or code < 0 or code > 255:
+        return VUL_TIER_UNKNOWN
+    return VUL_TIER_NO_CRASH if code in NO_CRASH_VUL_EXIT_CODES else VUL_TIER_CRASH
+
+
+# `designation` 값 — 어떤 근거로 최종 PoC를 지정했는지. **위치(처음·마지막)로 고르지 않고,
+# 채점기 값은 후보 자기 `vul` 제출의 종료 코드 하나(`vul_crash`)만 읽는다** - 이 저장소의 규칙이고
+# 저자의 금지 문장이 아니다(조사 문서 1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다).
+# ⏵ 2026-10-14 - 그 한 줄이 개정됐다: 2026-10-03 규칙은 채점기 값을 아예 안 읽었다(이슈 #637).
 #
 # ⏵ 2026-10-04 — 둘에서 여섯으로 늘었다. 동점 거부를 사슬로 바꾸면서 **무엇이 실제로 갈랐는지**를
 # 싣기로 했다(§0 — 지정 근거를 적는다). 앞 둘은 고를 것이 없던 경우고, 뒤 넷은 사슬의 **어느
 # 단계가** 둘을 갈랐는지다. `poc_digest`가 찍힌 run은 등급·`confidence`·바이트 수가 전부 같아
 # **내용 해시로** 갈린 것이다 — 약한 근거이고, 그렇게 적혀 있어야 읽는 쪽이 안다.
 # ⏵ 2026-10-11 — 사슬 맨 앞에 `critic_verdict`가 붙어 일곱이고 사슬은 다섯이다.
+# ⏵ 2026-10-14 — 그 앞에 `vul_crash`가 붙어 여덟이고 사슬은 여섯이다(이슈 #637).
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택이 없었다
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
+DESIGNATION_VUL_CRASH = "vul_crash"  # 자기 vul 응답 코드 — 크래시 < 모름 < 크래시 아님 순
 DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유 < 보류 순으로 앞선다
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다

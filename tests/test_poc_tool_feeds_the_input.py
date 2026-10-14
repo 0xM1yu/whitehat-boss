@@ -7,8 +7,8 @@
 
 ⚠ **「채점」과 「관측」을 섞지 않는다.** 이 도구가 내는 종료 코드는 모델에게 보여 주는 관측이고,
 점수는 계속 오라클만 낸다(ADR 0014 불변식 2). 그래서 이 파일은 **등급·지정을 검사하지 않는다** —
-`runner._designate_final`이 채점기 값을 안 읽는 것은
-`test_designation_does_not_read_oracle_fields`가 그대로 든다.
+`runner._designate_final`이 읽는 채점기 값이 후보 자기 `vul` 응답 종료 코드 하나뿐인 것(⏵ 2026-10-14
+이슈 #637 — 그 전에는 하나도 안 읽었다)은 `test_designation_does_not_read_oracle_fields`가 든다.
 
 🔴 **가장 중요한 검사는 ③이다** — 실행 **환경**이 낸 종료 코드(`124`~`127`·음수)를 타깃의 판정으로
 읽지 않는 것. `tools/oracle_canary.py`가 그 위험을 이미 적는다: *"이 코드로 `-vul` 다리가 채워지면

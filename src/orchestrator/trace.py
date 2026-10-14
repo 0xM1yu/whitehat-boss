@@ -247,6 +247,11 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 시간 상한에 닿는 시점이 `budget` 이벤트 열 자체를 바꾼다. 그래서 비교에서 빼는 것을 `data` 키로
 넓히지 않는다. 위 「새 필드」 규칙은 그래도 모든 run에 선다 — 새 휘발 값은 `data`가 아니라 최상위
 `wall_ms`나 사이드카로 낸다(`oracle_log`의 선례).
+
+⚠ **예외 하나(⏵ 2026-10-14 이슈 #637):** `oracle_final`의 `designation`·`subject_id`·`poc_sha256`·
+`poc_bytes`는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로 그 코드에 일부 달렸다. 코드가
+고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은 입력의 코드가 갈리면 이 네 필드가
+갈릴 수 있다(갈리는지는 미실측 — `oracle_log` 모듈 docstring).
 """
 
 import json
@@ -745,7 +750,8 @@ class EventKind(StrEnum):
     # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
     # 갈려서 trace의 재현성 기준(아래)을 깬다(분류는 `oracle_log` 모듈 docstring). 그래서 이
     # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
-    # `oracle_final` 하나다.**
+    # `oracle_final` 하나다.** (⏵ 2026-10-14 — 다만 어느 후보가 `oracle_final`로 지정되는지가
+    # 후보 자기 응답 종료 코드의 계단에 일부 달렸다: 아래 `ORACLE_FINAL` 주석.)
     ORACLE_SUBMITTED = "oracle_submitted"
     # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 제출 하나가 실패했거나(`leg=vul`)
     # 중간 gen의 판정 조회가 실패했거나(`leg=query_vul`) 0바이트 PoC를 안 냈다
@@ -758,14 +764,20 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 일곱이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
-    # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
+    # **`designation`은 여덟이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
+    # 코드 하나(`vul_crash`)만 읽는다**(`oracle_log`가 목록을 든다 · ⏵ 2026-10-14 이슈 #637) —
+    # 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
-    # 갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
-    # 하네스가 만든 값의 전순서다). 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
-    # 지정하지 않는다(`status=none` ·
-    # `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이
-    # 아니다.
+    # 갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
+    # 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든 값의 전순서다).
+    # 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다
+    # (`status=none` · `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고
+    # 판정이 있는 것이 아니다.
+    #
+    # ⚠ **`designation`·`subject_id`·`poc_sha256`·`poc_bytes`는 응답 코드에 일부 달렸다**(⏵
+    # 2026-10-14 이슈 #637) — 첫 계단이 후보 자기 `vul` 응답 종료 코드라서, 위에서 「서버가 돌려준
+    # 값은 trace에 안 싣는다」고 한 재현성 기준(Fake 경로 계약)에 이 네 필드가 간접으로 걸린다.
+    # 같은 입력에서 vul 응답 코드가 갈리는지는 미실측이다(`oracle_log` 모듈 docstring).
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
