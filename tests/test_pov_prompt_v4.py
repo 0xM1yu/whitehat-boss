@@ -1053,7 +1053,9 @@ def test_a_name_with_only_surface_noise_still_resolves(ctx, form: str) -> None: 
 def test_naming_a_gen_whose_code_was_excluded_or_missing_is_still_honored(
     ctx, codes  # noqa: ANN001, F811
 ) -> None:
-    """🔴 불변식 — 지정은 채점기 값을 읽지 않는다. 모델이 이름 붙인 gen이 제외 코드(0·71·300)나
+    """🔴 불변식 — 지정은 이름 붙인 gen을 채점기 값으로 거절하지도 승격하지도 않는다(⏵ 2026-10-14
+    이슈 #637: 후보가 **둘 이상**일 때 자기 응답 코드 계단이 순위에는 든다 — 이 검사는 후보가
+    이름 붙은 gen 하나뿐인 자리다). 모델이 이름 붙인 gen이 제외 코드(0·71·300)나
     `unavailable`이었어도 `matched`이고 그 바이트가 지정된다. (이것이 「이름 붙인 gen의 오라클
     코드로 거절한다」·「코드로 자동 승격한다」는 변이를 가르는 쪽이다.)"""
     first, second = _gen(count=3), _gen(count=1)
@@ -1393,7 +1395,7 @@ def test_the_limit_paragraph_is_exact_and_promises_no_more() -> None:
     ⑤ 채점은 `oracle_vul`이 한다고 적는다.
 
     🔴 **넘지 않는 선**: `poc`가 받는다고 적되 **점수를 낸다고는 적지 않는다**(ADR 0014 불변식 2 —
-    지정은 채점기 값만 읽는다). 그래서 「poc 관측이 점수」류 문구를 금지한다.
+    채점은 오라클만 한다). 그래서 「poc 관측이 점수」류 문구를 금지한다.
 
     ⚠ **통제**: v3·v4는 **불변 기록**이라 옛 문장을 그대로 들고 있어야 한다. 그 둘이 바뀌면 누군가
     지난 판을 고친 것이다."""
@@ -1682,9 +1684,14 @@ def test_unwired_and_transient_unavailable_are_told_apart_by_the_earlier_numeric
 def test_the_final_slot_goes_by_confidence_not_by_which_poc_crashed() -> None:
     """프롬프트의 「하네스는 그 자리를 채점기 코드로 가르지 않으므로 진 PoC가 이길 수 있다」의
     근거. 이긴 PoC(77)를 낸 Finding과 진 PoC(300)를 낸 Finding이 같은 등급이면 `confidence`가
-    높은 쪽이 최종 한 장이다 — 그 쪽이 진 PoC여도. 지정 키(`_designation_key`)는 채점기 응답을
-    안 읽는다는 것이 이 저장소의 결정이고(`_designate_final` docstring · best-of를 피한다) 이
-    프롬프트가 아니라 그 결정이 마지막 홉 규칙을 낳았다. ⚠ 지정 의미는 이 파일이 정하지 않는다."""
+    높은 쪽이 최종 한 장이다 — 그 쪽이 진 PoC여도. 77·300은 **중간 gen의 관측 코드**
+    (`observation_exit_code`)이고 지정 키(`_designation_key`)는 그것을 안 읽는다 — 후보가 아닌
+    중간 gen의 관측이고, 읽는 채점기 값은 후보 자기 제출의 응답 코드 하나다
+    (`_designate_final` docstring). 두 후보의 **제출 응답 코드는 같다**(`sub` 하나를 공유한다) —
+    ⏵ 2026-10-14(이슈 #637) 지정 키는 그 응답 코드의 계단(크래시 < 모름 < 크래시 아님)을 맨 앞에서
+    읽으므로 **응답 코드가 갈리는 후보 둘이면 이 검사의 기대값이 뒤집힌다**(그 경우는
+    `tests/test_oracle_wiring.py`가 문다). 프롬프트의 그 문장이 반만 맞게 된 것도 그 때문이다.
+    ⚠ 지정 의미는 이 파일이 정하지 않는다."""
     sub = VulSubmission(TASK_ID, "id", 1)
     winner = oracle_log.vul_ok(
         "f_win", b"win", sub, 1, designatable=True, observation_exit_code=77

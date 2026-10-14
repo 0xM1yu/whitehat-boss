@@ -1576,7 +1576,9 @@ def _pov_targets(
     든다. 정렬 키(판정 계단 → `confidence` → `finding_id`)는 반박을 맨 뒤(3)에 두지만
     (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
     **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
-    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 첫 계단).
+    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 **둘째** 계단이다 —
+    ⏵ 2026-10-14 첫 계단은 후보 자기 `vul` 응답 코드가 됐다(이슈 #637). 그래서 보류 PoC도 크래시를
+    냈으면 앞선다).
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -2581,6 +2583,7 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
 # 보아 처음 값이 갈리는 자리가 그 run의 `designation`이다. 이름과 키의 길이가 어긋나면
 # `zip(..., strict=True)`가 터진다(키를 늘리고 이름을 안 붙이는 변이를 그 자리가 막는다).
 _DESIGNATION_CHAIN = (
+    oracle_log.DESIGNATION_VUL_CRASH,
     oracle_log.DESIGNATION_CRITIC_VERDICT,
     oracle_log.DESIGNATION_TOP_GRADE,
     oracle_log.DESIGNATION_TOP_CONFIDENCE,
@@ -2594,17 +2597,31 @@ def _designation_key(
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
     verdicts: Mapping[str, int],
-) -> tuple[int, int, float, int, str]:
-    """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값뿐이다.
+) -> tuple[int, int, int, float, int, str]:
+    """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값과, 후보 자기 `vul`
+    제출의 종료 코드 **하나**뿐이다.
 
+    ⓿자기 `vul` 응답 코드의 계단(크래시 0 < 모름 1 < 크래시 아님 2 — `oracle_log.vul_code_tier`)
     ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
-    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
-    「모르겠다」고 한 PoC가 등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604).
-    판정 계단이 등급보다 앞서므로 **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 >
-    E4 보류, E2 uphold > E3 미경유) — 의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은
-    계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰, `_verdict_ranks_by_finding`).
+    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
 
-    🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
+    ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서 「모르겠다」고 한 PoC가
+    등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604). 판정 계단이 등급보다 앞서므로
+    **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 > E4 보류, E2 uphold > E3 미경유) —
+    의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은 계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰,
+    `_verdict_ranks_by_finding`).
+
+    ⏵ 2026-10-14 — ⓿을 맨 앞에 붙였다(이슈 #637, ADR 0013 결정 2 개정). **동기는 관측이 아니라 코드
+    판독에서 나온 계산상의 구멍이다**: 앞 판은 Finding A의 `submit`된 gen이 크래시 코드를 받았어도
+    Finding B의 코드 0인 gen이 Critic 계단·등급·`confidence`에서 앞서면 B가 최종이 될 수 있었다.
+    **그 분기에 닿은 실 run은 0건이다** — 10-08·10-11·10-12 run은 전부 `final: none`이었고 10-12의
+    PoC는 전부 코드 0이었다. 발생 비율은 미실측이다. 결정은 council → @danielcho02 승인(2026-10-14).
+    ⓿이 Critic 계단보다 **앞**이라 **계단이 뒤인 PoC가 앞인 PoC를 이긴다**(보류·크래시 >
+    uphold·코드 0) — 의도한 것이다. 한 코드 계단 안에서는 ⓪~④가 개정 전 그대로 정한다(같은 코드
+    계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` · 환경 실패 코드)은 크래시도 아니고
+    크래시 아님도 아니다**(§0) — 둘 사이에 둔다.
+
+    🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 다섯이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
     (처음·마지막)가 아니다. 자리로 고르지 않는다는 규칙은 그대로다 — 같은 후보 묶음을 어떤
     순서로 넣어도 같은 PoC가 지정된다.
@@ -2612,7 +2629,11 @@ def _designation_key(
     ⚠ **④는 약한 근거다.** 거기까지 와서 갈린 run은 `designation`이 `poc_digest`로 찍힌다 —
     읽는 쪽이 「해시로 골랐다」를 알아야 한다(§0).
     """
+    # 후보는 제출이 성공한 시도라 `submission`이 있다. 없으면(직접 부른 호출) 코드를 모르는 것이다.
+    submission = attempt.submission
+    code = None if submission is None else submission.response_exit_code
     return (
+        oracle_log.vul_code_tier(code),
         verdicts[attempt.finding_id],
         -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
         -confidences[attempt.finding_id],
@@ -2649,7 +2670,8 @@ def _designate_final(
     - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
-      `designation`이다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
+      `designation`이다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·
+      `poc_digest`).
       `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
       기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, @sumin0218 리뷰).
 
@@ -2661,32 +2683,52 @@ def _designate_final(
     ② 남은 동점은 거부가 아니라 **사슬의 다음 단계**로 넘긴다. 사슬의 끝(PoC 해시)이 전순서라
     `grade_tie`가 닿지 않는 분기가 되어 **사유 상수째 지웠다**(`oracle_log`).
 
-    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는
-    `response_exit_code` 같은 오라클 응답 값이 실려 **지정 시점에 손에 있는데도** 그렇다. 이것은
-    **이 저장소의 결정이고 저자의 금지 문장이 아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가
-    정확히 하나 지정하라고 요구하고 any-of가 무차별 대입을 보상한다고 적을 뿐 고르는 방법을
-    금지하지 않는다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 그 값으로
-    후보를 가르면 후보를 채점기에 물어 고르는 best-of가 되어 읽지 않기로 했다. 읽는 것은
-    `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스가 만든 값**
-    (Critic 판정 계단 · 내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다. 내부 등급은
-    하네스가 도구를 돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서
-    안 나온다(`_grades_by_finding`).
+    🔴 **이 함수가 읽는 채점기 값은 후보 자기 `vul` 제출의 종료 코드 하나다**
+    (`submission.response_exit_code` → `oracle_log.vul_code_tier` — 크래시 < 모름 < 크래시 아님,
+    지정 키의 **첫** 계단). 그 코드는 **모든 후보 것을 읽어 서로 견준다.** 그 밖의 채점기 값 —
+    `poc_id`·`cached`(어느 후보의 것이든)·`fix` 판정·중간 gen의 `query_vul` 관측 — 은
+    **지정 시점에 손에 있는데도** 안 읽는다. 이것은 **이 저장소의 결정이고 저자의 금지 문장이
+    아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가 정확히 하나 지정하라고 요구하고 any-of가
+    무차별 대입을 보상한다고 적을 뿐 고르는 방법을 금지하지 않는다(조사 문서 1.3절 —
+    docs/research/2026-09-29-cybergym-pov-design.md). 읽는 것은 `attempt.ok`(제출이 성공했나 —
+    후보 자격이고 판정이 아니다), 위 한 코드, 그리고 **하네스가 만든 값**(Critic 판정 계단 ·
+    내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)이다. 내부 등급은 하네스가 도구를 돌려 낸
+    근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
+    **코드를 크래시로 세는 것은 환경이 낸 값을 거른 뒤다** — 124~127·137·255·음수·255 초과·`None`은
+    모름이고 크래시로 안 센다(`oracle_log.ENV_FAILURE_VUL_EXIT_CODES`). 모름은 크래시와 크래시
+    아님 **사이**다(§0). 1은 크래시로 센다 — 실제 ASan 종료일 수도, 인프라 값일 수도 있어 둘이
+    안 갈린다(ADR 0013 · 0014). 300(채점기의 제외 코드이자 255 초과 — 모름)은 **응답 경로로는
+    닿지 않는다**: 서버가 300을 응답에서 0으로 덮는다(#384). 방어적으로만 모름에 둔다.
 
-    `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
-    `==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단 미상 ·
-    후보 하나) 문다.
+    ⏵ **2026-10-14 — 「채점기 값을 안 읽는다」(2026-10-03 · ADR 0013 결정 2)를 이 한 코드만큼
+    개정했다**(이슈 #637, council → @danielcho02 승인). **동기는 관측이 아니라 코드 판독에서 나온 계산상의
+    구멍이다**(`_designation_key` docstring): 앞 판은 자기 응답 코드를 든 후보끼리의 비교에서도
+    그 코드를 못 봤다. 그런 run은 **관측 0건**이다. 이 개정이 하는 것은 **모델이 이미 `submit`한
+    후보들 사이에서 그 코드로 고르는 것**이다 — 후보를 채점기에 새로 묻는 것은 아니다: 새 제출·새
+    조회·`fix` 호출이 없고 PoC를 승격하지 않는다(승격은 ADR 0013 결정 1이 여전히 안 한다).
+    ⚠ 응답의 0은 타임아웃과 안 터진 것을 못 가른다(`vul_code_tier` docstring · 이슈 #384). 서버는
+    같은 `(agent_id, task_id, sha256)`이면 옛 코드를 돌려주므로(#385 · `VulSubmission.cached`)
+    그 코드는 이번 환경의 새 측정이 아닐 수 있다.
+
+    `test_designation_does_not_read_oracle_fields`가 **그 한 필드 말고는 `submission` 접근**(속성·
+    `vars`·`repr`·`==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단
+    미상 · 후보 하나) 문다. `test_the_vul_tier_reads_only_the_exit_code_field`가 계단이 갈리는
+    분기를 같은 함정으로 문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring), `verdicts` 사전(`_verdict_ranks_by_finding` 안에서 채점기 장부를 읽는 변이는
     지금 안 잡힌다 — 이 함수 밖의 값이라 함정이 못 본다)과 후보 0건(읽을 `submission`이 없다).
+    열린 한 필드의 **해석**(`None`·환경 코드를 크래시로 세는 변이)은
+    `test_an_exit_code_that_is_not_a_crash_never_ranks_as_one`이 문다.
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
     아니다(그 run의 경고가 실패 건수를 알린다).
 
-    ⏵ **2026-10-11 — 위 「읽지 않는다」는 하네스 코드를 묶는 제약이다.** 어느 gen이 후보가 되는지는
-    모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면 마지막 gen) 그것은 이
-    제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이 제약이 막지 않는다(council).
+    ⏵ **2026-10-11 — 위 「읽는 것을 제한한다」는 하네스 코드를 묶는 제약이다.** 어느 gen이
+    후보가 되는지는 모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면
+    마지막 gen) 그것은 이 제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이
+    제약이 막지 않는다(council).
     """
     candidates = ledger.candidates
     if not candidates:
@@ -2921,8 +2963,9 @@ def _run_pov_hops(
         seen: dict[str, bytes] = {}
         # 도구 → (마지막으로 돌린 홉, 증거) — `inspect`가 같은 도구를 또 요청하면 안 돌린다(#619).
         ran: dict[str, tuple[int, Evidence]] = {}
-        # gen마다의 `vul` 종료 코드(없으면 `None`) — **로그 전용**이다. 종단 이벤트의 계측 플래그만
-        # 읽고 지정(`_designate_final`)은 읽지 않는다.
+        # gen마다의 `vul` 종료 코드(없으면 `None`)를 모은 이 목록은 **로그 전용**이다. 종단 이벤트의
+        # 계측 플래그만 이 목록을 읽고 `_designate_final`은 읽지 않는다(지정이 읽는 코드는 후보
+        # 자기 제출의 응답 코드이고, 중간 gen의 관측 코드가 아니다).
         gen_codes: list[int | None] = []
         followup = ""
         # 홉 줄을 붙이기 **전**의 followup(= 직전 홉의 도구 관측) — 다음 호출이 파싱에 실패하면

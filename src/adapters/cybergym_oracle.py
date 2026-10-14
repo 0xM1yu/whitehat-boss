@@ -29,13 +29,17 @@ agent_id로 다시 부르면 `created_at`·`updated_at`이 그대로였다(캐�
 멀티파트는 손으로 짠다 — `multipart`·`form-data`·`Content-Disposition`·`email.mime`·
 `encode_multipart`가 `src/` 전역에 0건이다(grep 확인, 이 파일 제외).
 
-🔴 **제출 응답의 `exit_code`를 믿지 않는다** (이슈 #384). 저자 `_post_process_result`
+🔴 **제출 응답의 `exit_code`를 판정에 쓰지 않는다** (이슈 #384). 저자 `_post_process_result`
 (`server_utils.py:37-43`)가 타임아웃(300)을 **응답에서만** 0으로 되쓴다 — `submit_poc`은 DB에
 300을 적고(`:278`) 라우트가 응답만 덮는다(`__main__.py:164,193`). 이것은 **소스 판독이고 실측은
 0건이다**(왕복 보고서 「미측정 항목과 사유」: 타임아웃을 재현하지 못했다). 그래서
 `run_round_trip`의 반환값은 항상 `/query-poc`가 돌려주는 `PoCRecord.to_dict()`에서 읽는다.
 `to_dict()`에 `vul_exit_code`·`fix_exit_code`가 둘 다 있다(`pocdb.py:30-41`) — sqlite 파일을
 긁는 우회는 필요 없었다.
+⏵ 2026-10-14 — **판정(`OracleVerdict`)과 지정을 가른다:** 이 어댑터의 판정은 응답 코드를 안 쓰지만,
+러너의 **최종 PoC 지정**(`runner._designation_key`)은 `VulSubmission.response_exit_code`를
+크래시/모름/크래시 아님 **계단**으로 읽는다(이슈 #637, ADR 0013 결정 2 개정). 지정은 판정이 아니고,
+위 응답 코드의 한계는 그 계단에도 그대로 걸린다.
 
 🔴 **판정 행은 신원(`poc_hash`)으로 고른다 — 최신성으로 고르지 않는다.** `/query-poc`는
 `(agent_id, task_id)`의 **모든 행**을 돌려주고 해시 필터는 서버에 없다(`PocQuery`는 두 칼럼뿐
@@ -401,7 +405,8 @@ class SubmitResult:
     🔴 **`response_exit_code`를 판정에 쓰지 않는다** — 이름 그대로 **응답에 실린** 값이라 타임아웃
     (300)이 거짓으로 0이 된다(모듈 docstring, 이슈 #384 — 소스 판독, 실측 0건). 판정은
     `OracleVerdict`의 DB 값에서 읽는다. 여기 보관하는 것은 `poc_id`·`output` 등 응답에만 있는
-    값을 잃지 않기 위해서다.
+    값을 잃지 않기 위해서다. ⏵ 2026-10-14 — **최종 지정은 `VulSubmission`으로 옮긴 이 값을 계단으로
+    읽는다**(`runner._designation_key` · 이슈 #637): 판정과 지정은 다른 일이다.
     """
 
     task_id: str
@@ -719,6 +724,8 @@ def run_round_trip(
     판정처럼** 돌려준다. 재측정은 `new_agent_id()`로 새 agent_id를 쓴다. 이 함수는 캐시 적중을
     가르지 않는다 — 가르려면 부르기 **전에** `peek_verdict`로 행을 읽는다(시각 비교가 아니다 — 모듈
     docstring).
+    ⏵ 2026-10-14 — 위 「쓰지 않는다」는 이 함수의 **판정**에 한한다: 러너의 최종 지정은
+    `submit_vul`이 돌려준 `VulSubmission.response_exit_code`를 계단으로 읽는다.
 
     제출 응답이 말한 `poc_id`(vul·fix 둘)와 판정 행의 `poc_id`가 하나가 아니면 예외다
     (`_require_one_poc_id`) — 행을 우리 sha256으로 고르는 것(`query_verdict`)과 서버가 말한 신원을
