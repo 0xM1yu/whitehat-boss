@@ -611,6 +611,16 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_slice_state",
 )
 
+# `AUDITOR_SOURCE_OPTIONS` 중 **같은 `SOURCE` 문자열을 받는 Critic·PoV 판**
+# (`runner.finding_sources` · `critic._SOURCE_INPUT_VERSIONS` · `pov._WIDE_INPUT_VERSIONS`)도
+# 서술해야 하는 둘이다 - 쓰기 창 생략 표지 줄과 입력 디코더 함수 블록. Critic v6·v7 prefix는 정의·
+# 피호출 본문·호출자 창·가드·쓰기 창을 이미 한 문장으로 서술하고 PoV 판은 블록 종류를 열거하지
+# 않지만, 이 둘은 새 블록이라 서술하는 판이 Critic v8 · PoV v7부터다(meta `source_options`가
+# 선언한다). 켜져 있는데 좌석의 판이 선언하지 않으면 `cli`의 run·doctor가 막는다
+# (`cli._undescribed_relayed_options`). 여기 없는 옵션(`auditor_guards` 등)은 좌석의 판 번호로
+# 막지 않는다 - 새 옵션이 Critic·PoV까지 새 블록을 보내면 이 튜플에 넣는다.
+RELAYED_SOURCE_OPTIONS = ("auditor_write_window_marker", "auditor_input_context")
+
 
 class Thresholds(HarnessModel):
     """정책 임계값. 노드가 직접 비교하지 않고 RoutingPolicy가 읽는다."""
@@ -768,9 +778,11 @@ class Thresholds(HarnessModel):
     # 받는 Critic·PoV 판도 이 줄을 받는데(`critic._SOURCE_INPUT_VERSIONS` ·
     # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
     # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
-    # (`cli._undescribed_source_options`는 Auditor meta만 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
-    # `budgets.yaml`은 서빙 판(v16 · v17)이 서술해 1로 켠다. Critic·PoV 판이 이 줄을 서술하지
-    # 않는 조합을 막는 가드는 Critic v8 / PoV v7을 넣는 #676이 넣는다(docs/agent-contracts.md §4).
+    # (`cli._undescribed_source_options`는 Auditor meta를 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
+    # `budgets.yaml`은 서빙 판(v16 · v17)이 서술해 1로 켠다. **Critic·PoV 좌석도 같은 가드다**
+    # (#676): 이 줄을 선언한 판(Critic v8 · PoV v7 - meta `source_options`)이 아니면서 SOURCE를
+    # 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
+    # (`RELAYED_SOURCE_OPTIONS` · docs/agent-contracts.md §4).
     auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
@@ -798,7 +810,9 @@ class Thresholds(HarnessModel):
     # 수치 상한은 없다. `syntax` 근거·`dispatches`· `carried_decoders`는 싣지 않고 이벤트에 수만
     # 남긴다. 키가 없는 슬라이스(`--index` 없이 돈 슬라이서)는 아무것도 안 붙는다. 필드 기본은 끈다
     # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)·
-    # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다.
+    # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다 - 그 좌석의 서술·선언은 Critic v8 ·
+    # PoV v7부터이고(meta `source_options`) 그 전 판과 함께 켜면 `cli`의 run·doctor가 막는다
+    # (`RELAYED_SOURCE_OPTIONS`).
     auditor_input_context: int = Field(default=0, ge=0, le=1)
     # Auditor FACTS에 슬라이스의 정적 상태 `slice_state`(`analysis_kind` · `degraded` ·
     # `truncated` + 사유 · 경계 사유 · 상한 둘)를 싣는가(이슈 #438 (b) · S20 Phase 14 ·

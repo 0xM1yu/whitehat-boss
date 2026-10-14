@@ -33,7 +33,7 @@ E2 미만은 7단계에 못 간다.
 ## 프롬프트는 작다 — 21,021은 이 경로의 수가 아니다
 
 **이 probe의 metadata-only 재구성 한정이다**(`_reconstruct` — v1 입력 모양):
-프롬프트 판은 registry에서 읽어 기록하지만 v6·v7(서빙은 v7)의 SOURCE·근거 본문·위치·
+프롬프트 판은 registry에서 읽어 기록하지만 v6·v7·v8(서빙은 v8)의 SOURCE·근거 본문·위치·
 Auditor 홉 관측(#600)은 재구성하지 않는다.
 그 판의 실 입력 토큰으로 읽지 않는다. SOURCE 자리표시자가 있으면 빈 문자열로 채운다.
 `build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences` **셋뿐**이다(content-aware 판은

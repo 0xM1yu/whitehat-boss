@@ -229,8 +229,17 @@ models:
     # ⚠ **위 「지금(4,096 · 순차)은 기본 300 s로도 든다」는 이제 전이다** — 그 문단의 93 s·71.8 s·95 s는
     # 전부 `max_tokens 4096`에서 잰 값이고 상한이 8배가 됐다. 같은 보고서 §3.3의 16,384토큰 382초를
     # 비율로 쓰면 ≈42.9 tok/s이고 32,768은 ≈764초다(계산값) — 3,600은 그 위에 네 배 여유를 둔 값이다.
+    # ⏵ 2026-10-14 — v7에서 **v8**로 올렸다(S20 Phase 14 · 이슈 #669). v8은 v7 prefix에 편집 넷을 했다 - ① SOURCE 계약 절에 SOURCE의 새 블록 둘
+    # (`auditor_input_context`가 붙이는 입력 디코더 함수 · #650 끝 줄 표지 `/* ... +N more write windows not shown ... */`)의
+    # 서술 ②③ 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절과 FACTS `auditor_hops`의 서술 ④ 「별도 호출」 문장을 그 절과
+    # 맞게 고침(FACTS.source 밖 맥락 중 관측 절은 있다고 적되 Evidence도 SOURCE도 아니다). body는 v7과 바이트 동일이고
+    # 판정 절차(step 1~5 · Check A~E)·출력 규칙은 안 바꿨다(`prompts/critic/v8/meta.yaml`). 입력 데이터는
+    # 그대로이고 `nodes/critic._CONTENT_AWARE_VERSIONS`·`_SOURCE_INPUT_VERSIONS`에 v8을 더했다. **v8로 돈 이 저장소 run은 0건 =
+    # 미실측** - v7 이하의 run과 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4). 위 v7 문단의 prefix 글자 수(19,291)는
+    # v7의 값이다. v8 prefix는 21,471자다(`len(prefix)`로 직접 센 값 · ⏵ 2026-10-15 Auditor 도구 관측 절·`auditor_hops` 서술과 「별도 호출」 문장 정정 뒤) -
+    # **토큰 수는 미실측**이다.
     request_timeout_s: 3600
-    prompt_template_version: "v7"
+    prompt_template_version: "v8"
     fallback: null
     benchmark:
       # **전부 미실측이다** (CLAUDE.md §0). 09-09 §5가 사유를 적었다 — *"이 모델이 registry에
@@ -877,7 +886,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5와 서빙 판 v6·v7은 `PovActionNamed`)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -933,7 +942,14 @@ models:
     # `7df25b5c667fda203e211d26beb543503ac87c029dd43627f64d6c1eff972c31`(`prompts/pov/v6/meta.yaml` 머리와
     # 같다). **실서빙 run 0건 · 효과 미실측**이다 — v6으로 돈 run이 없고, 영어로의 전환 자체가 모델 행동에 주는
     # 영향도 안 쟀다. v5와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
-    prompt_template_version: "v6"
+    # ⏵ 2026-10-14 — v7로 올렸다(S20 Phase 14 · 이슈 #649 (a)·#669). v7은 v6에서 셋만 고쳤다: body의 「JSON이 입력 사실 전부다」
+    # 문장(JSON의 Finding 데이터는 `finding_id`뿐이고 CWE·제목·경로·촉발 상태는 FACTS 밖 Vulnerability 절에만 있다 -
+    # FACTS 바이트는 안 바꿨다)과 prefix에
+    # SOURCE 끝의 입력 맥락 함수 블록·표지 줄이 하네스 생성 텍스트라는 한 문단, 그리고 DEF-SUBMIT의 최종 지정 문장(#637 뒤
+    # 「하네스는 채점기 코드로 가르지 않는다」가 거짓이라 다시 썼다)(`prompts/pov/v7/meta.yaml`).
+    # `nodes/pov._WIDE_INPUT_VERSIONS`에 v7을 더했다. **v7로 돈 run은 0건 · 효과 미실측** - v6 이하와 직접 비교하지 않는다. 위 v6
+    # 문단의 sha는 v6의 값이다.
+    prompt_template_version: "v7"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
