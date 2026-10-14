@@ -454,7 +454,11 @@ class EventKind(StrEnum):
     # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
     # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
     # — 같은 줄은 한 번,
-    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)가 더 실린다(#304).
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)·`write_windows_omitted`
+    # (SOURCE 끝 `+N more write windows not shown` 줄의 N — 상한에 안 읽은 창
+    # + `write_windows_dropped`, 이미 실린 범위 안의 지점은 뺀다.
+    # `write_sites_found - write_windows`가 아니다. `write_windows_dropped`를 이미 포함하니 둘을
+    # 더하지 않는다)가 더 실린다(#304 · #650).
     # `auditor_caller_lines`가 양수면
     # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
     # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
