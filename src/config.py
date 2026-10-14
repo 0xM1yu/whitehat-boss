@@ -588,6 +588,10 @@ class CapsuleBudgets(HarnessModel):
 # ⏵ 2026-10-14 — 아홉째 `auditor_input_context`(슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문,
 # S20 Phase 13)는 v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가
 # 막는다).
+# ⏵ 2026-10-14 — 열째 `auditor_slice_state`(슬라이스의 정적 상태를 FACTS `slice_state` 키로 보인다,
+# 이슈 #438 (b))는 v17이 서술·선언한다(v16까지는 안 한다). `SOURCE`가 아니라 FACTS를 넓히는
+# 옵션이지만 같은 자리(meta `source_options`)로 선언한다 - 켜면 모델 입력이 달라져 프롬프트가
+# 서술해야 하는 점이 같다. **기본은 끈다** - 켜는 것은 측정 결정이다(켠 run ↔ 끈 run 짝 비교).
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -599,6 +603,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_write_sites",
     "auditor_guards",
     "auditor_input_context",
+    "auditor_slice_state",
 )
 
 
@@ -778,6 +783,17 @@ class Thresholds(HarnessModel):
     # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)·
     # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다.
     auditor_input_context: int = Field(default=0, ge=0, le=1)
+    # Auditor FACTS에 슬라이스의 정적 상태 `slice_state`(`analysis_kind` · `degraded` ·
+    # `truncated` + 사유 · 경계 사유)를 싣는가(이슈 #438 (b) · S20 Phase 14 ·
+    # `orchestrator/slice_state`). 0이면 안 싣는다 - Auditor 입력(SOURCE·FACTS)과
+    # `auditor_source` 이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 슬라이스가 있는
+    # 후보의 hop0 FACTS에 키가 붙고(Auditor 자리만 - 다른 역할의 FACTS는 그대로) 같은 값이
+    # `auditor_source` 이벤트의 `slice_state_*`로 남는다. 슬라이서가 분석 사실을 안 적은
+    # 슬라이스는 `false`가 아니라 `null`이다. 서술·선언은 Auditor **v17**이 든다(v16 이하를
+    # 고르고 켜면 `cli`의 run·doctor가 막는다). **기본은 끈다 - 켜는 것은 측정 결정이다**:
+    # 이슈 #438의 닫히는 조건이 켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정
+    # 분포가 움직일 방향은 안 쟀다.
+    auditor_slice_state: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
@@ -831,7 +847,7 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-13 — 서빙 판은 v15이고 봉투는 다섯째 `AuditorProcedureProbeInputAction`이다(v12
     # 봉투의 서브클래스 — `probe`의 `spec` 설명만 다르다). 허용집합은 여섯이다.
     # ⏵ 2026-10-14 — 서빙 판은 v16이고 봉투는 v15와 같다(새 봉투를 안 낸다 — 허용집합은 여섯
-    # 그대로).
+    # 그대로). ⏵ 같은 날 서빙 판은 v17이고 봉투는 같다(S20 Phase 14 — 허용집합은 여섯 그대로).
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리

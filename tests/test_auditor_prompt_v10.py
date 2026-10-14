@@ -1438,7 +1438,9 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # (`tests/test_auditor_v15.py`가 v14와의 차이에 그 줄이 없음을 문다).
 # ⏵ 2026-10-14 v16도 같다 — 그 약속 문장을 안 건드렸다(`tests/test_auditor_v16.py`가 v15와의 차이가
 # `Build contract` 목록뿐임을 문다).
-_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14", "v15", "v16"})
+# ⏵ 2026-10-14 v17도 같다 — 그 약속 문장을 안 건드렸다(`tests/test_auditor_v17.py`가 v16과의 차이가
+# `Build contract` 목록 한 항목뿐임을 문다).
+_V10_REPRO_PROMISE_VERSIONS = frozenset({"v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17"})
 
 
 def _profiles_serving_v10() -> list[str]:
