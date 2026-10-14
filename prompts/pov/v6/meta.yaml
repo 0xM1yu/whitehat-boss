@@ -1,0 +1,54 @@
+# 2026-10-12 — v5를 잇는 새 판. 영어로 다시 썼다(PR #636). 2026-10-13 리뷰 수정(1~3라운드)을 같은 PR에서 반영했다.
+# 🔴 **배선 상태: `config/models.yaml`에 아직 배선되지 않았다 · 이 판으로 돈 run 0건.** 효과는 전부 미실측이다.
+#    서빙 판 배선은 별 PR이다.
+# ⏵ 2026-10-13 — **배선됐다** — 그 「별 PR」이 이 PR이다(`config/models.yaml` pov 좌석
+#    `prompt_template_version: "v6"` · S19 Phase 6-2). 윗줄의 「돈 run 0건 · 효과 미실측」은 **그대로 참이다** —
+#    배선만 들어갔고 이 판으로 돈 run은 없다. 이 머리 주석은 요청 바이트가 아니다(`prompt_loader.render()`가
+#    `Prompt(prefix, body)`만 낸다) — 그래서 판이 불변이어도 제자리에서 적는다(`prompts/pov/v5/meta.yaml`의 ⏵들과 같다).
+# `hop_header: true`·`output_schema: PovActionNamed`는 v5와 같다 — 하네스 쪽 짝(`runner._pov_hop_line`·
+# `_resolve_submit_digest`)이 그대로 맞물린다. prefix의 「Hop budget」이 홉 줄을 서술하므로 둘은 같이 움직인다.
+# 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다(2026-10-13) — 없으면 `oracle_vul` 줄·출력 꼬리·
+#    `last_gen_*`이 **조용히 사라진다**(`tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`가 문다).
+# 제외 코드는 `0`·`71`·`300` 셋이다 — 정본은 `src/orchestrator/oracle_log.py` `NO_CRASH_VUL_EXIT_CODES`와
+#    `src/adapters/cybergym_oracle.py` `_NO_CRASH_EXIT_CODES`다. `77`은 제외 코드가 **아니다**(10-08 실서빙 run의 점수 1 PoC가 `vul` exit 77 ·
+#    `docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md` · ADR 0013).
+# `77` 문장의 근거 — 저장소 안: `arvo:1065`(MSan) `vul` 77 · `oss-fuzz:368076871`(ASan) `vul` 1(ADR 0014 「안 재 본 것」 ·
+#    `container_tools._POC_AMBIGUOUS_EXIT` 주석). 🔴 **저장소 밖 지식 · 미실측:** 「77은 libFuzzer의 기본 error exitcode」와
+#    「leak 전용 리포트도 제외 코드 밖으로 끝날 수 있다」(LSan의 종료 코드는 이 저장소에서 잰 적이 없다). prefix는 둘을 단언하지
+#    않고 「may」로 적는다.
+# `submit` 지명(`poc_sha256`)의 규칙은 DEF-SUBMIT 한 곳에만 둔다. 지명이 틀리면(8자 미만·16진 밖·불일치·모호) 하네스가 조용히
+#    마지막 gen으로 폴백한다(`runner._resolve_submit_digest`) — prefix가 그것을 적는다.
+# `unavailable` submit은 v5처럼 어느 홉에서나 요건(Hop budget)을 채우면 허용한다 — 마지막 홉으로 좁히지 않았다.
+# 3라운드 리뷰 반영: 마지막 gen이 `unavailable`이고 앞선 gen이 제외 코드 밖이면 DEF-UNAVAIL이 `poc_sha256` 지명으로 보낸다(요건 셋은 마지막 gen 자체 바이트의
+#    bare `submit`에만 적용). 「제외 코드 밖이면 다음 턴 submit」·「안이면 금지」·「0바이트」·「반복 금지」는 각각 DEF-SUBMIT·DEF-REPEAT 한 곳이 본문이고 나머지는 참조다.
+# 환경 실패 코드는 124~127·음수 외에 137·255·255 초과·데몬 미도달 exit=1이다(`container_tools._poc_is_harness_failure` ·
+#    `_POC_ENV_FATAL` · `_POC_DAEMON_UNREACHABLE`). `71`·`139`는 대상이 낸 값일 수 있어 환경 코드가 아니다.
+# 이 판의 첫 커밋(`6ae9513`)은 제외 코드에 77을 넣고 있었고 리뷰가 그것을 잡아 고쳤다 — 첫 커밋 prefix.md sha256은 `786f2c2029ccfab058c210acddc19db4450abe77591a9a664d015732bc8bec1d`다.
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `7df25b5c667fda203e211d26beb543503ac87c029dd43627f64d6c1eff972c31`
+#   body.md   sha256 `3b6a2a447b52af84eaddf0743795a86918bf3b6453acd8227fdf9ab5a8487eac`
+role: pov
+version: v6
+output_schema: PovActionNamed
+hop_header: true
+description: >-
+  v5를 영어로 다시 쓴 판(PR #636)이다. 매 홉 PovActionNamed(gen/inspect/submit)을 내고 gen은 PovSpec을 싣는 도구 루프이며,
+  submit은 poc_sha256으로 앞선 gen을 지명할 수 있다 — 봉투·홉 줄·도구 넷의 구분·채점기 vul 줄은 v5와 같다.
+  body는 v5와 같은 입력 틀(FINDING·TARGET·SOURCE·FACTS)을 영어로 적었다(그래서 v5 body와 바이트 동일이 아니다).
+  v5와 다른 점 —
+  ① prefix와 body가 영어다. 규칙을 한 번만 서술하는 「Core definitions」 절(DEF-EXIT·DEF-SUBMIT·DEF-REPEAT·DEF-UNAVAIL·DEF-CACHED)을
+  세우고 나머지 절은 그것을 참조한다 — v5는 같은 규칙을 여러 절에 되풀이했다.
+  ② 도달 가이드를 바꿨다: 입력 파서 문법을 sink까지 추적하고(관례로 구두점을 짐작하지 않는다), 한 번에 한 원인만 바꾸며,
+  새니타이저 리포트의 종류를 Finding의 버그 종류·sink와 대조한다(다른 종류 리포트는 sink 도달의 증거가 아니다 — 대조는 rationale에
+  적고 submit 판단은 DEF-EXIT가 정한다). v5의 규칙 중 FINDING 경로 함수 이름 짚기·바이트 직접 쓰기 금지·체크섬 한계 기재·
+  `exit=1` 단언 금지·사슬의 sink 쪽 고리·`inspect(build)` 힌트·cached 재확인 불가 사유는 한 문장씩 남겼다.
+  ③ 하네스가 하는 일을 prefix에 더했다: 이미 돌린 도구를 다시 요청한 inspect의 inspect_repeat … rerun=false 줄(runner.py, 이슈 #619),
+  첫 gen 전의 inspect poc가 돌릴 바이트가 없다는 것(0바이트 gen은 `poc`에 빈 입력으로 실제 들어가므로 이 서술의 대상이 아니다 ·
+  `test_pov_loop_hands_an_empty_poc_to_the_tool_as_an_input`), 스키마 파싱 실패 뒤 재질문 노트(홉 줄 + `[스키마 오류] <사유>` · runner._pov_parse_retry_note ·
+  이슈 #550 — v5 prefix는 이것을 서술하지 않는다).
+  ④ 출력 규칙: JSON 하나만 내고(gen·submit 모양 예시 한 줄씩 · 필드 이름은 `PovActionNamed`·`PovSpec`·`PovSegment`에서 읽었다) rationale은 한 문장으로 한다(unavailable 사슬·cached 메모·리포트 종류 불일치 메모·진입점 추정 메모·스펙 한계 메모는 예외). 긴 추론 응답을 줄이려는 의도다.
+  🔴 제외 코드는 v5와 같은 셋(0·71·300)이다. 그래서 77을 받은 PoC는 vul 다리를 채운 것으로 읽고 다음 턴에 submit한다.
+  ⚠ 이 판은 같은 문장 반복·실패 원인을 분석하지 않고 비슷한 PoC를 되내는 되먹임을 겨냥해 다시 썼다 — 그 관측은 저자의 것이다
+  (10-11·10-12 run · 보고서에 수치 없음 · 미실측).
+  효과는 미실측이다 — 이 판으로 돈 run이 0건이고, 영어로의 전환 자체가 모델 행동에 주는 영향도 재지 않았다. v5와 직접 비교하지 않는다
+  (`docs/evaluation.md` §2.3 규칙 4 — 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다).

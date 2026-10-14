@@ -175,6 +175,10 @@ models:
     # 않아 꼬리를 확인할 수 없고(보고서 메타), 모델도 양자화도 다르다. **그러니 "이 옵션이
     # 이 모델도 고친다"로 읽지 않는다.** 다만 위 기동 조건이 이미 `backend xgrammar`라
     # 옵션 한 줄을 더하는 값이 싸고, `tools/probe/gpt_oss_structured.py`의 팔로 그대로 잰다.
+    # ⏵ 2026-10-13 - #79는 닫혔다(현재 로스터에서 공백 폭주를 관측한 기록이 없다 - 다만 꼬리를 본 적이 없어
+    # 「없었다」가 아니라 「본 적 없다」다). 그 위 「잰다」는 하네스 몫이 아니다 - 실험팀 소관이고, 켜 볼
+    # 이유는 `model_call.attempt_tail_whitespace_only`에 `true`가 나온 run이 생겼을 때다. 옵션은 여전히
+    # `config/serving/*.yaml`에 없다.
     endpoint: "http://127.0.0.1:8003/v1"
     context_limit: 131072
     quantization: "mxfp4"
@@ -186,6 +190,9 @@ models:
     # ⏵ 2026-10-05 — Critic v6을 배선한다. 근거 본문·위치와 Auditor가 본 SOURCE를
     # 함께 싣는다. 공유 fake 엔트리는 v1을 유지한다. 이전 입력과 직접 비교하지 않는다.
     # v6의 uphold 관측·입력 토큰 수·스키마 준수율은 0(미실측 — 실모델 run 필요).
+    # ⏵ 2026-10-13 (#600 H2ⓐ) — v6 요청에 Auditor 도구 루프의 홉 관측도 실린다(홉이 돈 Finding만 · 판 번호는
+    # 그대로). 입력 몫 131,072 − 32,768 = 98,304토큰(계산값)을 넘을 수 있고 자르지 않는다 -
+    # `config/budgets.yaml`의 같은 날 ⏵과 trace `critic_hop_observations`.
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
@@ -491,7 +498,7 @@ models:
     #     65,536 ÷ 16.2 ≈ 4,045 s로 `gpu_seconds`의 56%(계산값 — 7,200이던 때의 비율이다. 2026-10-05에
     #     72,000으로 올려 5.6%가 되고, **같은 날 둘째 인상으로 7,200,000이 되어 지금은 0.056%**다 —
     #     4,045 ÷ 7,200,000, 계산값)다. 그리고 **상한은 호출당인데 피해는
-    #     후보당이다** — 도구 루프 상한 16홉이면 한 후보가 최대 16 × 65,536토큰을 쓴다. 호출 타임아웃도 이 잠금도
+    #     후보당이다** — 도구 루프 상한 16홉이면 한 후보가 최대 17호출(홉 0 + 16) × 65,536토큰을 쓴다. 호출 타임아웃도 이 잠금도
     #     그 누적을 안 묶는다. 묶는 것은 run 예산뿐이고 그쪽이 걸리면 run이 **중단**된다. run 예산 쪽은 이슈 #389(닫힘)였고 **후보당 누적 상한은 이슈 #432(열림)의 선택지 (d)가 든다.**
     #     ⏵ **2026-10-05 — 묶는 키가 바뀌었다.** ⚠ 위 0.056%는 **호출 1회**(4,045 s)의 비율이고,
     #     후보 하나가 16홉을 다 쓰면 **17호출 × 65,536 ÷ 16.2 ≈ 68,773 s**다 — 그것이
@@ -698,7 +705,14 @@ models:
     # 데이터로 학습한 Auditor를 서빙하려면 v12 봉투가 필요하다. v14 = v12 + FACTS에서 `source` 사본을 뺀다(봉투는 v12의 `AuditorProcedureAuditAlwaysAction`).
     # body는 v13과 바이트 동일, prefix는 v12와 한 자리만 다르다(`prompts/auditor/v14/meta.yaml`). v13의
     # 요청 바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 규칙 1). 이 판으로 돈 run은 0건이다(`docs/experiments/` grep, 2026-10-11).
-    prompt_template_version: "v14"
+    # ⏵ 2026-10-13 — **v15**로 올렸다(S19 · council 2026-10-13). v15 = v14 + 계약 문장 여섯(`probe`가 `spec` 바이트를 `poc`에
+    # 싣는다 · 조회·도구 응답이 Critic에도 간다 · `triggerable`은 `probe` 뒤에 — 하네스가 검사하지 않는 지시 · 「유계 발췌」
+    # 문장을 빼고 `K of N shown` 접힘 표지 · `answer`의 `procedure`는 비지 않는다 · hop-0 컴파일 노트). body·SOURCE 옵션·
+    # 도구는 v14와 같고 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이다(`prompts/auditor/v15/meta.yaml`).
+    # v14 문장·스키마는 한 글자도 안 고쳤다(규칙 1). ⚠ 그 문장 셋은 PR #642(반복을 전 홉과 견준다)·#644(`probe`가 `spec`을 싣는다)·#648(hop-0 컴파일 노트)·#660(Critic이 홉
+    # 관측을 받는다 - 이슈 #600)이 main에 들어와야 코드와 맞는다.
+    # 머지 순서는 #642 → #644 → #648 → #660 → 이 PR이다 - 이 엔트리가 이미 v15를 서빙하므로 이 PR이 먼저 들어가면 안 된다. 이 판으로 돈 run은 0건이다.
+    prompt_template_version: "v15"
     fallback: null
     benchmark:
       measured_at: null
@@ -837,7 +851,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5는 `PovActionNamed`)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5와 서빙 판 v6은 `PovActionNamed`)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -887,7 +901,13 @@ models:
     # 돈 run 0건(`docs/experiments` grep · 로컬 확인). 경계: 옛 prefix는 `60df731`(#567 머지
     # `a78b09f` · 10-09 19:29)부터 #574 머지 전까지. prefix.md sha256 전 `14486e57…`
     # · 후 `e19e7e7b…`(전체는 `prompts/pov/v5/meta.yaml` 머리).
-    prompt_template_version: "v5"
+    # ⏵ 2026-10-13 — 위 「v5로 돈 run 0건」 서술은 10-12 run으로 뒤집혔다 — `prompts/pov/v5/meta.yaml` 참조.
+    # ⏵ 2026-10-13 — v6으로 올렸다(S19 Phase 6-2 · 판은 PR #636, 영어로 다시 쓴 판 — 이슈 #549(b)·#572(a)·
+    # #619(b)·#613·#562③의 수정이 prefix에 든다). prefix.md sha256
+    # `7df25b5c667fda203e211d26beb543503ac87c029dd43627f64d6c1eff972c31`(`prompts/pov/v6/meta.yaml` 머리와
+    # 같다). **실서빙 run 0건 · 효과 미실측**이다 — v6으로 돈 run이 없고, 영어로의 전환 자체가 모델 행동에 주는
+    # 영향도 안 쟀다. v5와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+    prompt_template_version: "v6"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
