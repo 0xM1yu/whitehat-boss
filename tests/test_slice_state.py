@@ -42,6 +42,9 @@ _ENTRY_PARAMETER_ROW = {
 _RECORDED = {
     "truncated_recorded": True, "truncation_reasons_recorded": True, "boundaries_recorded": True,
 }
+# 상한 둘(`sinks_capped` · `cross_method_flow_truncated`)을 적지 않는 슬라이서 종류(Case B 역추적
+# 등)의 모름 - `false`가 아니라 `null`이다.
+_NO_CAPS = {"sinks_capped": None, "cross_method_flow_truncated": None}
 
 
 def _ref(given_end: str = "sink", **fields) -> SliceRef:  # noqa: ANN003
@@ -60,7 +63,7 @@ def test_a_slice_the_slicer_fully_described_reports_its_facts() -> None:
 
     assert state == {
         "analysis_kind": "backward_ddg", "degraded": False, "truncated": False,
-        "truncation_reasons": [], "boundary_reasons": [],
+        "truncation_reasons": [], "boundary_reasons": [], **_NO_CAPS,
     }
 
 
@@ -73,7 +76,7 @@ def test_a_slice_without_analysis_facts_is_unknown_never_false(given_end: str) -
 
     assert state == {
         "analysis_kind": None, "degraded": None, "truncated": None,
-        "truncation_reasons": None, "boundary_reasons": None,
+        "truncation_reasons": None, "boundary_reasons": None, **_NO_CAPS,
     }
     assert all(value is None for value in state.values())
 
@@ -89,6 +92,7 @@ def test_a_flag_that_is_set_is_reported_even_when_the_analysis_kind_is_unknown()
     assert state == {
         "analysis_kind": None, "degraded": True, "truncated": True,
         "truncation_reasons": ["backward_depth"], "boundary_reasons": ["entry_parameter"],
+        **_NO_CAPS,
     }
 
 
@@ -150,10 +154,13 @@ def test_the_event_fields_are_flat_scalars_and_keep_unknown_as_none() -> None:
         "slice_state_analysis_kind": "backward_ddg", "slice_state_degraded": False,
         "slice_state_truncated": True, "slice_state_truncation_reasons": "backward_depth",
         "slice_state_boundary_reasons": "entry_parameter",
+        "slice_state_sinks_capped": None, "slice_state_cross_method_flow_truncated": None,
     }
     assert clean["slice_state_truncation_reasons"] == ""
     assert clean["slice_state_boundary_reasons"] == ""
     assert set(unknown.values()) == {None}
+    assert known["slice_state_sinks_capped"] is None
+    assert known["slice_state_cross_method_flow_truncated"] is None
 
 
 # === 2. 옵션 =====================================================================================
@@ -247,13 +254,14 @@ def test_with_the_option_on_each_signal_reaches_the_facts_and_the_event(tmp_path
     assert facts["slice_state"] == {
         "analysis_kind": "backward_ddg", "degraded": False, "truncated": True,
         "truncation_reasons": ["backward_depth", "backward_states"],
-        "boundary_reasons": ["entry_parameter"],
+        "boundary_reasons": ["entry_parameter"], **_NO_CAPS,
     }
     assert {k: v for k, v in event.items() if k.startswith("slice_state")} == {
         "slice_state_analysis_kind": "backward_ddg", "slice_state_degraded": False,
         "slice_state_truncated": True,
         "slice_state_truncation_reasons": "backward_depth,backward_states",
         "slice_state_boundary_reasons": "entry_parameter",
+        "slice_state_sinks_capped": None, "slice_state_cross_method_flow_truncated": None,
     }
 
 
@@ -264,7 +272,7 @@ def test_with_the_option_on_an_old_slice_says_unknown_not_false(tmp_path: Path) 
 
     assert facts["slice_state"] == {
         "analysis_kind": None, "degraded": None, "truncated": None,
-        "truncation_reasons": None, "boundary_reasons": None,
+        "truncation_reasons": None, "boundary_reasons": None, **_NO_CAPS,
     }
     assert event["slice_state_truncated"] is None
     assert event["slice_state_analysis_kind"] is None
@@ -297,7 +305,7 @@ def test_the_trace_event_for_the_off_run_is_json_with_no_slice_state_keys(tmp_pa
 
 
 def test_with_the_option_on_a_run_without_slices_adds_no_key(tmp_path: Path) -> None:
-    """슬라이스 없는 후보(`--slices` 없는 run)는 상태를 낼 근거가 없다 - 모르는 것을 `null` 다섯으로
+    """슬라이스 없는 후보(`--slices` 없는 run)는 상태를 낼 근거가 없다 - 모르는 것을 `null` 일곱으로
     채워 싣지 않고 키 자체가 없다(「안 줬다」와 「슬라이스가 모른다」는 다른 신호다)."""
     _, trace_path = _run(tmp_path, "noslice", configure=_slice_state_option(1))
 
@@ -336,6 +344,7 @@ def test_case_a_parameter_paths_records_neither_reasons_nor_boundaries(tmp_path:
     assert _loaded_state(tmp_path, item) == {
         "analysis_kind": "parameter_paths", "degraded": False, "truncated": True,
         "truncation_reasons": None, "boundary_reasons": None,
+        "sinks_capped": True, "cross_method_flow_truncated": None,
     }
 
 
@@ -358,11 +367,11 @@ def test_case_b_backward_ddg_records_both_and_empty_means_none(tmp_path: Path) -
 
     assert _loaded_state(tmp_path, clean) == {
         "analysis_kind": "backward_ddg", "degraded": False, "truncated": False,
-        "truncation_reasons": [], "boundary_reasons": [],
+        "truncation_reasons": [], "boundary_reasons": [], **_NO_CAPS,
     }
     assert _loaded_state(tmp_path, cut) == {
         "analysis_kind": "backward_ddg", "degraded": False, "truncated": True,
-        "truncation_reasons": ["call_depth"], "boundary_reasons": ["entry_parameter"],
+        "truncation_reasons": ["call_depth"], "boundary_reasons": ["entry_parameter"], **_NO_CAPS,
     }
 
 
@@ -380,7 +389,7 @@ def test_the_anchor_only_fallback_records_no_boundaries(tmp_path: Path) -> None:
 
     assert _loaded_state(tmp_path, item) == {
         "analysis_kind": "degraded_anchor_only", "degraded": True, "truncated": False,
-        "truncation_reasons": None, "boundary_reasons": None,
+        "truncation_reasons": None, "boundary_reasons": None, **_NO_CAPS,
     }
 
 
@@ -436,3 +445,139 @@ def test_a_merged_slice_records_a_key_when_any_member_wrote_it(tmp_path: Path) -
     state = _loaded_state(tmp_path, merged)
 
     assert (state["truncation_reasons"], state["boundary_reasons"]) == ([], [])
+
+
+def _cluster_member(sid: str, case: str, points: set, kind: str, analysis: dict) -> dict:
+    return _slice(
+        sid, case, points, _SOURCES, flow_count=None, truncated=False, analysis_kind=kind,
+        analysis=analysis,
+        line_provenance={"data_dependency": [], "context": [],
+                         "candidate_anchor": [list(p) for p in sorted(points)]},
+    )
+
+
+_BIG = {("main.c", n) for n in range(1, 8)}  # 대표(줄이 더 많다)
+_SMALL = {("main.c", 5), ("main.c", 6)}  # 대표에 흡수된다
+
+
+@pytest.mark.parametrize("order", ["big_first", "small_first"])
+def test_a_merged_slice_whose_representative_recorded_keeps_it_over_a_bare_member(
+    tmp_path: Path, order: str
+) -> None:
+    """위 핀의 반대 순서: **대표는 사유·경계를 적었고 흡수된 구성원은 안 적었다**(`backward_ddg`
+    대표가 `degraded_anchor_only`를 흡수하는 모양 - 후자는 `analysis`에 둘 다 없다). 구성원 중
+    하나라도 적었으면 적힌 것이라 `[]`·`[]`다. 마지막 구성원의 값만 읽으면 `null`이 돼 죽는다."""
+    big = _cluster_member("slice_0001", "B", _BIG, "backward_ddg", _backward())
+    small = _cluster_member(
+        "slice_0002", "B", _SMALL, "degraded_anchor_only",
+        {"lines": [], "flow_count": 0, "truncated": False, "degraded": True},
+    )
+    (merged,) = cluster([big, small] if order == "big_first" else [small, big], 0.95, _SOURCES)
+    assert "boundaries" in merged["analysis"], "대표가 적었다"
+    assert set(merged["member_analysis"]) == {"key_slice_0001", "key_slice_0002"}
+
+    state = _loaded_state(tmp_path, merged)
+
+    assert (state["truncation_reasons"], state["boundary_reasons"]) == ([], [])
+
+
+# === 6. 상한 둘: 슬라이서가 적은 종류만 true/false, 아니면 null ==================================
+
+
+@pytest.mark.parametrize("capped", [True, False])
+def test_case_a_reports_the_sink_cap_it_recorded_true_or_false(
+    tmp_path: Path, capped: bool
+) -> None:
+    """Case A flows 질의는 `sinks_capped`를 **늘** 적는다(`slicer_queries.py`) - 안 잘렸으면
+    `false`다. 잘렸는데 `truncated`가 `false`인 슬라이스가 모델에게 `truncated: false`만
+    보이던 구멍(리뷰 MEDIUM-1)을 닫는다. `cross_method_flow_truncated`는 이 종류가 안
+    적으니 `null`이다."""
+    queries = (_REPO / "tools/slicer/slicer_queries.py").read_text(encoding="utf-8")
+    assert '"sinks_capped" -> sinksCapped, "sinks_kept" -> sinks.size,' in queries
+    item = _slice(
+        "slice_0001", "A", {("main.c", 1)}, _SOURCES, truncated=False,
+        analysis_kind="parameter_paths",
+        analysis={"flow_count": 3, "truncated": False, "sinks_capped": capped,
+                  "sinks_kept": 2000 if capped else 12, "lines": [{"file": "main.c", "line": 1}]},
+    )
+
+    state = _loaded_state(tmp_path, item)
+
+    assert state["truncated"] is False, "흐름 수 상한에는 안 닿았다 - 그래서 별도 키가 필요하다"
+    assert state["sinks_capped"] is capped
+    assert state["cross_method_flow_truncated"] is None
+
+
+@pytest.mark.parametrize("capped", [True, False])
+def test_the_targeted_mode_reports_its_cross_method_cap_true_or_false(
+    tmp_path: Path, capped: bool
+) -> None:
+    """대상 지정 모드(`tools/slicer_v2`)는 `cross_method_flow_truncated`를 적는다. `sinks_capped`는
+    안 적는 종류라 `null`이다."""
+    targeted = (_REPO / "tools/slicer_v2/slicer_target.py").read_text(encoding="utf-8")
+    assert '"cross_method_flow_truncated" -> (crossEdges.size > crossEdgeLimit),' in targeted
+    item = _slice(
+        "slice_0001", "B", {("main.c", 1)}, _SOURCES, truncated=False,
+        analysis_kind="forward_ddg",
+        analysis=_backward(cross_method_flow=[], cross_method_flow_truncated=capped),
+    )
+
+    state = _loaded_state(tmp_path, item)
+
+    assert state["cross_method_flow_truncated"] is capped
+    assert state["sinks_capped"] is None
+
+
+def test_a_slice_that_records_neither_cap_reports_null_not_false(tmp_path: Path) -> None:
+    """키가 없는 분석(Case B 역추적 · 옛 슬라이스 · 대체 슬라이스)은 「안 잘렸다」가 아니라
+    모름이다 - 로더가 없는 불리언을 `False`로 채운다(`slices._flag`)는 사실이 새면 안 된다. 서 있는
+    신호는 적었는지와 무관하게 지우지 않는다(`SliceRef`를 직접 만든 순수 함수 쪽)."""
+    backward = _slice(
+        "slice_0001", "B", {("main.c", 1)}, _SOURCES, truncated=False,
+        analysis_kind="backward_ddg", analysis=_backward(),
+    )
+    old = _slice("slice_0002", "A", {("main.c", 1)}, _SOURCES)
+
+    for item in (backward, old):
+        state = _loaded_state(tmp_path, item)
+        assert (state["sinks_capped"], state["cross_method_flow_truncated"]) == (None, None)
+    standing = slice_state.facts(_ref(sinks_capped=True, cross_method_flow_truncated=True))
+    assert (standing["sinks_capped"], standing["cross_method_flow_truncated"]) == (True, True)
+
+
+@pytest.mark.parametrize(
+    ("key", "case", "kind", "extra"),
+    [
+        ("sinks_capped", "A", "parameter_paths", {"flow_count": 1, "truncated": False,
+                                                    "sinks_kept": 9, "lines": []}),
+        ("cross_method_flow_truncated", "B", "backward_ddg", _backward()),
+    ],
+)
+@pytest.mark.parametrize("order", ["big_first", "small_first"])
+@pytest.mark.parametrize(
+    ("big_value", "small_value", "expected"),
+    [
+        (None, False, False),   # 대표는 안 적고 흡수된 쪽이 적었다 - 적힌 것이다
+        (False, None, False),   # 대표가 적고 흡수된 쪽이 안 적었다 - 마지막 값만 읽으면 null이 된다
+        (None, True, True),
+        (True, None, True),
+        (True, False, True),    # OR
+        (None, None, None),     # 둘 다 안 적었다 - 모름
+    ],
+)
+def test_a_merged_slice_ors_each_cap_over_its_members_and_records_it_if_any_did(
+    tmp_path: Path, key: str, case: str, kind: str, extra: dict, order: str,
+    big_value: bool | None, small_value: bool | None, expected: bool | None,
+) -> None:
+    """합친 슬라이스의 `analysis`는 대표의 것이고 구성원별 분석은 `member_analysis`에 있다 - 상한도
+    `truncated`·사유·경계와 같은 길이다: 값은 구성원의 OR, 적었는지는 하나라도 적었으면 참."""
+    def member(sid: str, points: set, value: bool | None) -> dict:
+        analysis = {**extra, **({} if value is None else {key: value})}
+        return _cluster_member(sid, case, points, kind, analysis)
+
+    big = member("slice_0001", _BIG, big_value)
+    small = member("slice_0002", _SMALL, small_value)
+    (merged,) = cluster([big, small] if order == "big_first" else [small, big], 0.95, _SOURCES)
+    assert set(merged["member_analysis"]) == {"key_slice_0001", "key_slice_0002"}
+
+    assert _loaded_state(tmp_path, merged)[key] is expected

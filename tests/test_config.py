@@ -10,6 +10,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 """
 
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from src.config import (
     HarnessConfig,
     ModelEntry,
     ProfileEntry,
+    Thresholds,
     load_config,
 )
 from src.orchestrator.nodes import auditor as auditor_node
@@ -607,7 +609,8 @@ def test_the_canonical_auditor_selects_prompt_v17(profile: str) -> None:
     v14 + 계약 문장 여섯(`probe`가 `spec`을 `poc`에 싣는다 등 — `prompts/auditor/v15/meta.yaml`).
     봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
     바뀌었다(같은 규칙 1). ⏵ **v16**(2026-10-14 · S20 Phase 13) = v15 + 입력 맥락 함수 블록의 서술 -
-    새 옵션 `auditor_input_context`(`prompts/auditor/v16/meta.yaml`)를 켜 두려고 올렸다. 봉투·body는
+    새 옵션 `auditor_write_window_marker`·`auditor_input_context`
+    (`prompts/auditor/v16/meta.yaml`)를 켜 두려고 올렸다. 봉투·body는
     v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1). ⏵ **v17**(2026-10-14 · S20 Phase 14) =
     v16 + `FACTS.slice_state` 서술(이슈 #438 (b)) · 「배너 없으면 첫 블록 하나」 정정(이슈 #669) -
     새 옵션 `auditor_slice_state`(`prompts/auditor/v17/meta.yaml`)는 꺼 둔 채 선언한다. 봉투·body는
@@ -2802,6 +2805,37 @@ def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(pro
     assert not (set(config.thresholds.auditor_source_options_on()) & pending), (
         "끈 채 선언하는 예외는 꺼져 있을 때만 예외다 - 켜면 위 등식이 그대로 걸려야 한다"
     )
+
+
+@pytest.mark.parametrize("key", ["auditor_write_window_marker", "auditor_input_context"])
+def test_the_new_block_options_default_to_off_in_code(key: str) -> None:
+    """코드 기본은 0이다 - `budgets.yaml`이 켠다. 옵션을 전부 0으로 바꾼 뒤 0을 확인하는 것은
+    동어반복이라 필드 기본을 직접 본다(`Field(default=1)`로 바꾸면 죽는다)."""
+    assert Thresholds.model_fields[key].default == 0
+
+
+def test_the_write_window_marker_is_declared_from_v16_and_turned_on_with_it() -> None:
+    """#650 쓰기 창 생략 줄은 `auditor_write_window_marker` 뒤에 있고 **v16부터** 선언한다(prefix가
+    그 줄을 서술한다) - 서빙 판이 v17이고(v17은 v16의 선언을 이어받는다) `budgets.yaml`이 1이다.
+    v15 이하는 선언하지 않아 그 판과 함께 켜면 `cli`가 막는다."""
+    from src.cli import _undescribed_source_options
+
+    config = load_config("harness_pool")
+    assert config.model_for("auditor").prompt_template_version == "v17"
+    assert config.thresholds.auditor_write_window_marker == 1
+    assert "auditor_write_window_marker" in config.thresholds.flatten()
+    declaring = {
+        path.name
+        for path in (PROMPTS_DIR / "auditor").iterdir()
+        if path.is_dir()
+        and "auditor_write_window_marker" in load_prompt(Role.AUDITOR, path.name).source_options
+    }
+    assert {"v16", "v17"} <= declaring
+    assert all(int(re.match(r"v(\d+)", name).group(1)) >= 16 for name in declaring), declaring
+    older = config.model_key_for("auditor")
+    entry = config.models[older].transition(prompt_template_version="v15")
+    refused = config.transition(models={**config.models, older: entry})
+    assert "auditor_write_window_marker(auditor/v15)" in _undescribed_source_options(refused)
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:
