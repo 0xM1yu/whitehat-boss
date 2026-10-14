@@ -8,13 +8,14 @@ Critic v7·PoV v6 몫은 이 판이 안 고친다 - ⏵ 2026-10-15 후속 Critic
 묶는 것은 다섯이다.
 
 1. **v16은 한 글자도 안 바뀌었다** - prefix·body·meta의 sha256이 `origin/feat/p13-input-context`
-   (`4e3790a`)의 값이다(규칙 1).
+   (`ca902d2`)의 값이다(규칙 1).
 2. **v17 산문 = v16 + 이 편집들** - body는 바이트 동일이고 prefix는 `_EDITS`를 v16에 적용한
    결과와 바이트 동일이다. 편집은 두 군데다.
 3. **문장이 코드와 맞는다** - 정정한 문장은 러너가 실제로 내는 `SOURCE`(배너 없는 entry 함수 +
    끝 줄 표지)와 맞고, 새 항목이 부르는 키·사유 철자는 `slice_state.facts`와 슬라이서 소스에서 온다.
 4. **배선** - `_CONTENT_AWARE_VERSIONS` · meta · `config/models.yaml` · doctor · Fake.
-5. **meta가 옵션과 맞는다** - 선언 == 켜진 옵션 + 측정 대기로 끈 옵션(`auditor_slice_state`).
+5. **meta가 옵션과 맞는다** - 선언 == 켜진 옵션(표지 줄 · 입력 맥락 포함) + 측정 대기로 끈
+   옵션(`auditor_slice_state`).
 
 ⚠ 철자·구조 핀이다 - 모델이 `slice_state`를 판정에 쓰는지는 미측정이다.
 """
@@ -60,12 +61,12 @@ def _sha(data: bytes) -> str:
 
 # === 1. v16은 한 글자도 안 바뀌었다 ===============================================================
 
-# `origin/feat/p13-input-context` `4e3790a`의 `prompts/auditor/v16/*` sha256
+# `origin/feat/p13-input-context` `ca902d2`의 `prompts/auditor/v16/*` sha256
 # (`git show <ref>:<path> | sha256sum`).
 _V16_SHA = {
     "prefix.md": "b9e4106a21be8ae1bb763a3eec9adaa230cefdd056eab5af12ea609530ea4aa7",
     "body.md": "c4799594df6cc3e6d84658674e82bf357d9127479a27c255b93a5a093acb9584",
-    "meta.yaml": "efb0776cd25dc6973463f88940bc0c49e1568620e49ac27650ac1d9cf9fb05d4",
+    "meta.yaml": "e94398868e83fd7ce6af5d00d4de872c8baf60e5ddcfbde1dde910bd4ec5c3fb",
 }
 
 
@@ -78,7 +79,7 @@ def test_v16_is_byte_identical_to_the_branch_it_was_cut_from(name: str) -> None:
 
 # 기록된 sha - v17도 불변 기록이다. 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 _V17_SHA = {
-    "prefix.md": "e7326fae6e995f691a81ef1840607a8125a1f6222e4791db6e8ef8d2bcc4fb61",
+    "prefix.md": "8905905f4ab2fd1b744eb63696f613be0855eab2b83f74f11c5ea58ca465162a",
     "body.md": _V16_SHA["body.md"],
 }
 
@@ -99,17 +100,29 @@ _NO_BANNER_NEW = (
     "lines located by text). `truncated: true` means the slicer cut its analysis at a limit; "
     "`truncation_reasons` names what cut it (for example `backward_depth`, `backward_states`, "
     "`call_depth`) and is `null` when the slicer records no reasons for that analysis, even if "
-    "`truncated` is true; `[]` means it recorded reasons and found none. `boundary_reasons` "
+    "`truncated` is true; `[]` means it recorded reasons and found none. `truncated: false` "
+    "only means no such limit was reached (for `parameter_paths`, the flow-count limit). The "
+    "slicer has other caps and only the two named below are reported here, so `false` or "
+    "`null` in `slice_state` does not show that no cap was hit. `sinks_capped: true` means a "
+    "`parameter_paths` analysis cut the set "
+    "of program-wide sinks it follows flows to at a cap (the candidate function's own sinks "
+    "are always kept), so flows to sinks beyond it are absent; "
+    "`cross_method_flow_truncated: true` means a targeted-mode analysis kept only a bounded "
+    "number of its cross-method flow edges. Each of the two is `true` or `false` only when the "
+    "slicer records it for that analysis, and `null` otherwise. `boundary_reasons` "
     "lists the distinct reasons for which a dependency trace stopped, for example "
     "`entry_parameter` (a function parameter was reached and the code property graph holds no "
     "call to that function — the graph did not link a caller; it does not show that no caller "
     "exists or that the value is unchecked), `external_or_unresolved_call` (a call the graph "
     "could not resolve to a function body) or `dependency_root` (no earlier dependency to "
-    "follow); the slicer may write other reasons, and it is `null` when the analysis records no "
-    "boundaries at all, which is not a finding. A `null` value means the slicer did not record "
+    "follow); the slicer may write other reasons, and it is `null` when the slicer does not "
+    "record boundaries for that analysis, which is not a finding; `[]` means it recorded them "
+    "and none were reached (a `degraded_lexical` fallback also records `[]`: it traced "
+    "nothing). A `null` value means the slicer did not record "
     "that fact for this slice: unknown, not `false`, not an empty list and not complete. When "
     "`FACTS.slice_state` is absent the harness did not report the slice state; absence is not "
-    "evidence that the slice is complete. A truncated or degraded slice may lack lines that "
+    "evidence that the slice is complete. A truncated or degraded slice, or one with "
+    "`sinks_capped` or `cross_method_flow_truncated` true, may lack lines that "
     "connect the input to the sink, and that gap is unobserved, not absent (Absence is not "
     "evidence).\n"
 )
@@ -221,6 +234,7 @@ def test_the_corrected_sentence_matches_the_source_when_every_write_window_drops
 
     unit, events, _, _ = _unit(
         _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=6, auditor_source_tokens=20,
+        auditor_write_window_marker=1,
         writes={"dst": [Location(file="w.c", symbol="init", line_start=41, line_end=41)]},
         field_writes={"len": [Location(file="w.c", symbol="setup", line_start=22, line_end=22)]},
     )
@@ -247,7 +261,10 @@ def test_the_corrected_sentence_still_holds_when_nothing_was_omitted() -> None:
     예외를 더한 것이지 규칙을 뒤집은 것이 아니다."""
     from tests.test_slice_targets import _WS_F, _WS_FILE, _WS_INIT, _WS_SETUP
 
-    unit, events, _, _ = _unit(_WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT], auditor_write_sites=0)
+    unit, events, _, _ = _unit(
+        _WS_FILE, [_WS_F, _WS_SETUP, _WS_INIT],
+        auditor_write_sites=0, auditor_write_window_marker=1,
+    )
     source, _ = _unit_run(unit, events, _WS_F, [("w.c", 2)])
 
     assert "/* =====" not in source and "more write windows" not in source
@@ -285,6 +302,10 @@ def test_the_spellings_the_bullet_uses_are_the_ones_the_slicer_writes() -> None:
     assert "`forward_ddg`" in bullet
     assert '"degraded_lexical"' in targeted and "`degraded_lexical`" in bullet
     assert "for example `parameter_paths`" in bullet, "값 집합이 닫혀 있다고 쓰지 않는다"
+    queries = (_REPO / "tools/slicer/slicer_queries.py").read_text(encoding="utf-8")
+    assert '"sinks_capped" ->' in queries and "`sinks_capped: true`" in bullet
+    assert '"cross_method_flow_truncated" ->' in targeted
+    assert "`cross_method_flow_truncated: true`" in bullet
     for reason in ("backward_depth", "backward_states", "call_depth"):
         assert f'"{reason}"' in backward and f"`{reason}`" in bullet, reason
     for reason in ("entry_parameter", "external_or_unresolved_call", "dependency_root"):
@@ -306,7 +327,21 @@ def test_the_bullet_makes_no_claim_stronger_than_the_facts() -> None:
     assert "which is not a finding" in bullet
     assert "is `null` when the slicer records no reasons for that analysis, even if" in bullet
     assert "`[]` means it recorded reasons and found none" in bullet
-    assert "it is `null` when the analysis records no boundaries at all" in bullet
+    assert "it is `null` when the slicer does not record boundaries for that analysis" in bullet
+    assert "`[]` means it recorded them and none were reached" in bullet
+    assert "a `degraded_lexical` fallback also records `[]`: it traced nothing" in bullet
+    # `truncated: false`는 `truncated`를 켜는 상한에 안 닿았다는 뜻일 뿐이다(리뷰 MEDIUM-1:
+    # Case A 싱크 cap이 모델에게 `truncated: false`로 보이던 구멍).
+    assert "`truncated: false` only means no such limit was reached" in bullet
+    # 리뷰 라운드 2: 「제 키가 말한다」는 완전하다는 뜻으로 읽혔다 - Case B 싱크 후보 사전
+    # 절단(`CASE_B_*_CAP`)과 대상 지정 시작 노드 동점 절단(`tied_truncated`)은 안 실린다.
+    assert "only the two named below are reported here" in bullet
+    assert "`false` or `null` in `slice_state` does not show that no cap was hit" in bullet
+    assert "other caps are reported by their own keys" not in bullet
+    assert (
+        "or one with `sinks_capped` or `cross_method_flow_truncated` true, may lack lines" in bullet
+    )
+    assert "`true` or `false` only when the slicer records it for that analysis" in bullet
     assert "the slicer may write other reasons" in bullet
     assert "that gap is unobserved, not absent" in bullet
     for stronger in ("no caller exists." , "is safe", "is unreachable", "proves"):
@@ -379,7 +414,9 @@ def test_turning_the_option_on_is_blocked_before_v17_and_allowed_on_it() -> None
         "auditor_slice_state(auditor/v16)"
     ]
     assert cli._undescribed_source_options(with_version("v15")) == [
-        "auditor_input_context(auditor/v15)", "auditor_slice_state(auditor/v15)",
+        "auditor_write_window_marker(auditor/v15)",
+        "auditor_input_context(auditor/v15)",
+        "auditor_slice_state(auditor/v15)",
     ]
 
 

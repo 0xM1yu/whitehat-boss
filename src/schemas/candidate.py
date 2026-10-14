@@ -174,7 +174,8 @@ class SliceRef(HarnessModel):
     # 기본 `{}`는 provenance 없는 입력(옛 슬라이스·degraded 빈 범주)이고, 그럴 땐 거리순만 남는다.
     provenance: dict[str, tuple[tuple[str, int], ...]] = Field(default_factory=dict)
     # 슬라이서의 분석 사실 — slice-v2 `analysis_kind`·`truncated`·`analysis.truncation_reasons`·
-    # `analysis.sinks_capped`·`analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
+    # `analysis.sinks_capped`·`analysis.cross_method_flow_truncated`·
+    # `analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
     # 버렸다** — 그러면 하류가 「이 슬라이스는 잘렸다·역추적이 호출 간선 없는 파라미터에 닿았다」를
     # 못 안다(`orchestrator/source_gate.py`가 읽고 ⏵ 2026-10-14 `orchestrator/slice_state.py`도 같은
     # 필드를 읽는다 — 둘째 소비자, 이슈 #438 (b)). 기본값은 옛 슬라이스(키가 없다)의 것이라
@@ -198,12 +199,19 @@ class SliceRef(HarnessModel):
     boundaries: tuple[tuple[str, str, int], ...] = ()
     # 위 `truncated` · `truncation_reasons` · `boundaries`를 슬라이서가 **실제로 적었나**(이슈
     # #438 (b)). 빈 값(`False` · `()`)만으로는 「적었는데 비었다」와 「그 키를 안 적는다」가 안
-    # 갈린다 — Case A `parameter_paths`는 사유·경계를 안 적고 `degraded_anchor_only`는 경계를 안
-    # 적는다. 기본 `False`는 모름이다. 읽는 곳은 `orchestrator/slice_state.py`(Auditor FACTS ·
+    # 갈린다 — Case A `parameter_paths`와 `degraded_anchor_only`는 사유·경계를 둘 다 안 적는다.
+    # 기본 `False`는 모름이다. 읽는 곳은 `orchestrator/slice_state.py`(Auditor FACTS ·
     # `auditor_slice_state`)다 - 사후 관측 `source_gate`는 안 읽는다(빈 값을 사유 없음으로 둔다).
     truncated_recorded: bool = False
     truncation_reasons_recorded: bool = False
     boundaries_recorded: bool = False
+    # 슬라이서의 상한 둘을 **적었나**와 값(같은 규약). `sinks_capped`(위)는 Case A flows 질의만
+    # 적는다. `cross_method_flow_truncated`는 대상 지정 모드(`tools/slicer_v2`)만 적는다 — 교차
+    # 메서드 간선을 `CROSS_EDGE_LIMIT`개에서 잘랐다는 뜻이고 `truncated`·`truncation_reasons`와
+    # 별개다. 합친 슬라이스는 구성원 전부에서 OR로 모은다. 기본 `False`는 모름이다.
+    sinks_capped_recorded: bool = False
+    cross_method_flow_truncated: bool = False
+    cross_method_flow_truncated_recorded: bool = False
     # 슬라이서의 `analysis.input_context` - 입력 디코더로 보이는 함수의 **이름**(소스는 안 싣는다).
     # `None`은 키가 없다(`--index` 없이 돈 슬라이스·옛 슬라이스)이고 `none_selected`와 다르다. 읽는
     # 곳은 `auditor_input_context`가 켜진 run의 `runner._auditor_source` 하나다.
