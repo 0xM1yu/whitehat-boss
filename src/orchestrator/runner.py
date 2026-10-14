@@ -4585,8 +4585,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
     범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
     — `write_windows`·`write_windows_dropped`가 따로 센다. 상한에 걸려 안 읽은 창과 크기 상한에 못
-    붙인 창이 있으면 SOURCE 끝에 `_WRITE_WINDOWS_MORE` 한 줄을 달고 그 수를
-    `write_windows_omitted`가 든다(#650) — 안 읽은 지점 중 이미 실린 범위 안의 것은 안 센다.
+    붙인 창이 있으면 그 수를 trace `write_windows_omitted`가 든다(#650). 세는 대상은 **SOURCE에
+    실제로 든 범위(`shown`) 밖의 지점**이다 — 크기 상한에 걸려 못 실은 함수·창 안의 지점도 센다
+    (`seen`에는 들어 있어도 모델은 못 본다). `auditor_write_window_marker`가 1이면 그 수를 SOURCE 끝
+    `_WRITE_WINDOWS_MORE` 한 줄로도 단다(0이면 줄이 없고 SOURCE는 이 옵션 전과 바이트 동일).
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
@@ -4645,6 +4647,10 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
+    # 실제로 `SOURCE`에 **실린** 범위 — `seen`은 상한에 걸려 못 실은 범위도 들지만 이것은 블록을
+    # 붙인 자리에서만 는다. 줄인 entry 함수·줄인 enum은 일부만 보이므로 안 든다. 읽는 곳은 쓰기 창
+    # 생략 수(`write_windows_omitted`)의 「이미 보이나」 하나다.
+    shown = [] if omitted else [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         seen.append(symbol)
         text = ctx.read_source(symbol)
@@ -4653,6 +4659,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             dropped += 1
             continue
         blocks.append(block)
+        shown.append(symbol)
         bodies.append((symbol, text))
         carried.append(symbol)
         size += 1 + measure(block)
@@ -4696,8 +4703,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             return False
         names = [*cut.names, name]
         trimmed = _trim_enum(cut.text, names)
-        shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일 이름의 낱말은 정의가 아니다
-        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", shown):
+        body_shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일명 낱말은 정의가 아니다
+        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", body_shown):
             cut.settled.add(name)
             return False
         block = _block(definition, trimmed, end=cut.end) if trimmed is not None else None
@@ -4739,6 +4746,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         blocks.append(block)
         size += 1 + measure(block)
         definitions += 1
+        if not is_trimmed:
+            shown.append(definition)
         if is_trimmed:  # 실린 것만 센다 — 줄여 놓고 상한에 걸려 못 실은 enum은 위에서 dropped다
             definitions_trimmed += 1
             trimmed_enums[key] = _TrimmedEnum(text, end, [definition.symbol or ""], len(blocks) - 1)
@@ -4800,6 +4809,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callees_dropped += 1
                 return False
             blocks.append(block)
+            shown.append(callee)
             size += 1 + measure(block)
             callees += 1
             return True
@@ -4869,6 +4879,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callers_dropped += 1
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             callers += 1
     # 쓰기 지점 창(C5(a) — #304)은 호출자 창 **뒤**다 — 앞이면 쓰기 창이 먼저 `seen`에 들어가 그와
@@ -4876,56 +4887,61 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # 범위와 겹치는 쓰기 창은 쓰는 줄 쪽 남은 조각으로 자르고, 쓰는 줄 자체가 실려 있으면 안 붙인다
     # (읽는 지점 수 상한도 안 먹는다).
     write_sites = ctx.config.thresholds.auditor_write_sites
-    write_windows = write_windows_dropped = write_sites_found = write_windows_omitted = 0
+    write_windows = write_windows_dropped = write_sites_found = 0
+    # 모델이 못 보는 쓰기 창(#650) — 상한에 안 읽은 것 · 크기 상한에 못 붙인 것 · `seen`에는 들지만
+    # `shown`에는 없는 범위(크기 상한에 못 실은 함수·창) 안의 지점. 겹치면 하나로 센다.
+    # `write_sites_found - write_windows`가 아니다 — 찾은 수는 실린 코드 안의 지점도 센다. 줄인
+    # entry 함수는 `shown`에 없지만 보이는 쪽 줄에 있는 지점을 숨은 것으로 세지 않게 따로 뺀다.
+    hidden: list[Location] = []
+
+    def hide(site: Location) -> None:
+        cut = _clip_around(
+            _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1,
+            [*shown, *([anchor] if omitted else []), *hidden],
+        )
+        if cut is not None:
+            hidden.append(cut)
+
     if write_sites:
         sites = _write_sites(ctx, ref, carried, anchor.file)
         write_sites_found = len(sites)
         tried = 0
         for at, site in enumerate(sites):
             if tried == write_sites:
-                # 상한에 걸려 안 읽은 지점. `write_sites_found - write_windows`가 아니다 — 찾은 수는
-                # 이미 실린 코드 안의 지점도 센다. 위 루프와 같은 `_clip_around`로 잘렸다면(= 읽혀
-                # 창이 됐을 지점 — 크기 상한에 또 떨어졌을 수는 있다) 센다.
-                # `probe`가 `seen`의 복사본이라 원본은 안 바뀐다 — 이미 실린 범위·앞서 센 창
-                # 안의 지점은 뺀다.
-                probe = list(seen)
                 for rest in sites[at:]:
-                    cut = _clip_around(
-                        _caller_window(ctx, rest, _AUDITOR_WRITE_LINES), rest.line_start or 1, probe
-                    )
-                    if cut is not None:
-                        probe.append(cut)
-                        write_windows_omitted += 1
+                    hide(rest)
                 break
             window = _clip_around(
                 _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1, seen
             )
             if window is None:
+                hide(site)
                 continue
             tried += 1
             seen.append(window)
             block = _block(window, ctx.read_source(window))
             if size + 1 + measure(block) > cap:
                 write_windows_dropped += 1
+                hidden.append(window)
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             write_windows += 1
-    # 못 실은 창은 SOURCE 끝에 줄로 남긴다 — 잘린 목록을 완전한 목록으로 읽히지 않게(#650). 꼴은
-    # 주석 한 줄이다(`_OMITTED`와 같은 `/* ... */` — 「+N more … 」 꼴은 `source_guards.py`의
-    # `_MORE_ROWS`(`... +N more rows omitted`)를 따랐고, 「not shown」 문구는 이 변경(#650)이
-    # 정했다). 상한에 걸린 창(`write_windows_omitted`)에 더해 글자·토큰 상한에 못 붙인 창
-    # (`write_windows_dropped`)도 센다 — 둘 다 모델은 못 본다. 줄 자체는 예산(`size`·`cap`)에는
-    # 안 들지만 이벤트의 `chars`(토큰 상한이면 `tokens`도)에는 든다 — 아래에서 `source`에
-    # 붙인 뒤 잰다.
-    # 여기서부터 `write_windows_omitted`는 합계다 — `write_windows_dropped`를 또 더하지 않는다.
-    write_windows_omitted += write_windows_dropped
+    # 못 실은 창은 `auditor_write_window_marker`가 1이면 SOURCE 끝에 줄로 남긴다 — 잘린 목록을
+    # 완전한 목록으로 읽히지 않게(#650). 꼴은 주석 한 줄이다(`_OMITTED`와 같은 `/* ... */` — 「+N
+    # more … 」 꼴은 `source_guards.py`의 `_MORE_ROWS`(`... +N more rows omitted`)를 따랐고, 「not
+    # shown」 문구는 이 변경(#650)이 정했다). 상한에 안 읽은 창과 글자·토큰 상한에 못 붙인 창
+    # (`write_windows_dropped`)과 못 실은 함수 안의 지점을 다 센다 - 전부 모델은 못 본다. 줄 자체는
+    # 예산(`size`·`cap`)에는 안 들지만 이벤트의 `chars`(토큰 상한이면 `tokens`도)에는 든다 —
+    # 아래에서 `source`에 붙인 뒤 잰다. 옵션이 0이면 줄을 안 달아도 수는 trace에 남는다.
+    write_windows_omitted = len(hidden)
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
     blocks[1:1] = guard_blocks
     source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
-    if write_windows_omitted:
+    if write_windows_omitted and ctx.config.thresholds.auditor_write_window_marker:
         source += "\n" + _WRITE_WINDOWS_MORE.format(write_windows_omitted)
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
