@@ -352,19 +352,27 @@ def test_the_cut_marker_is_not_in_the_rendered_prompt(role: Role, source: Path) 
 # --- 영속·전이 -----------------------------------------------------------------------------
 
 
-def test_the_marker_survives_the_store_and_transition(tmp_path: Path, source: Path) -> None:
-    capsule = _retriever("fake", source).search(_query(_TARGET_TOKENS), CapsuleLevel.LIGHT)
-    deps = build_deps(
-        load_config("dev_fake"),
-        run_id=RUN_ID,
-        source_root=source,
-        artifacts_root=tmp_path / "a",
-    )
+def test_the_marker_survives_the_sqlite_store_and_transition(
+    tmp_path: Path, source: Path
+) -> None:
+    """서빙 프로필은 sqlite를 쓴다 - `InMemoryStateStore`는 객체 참조를 들어 직렬화를 안 거친다.
+    put -> 닫기 -> 다시 열기로 JSON 왕복을 태우고, 비어 있지 않은 표지와 `None`이 각각 그대로 온다.
+    """
+    cut = _retriever("fake", source).search(_query(_TARGET_TOKENS), CapsuleLevel.LIGHT)
+    assert cut.cuts is not None and cut.cuts.any_cut, "픽스처 전제 - 잘린 캡슐"
+    bare = cut.transition(cuts=None)
 
-    deps.store.put(capsule)
+    for name, capsule in (("cut", cut), ("bare", bare)):
+        path = tmp_path / f"{name}.db"
+        with SqliteStateStore(path) as first:
+            first.put(capsule)
+        with SqliteStateStore(path) as second:
+            loaded = second.get("capsule", capsule.capsule_id)
+        assert isinstance(loaded, ContextCapsule)
+        assert loaded.cuts == capsule.cuts, name
+        assert loaded == capsule, name
 
-    assert deps.store.get("capsule", capsule.capsule_id) == capsule
-    assert capsule.transition(budget_tokens=capsule.budget_tokens + 1).cuts == capsule.cuts
+    assert cut.transition(budget_tokens=cut.budget_tokens + 1).cuts == cut.cuts
 
 
 def test_a_state_db_of_the_version_before_the_field_is_refused_naming_the_change(
