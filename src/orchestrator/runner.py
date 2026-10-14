@@ -2041,6 +2041,9 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     # 꼬리에 *"output one complete ScoutResponse JSON"*이 붙는다. FACTS는 body.md가 *"참조 가능한
     # 사실 전부"*라 선언하는 블록이라, 거기에 **다른 역할의 지시**가 실리면 PoV가 그것을 사실로
     # 읽는다(적대적 리뷰 2026-10-02 H-1). 그래서 위치만 받고 **원문은 직접 읽는다.**
+    # ⏵ 2026-10-15 — 그 「전부」 선언은 PoV v2~v6 body의 것이다. PoV v7 body는 「JSON의 Finding
+    # 데이터는 `finding_id`뿐」이라 적고 「전부」라 하지 않는다(`prompts/pov/v7/body.md`). 지시를
+    # FACTS에 안 싣는 이유는 v7에서도 같다 - FACTS는 입력 사실 JSON이다.
     lines = sorted(block.lines)
     lo, hi = lines[0], lines[-1]
     try:

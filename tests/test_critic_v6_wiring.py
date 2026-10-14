@@ -1,6 +1,7 @@
 """Critic v6·v7의 실제 배선과 공유 SOURCE 계약 — 모델 판정 품질은 재지 않는다.
 
-서빙 판은 v7이다(2026-10-14). 파일 이름은 v6 배선(#497) 때의 것이다."""
+서빙 판은 v8이다(2026-10-14 v7 → 같은 날 v8 · `tests/test_critic_v8.py`).
+파일 이름은 v6 배선(#497) 때의 것이다."""
 
 import hashlib
 from pathlib import Path

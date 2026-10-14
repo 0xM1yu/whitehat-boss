@@ -184,6 +184,10 @@ def test_the_finding_prose_is_outside_facts_and_facts_carries_only_the_finding_i
     prose, facts = _split_facts(prompt.body)
 
     assert finding.title in prose
+    # v7 body는 「CWE는 Vulnerability 절에만 있다」고 적는다 - 머리줄에서 CWE를 빼는 변이를
+    # 문다(리뷰 #676 LOW).
+    assert f"CWE: {pov._cwe_label(finding)}" in prose
+    assert "cwe" not in facts and "cwe" not in json.dumps(facts, ensure_ascii=False).lower()
     assert finding.path, "경로가 없는 Finding으론 이 핀이 의미가 없다"
     assert all(step.symbol in prose for step in finding.path)
     assert facts["ids"] == {"finding_id": finding.finding_id}
