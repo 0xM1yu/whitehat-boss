@@ -305,7 +305,7 @@ def test_the_trace_event_for_the_off_run_is_json_with_no_slice_state_keys(tmp_pa
 
 
 def test_with_the_option_on_a_run_without_slices_adds_no_key(tmp_path: Path) -> None:
-    """슬라이스 없는 후보(`--slices` 없는 run)는 상태를 낼 근거가 없다 - 모르는 것을 `null` 다섯으로
+    """슬라이스 없는 후보(`--slices` 없는 run)는 상태를 낼 근거가 없다 - 모르는 것을 `null` 일곱으로
     채워 싣지 않고 키 자체가 없다(「안 줬다」와 「슬라이스가 모른다」는 다른 신호다)."""
     _, trace_path = _run(tmp_path, "noslice", configure=_slice_state_option(1))
 
