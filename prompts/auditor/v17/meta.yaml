@@ -1,7 +1,7 @@
 # 도구 루프 판. 배선 조건은 v12·v14·v15·v16과 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
 # `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
 #
-# v17 = v16 + **두 군데**(S20 Phase 14 · 이슈 #438 (b) · #669의 Auditor 몫). body·봉투·도구·다른 옵션 아홉은 v16과 같다.
+# v17 = v16 + **두 군데**(S20 Phase 14 · 이슈 #438 (b) · #669의 Auditor 몫). body·봉투·도구·다른 옵션 열(표지 줄 `auditor_write_window_marker` · 입력 맥락 `auditor_input_context` 포함)은 v16과 같다.
 # - body는 v16과 바이트 동일이다. prefix는 아래 **두 군데**만 v16과 다르다(`tests/test_auditor_v17.py`가 묶는다).
 #   1. 「Original-source input contract」의 마지막 항목 정정: v16은 「배너가 없으면 `SOURCE`는 첫 블록 하나」라고 했는데, 쓰기 지점
 #      창이 전부 못 실리면(크기 상한 · 개수 상한) `SOURCE`는 배너 없는 entry 함수 **+ 끝 줄 표지**
@@ -10,7 +10,7 @@
 #   2. 새 항목 `FACTS.slice_state`: 슬라이서가 슬라이스마다 쓴 정적 사실(`analysis_kind` · `degraded` · `truncated` +
 #      `truncation_reasons` · `boundary_reasons` · `sinks_capped` · `cross_method_flow_truncated`)이다. 모름(`null`)은 `false`가 아니고, 키가 없는 것도 완전하다는 증거가 아니다 —
 #      그 서술은 키가 없을 때도 참이라 옵션이 꺼진 run에서도 맞다. 키를 만드는 곳은 `orchestrator/slice_state.facts`다.
-# - source_options: v16의 아홉에 `auditor_slice_state`를 더한 열이다. 이 옵션은 `config/budgets.yaml`에서 **꺼져 있다** — 켜는 것은
+# - source_options: v16의 열(`auditor_write_window_marker` · `auditor_input_context` 포함)에 `auditor_slice_state`를 더한 열하나다. 이 옵션은 `config/budgets.yaml`에서 **꺼져 있다** — 켜는 것은
 #   측정 결정이다(D101의 닫히는 조건이 켠 run ↔ 끈 run 짝 비교를 요구한다). 같은 판이 둘을 다 서술해야 짝 비교가 같은 prefix에서
 #   선다(그래서 끈 채로 선언한다 — `tests/test_config.py`의 선언 == 켜진 옵션 검사는 이 하나만 예외로 둔다). v16 이하를 고르고
 #   켜면 `cli`의 run·doctor가 막는다(`_undescribed_source_options`).
@@ -27,6 +27,6 @@ role: auditor
 version: v17
 output_schema: AuditorProcedureProbeInputAction
 description: v16에 FACTS 슬라이스 상태(slice_state) 서술을 더하고 「배너가 없으면 SOURCE는 첫 블록 하나」 문장을 정정한 판입니다(쓰기 창이 전부 크기 상한에 떨어지면 배너 없는 entry 함수 뒤에 끝 줄 표지가 붙는다). slice_state의 모름은 null이고 false가 아니며, 키가 없는 것은 완전하다는 증거가 아니다. body·봉투·도구·다른 SOURCE 옵션은 v16과 같습니다.
-source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards, auditor_input_context, auditor_slice_state]
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards, auditor_write_window_marker, auditor_input_context, auditor_slice_state]
 tools: [semgrep, clang-tidy, build, asan, gdb, poc]
 facts_source: false

@@ -875,4 +875,4 @@ spec은 `{"sink": {...}, "source": {...} | null}`이고 각 끝은 `file`·`line
 `status: selected` ∧ `basis: cpg`일 때 `functions[]`의 **본문**을 쓰기 지점 창 뒤에 같은 상한(`auditor_source_tokens`)으로 붙인다
 (`src/orchestrator/source_input_context.py`). `basis: syntax`·`dispatches`·`carried_decoders`는 싣지 않고 `auditor_source` 이벤트의
 `input_context_*` 수에만 남는다. 슬라이서의 `identical_to_auditor_input`은 하네스가 **믿지 않는다** - 이미 실린 범위인지는 러너의
-`shown`(블록을 붙인 범위만 든다)이 가른다(함수 **전체**가 이미 `SOURCE`에 실린 범위 안일 때만 건너뛴다 - 창 조각과 일부만 겹치면 완전한 함수를 붙인다). 이 서술은 Auditor v16이 든다(`docs/agent-contracts.md` 「v15 → v16」).
+`shown`(블록을 붙인 범위만 든다)이 가른다(함수 **전체**가 이미 `SOURCE`에 실린 범위 안일 때만 건너뛴다 - 창 조각과 일부만 겹치면 완전한 함수를 붙인다). 이 서술은 Auditor v16과 v17(서빙 판)이 든다(`docs/agent-contracts.md` 「v15 → v16」).
