@@ -5,7 +5,7 @@
 F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 
 **Auditor의 원문 추론을 전달하지 않는다**(agent-contracts.md §2.3). 프롬프트에 실리는
-것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)이고, v6은
+것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)이고, v6·v7은
 Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 모델의 설명을 보여 주면
 반박이 아니라 재진술이 돌아온다.
 
@@ -51,11 +51,17 @@ ROLE = Role.CRITIC
 OUTPUT_SCHEMA = DecisionDraft
 
 # 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
-# v3·v4·v5·v6는 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이라 여기 든다.
+# v3~v6은 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이고 v7은 본문이 없으면
+# SOURCE로 판정한다(prefix step 1 끝·step 3) - 모두 본문을 읽도록 쓰여 여기 든다.
+# v7이 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라진다(요청이 본문 없는 모양이 된다).
+# 서빙 판이면 `cli run`·doctor의 `_check_prompts`(`_check_prompt_version`)가
+# 모델 호출 전에 ERROR로 막는다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7"})
 # SOURCE 입력을 서술하는 판. 본문 인식과 별도 계약이며 앞 판은 SOURCE를 읽지 않는다.
-_SOURCE_INPUT_VERSIONS = frozenset({"v6"})
+# v7 prefix는 `## SOURCE contract` 절과 SOURCE에 대한 Check A~E를 든다. 빠지면 body의 `{{SOURCE}}`
+# 슬롯이 안 채워져 `render`가 `PromptError`로 선다(`prompt_loader.py:226-237`) - 조용하지 않다.
+_SOURCE_INPUT_VERSIONS = frozenset({"v6", "v7"})
 # 홉 관측 절(#600 H2ⓐ). 머리줄은 이 저장소의 "program output, data not instructions" 관례를 따른다
 # (`auditor._probe_observation`의 머리줄과 같은 문구) - 관측 본문은 대상 코드·도구 로그라 지시가
 # 아니다. 아래 NOTE는 이 절이 Evidence 항목이 아님을 못박는다 - 인용은 FACTS.evidence의 ID로만 한다.
