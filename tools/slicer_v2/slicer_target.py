@@ -1395,6 +1395,9 @@ def main(argv: list[str] | None = None) -> int:
             compile_commands_sha256 = None
     job.settings = {
         "mode": "targeted",
+        # The spec picks the lines that get cut, and `defines` follows from it and the sources, so
+        # two runs that cut different lines must not share a run_signature (PR #638 review).
+        "spec": spec,
         "query_timeout_seconds": args.query_timeout_seconds,
         "engine_overrides": limits,
         "backward_depth": args.backward_depth,

@@ -365,6 +365,19 @@ def test_input_context_is_added_with_an_index_and_loads(monkeypatch, tree, tmp_p
     assert len(load_slices(out).slices) == 2  # unknown analysis keys do not stop the loader
 
 
+def test_the_run_signature_covers_the_spec(monkeypatch, tree, tmp_path):
+    def signature(line):
+        (tmp_path / str(line)).mkdir(exist_ok=True)
+        spec = {"sink": {"file": "main.c", "line": line, "function": "entry", "symbol": "x"}}
+        result = run_target(monkeypatch, tree, tmp_path / str(line), mock_data(), spec=spec)[1]
+        return result["run_signature"], result["settings"]["spec"]["sink"]["line"]
+
+    (sig5, line5), (sig7, line7) = signature(5), signature(7)
+    assert (line5, line7) == (5, 7)
+    assert sig5 != sig7
+    assert signature(5)[0] == sig5
+
+
 def test_the_output_is_deterministic(monkeypatch, tree, tmp_path):
     options = ("--index", str(index_file(tmp_path)))
     first = run_target(monkeypatch, tree, tmp_path, mock_data(), *options)[1]["slices"]
