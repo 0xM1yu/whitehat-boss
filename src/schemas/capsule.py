@@ -26,7 +26,8 @@ class CapsuleSection(HarnessModel):
     스키마는 계속 허용한다; 막는 것은 이 클래스의 일이 아니다.
 
     `items`는 **실제로 담은 개수**다. 예산에 안 들어간 항목은 세지 않으므로
-    `items=3`이 "전부 3건"인지 "여럿 중 3건"인지는 여기서 구별되지 않는다(#63).
+    `items=3`이 "전부 3건"인지 "여럿 중 3건"인지는 여기서 구별되지 않는다(#63) — 그 구별은
+    `ContextCapsule.cuts`(`CapsuleCuts`)가 든다(#663).
 
     ## `body`가 비어 있는 것과 내용이 없는 것은 다르다
 
@@ -84,6 +85,47 @@ class CapsuleSection(HarnessModel):
         return self
 
 
+class CapsuleCuts(HarnessModel):
+    """`search`(캡슐 최초 조립) 시점의 예산 절단 — **내용이 실제로 갈린 자리**만 센다 (#663).
+
+    캡슐만 봐서는 `items=k`가 잘린 값인지, 섹션이 왜 없는지 알 수 없었다. 채움률
+    (`used_tokens` 대 `budget_tokens`)도 못 쓴다 — 섹션이 통째로 빠지면 `used`가 예산 아래로
+    내려가 오히려 여유로워 보인다.
+
+    **세지 않는 것(함정):** `_sections_for`의 `min(cost, remaining)`는 본문이 없는 자리표시자의
+    토큰만 깎아 내용을 안 바꾼다. `retrieval_truncated`는 청크 개수 상한(`MAX_CHUNKS`) 절단이라
+    다른 질문이다. 확장(`expand`)이 붙인 것도 반영하지 않는다 — 최초 조립만이다.
+
+    **프롬프트에 실리지 않는다** — `build_facts`·`describe_sections`는 `sections`만 읽는다.
+    """
+
+    # 예산 break로 **만들지 못한** kind — break 지점의 kind와 `LEVEL_SECTIONS`에서 그 뒤 전부다.
+    # ⚠ **상한이다.** 뒤 kind 중에는 break가 없었어도 안 실렸을 것(인덱스 없음·선별 0건)이 섞일 수
+    # 있다 — break는 그 뒤를 시도하지 않으므로 하네스도 그것을 모른다.
+    dropped_sections: list[NonEmptyStr] = Field(default_factory=list)
+    # `graph_section`이 `stop=True`를 냈다 — 실을 항목은 있는데 한 줄도 예산에 안 들었다.
+    graph_stopped: bool = False
+    # 그래프 섹션에서 **못 담은 항목 수**(`len(names) - items`). 섹션이 일부만 담겼을 때와
+    # `graph_stopped`일 때(전부) 모두 센다. 인덱스가 없는 것(`None`)은 세지 않는다.
+    # ⚠ **하한이다** - 예산 break 뒤의 그래프 섹션은 시도하지 않아 그 항목은 안 세어진다
+    # (`dropped_sections`가 상한인 것과 짝이다).
+    graph_skipped: int = Field(default=0, ge=0)
+    # 리랭커가 선별했는데 `related`에 안 든 조각 수(`len(selected) - items`). 선별 **전**에 잘린
+    # 조각(`top_n`·`MAX_CHUNKS`)은 세지 않는다. 본문(코드)이 갈리는 자리는 이것과 `graph_skipped`
+    # 둘이다(그래프 섹션도 `body` 줄을 떨군다 - 이슈 #663 본문은 이쪽만 셌다). 그래프 stop 뒤에
+    # 통째로 빠진 섹션의 본문은 여기 안 세어지고 `dropped_sections`에만 남는다.
+    related_skipped: int = Field(default=0, ge=0)
+
+    @property
+    def any_cut(self) -> bool:
+        return bool(
+            self.dropped_sections
+            or self.graph_stopped
+            or self.graph_skipped
+            or self.related_skipped
+        )
+
+
 class ContextCapsule(HarnessModel):
     """대상 하나에 대응하는 최소 분석 문맥.
 
@@ -110,6 +152,14 @@ class ContextCapsule(HarnessModel):
     # engineering-guide.md §8.5는 임계값을 config에서 읽으라고 정한다. 상한 판정은
     # 오케스트레이터가 config를 보고 한다(초과 시 후보를 queued로).
     expansion_count: int = Field(default=0, ge=0)
+    # `search` 시점 예산 절단 표지 (#663). **`None`은 「기록 안 했다」**(이 필드가 생기기 전에
+    # 저장된 캡슐)이고 「안 잘렸다」는 `CapsuleCuts()`(빈 값)다 — 둘을 섞으면 안 쟀다가 안 잘렸다로
+    # 읽힌다(CLAUDE.md §0). 두 Retriever의 `search()`가 항상 채운다.
+    #
+    # ⚠ **뒤처진 쪽은 이 캡슐을 못 읽는다** — `extra="forbid"`라 이 키(`null`이어도)를 모르는 옛
+    # 코드의 `ContextCapsule`은 로드에서 죽는다. 반대(옛 데이터를 새 코드가 읽기)는 기본값
+    # `None`으로 산다.
+    cuts: CapsuleCuts | None = None
 
     @property
     def used_tokens(self) -> int:
