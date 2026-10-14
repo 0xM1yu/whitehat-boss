@@ -23,7 +23,7 @@ target-version = "py311"
 src = [".", "src", "tools/slicer", "tools/slicer_v2"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "W605"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
