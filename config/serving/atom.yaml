@@ -32,26 +32,12 @@
 command: [bash, tools/serve/swap.sh]
 
 servers:
-  # --- 4단계 Scout 쌍 — 같이 뜬다(한 번에 하나씩 기동). util 합 0.70 ≤ 0.80 ---
+  # --- 4단계 Scout — 서버 하나다 ---
   # KV는 계산값이다: util × 119.7 − (가중치+non-torch · 활성 — ATOM 실측) ÷ 토큰당 KV.
-  seccoderx-8b:
-    # 0.30 × 119.7 = 35.9 GiB − 16.05(가중치+non-torch, 2026-09-24 스모크) − 0.19(활성, 2026-09-21 `qwen3-8b` —
-    # 같은 구조) ≈ 19.7 GiB → 144 KiB/토큰(09-24 실측 7.69 GiB ÷ 55,952 토큰)이면 ≈143k 토큰 = 창의 3.5배.
-    # 가장 가까운 실측: 2026-09-28 util 0.20 · 창 40,960으로 떴다(정상 표본 스모크 메타).
-    # 준비 상한 400 s = 132 s(2026-09-24 스모크 「기동→서버 준비」, 창 16,384) × 3.
-    util: 0.30
-    max_num_seqs: 8
-    max_model_len: 40960
-    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
-    env: &vllm_env
-      VLLM_USE_DEEP_GEMM: "0"
-      VLLM_USE_FLASHINFER_SAMPLER: "0"
-      VLLM_HOST_IP: "127.0.0.1"
-      NCCL_SOCKET_IFNAME: lo
-      GLOO_SOCKET_IFNAME: lo
-    probe: chat
-    ready_timeout_s: 400
-
+  # ⏵ 2026-10-14 — `scout_boundary`가 `qwen3-14b`로 옮겨 쌍이 하나가 됐다(`seccoderx-8b`는 로스터에서
+  #   내려왔다 — PROJECT-CONTEXT.md §1). 그 전에는 util 합이 0.70(0.30 + 0.40) ≤ 0.80이었다.
+  #   남은 0.30은 어디에도 안 줬다 — 단독 기동의 KV를 다시 재지 않았다(CLAUDE.md §0).
+  #   앵커 `&vllm_env`를 선언하는 자리도 그 키에서 아래 `qwen3-14b`로 옮겼다.
   qwen3-14b:
     # 0.40 × 119.7 = 47.9 GiB − 28.27(가중치+non-torch, 09-24) − 0.80(활성 — 09-21 dense 24B의 값을 상한으로)
     # ≈ 18.8 GiB → 160 KiB/토큰(09-24 실측 7.37 GiB ÷ 48,256 토큰)이면 ≈123k 토큰 = 창의 3.0배.
@@ -61,7 +47,12 @@ servers:
     max_num_seqs: 8
     max_model_len: 40960
     extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
-    env: *vllm_env
+    env: &vllm_env
+      VLLM_USE_DEEP_GEMM: "0"
+      VLLM_USE_FLASHINFER_SAMPLER: "0"
+      VLLM_HOST_IP: "127.0.0.1"
+      NCCL_SOCKET_IFNAME: lo
+      GLOO_SOCKET_IFNAME: lo
     probe: chat
     ready_timeout_s: 550
 

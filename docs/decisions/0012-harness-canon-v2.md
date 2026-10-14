@@ -118,7 +118,8 @@
 - 새 키 `seccoderx-8b`·`deepseek-r1-distill-qwen-32b`·`qwen3.6-35b-a3b`는 `checksum`이 0이고(`config/models.yaml:664`·`:687`·`:715`) `source`에 `@rev`가 없다(`config/models.yaml:665`·`:688`·`:716`). `@rev`가 없으면 토크나이저 디렉터리를 못 정해 기본(글자수 근사) 카운터로 남는다(`src/adapters/tokenizer.py:119-122`). `gpt-oss-20b`·`qwen3-reranker-4b`는 두 칸이 다 있다(`config/models.yaml:512-513` · `:635-636`). `qwen3-14b`를 열면 같은 두 칸을 채워야 선다. (⏵ 2026-09-24 — `qwen3-14b`를 열었다(#266): `source`에 `@rev`가 있고 `checksum`은 0이다. `deepseek-r1-distill-qwen-32b`는 지웠다(#267). `seccoderx-8b`·`qwen3.6-35b-a3b`는 `checksum` 0 · `@rev` 없음 그대로다. ⏵ 2026-09-26 — `@rev`를 박았다: `seccoderx-8b@25d7f38…`·`qwen3.6-35b-a3b@995ad96…`(둘 다 [2026-09-24 스모크](../experiments/harness/2026-09-24-roster-smoke-atom.md)가 `--revision`으로 서빙한 리비전이고 HF 현재 main과 같다). 이제 `tokenizer_dir_from_source`가 스냅샷을 풀어 실 토크나이저 카운터로 뜬다(그 박스에 `tokenizer.json` 캐시·`tokenizers` 있으면 — 없으면 `file_absent`/`library_absent`로 사유가 남는다). `checksum`은 여전히 0이다.)
 - ⏵ 2026-09-26 — `qwen3.6-35b-a3b`는 registry에서 지웠다(Auditor가 `qwen3.8-27b`로 바뀌었다). 새 키는 `source`에 처음부터 `@rev`가 있고(`@1d4bf0f…`, 2026-09-26 Hugging Face 직접 판독) `checksum`만 0이다.
 - ~~Scout 좌석이 「교체 가능」인 것은 실험팀이 아직 고르는 중이라서다(결정 기한 2026-09-30).~~ → ⏵ 2026-09-24 — @danielcho02가 세 좌석을 확정했다(위 표). 그 실험도 원본 함수 입력이었다 — 결정 1의 두 번째 ⚠.
-- ⏵ **2026-09-25 — `scout_memory`가 다시 움직였다.** 실험팀 최종 권고로 `seccoderx-8b`에서 `qwen3-14b`로 확정(@danielcho02) — 파인튜닝 체크포인트가 오기 전까지 베이스 키. `scout_boundary`는 위 확정(`seccoderx-8b`) 그대로다. 정본은 PROJECT-CONTEXT.md §1.
+- ⏵ **2026-09-25 — `scout_memory`가 다시 움직였다.** 실험팀 최종 권고로 `seccoderx-8b`에서 `qwen3-14b`로 확정(@danielcho02) — 파인튜닝 체크포인트가 오기 전까지 베이스 키. `scout_boundary`는 그때 위 확정(`seccoderx-8b`) 그대로였다. 정본은 PROJECT-CONTEXT.md §1.
+- ⏵ **2026-10-14 — `scout_boundary`도 `qwen3-14b`로 옮겼다**(실험팀 프롬프트 개선 작업에서 정해진 교체). 세 좌석이 한 키이고 `seccoderx-8b`는 registry에서 지웠다. 위 표의 「2026-09-24 확정」 칸은 그 시점의 기록이다. 정본은 PROJECT-CONTEXT.md §1.
 - ⏵ **2026-09-26 — Auditor도 다시 움직였다.** @danielcho02 결정으로 `qwen3.6-35b-a3b`에서 `qwen3.8-27b`(dense 27.8B · GDN hybrid · VLM, bf16)로 바꾸고 추론(사고)을 켰다(`reasoning_effort: xhigh`). 근거는 벤더 모델 카드 주장뿐이다 `[출처주장]`(Qwen3.6-27B 대비 — 우리 35B-A3B와의 직접 비교 아님). 정본은 PROJECT-CONTEXT.md §1.
 
 ### 5. 저장소는 하네스 개발 전용이다 — 실험팀 실험의 원천은 팀 Notion
@@ -220,7 +221,7 @@
 | --- | --- | --- | --- | --- |
 | 1-b | Auditor 입력 표현 | @sumin0218 리뷰 | 2026-09-26 | (i) 원본 소스. ⏵ 2026-09-25 — 정해졌다: 넓은 (i) + 크기 상한(팀 합의 — 위 1-b) |
 | 3 | 3단계의 쓰임 | 팀(@sumin0218 리뷰) | 2026-09-26 대면 | resolver만 · `retriever: hybrid` 끔 |
-| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — @danielcho02가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) ⏵ 2026-09-25 — memory가 다시 바뀌었다: `qwen3-14b`·`seccoderx-8b`·`qwen3-14b`(memory·boundary·injection 순 — 실험팀 최종 권고, @danielcho02. PROJECT-CONTEXT.md §1) |
+| 4 | Scout 세 좌석 모델 | 실험팀 → PM | 2026-09-30 | registry 지금 값 — injection은 `qwen3-14b`를 연 뒤 그 키. ⏵ 2026-09-24 — @danielcho02가 확정했다: `seccoderx-8b`·`seccoderx-8b`·`qwen3-14b`(PROJECT-CONTEXT.md §1) ⏵ 2026-09-25 — memory가 다시 바뀌었다: `qwen3-14b`·`seccoderx-8b`·`qwen3-14b`(memory·boundary·injection 순 — 실험팀 최종 권고, @danielcho02. PROJECT-CONTEXT.md §1) ⏵ 2026-10-14 — boundary도 바뀌어 셋이 전부 `qwen3-14b`다(실험팀 프롬프트 개선 작업) |
 | 7 | Auditor SFT가 배울 것 | 팀 | 2026-10-04 전 | 벤치마크의 Auditor는 Finding 검증자다 |
 
 ## 대안

@@ -17,7 +17,9 @@
 # `tests/test_remote_swap.py`가 그 집합과 같은지 잠근다(행이나 포트가 바뀌면 그 테스트가 빨개진다).
 set -euo pipefail
 
-PORTS=(8000 8001 8002 8003 8006)
+# ⏵ 2026-10-14 — 한 칸씩 당겨졌다(그 전 8000 8001 8002 8003 8006). `scout_boundary`가 `qwen3-14b`로
+#   옮겨 Scout 서버가 둘에서 하나가 되었고 뒤 단계 포트가 전부 내려왔다 — PROJECT-CONTEXT.md §1.
+PORTS=(8000 8001 8002 8005)
 
 loop=0
 if [ $# -gt 1 ]; then

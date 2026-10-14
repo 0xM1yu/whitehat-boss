@@ -1,4 +1,6 @@
-# 배선됨(2026-10-07 — PR #524): qwen3-14b·seccoderx-8b가 함께 v4를 고른다(풀 세 자리가 한 버전).
+# 배선됨(2026-10-07 — PR #524): qwen3-14b·seccoderx-8b가 함께 v4를 골랐다(풀 세 자리가 한 버전).
+# ⏵ 2026-10-14 — 세 자리가 `qwen3-14b` 한 키다(PROJECT-CONTEXT.md §1). 「한 버전」은 그대로이고
+#   이제 엔트리 하나가 그것을 정한다 — 한 역할만 따로 올릴 수 없다(D67).
 # ⏵ 2026-10-13(#529): 노드는 SOURCE를 이 meta의 input 선언으로 고른다(nodes/scout.py) — input: source라
 # --slices run에서도 entry를 품는 함수 본문이 간다(슬라이스 렌더 아님). 트림은 안 돈다.
 # ⚠ 인덱스가 entry를 품는 함수를 모르면(프로토타입·전역·매크로 줄) 함수 본문이 아니라
@@ -8,8 +10,15 @@ version: v4
 output_schema: ScoutResponse
 input: source
 profile: boundary
-# ⚠ 이 좌석의 실측은 없다 — 실험은 v4의 원본(v9)을 qwen3-14b로 쟀다.
-model: seccoderx-8b
+# ⏵ 2026-10-14 — 좌석이 `seccoderx-8b`에서 `qwen3-14b`로 바뀌었다(실험팀 프롬프트 개선 작업의 결정 ·
+#   PROJECT-CONTEXT.md §1). ~~⚠ 이 좌석의 실측은 없다 — 실험은 v4의 원본(v9)을 qwen3-14b로 쟀다.~~
+#   그 어긋남(원본 실험의 키 ≠ 좌석의 키)은 사라졌다. ⚠ **그래도 이 좌석이 실측됐다는 말은 아니다** —
+#   원본 실험이 쟀던 것은 v4가 아니라 그 원본(실험 v9)이고 `qwen3-14b`의 checksum은 0이다(CLAUDE.md §0).
+# ⚠ 이 `model`은 서술이다 — 로더가 `META_KEYS`로 통과시키기만 하고 어느 코드도 읽지 않는다
+#   (`src/`·`tests/` 전수 0건). 좌석↔모델을 정하는 것은 `config/profiles.yaml`의 `roles`다.
+# ⚠ 이 줄들은 요청 바이트가 아니다 — `prompt_loader.render()`가 싣는 것은 `prefix.md`·`body.md`뿐이라
+#   v4를 새 버전으로 올리지 않는다(docs/agent-contracts.md §4 규칙 1).
+model: qwen3-14b
 description: 'scout 프롬프트 FP 실험 v9의 분석·신호 본문. 입력 서술(input: source — 대상 함수 본문, 줄번호 없음, 첫 줄 = FACTS.target.line_start, 캡슐·FACTS)과 출력 절(candidate 9키 먼저, FACTS 복사, claim 먼저)을 하네스 계약에 맞춤. 신호 2개(need_evidence 미사용).'
 cwe_scope:
 - CWE-119
