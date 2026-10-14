@@ -15,7 +15,8 @@ fix 다리는 후보가 0개면 0번 · 1개 이상이면 정확히 한 번 도�
 단계**가 찍힌다. 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
 여전히 거부다(`grade_unknown`).
 끝 절의 검사들이 그
-사슬과 **불변식**(지정 로직은 채점기가 돌려준 값을 안 읽는다)을 건다.
+사슬과 **불변식**(지정 로직이 읽는 채점기 값은 후보 자기 `vul` 응답 종료 코드 하나뿐이다 —
+⏵ 2026-10-14 이슈 #637, 앞 판은 하나도 안 읽었다)을 건다.
 
 ⚠ **위 `ctx` 문맥의 후보 N개는 근거가 없는 손수 만든 Finding이라 등급이 전부 E0이고 `confidence`도
 같다**(도구가 안 돈다) - 그래서 후보가 둘 이상이면 사슬이 ③까지 내려가 **바이트가 작은 쪽**이
@@ -30,6 +31,7 @@ CLI 전체를 돌려 본다 — 여기서 `ctx.oracle`을 직접 꽂는 검사�
 
 import argparse
 import hashlib
+import itertools
 from pathlib import Path
 
 import pytest
@@ -37,8 +39,8 @@ import pytest
 from src import cli
 from src.interfaces.model_client import ModelGatewayError
 from src.interfaces.oracle import OracleOutcome, VulSubmission
+from src.orchestrator import gate, runner
 from src.orchestrator import oracle_log as oracle_log_module
-from src.orchestrator import runner
 from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.oracle_log import OracleLedger, OracleLog, VulAttempt, vul_ok
 from src.orchestrator.stages import Stage
@@ -1729,8 +1731,8 @@ def test_there_is_no_tie_refusal_left_to_fall_back_on() -> None:
     key = runner._designation_key(
         _attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 1}
     )
-    assert len(runner._DESIGNATION_CHAIN) == len(key) == 5
-    assert runner._DESIGNATION_CHAIN[0] == "critic_verdict"
+    assert len(runner._DESIGNATION_CHAIN) == len(key) == 6
+    assert runner._DESIGNATION_CHAIN[:2] == ("vul_crash", "critic_verdict")
 
 
 def _trap(name: str):  # noqa: ANN202
@@ -1741,18 +1743,24 @@ def _trap(name: str):  # noqa: ANN202
 
 
 class _TrapSubmission:
-    """어떤 접근도 터지는 `submission` - **속성**(`.response_exit_code`)·`vars`·`__dict__`
-    (`__slots__`가 비어 `__dict__`가 없다)·`repr`·`str`·`format`·`==`·`hash`·`dir`가 전부
-    `AssertionError`다.
+    """`response_exit_code` **한 필드만** 읽히는 `submission` - 그 밖의 **속성**(`.poc_id`·
+    `.task_id`·`.cached`)·`vars`·`__dict__`(`__slots__`라 없다)·`repr`·`str`·`format`·`==`·
+    `hash`·`dir`는 전부 `AssertionError`다.
+
+    ⏵ 2026-10-14 - 지정 키의 첫 계단(`vul_crash`)이 그 필드를 읽도록 ADR 0013 결정 2가 개정됐다
+    (이슈 #637). 앞 판은 그 필드도 막았다. **열린 것은 그 한 필드뿐이다** - `cached`·`poc_id`로
+    고르는 변이는 여전히 빨개진다.
 
     타입은 `VulSubmission`이 아니지만 그 자리에 꽂힌다 - `VulAttempt`가 frozen dataclass라 런타임
     검증이 없다. ⚠ **못 무는 것:** `submission is not None`(후보 자격 `attempt.ok`)은 접근이
     아니라 허용한다. 그리고 `attempt`의 **다른 필드**(`poc`·`poc_sha256`·`wall_ms`)나 `grades`
     사전에 채점기 값이 섞이는 경로는 이 함정이 안 본다 - 앞의 둘은 하네스가 만든 값이고 뒤의
-    것은 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 러너 쪽에서 문다.
+    것은 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 러너 쪽에서 문다. 열린 한
+    필드를 **어떻게** 읽는지(`None`·환경 코드를 크래시로 세는 변이)는 아래
+    `test_an_exit_code_that_is_not_a_crash_never_ranks_as_one`이 문다.
     """
 
-    __slots__ = ()
+    __slots__ = ("response_exit_code",)
     __repr__ = _trap("repr")
     __str__ = _trap("str")
     __format__ = _trap("format")
@@ -1761,11 +1769,14 @@ class _TrapSubmission:
     __hash__ = _trap("hash")
     __dir__ = _trap("dir")
 
+    def __init__(self, response_exit_code: int | None) -> None:
+        self.response_exit_code = response_exit_code
+
     def __getattr__(self, name: str) -> object:
         raise AssertionError(f"지정 로직이 채점기가 돌려준 submission을 읽었다: .{name}")
 
 
-def _trap_attempt(finding_id: str) -> VulAttempt:
+def _trap_attempt(finding_id: str, code: int | None = 1) -> VulAttempt:
     """함정 `submission`을 든 후보. **해시는 `finding_id`에서 뽑는다** - 앞 판은 전부 같은
     `"0" * 64`라 접기(`poc_sha256`)가 모든 분기를 `sole_poc` 하나로 눌러 분기들이 뜻을
     잃는다.
@@ -1777,7 +1788,7 @@ def _trap_attempt(finding_id: str) -> VulAttempt:
         poc_bytes=len(body),
         wall_ms=1,
         poc=body,
-        submission=_TrapSubmission(),  # type: ignore[arg-type]
+        submission=_TrapSubmission(code),  # type: ignore[arg-type]
         designatable=True,
     )
 
@@ -1815,19 +1826,23 @@ _BRANCHES = [
 def test_designation_does_not_read_oracle_fields(
     ids, grades, winner, designation, reason  # noqa: ANN001
 ) -> None:
-    """🔴 **불변식** - 지정은 채점기가 돌려준 값을 안 읽는다. 이 저장소가 정한 규칙이다(저자의
-    금지 문장이 아니다 - `_designate_final` docstring).
+    """🔴 **불변식** - 지정은 채점기가 돌려준 값 중 **`response_exit_code` 한 필드만** 읽는다
+    (⏵ 2026-10-14 ADR 0013 결정 2 개정 · 이슈 #637 - 앞 판은 그 필드도 막았다). 이 저장소가 정한
+    규칙이다(저자의 금지 문장이 아니다 - `_designate_final` docstring).
 
-    그 값은 **지정 시점에 손에 있다** - `VulSubmission.response_exit_code`가 후보마다 장부 행에
-    실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
-    아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(속성·`vars`·`repr`·`==`
-    전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 ·
-    등급·confidence·판정 계단 미상 · 후보 하나) 돌린다.
+    나머지는 **지정 시점에 손에 있는데도** 안 읽는다 - `VulSubmission.poc_id`·`cached`가 후보마다
+    장부 행에 실려 있어서(`oracle_log._attempt_record`) 「없어서 안 읽는다」가 아니다. 그래서 문구가
+    아니라 **접근**을 문다: 후보의 `submission`이 `_TrapSubmission`이고(그 한 필드 말고는 속성·
+    `vars`·`repr`·`==` 전부 터진다) **분기마다**(유일 최상위 · 등급 동점 → 작은 바이트 ·
+    등급·confidence·판정 계단 미상 · 후보 하나) 돌린다. 함정의 코드는 전 후보가 같은
+    계단(크래시)이라
+    이 표의 기대값은 개정 전과 같다 - 계단이 갈리는 분기는 아래 `test_the_vul_tier_reads_only_…`.
 
-    **오염 테스트다** - 어느 분기에든 `attempt.submission.response_exit_code`를 보거나 `repr`로
-    고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인).
-    읽어도 되는 것은 `attempt.ok`(후보 자격)와 하네스 내부 등급뿐이다. 후보 0건(실패한 제출만)은
-    읽을 `submission`이 없어 이 함정이 못 문다 - 그 분기는 위 검사들이 문다.
+    **오염 테스트다** - 어느 분기에든 `attempt.submission.cached`·`.poc_id`를 보거나 `repr`로
+    고르는 한 줄을 넣으면 그 분기가 빨개진다(2026-10-04 스크래치 사본에서 변이 아홉으로 확인 —
+    그때는 `response_exit_code`도 그 아홉에 들었다). 읽어도 되는 것은 `attempt.ok`(후보 자격)와
+    하네스 내부 등급, 그리고 이제 그 한 필드다. 후보 0건(실패한 제출만)은 읽을 `submission`이 없어
+    이 함정이 못 문다 - 그 분기는 위 검사들이 문다.
     """
     attempts = [_trap_attempt(finding_id) for finding_id in ids]
 
@@ -1858,6 +1873,203 @@ def test_the_verdict_step_does_not_read_oracle_fields_either() -> None:
     assert (picked, designation, reason) == (attempts[1], "critic_verdict", None)
 
 
+# --- 지정 키의 첫 계단: 자기 `vul` 제출 응답 코드 (⏵ 2026-10-14 · 이슈 #637 · ADR 0013 결정 2) ---
+#
+# 크래시(0) < 모름(1) < 크래시 아님(2). 나머지 사슬은 개정 전 그대로다.
+
+# 크래시로 읽는 코드 / 모른다고 읽는 코드(환경 실패·`None`) / 크래시가 아니라고 읽는 코드.
+_CRASH_CODES = (1, 2, 77, 134, 139)
+_UNKNOWN_CODES = (None, 124, 125, 126, 127, 137, 255, 256, 300, -1)
+_NO_CRASH_CODES = (0, 71)
+
+
+def _coded(finding_id: str, poc: bytes, code: int | None) -> VulAttempt:
+    """제출 응답 코드가 `code`인 후보. `None`은 계약(`int`) 밖이지만 「코드가 없다」를 흉내 낸다 -
+    프레임이 형을 검사하지 않는다(`_TrapSubmission`과 같은 이유)."""
+    sub = VulSubmission(TASK_ID, "a" * 32, code)  # type: ignore[arg-type]
+    return vul_ok(finding_id, poc, sub, wall_ms=1, designatable=True)
+
+
+@pytest.mark.parametrize(
+    ("code", "tier"),
+    [
+        *[(c, oracle_log_module.VUL_TIER_CRASH) for c in _CRASH_CODES],
+        *[(c, oracle_log_module.VUL_TIER_UNKNOWN) for c in _UNKNOWN_CODES],
+        *[(c, oracle_log_module.VUL_TIER_NO_CRASH) for c in _NO_CRASH_CODES],
+    ],
+)
+def test_the_exit_code_tier_table(code: int | None, tier: int) -> None:
+    """계단 표 - 크래시 / 모름 / 크래시 아님. 139(SIGSEGV)·77은 대상이 낸 값이라 크래시고
+    124~127·137·255·255 초과·음수·`None`은 **크래시로 안 센다**(모름). 71(OOM)은 채점기의 제외
+    코드라 크래시 아님이다. 300은 제외 코드이기도 하고 255 초과이기도 한데 **환경 쪽이 이긴다** -
+    타임아웃은 「크래시가 안 났다」가 아니라 「끝까지 못 돌았다」다(§0). ⚠ 다만 서버가 300을
+    응답에서 0으로 덮으므로(#384) 이 행은 응답 경로로는 닿지 않는 방어 표다(어댑터 사본과
+    구간 전체를 맞추려 둔다)."""
+    assert oracle_log_module.vul_code_tier(code) == tier
+    assert oracle_log_module.VUL_TIER_CRASH < oracle_log_module.VUL_TIER_UNKNOWN
+    assert oracle_log_module.VUL_TIER_UNKNOWN < oracle_log_module.VUL_TIER_NO_CRASH
+
+
+def test_the_env_failure_codes_are_the_tool_adapters_and_cover_the_pov_node_set() -> None:
+    """오케스트레이터는 `src.adapters`를 못 읽어 환경 실패 코드를 `oracle_log`에 따로 든다 -
+    어댑터의 `_poc_is_harness_failure`와 **구간 전체에서** 같아야 한다(둘이 어긋나면 한쪽이 환경
+    코드를 크래시로 센다). PoV 노드의 `INFRA_FAILURE_EXITS`는 그 부분집합이다."""
+    from src.adapters.container_tools import _poc_is_harness_failure
+    from src.orchestrator.nodes.pov import INFRA_FAILURE_EXITS
+
+    unknown = oracle_log_module.VUL_TIER_UNKNOWN
+    for code in range(-300, 1100):
+        assert (oracle_log_module.vul_code_tier(code) == unknown) == _poc_is_harness_failure(
+            code
+        ), code
+    assert INFRA_FAILURE_EXITS <= oracle_log_module.ENV_FAILURE_VUL_EXIT_CODES
+
+
+def test_a_crashing_poc_beats_a_better_ranked_one_that_did_not_crash() -> None:
+    """🔴 이슈 #637. A(보류 · E1 · 0.1 · **크래시 139**) 대 B(uphold · E4 · 0.9 · **코드 0**) -
+    개정 전 키는 계단(⓪)이 먼저라 B를 냈다. 이제 첫 계단이 가르므로 A고, 근거는 `vul_crash`다.
+    넣는 순서를 뒤집어도 같다."""
+    crashed = _coded("f_crashed", b"\x01crashed", 139)
+    clean = _coded("f_clean", b"\x02clean\xfe", 0)
+    grades = {"f_crashed": EvidenceGrade.E1, "f_clean": EvidenceGrade.E4}
+    confidences = {"f_crashed": 0.1, "f_clean": 0.9}
+    ranks = {"f_crashed": 2, "f_clean": 0}  # 보류 · uphold
+
+    for order in ((crashed, clean), (clean, crashed)):
+        got = runner._designate_final(_ledger_of(*order), grades, confidences, ranks)
+        assert got == (crashed, "vul_crash", None)
+
+
+def test_the_vul_tier_reads_only_the_exit_code_field() -> None:
+    """계단이 **갈리는** 분기에서도 `response_exit_code` 말고는 `submission`을 안 연다 -
+    위 분기표는 전 후보가 같은 계단이라 이 분기를 못 문다. 다른 속성(`cached`·`poc_id`)에 손대는
+    변이는 함정이 터뜨린다."""
+    crashed = _trap_attempt("f_crashed", 139)
+    clean = _trap_attempt("f_clean", 0)
+    ids = ("f_crashed", "f_clean")
+
+    for order in ((crashed, clean), (clean, crashed)):
+        got = runner._designate_final(
+            _ledger_of(*order),
+            {"f_crashed": EvidenceGrade.E0, "f_clean": EvidenceGrade.E4},
+            _flat(*ids),
+            _uncritiqued(*ids),
+        )
+        assert got == (crashed, "vul_crash", None)
+
+
+@pytest.mark.parametrize("code", _UNKNOWN_CODES)
+def test_an_exit_code_that_is_not_a_crash_never_ranks_as_one(code: int | None) -> None:
+    """모름(환경 실패·`None`)은 크래시도 크래시 아님도 아니다 - **둘 사이**다(§0: 안 잰 값을 0으로
+    깔지 않는다).
+
+    ① 크래시 후보(E0 · 보류)가 모름 후보(E3 · 미경유 - 사슬만 보면 이쪽이 앞선다)를 이긴다 -
+       모름을 크래시로 세는 변이는 사슬로 내려가 모름 후보를 낸다.
+    ② 크래시가 없으면 모름 후보(E1 · 보류)가 크래시 아님 후보(E4 · uphold - 사슬만 보면 이쪽이
+       앞선다)를 이긴다 - 모름을 크래시 아님으로 세는 변이는 후자를 낸다.
+    """
+    crash = _coded("f_crash", b"\x01crash", 139)
+    unknown = _coded("f_unknown", b"\x02unknown\xfe", code)
+    clean = _coded("f_clean", b"\x03clean\xfd", 0)
+
+    grades = {
+        "f_crash": EvidenceGrade.E0,
+        "f_unknown": EvidenceGrade.E3,
+        "f_clean": EvidenceGrade.E4,
+    }
+    confidences = {"f_crash": 0.1, "f_unknown": 0.5, "f_clean": 0.9}
+    ranks = {"f_crash": 2, "f_unknown": 1, "f_clean": 0}
+    picked, designation, _ = runner._designate_final(
+        _ledger_of(clean, unknown, crash), grades, confidences, ranks
+    )
+    assert (picked, designation) == (crash, "vul_crash")
+
+    grades["f_unknown"], ranks["f_unknown"] = EvidenceGrade.E1, 2
+    picked, designation, _ = runner._designate_final(
+        _ledger_of(clean, unknown), grades, confidences, ranks
+    )
+    assert (picked, designation) == (unknown, "vul_crash")
+
+
+@pytest.mark.parametrize("code", (*_CRASH_CODES, *_NO_CRASH_CODES))
+def test_a_known_code_ranks_by_its_tier_only_not_by_its_value(code: int) -> None:
+    """같은 계단 안에서는 코드 값이 순위에 안 든다 - 139가 77을 이기는 식의 「큰 코드」 규칙이
+    아니다(`vul_crash`는 계단만 가른다). 같은 계단 둘(코드가 다르다)이 사슬로 내려가 더 높은
+    등급이 이긴다."""
+    tier = oracle_log_module.vul_code_tier(code)
+    twins = [c for c in (*_CRASH_CODES, *_NO_CRASH_CODES) if c != code and
+             oracle_log_module.vul_code_tier(c) == tier]  # fmt: skip
+    for twin in twins:
+        weak = _coded("f_weak", b"\x01weak", code)
+        strong = _coded("f_strong", b"\x02strong\xfe", twin)
+        grades = {"f_weak": EvidenceGrade.E2, "f_strong": EvidenceGrade.E4}
+        got = runner._designate_final(
+            _ledger_of(weak, strong), grades, _flat(*grades), _uncritiqued(*grades)
+        )
+        assert got == (strong, "top_grade", None), (code, twin)
+
+
+def _chain_before_637(attempt: VulAttempt, grades, confidences, ranks) -> tuple:  # noqa: ANN001
+    """이슈 #637 이전의 `_designation_key` - 손으로 옮긴 사본이다(기준선)."""
+    return (
+        ranks[attempt.finding_id],
+        -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
+        -confidences[attempt.finding_id],
+        attempt.poc_bytes,
+        attempt.poc_sha256,
+    )
+
+
+@pytest.mark.parametrize("code", (*_CRASH_CODES, *_NO_CRASH_CODES, *_UNKNOWN_CODES))
+def test_when_every_candidate_shares_a_tier_the_old_chain_decides_exactly(
+    code: int | None,
+) -> None:
+    """한 계단 안에서는 선택이 **개정 전과 같다** - 어느 계단이든(코드가 전부 같다). 기대값은 옛 키
+    사본으로 센다(`_chain_before_637`). 지정 근거도 첫 계단 이름(`vul_crash`)이 아니다."""
+    specs = [  # (finding_id, 계단, 등급, confidence, 바이트)
+        ("f_a", 2, EvidenceGrade.E3, 0.9, b"\x01aaaa"),
+        ("f_b", 0, EvidenceGrade.E2, 0.4, b"\x02bb"),
+        ("f_c", 0, EvidenceGrade.E4, 0.2, b"\x03cccccc"),
+        ("f_d", 1, EvidenceGrade.E4, 0.9, b"\x04d"),
+    ]
+    attempts = [_coded(fid, poc, code) for fid, _, _, _, poc in specs]
+    ranks = {fid: rank for fid, rank, _, _, _ in specs}
+    grades = {fid: grade for fid, _, grade, _, _ in specs}
+    confidences = {fid: conf for fid, _, _, conf, _ in specs}
+    expected = min(attempts, key=lambda a: _chain_before_637(a, grades, confidences, ranks))
+
+    picked, designation, reason = runner._designate_final(
+        _ledger_of(*attempts), grades, confidences, ranks
+    )
+
+    assert picked is expected and reason is None
+    assert designation in {"critic_verdict", "top_grade", "top_confidence", "smallest_poc"}
+
+
+def test_the_designation_does_not_follow_the_input_order_across_tiers() -> None:
+    """계단이 섞인 넷을 **모든 순서로** 넣어도 같은 PoC·같은 근거가 나온다 - 자리(처음·마지막)로
+    고르는 구현과 `sorted`의 안정성에 기대는 구현이 여기서 빨개진다."""
+    attempts = [
+        _coded("f_a", b"\x01a", 0),
+        _coded("f_b", b"\x02bb", 137),
+        _coded("f_c", b"\x03ccc", 139),
+        _coded("f_d", b"\x04dddd", 77),
+    ]
+    ids = tuple(a.finding_id for a in attempts)
+    grades = {"f_a": EvidenceGrade.E4, "f_b": EvidenceGrade.E3,
+              "f_c": EvidenceGrade.E1, "f_d": EvidenceGrade.E1}  # fmt: skip
+    confidences = {"f_a": 0.9, "f_b": 0.8, "f_c": 0.3, "f_d": 0.6}
+
+    results = {
+        runner._designate_final(_ledger_of(*order), grades, confidences, _uncritiqued(*ids))[:2]
+        for order in itertools.permutations(attempts)
+    }
+
+    # 크래시 둘(f_c·f_d)이 앞서고, 그 안은 `confidence`가 가른다(f_d 0.6 > f_c 0.3) - 근거는
+    # 지정한 것과 **차점**을 가른 단계다(`top_confidence`). 첫 계단은 둘이 같아 이름이 안 붙는다.
+    assert results == {(attempts[3], "top_confidence")}
+
+
 class _OracleThatReadsNothingItIsGiven:
     """`finalize`가 받은 `vul`을 열지 않는 대역 - 함정 `submission`이 `_score`를 지나가게 한다."""
 
@@ -1875,7 +2087,8 @@ class _OracleThatReadsNothingItIsGiven:
 def test_finalize_oracle_does_not_read_oracle_fields_either(
     ctx, monkeypatch, ids, grades, winner, designation, reason  # noqa: ANN001, F811
 ) -> None:
-    """`_designate_final`만이 아니라 **`_finalize_oracle`도** 채점기 값을 안 읽는다 - 지정 직전에
+    """`_designate_final`만이 아니라 **`_finalize_oracle`도** 채점기 값을 **응답 코드 한 필드
+    말고는** 안 읽는다(⏵ 2026-10-14 · 이슈 #637) - 지정 직전에
     등급을 채점 성공 후보 쪽으로 올리는 변이는 `_designate_final`을 안 건드리고 여기서 난다.
     함정 `submission`이 든 장부로 `_finalize_oracle`을 직접 돌리고(등급은
     `_grades_by_finding`을 바꿔 꽂는다) 결과 기록이 분기대로인지 본다."""
