@@ -29,7 +29,7 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6은
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6·v7은
 # `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
 # (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
