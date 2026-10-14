@@ -251,7 +251,8 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 ⚠ **예외 하나(⏵ 2026-10-14 이슈 #637):** `oracle_final`의 `designation`·`subject_id`·`poc_sha256`·
 `poc_bytes`는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로 그 코드에 일부 달렸다. 코드가
 고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은 입력의 코드가 갈리면 이 네 필드가
-갈릴 수 있다(갈리는지는 미실측 — `oracle_log` 모듈 docstring).
+갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 — 서버 경로의 비율은 미실측, `oracle_log`
+모듈 docstring).
 """
 
 import json
@@ -788,7 +789,9 @@ class EventKind(StrEnum):
     # ⚠ **`designation`·`subject_id`·`poc_sha256`·`poc_bytes`는 응답 코드에 일부 달렸다**(⏵
     # 2026-10-14 이슈 #637) — 첫 계단이 후보 자기 `vul` 응답 종료 코드라서, 위에서 「서버가 돌려준
     # 값은 trace에 안 싣는다」고 한 재현성 기준(Fake 경로 계약)에 이 네 필드가 간접으로 걸린다.
-    # 같은 입력에서 vul 응답 코드가 갈리는지는 미실측이다(`oracle_log` 모듈 docstring).
+    # 같은 입력에서 vul 코드는 `run_container` 직접 호출 실측에서 갈렸고(`vm.mmap_rnd_bits` 32 ·
+    # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
+    # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —

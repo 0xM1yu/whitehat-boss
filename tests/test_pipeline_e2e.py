@@ -2840,14 +2840,15 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave(
     assert result.record.is_complete
 
 
-def test_the_designation_picks_the_candidate_whose_own_vul_response_crashed(
+def test_the_same_bytes_fold_still_follows_the_crashing_finding(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """🔴 이슈 #637 - 파이프라인 끝에서 끝까지: find_0001은 등급이 높고(E4) 응답 코드가 0이고,
-    find_0002는 등급이 낮고(E3) 응답 코드가 **139(크래시)**다. 개정 전에는 find_0001이 지정됐다(위
-    형제 검사가 같은 구도에서 코드를 같게 두면 그렇다). 지금은 응답 코드 계단이 앞서
-    **find_0002**다.
-    `fix` 다리와 판정은 그 하나에만 돈다."""
+    """이슈 #637 - **같은 바이트 접기 분기**의 귀속 검사: find_0001은 등급이 높고(E4) 응답 코드가
+    0이고, find_0002는 등급이 낮고(E3) 응답 코드가 **139(크래시)**다. `dev_fake`의 두 PoC는
+    바이트까지 같아 지정이 먼저 접으므로 `designation`은 `vul_crash`가 아니라 **`sole_poc`**다 -
+    이 검사는 접힌 묶음 안에서도 **어느 Finding으로 기록되는지**(키가 크래시 쪽을 앞세운다)를
+    문다. 응답 코드 계단이 PoC **자체**를 가르는 길은 아래 형제 검사다(바이트가 다르다).
+    개정 전에는 find_0001이 지정됐다."""
     oracle = _OracleThatCrashesOnlyTheSecond()
 
     result, trace_path = _run_with_second_asan_failing(tmp_path, monkeypatch, oracle)
@@ -2860,7 +2861,44 @@ def test_the_designation_picks_the_candidate_whose_own_vul_response_crashed(
     assert [r.response_exit_code for r in oracle.vul_results] == [0, 139]
     (final,) = _of(events, "oracle_final")
     assert final["subject_id"] == "find_0002"
-    assert final["data"]["status"] == "scored"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "sole_poc")
+    assert oracle.vul_calls[0] == oracle.vul_calls[1]  # 접기 분기의 전제 - 바이트가 같다
+    assert oracle.final_calls == [(oracle.vul_calls[1], oracle.vul_results[1])]
+    assert result.record.is_complete
+
+
+def test_the_designation_submits_the_crashing_poc_when_the_bytes_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 이슈 #637 - 파이프라인 끝에서 끝까지, **바이트가 다른** 두 PoC: find_0001은 등급이
+    높고(E4) 응답 코드가 0이고, find_0002는 등급이 낮고(E3) 응답 코드가 **139(크래시)**다.
+    접기가 안 일어나므로 `designation`은 **`vul_crash`**이고 `fix` 다리·판정으로 나가는 바이트는
+    크래시한 쪽 PoC다. 계단 순서를 뒤집으면(등급이 앞서면) find_0001의 PoC가 나가 이 검사가
+    빨개진다."""
+    real_build_pov = fake_model._build_pov
+    built: list[int] = []
+
+    def distinct_bytes(context, produced_by, history):  # noqa: ANN001, ANN202
+        # PoV 스펙 호출마다 반복 바이트 수를 하나 늘려 Finding마다 다른 PoC를 만든다.
+        spec = real_build_pov(context, produced_by, history)
+        extra = len(built)
+        built.append(extra)
+        padding = spec.segments[0].model_copy(update={"count": spec.segments[0].count + extra})
+        return spec.model_copy(update={"segments": [padding, *spec.segments[1:]]})
+
+    monkeypatch.setattr(fake_model, "_build_pov", distinct_bytes)
+    oracle = _OracleThatCrashesOnlyTheSecond()
+
+    result, trace_path = _run_with_second_asan_failing(tmp_path, monkeypatch, oracle)
+
+    events = _events(trace_path)
+    assert len(built) == 2, "PoV 스펙이 Finding마다 한 번 만들어지지 않았다(전제)"
+    assert len(oracle.vul_calls) == 2
+    assert oracle.vul_calls[0] != oracle.vul_calls[1], "바이트가 같다 - 접기 분기다(전제)"
+    assert [r.response_exit_code for r in oracle.vul_results] == [0, 139]
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == "find_0002"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "vul_crash")
     assert oracle.final_calls == [(oracle.vul_calls[1], oracle.vul_results[1])]
     assert result.record.is_complete
 

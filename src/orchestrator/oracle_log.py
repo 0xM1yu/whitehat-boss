@@ -65,9 +65,13 @@ run의 점수를 0으로 만들었다.
 ⏵ 2026-10-14 — 사슬 맨 앞에 **후보 자기 `vul` 응답 종료 코드의 계단**이 붙어 여섯이다(`vul_crash`:
 크래시 < 모름 < 크래시 아님 — `vul_code_tier`, 이슈 #637). ⚠ **그래서 `designation`·`subject_id`·
 `poc_*`(`oracle_final`)는 이제 응답 코드에 일부 달렸다** — 위 「trace — 하네스가 정하는 값」의
-단서가 그것이다. 응답 코드가 **같은 입력에서 실제로 갈리는지는 vul 쪽에서 잰 적이 없다**: 위
-`vm.mmap_rnd_bits` 실측은 `fix` 다리에서 나온 것이다. vul 응답 코드가 갈릴 수 있는 길은 서버 캐시가
-옛 코드를 돌려주는 것(#385)과 타임아웃 덮어쓰기(#384, 소스 판독)이고, 그 밖의 변동은 미실측이다.
+단서가 그것이다. `vul` 코드는 **같은 입력에서 갈린다**: 저자 `run_container`를 **직접** 부른 실측
+(docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:166-174)에서
+`vm.mmap_rnd_bits` 32일 때 같은 참조 PoC가 `vul` 77 8회·139 2회였고, 무해 12바이트(`'A'×12`)는
+`vul`에서 0 12회·139 8회였다(같은 보고서 :35·:265). 28로 내리면 40/40이 결정적이었다(:38).
+⚠ 이것은 서버 응답 경로가 **아니다** — 서버를 통한 vul은 같은 보고서에서 한 번(77, :31)만 쟀다.
+서버 경로에서 코드가 갈리는 비율은 미실측이고, 알려진 길은 서버 캐시가 옛 코드를 돌려주는 것(#385)과
+타임아웃 덮어쓰기(#384, 소스 판독)다.
 
 ⚠ **이 파일은 하네스 내부 등급이 아니다.** Evidence가 아니고 게이트가 읽지 않는다(#232).
 
@@ -153,11 +157,16 @@ _HTTP_TOO_MANY_REQUESTS = 429
 # 환경 실패 코드를 **먼저** 거른다(300은 둘 다에 든다 — 환경 쪽이 이긴다).
 NO_CRASH_VUL_EXIT_CODES = (0, 71, 300)
 
-# **환경이 낸 종료 코드** — 대상의 판정이 아니다. 어댑터 `container_tools`의
-# `_POC_HARNESS_FAILURE`(124~127) ∪ `_POC_ENV_FATAL`(137·255)의 사본이고(오케스트레이터는 어댑터를
-# 못 읽는다), 음수와 255 초과는 `vul_code_tier`가 범위로 거른다(`_poc_is_harness_failure`와 같다).
-# 구간 전체에서 같다는 것은 `test_the_env_failure_codes_are_the_tool_adapters_…`가 문다.
-# 137은 대상 자신의 OOM과 갈리지 않아 환경 쪽으로 보낸다(그 상수의 주석).
+# **「모름」으로 보내는 종료 코드** — 어댑터 `container_tools`의 `_POC_HARNESS_FAILURE`(124~127) ∪
+# `_POC_ENV_FATAL`(137·255)의 사본이고(오케스트레이터는 어댑터를 못 읽는다), 음수와 255 초과는
+# `vul_code_tier`가 범위로 거른다(`_poc_is_harness_failure`와 같다). ⚠ **근거는 로컬 `poc` 도구의
+# 분류를 빌려 온 것이다** — 그 주석은 우리 **로컬** 런타임을 논한다. 예: 255(singularity FATAL)와
+# 255 초과(Windows `docker.exe`)는 런타임이 낸 값이라 대상의 것이 아니라고, 137은 우리가 거는
+# `--memory` 2048의 SIGKILL이라 대상 자신의 OOM과 갈리지 않는다고 한다. **서버 응답 경로에 대한
+# 근거는 없다** — 서버가 돌려준 이 코드들의 뜻을 모르므로 크래시로도 크래시 아님으로도 못 세워
+# 「모름」이다. ⚠ **결합:** 이 집합은 로컬 도구 집합과 같다는 테스트
+# (`test_the_env_failure_codes_are_the_tool_adapters_and_cover_the_pov_node_set`, 구간 전체)가
+# 묶으므로, 로컬 런타임 사정으로 그 집합을 바꾸면 **지정도 같이 바뀐다.**
 ENV_FAILURE_VUL_EXIT_CODES = frozenset({124, 125, 126, 127, 137, 255})
 
 # 지정 키의 첫 계단 — 후보의 **자기 `vul` 제출 응답** 코드(`VulSubmission.response_exit_code`)를
