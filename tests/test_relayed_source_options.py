@@ -21,7 +21,7 @@ import pytest
 from src import cli
 from src.config import RELAYED_SOURCE_OPTIONS, HarnessConfig, load_config
 from src.orchestrator.nodes import critic, pov
-from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
+from src.orchestrator.prompt_loader import PROMPTS_DIR, PromptError, load_prompt
 from src.orchestrator.stages import Stage
 from src.schemas.enums import Role
 
@@ -180,3 +180,32 @@ def test_doctor_reports_the_refusal_as_an_error_and_not_for_the_serving_combo(
     assert errors(load_config("harness_pool")) == []
     (message,) = errors(_with_version("critic", "v7"))
     assert "critic/v7" in message and MARKER in message
+
+
+def test_a_critic_prompt_load_failure_does_not_discard_the_auditor_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """한 try에 둘을 묶으면 Critic 판 로드 실패(`PromptError`)가 **이미 계산한** Auditor ERROR를
+    버렸다 - 둘은 독립으로 보고한다. Auditor 판 v15는 옵션 둘을 서술하지 않는다(전제)."""
+    config = _with_version("auditor", "v15")
+    assert cli._undescribed_source_options(config), "전제 - Auditor v15는 옵션을 서술하지 않는다"
+    real_load = cli.load_prompt
+
+    def load(role: Role, version: str):  # noqa: ANN202
+        if role == Role.CRITIC:
+            raise PromptError("critic 프롬프트를 못 읽었다")
+        return real_load(role, version)
+
+    monkeypatch.setattr(cli, "load_prompt", load)
+    (check,) = cli._check_source_options(config)
+    assert check.severity.name == "ERROR"
+    assert "Auditor SOURCE 옵션" in check.message and "auditor/v15" in check.message
+
+    monkeypatch.setattr(cli, "load_profile", lambda *a, **k: config)
+    checks = cli.doctor("harness_pool", artifacts_root=tmp_path)
+    assert any(
+        c.severity.name == "ERROR"
+        and "Auditor SOURCE 옵션" in c.message
+        and "auditor/v15" in c.message
+        for c in checks
+    )

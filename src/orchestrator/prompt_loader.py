@@ -92,8 +92,8 @@ v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 그 블록에 `sour
 `facts_source: false`가 아니면서도 「JSON의 Finding 데이터는 `finding_id`뿐」이라 적는다(CWE·제목·
 경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649). **Critic v4~v8**은 「전부」를 「추가 사실
 (additional facts)의 전부」로 좁힌다(CLAIM·PATH·EVIDENCE는 산문 블록이다). 「전부」를 그대로
-선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2와 scout_* v2다
-(2026-10-15 `prompts/*/*/body.md`를 읽어 센 값 — scout_* v3·v4와 single v2는 선언하지 않는다).
+선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2 · scout_* v2 ·
+single v2다(2026-10-15 `prompts/*/*/body.md`를 전부 읽어 센 값 — scout_* v3·v4는 선언하지 않는다).
 ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.

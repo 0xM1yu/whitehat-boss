@@ -686,11 +686,16 @@ def _check_source_options(config: HarnessConfig) -> list[Check]:
     설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다. 같은 `SOURCE`를 받는
     Critic·PoV 판이 서술하지 않는 경우도 따로 ERROR다(`_undescribed_relayed_options`, PR #676)."""
     checks: list[Check] = []
+    # 둘은 **따로 시도한다** - 한 try에 묶으면 Critic·PoV 판 로드 실패가 이미 계산한 Auditor ERROR를
+    # 버린다. 로드 실패 자체는 `_check_prompts`가 이미 ERROR로 댄다.
     try:
         missing = _undescribed_source_options(config)
+    except PromptError:
+        missing = []
+    try:
         relayed = _undescribed_relayed_options(config)
     except PromptError:
-        return []  # 로드 실패는 `_check_prompts`가 이미 ERROR로 댄다
+        relayed = []
     if missing:
         checks.append(
             Check(
@@ -1824,10 +1829,10 @@ def run(args: argparse.Namespace) -> int:
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
             undescribed = _undescribed_source_options(config)
-            relayed = _undescribed_relayed_options(config, last_stage=Stage(spec.stop_at()[0]))
         except PromptError as exc:
             print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
             return 2
+        # Auditor 거절을 먼저 낸다 - Critic·PoV 판 로드 실패가 이 메시지를 가리지 않는다.
         if undescribed:
             print(
                 f"[ERROR] Auditor SOURCE 옵션 {', '.join(undescribed)}을 프롬프트가 서술하지 "
@@ -1836,6 +1841,11 @@ def run(args: argparse.Namespace) -> int:
             )
             return 2
         # **같은 SOURCE를 받는 Critic·PoV 좌석도 같은 가드다**(PR #676) - 그 run이 닿는 좌석만 본다.
+        try:
+            relayed = _undescribed_relayed_options(config, last_stage=Stage(spec.stop_at()[0]))
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
         if relayed:
             print(f"[ERROR] {_relayed_options_message(relayed)}", file=sys.stderr)
             return 2
