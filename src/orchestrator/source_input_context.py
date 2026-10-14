@@ -1,4 +1,4 @@
-"""슬라이서가 고른 입력 디코더 함수의 본문을 Auditor `SOURCE` 맨 뒤에 싣는다
+"""슬라이서가 고른 입력 디코더 함수의 본문을 Auditor `SOURCE`의 마지막 블록으로 싣는다
 (`auditor_input_context`).
 
 S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인. 슬라이서(`tools/slicer_v2/input_context.py`)가

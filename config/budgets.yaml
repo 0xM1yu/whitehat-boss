@@ -737,7 +737,7 @@ thresholds:
   auditor_guards: 1
   # 슬라이서의 입력 디코더 함수 본문(`analysis.input_context` · S20 Phase 13 · 2026-10-14 · 사용자 결정 - 켠다). 슬라이스에
   # `--index`로 만든 선택이 있고(`status: selected`) 그 근거가 CPG 호출 경로(`basis: cpg`)면, 고른 함수의 본문을
-  # **맨 뒤**(쓰기 지점 창 다음)에 같은 상한으로 붙인다(`orchestrator/source_input_context`). `syntax` 근거·
+  # 쓰기 창 뒤의 마지막 블록(#650 표지 줄이 있으면 그 앞)으로 같은 상한으로 붙인다(`orchestrator/source_input_context`). `syntax` 근거·
   # `dispatches`·`carried_decoders`는 안 싣는다. 키가 없는 슬라이스는 `SOURCE`가 그대로이고
   # `auditor_source` 이벤트에 `input_context: absent` 하나만 는다. 서술·선언은 Auditor **v16**
   # 이 든다(`prompts/auditor/v16/`) - v15 이하를 고르고 켜면 `cli`의 run·doctor가 막는다.

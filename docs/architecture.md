@@ -140,7 +140,7 @@ graph LR
 >   그 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술). ⏵ 같은 날 -> 간접 피호출(`auditor_indirect_callees` — 필드
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
 >   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다). 쓰기 창은 못 실은 창이 있으면 SOURCE 끝에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(#650 — v15 이하는 이 줄을 서술하지 않고 v16이 서술한다).
->   ⏵ 2026-10-14 -> 아홉째 `auditor_input_context`(슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문 — 쓰기 지점 창 뒤 맨 끝 · 켠 효과 미실측)도 켜져 있고
+>   ⏵ 2026-10-14 -> 아홉째 `auditor_input_context`(슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문 — 쓰기 창 뒤의 마지막 블록(#650 표지 줄이 있으면 그 앞) · 켠 효과 미실측)도 켜져 있고
 >   v16이 서술·선언한다(`docs/agent-contracts.md` 「v15 → v16」).
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
 >   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판이 아닌 v12도 같다, 이슈 #578 · ⏵ 같은 날 서빙 판 v13도 같다, 이슈 #67 · ⏵ 2026-10-11 서빙 판 v14도 같다 — v12 + 같은 FACTS 변경). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아

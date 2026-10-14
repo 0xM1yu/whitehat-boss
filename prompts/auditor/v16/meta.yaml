@@ -3,7 +3,7 @@
 #
 # v16 = v15 + **`SOURCE` 블록 하나의 서술**(S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인). 새 옵션
 # `auditor_input_context`가 켜지면 슬라이서의 `analysis.input_context`가 고른 입력 디코더 함수의 본문이 `SOURCE`
-# 블록의 **맨 끝**(쓰기 지점 창 다음)에 붙는다(`orchestrator/source_input_context`). body·봉투·도구·다른 옵션 여덟은
+# 블록의 마지막(쓰기 지점 창 다음 - #650 표지 줄이 있으면 그 앞)에 붙는다(`orchestrator/source_input_context`). body·봉투·도구·다른 옵션 여덟은
 # v15와 같다.
 # - body는 v15와 바이트 동일이다. prefix는 아래 **다섯 군데**만 v15와 다르다(`tests/test_auditor_v16.py`가 묶는다).
 #   1. 「Trust boundary」의 하네스 생성 텍스트 목록에 `/* ... +N more write windows not shown ... */` 줄을 더한다 -
@@ -28,7 +28,7 @@
 role: auditor
 version: v16
 output_schema: AuditorProcedureProbeInputAction
-description: v15에 입력 맥락 함수 블록의 서술과 쓰기 지점 창 표지 줄의 설명을 더한 판입니다(슬라이서의 input_context가 CPG 근거로 고른 입력 디코더 함수가 SOURCE 맨 끝에 붙을 수 있다 · 블록이 없을 수 있고 없음은 증거가 아니다 · 쓰기 지점 창이 더 있었으면 SOURCE 맨 끝 줄이 말한다). body·봉투·도구·다른 SOURCE 옵션은 v15와 같습니다.
+description: v15에 입력 맥락 함수 블록의 서술과 쓰기 지점 창 표지 줄의 설명을 더한 판입니다(슬라이서의 input_context가 CPG 근거로 고른 입력 디코더 함수가 쓰기 창 뒤 마지막 블록으로 붙을 수 있다 · 블록이 없을 수 있고 없음은 증거가 아니다 · 쓰기 지점 창이 더 있었으면 SOURCE 맨 끝 줄이 말한다). body·봉투·도구·다른 SOURCE 옵션은 v15와 같습니다.
 source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards, auditor_input_context]
 tools: [semgrep, clang-tidy, build, asan, gdb, poc]
 facts_source: false

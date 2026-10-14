@@ -4602,7 +4602,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     규칙을 쓴다. 함수 **전체**가 이미 든 범위 안이면 건너뛰고(`skipped_carried`) 창 조각과 일부만
     겹치면 완전한 함수를 붙인다. 상한에 넘치면 통째로 뺀다. 붙인 블록은 `functions`에 안 들고
     `input_context_added`가 센다. 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을
-    때와 바이트 동일이다. ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로).
+    때와 바이트 동일이다. ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로 - Critic은
+    `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때).
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -4712,8 +4713,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             return False
         names = [*cut.names, name]
         trimmed = _trim_enum(cut.text, names)
-        shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일 이름의 낱말은 정의가 아니다
-        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", shown):
+        body_shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일명 낱말은 정의가 아니다
+        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", body_shown):
             cut.settled.add(name)
             return False
         block = _block(definition, trimmed, end=cut.end) if trimmed is not None else None
@@ -4933,7 +4934,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             size += 1 + measure(block)
             write_windows += 1
     # 슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문(`auditor_input_context`)은 쓰기 지점 창
-    # **뒤**, 블록의 맨 끝이다. 켜지 않았으면 `None`이라 블록도 이벤트 필드도 없다.
+    # **뒤**의 마지막 블록이다(#650 표지 줄이 있으면 그 앞). 켜지 않았으면 `None`이라 블록도 이벤트
+    # 필드도 없다.
     input_context = (
         carry_input_context(
             ref, read_source=ctx.read_source, block=_block, measure=measure,
