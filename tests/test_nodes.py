@@ -2960,6 +2960,267 @@ def test_a_step_equal_to_the_input_placeholder_is_refused_not_fatal(ctx: RunCont
     assert transition.data["reason"] == ReasonCode.REPRO_FAILED.value
 
 
+# --- 8단계가 측정하지 못한 것은 재현 실패가 아니다 (#326) -------------------------------------
+#
+# 컨테이너 러너의 `asan`은 우리 clang으로 대상을 컴파일·링크하는데 CyberGym 번들은 그것이 안 된다
+# (#507). 그 `ok=False`를 F-11(`repro_failed`)로 세면 Critic을 통과한 Finding이 `queued`로 내려가고
+# 「제거율 — Tool」의 분자가 하네스 한계로 부푼다.
+
+
+class _AsanFails:
+    """`asan` 요청에 주어진 `ok=False` 결과를 돌려주는 도구 대역 - 다른 도구는 위임한다."""
+
+    def __init__(self, inner: ToolRunner, exit_code: int | None, error: str) -> None:
+        self.exit_code = exit_code
+        self.error = error
+        self._inner = inner
+
+    def run(self, tool: str, args: ToolArgs, sandbox: SandboxSpec) -> Evidence:
+        evidence = self._inner.run(tool, args, sandbox)
+        if tool == "asan":
+            return evidence.model_copy(
+                update={"ok": False, "exit_code": self.exit_code, "error": self.error}
+            )
+        return evidence
+
+
+def _asan_cannot_build(inner: ToolRunner) -> _AsanFails:
+    """`asan` 요청에 **어댑터가 실제로 내는 문구**로 `ok=False`를 돌려준다 -
+    `container_tools.judge()`가 링크 단계에서 끊긴 대상에 붙이는 것이다. 문구를 손으로 안 쓴다."""
+    from src.adapters.container_tools import Step, judge
+
+    ok, exit_code, error = judge("asan", [Step(1, "", "ld.lld: error: undefined symbol: main")], 2)
+    assert not ok and error is not None, "픽스처 전제 - 어댑터가 ok=False를 낸다"
+    return _AsanFails(inner, exit_code, error)
+
+
+def _asan_times_out(inner: ToolRunner) -> _AsanFails:
+    """`container_tools._execute`의 시간 초과 Evidence와 같은 모양(`124` + `timeout after …`)."""
+    return _AsanFails(inner, validate.TIMEOUT_EXIT, "timeout after 60s")
+
+
+def _validated_with_capsule(ctx: RunContext, signal: str) -> tuple[runner._Accumulator, Finding]:
+    _, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal=signal)
+    state = runner._Accumulator()
+    state.update(finding)
+    state.finding_capsules[finding.finding_id] = capsule
+    return state, finding
+
+
+def _not_measured_events(ctx: RunContext) -> list:
+    return [e for e in ctx.trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
+
+
+def test_a_stage_8_compile_failure_holds_the_finding_and_pov_still_targets_it(
+    ctx: RunContext,
+) -> None:
+    """asan이 컴파일·링크 단계에서 끊기면 Finding은 `validated`에 남고(`queued`가 아니다) 전이도
+    `policy_decision`도 없다. PoV는 8단계 진입 시점의 `validated` 목록으로 대상을 잡으므로(상태가
+    내려가도 도는 것은 `test_pov_also_runs_for_a_finding_that_validate_demotes_to_queued`가 문다)
+    풀 소속은 그대로다 - **이 검사가 바꾸는 것은 상태·지표·보고서다.**
+    Evidence는 `ok=False`와 사유로 남고 게이트는 그 근거로 등급을 낸다(p4는 거짓)."""
+    state, finding = _validated_with_capsule(ctx, "AddressSanitizer: heap-buffer-overflow")
+    failing = _asan_cannot_build(ctx.tools)
+    broken = dataclasses.replace(ctx, tools=failing)
+
+    runner._analyze(broken, [], state, int(Stage.VALIDATE))
+
+    after = state.findings[finding.finding_id]
+    assert after.state is FindingState.VALIDATED
+    stage_8_transitions = [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.TRANSITION and e.stage == int(Stage.VALIDATE)
+    ]
+    assert stage_8_transitions == [], "전이가 났다"
+    assert not [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.POLICY_DECISION and e.stage == int(Stage.VALIDATE)
+    ]
+    (event,) = _not_measured_events(broken)
+    assert (event.subject_id, event.stage) == (finding.finding_id, int(Stage.VALIDATE))
+    assert event.data == {
+        "tool": "asan",
+        "reason": validate.NOT_MEASURED_TOOL,
+        "exit_code": failing.exit_code,
+        "error": failing.error,
+    }
+    stored = [ev for ev in state.evidences[finding.finding_id] if ev.source == "asan"]
+    assert [(ev.ok, ev.error) for ev in stored] == [(False, failing.error)]
+    assert {ev.evidence_id for ev in stored} <= set(after.evidence_refs)
+    (graded,) = [
+        e
+        for e in broken.trace.events
+        if e.kind is EventKind.GATE_EVAL and e.stage == int(Stage.VALIDATE)
+    ]
+    assert graded.data["p4"] is False
+    assert _pov_subjects(broken) == [finding.finding_id], "PoV 풀에서 빠졌다"
+
+
+def test_a_real_crash_still_routes_and_is_not_reported_as_unmeasured(ctx: RunContext) -> None:
+    """음성 쌍 - 대상이 떠서 비-0으로 끝난 건(`ok=True`, 크래시는 신호)은 종전대로 `proven`이다.
+    `_not_measured`가 `ok=False`만 보는지 문다: 종료 코드로 갈랐다면 여기서 빨개진다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+
+    after, evidences = validate.run(ctx, finding=finding, workdir="parser.c")
+
+    assert any(ev.ok and ev.exit_code not in (None, 0) for ev in evidences), "픽스처 전제"
+    assert after.state is FindingState.PROVEN
+    assert _not_measured_events(ctx) == []
+
+
+def test_a_refused_step_is_still_a_failed_repro_not_an_unmeasured_one(ctx: RunContext) -> None:
+    """모델이 쓴 `steps`가 예약 자리표와 같아 우리가 요청을 안 보낸 건(`exit_code=None`)은 명세의
+    실패라 F-11 그대로다 - 위 `test_a_step_equal_to_the_input_placeholder_…`가 상태까지 묻고, 여기는
+    그 건이 `repro_not_measured`로 새지 않는 것만 문다(종료 코드가 있는 `ok=False`와의 경계)."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED)
+    assert finding.repro_spec is not None
+    finding = finding.transition(
+        repro_spec=ReproSpec(
+            steps=[INPUT_PLACEHOLDER], expected_signal=finding.repro_spec.expected_signal
+        )
+    )
+
+    after, _ = validate.run(ctx, finding=finding, workdir="parser.c")
+
+    assert after.state is FindingState.QUEUED
+    assert _not_measured_events(ctx) == []
+
+
+def test_a_poc_signal_is_not_run_here_and_holds_the_finding(ctx: RunContext) -> None:
+    """`poc` 신호(ADR 0014 - 서빙 점수 경로는 PoV 루프의 `poc`)는 이 노드가 **돌리지 않는다**: 도구
+    호출 0건 - 입력 바이트를 실을 길이 없어 항상 `ok=False`로 거절당하던 갈래다. `queued`가 아니라
+    `validated`에 두고 사유를 남긴다."""
+    finding = _finding(
+        "find_0001", state=FindingState.VALIDATED, signal="poc가 종료 코드 139로 죽는다"
+    )
+    assert finding.repro_spec is not None
+    assert validate.tool_for(finding.repro_spec.expected_signal) == validate.POC_TOOL
+    recorder = _CallRecorder(ctx.tools)
+    watching = dataclasses.replace(ctx, tools=recorder)
+
+    after, evidences = validate.run(watching, finding=finding, workdir="parser.c")
+
+    assert recorder.calls == [] and evidences == []
+    assert after.state is FindingState.VALIDATED
+    assert not [e for e in watching.trace.events if e.kind is EventKind.TRANSITION]
+    (event,) = _not_measured_events(watching)
+    assert event.data == {
+        "tool": "poc",
+        "reason": validate.NOT_MEASURED_POC,
+        "exit_code": None,
+        "error": None,
+    }
+
+
+def _hold_with(ctx: RunContext, tools: ToolRunner, number: int, signal: str) -> None:
+    validate.run(
+        dataclasses.replace(ctx, tools=tools),
+        finding=_finding(f"find_{number:04d}", state=FindingState.VALIDATED, signal=signal),
+        workdir="parser.c",
+    )
+
+
+def test_the_run_warning_is_absent_without_events_and_counts_by_cause(ctx: RunContext) -> None:
+    """`repro_not_measured`는 보고서에 안 보이므로(상태가 그대로다) run 경고로 올린다. 이벤트가
+    없으면 `None`. 시간 초과(124)와 컴파일 실패는 **한 숫자로 합치지 않고** 종료 코드별로 센다."""
+    assert runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True) is None
+    asan = "AddressSanitizer: overflow"
+    _hold_with(ctx, _asan_times_out(ctx.tools), 1, asan)
+    _hold_with(ctx, _asan_times_out(ctx.tools), 2, asan)
+    _hold_with(ctx, _asan_cannot_build(ctx.tools), 3, asan)
+
+    warning = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True)
+
+    assert warning is not None
+    assert "3건" in warning
+    assert "124(시간 초과) 2건" in warning
+    assert "1 1건" in warning, "컴파일 실패(종료 코드 1)가 시간 초과와 한 숫자로 합쳐졌다"
+    assert "poc 신호" not in warning, "poc 신호가 없는 run인데 poc 문장이 있다"
+
+
+def test_the_poc_sentence_depends_on_whether_the_profile_has_a_pov_seat(ctx: RunContext) -> None:
+    """8단계는 `poc`를 실행하지 않는다. 그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 풀 여부는
+    PoV 단계 이벤트가 들고 **없으면 어디서도 안 돈다.** 경고가 좌석이 없을 때 「PoV 루프」를 말하면
+    거짓이다."""
+    _hold_with(ctx, ctx.tools, 1, "poc가 종료 코드 139로 죽는다")
+
+    seated = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=True)
+    seatless = runner._repro_not_measured_warning(ctx.trace, has_pov_seat=False)
+
+    assert seated is not None and seatless is not None
+    assert "PoV 단계 이벤트" in seated and "pov 좌석이 없어" not in seated
+    assert "pov 좌석이 없어 어디서도 실행되지 않았다" in seatless
+    assert "PoV 루프" not in seatless
+
+
+def test_the_timeout_exit_code_mirrors_the_adapter() -> None:
+    """`validate.TIMEOUT_EXIT`는 어댑터 상수의 사본이다(노드는 어댑터를 못 import한다) - 경고가 이
+    값으로 시간 초과를 가른다."""
+    from src.adapters import container_tools
+
+    assert validate.TIMEOUT_EXIT == container_tools._TIMEOUT_EXIT
+
+
+def test_a_timeout_holds_the_finding_like_a_compile_failure(ctx: RunContext) -> None:
+    """시간 초과(`ok=False`, 124)도 측정을 못 낸 건이다 - 강등하지 않고 `validated`에 두며 사유와
+    종료 코드를 trace에 남긴다. 옛 동작(F-11 강등)이 돌아오면 여기서 빨개진다."""
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal="AddressSanitizer: x")
+
+    after, _ = validate.run(
+        dataclasses.replace(ctx, tools=_asan_times_out(ctx.tools)),
+        finding=finding,
+        workdir="parser.c",
+    )
+
+    assert after.state is FindingState.VALIDATED
+    (event,) = _not_measured_events(ctx)
+    assert (event.data["reason"], event.data["exit_code"]) == (
+        validate.NOT_MEASURED_TOOL,
+        validate.TIMEOUT_EXIT,
+    )
+
+
+def test_a_judge_with_no_commands_is_a_spec_failure_not_an_unmeasured_one(ctx: RunContext) -> None:
+    """`judge()`가 명령이 하나도 안 돈 건에 종료 코드를 지어내면(127) `_not_measured`가 그것을
+    「대상이 안 떴다」로 읽어 보류한다. 돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 종전대로
+    F-11이다. 127로 되돌리면 두 단언이 같이 빨개진다."""
+    from src.adapters.container_tools import judge
+
+    ok, exit_code, error = judge("asan", [], 2)
+    assert (ok, exit_code) == (False, None) and error is not None
+    finding = _finding("find_0001", state=FindingState.VALIDATED, signal="AddressSanitizer: x")
+
+    after, _ = validate.run(
+        dataclasses.replace(ctx, tools=_AsanFails(ctx.tools, exit_code, error)),
+        finding=finding,
+        workdir="parser.c",
+    )
+
+    assert after.state is FindingState.QUEUED
+    assert _not_measured_events(ctx) == []
+
+
+def test_the_adapter_still_reports_a_failed_build_as_not_ok_with_an_exit_code() -> None:
+    """`_not_measured`는 어댑터 문구가 아니라 **`ok=False` + 종료 코드 있음**을 본다. 어댑터가
+    컴파일·링크 실패·대상 미기동에 그 모양을 계속 내는지 실제 `judge()`로 문다 -
+    문구가 바뀌어도 안 깨지고,
+    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다."""
+    from src.adapters.container_tools import Step, judge
+
+    for tool, steps, total in (
+        ("asan", [Step(1, "", "x.c:1:1: error: boom")], 2),  # 빌드 단계에서 끊김
+        ("asan", [Step(0, "", ""), Step(127, "", "")], 2),  # 대상이 안 떴다
+        ("build", [Step(1, "", "x.c:1:1: error: boom")], 1),
+    ):
+        ok, code, error = judge(tool, steps, total)
+        assert (ok, code is not None, bool(error)) == (False, True, True), (tool, steps)
+    ok, code, _ = judge("asan", [Step(0, "", ""), Step(139, "", "ERROR: AddressSanitizer")], 2)
+    assert ok and code == 139, "크래시는 신호다 - ok=True"
+
+
 def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
     """거절 Evidence의 `kind`는 `validate`가 든 사본이다 — 어댑터는 못 import해서 복제했다
     (`prompt_loader`의 도구 이름 사본과 같은 사정). 화이트리스트가 움직이면 여기서 빨개지고, 이
@@ -2967,8 +3228,12 @@ def test_validate_refusal_kinds_mirror_the_tool_whitelist() -> None:
     떨어지므로 그것도 문다."""
     from src.adapters.fake_tools import TOOL_KINDS
 
-    called = {validate.BUILD_TOOL, *(tool for _, tool in validate._SIGNAL_TOOLS)}
-    assert called <= set(validate.REFUSED_KINDS), "이 노드가 부르는 도구가 사본에서 빠졌다"
+    # `poc`는 신호 분류일 뿐 이 노드가 부르지 않는다(#326) - 사본에도 없다.
+    called = {
+        validate.BUILD_TOOL,
+        *(tool for _, tool in validate._SIGNAL_TOOLS if tool != validate.POC_TOOL),
+    }
+    assert called == set(validate.REFUSED_KINDS), "이 노드가 부르는 도구와 사본이 갈라졌다"
     assert validate.REFUSED_KINDS == {tool: TOOL_KINDS[tool] for tool in validate.REFUSED_KINDS}
 
 
