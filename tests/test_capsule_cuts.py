@@ -179,6 +179,23 @@ def test_a_section_dropped_by_the_budget_break_is_named(
     assert capsule.cuts.any_cut is True
 
 
+@_BOTH
+@pytest.mark.parametrize(
+    "level", [CapsuleLevel.LIGHT, CapsuleLevel.EXPANDED, CapsuleLevel.FOCUSED]
+)
+def test_a_target_function_trimmed_by_min_is_always_followed_by_a_named_drop(
+    kind: str, source: Path, level: CapsuleLevel
+) -> None:
+    """예산이 `target_function`보다 작으면 `min(cost, remaining)`이 그 섹션을 깎는다 — 그 깎임은
+    따로 세지 않는다. 어느 레벨이든 끝의 64토큰 보조 칸이 break로 빠져 표지에 들기 때문이다
+    (`capsule.py` `CapsuleCuts` docstring). 마지막 칸 구성이 바뀌면 여기서 죽는다."""
+    capsule = _retriever(kind, source).search(_query(_TARGET_TOKENS - 5), level)
+
+    assert capsule.cuts is not None
+    assert capsule.cuts.dropped_sections
+    assert capsule.cuts.any_cut is True
+
+
 # --- 2. graph_section의 stop=True --------------------------------------------------------
 
 
