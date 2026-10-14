@@ -621,7 +621,7 @@ def test_the_prefix_splits_the_four_tools_and_gives_the_poc_tool_no_score() -> N
     무는 것: ① `poc`가 PoC를 받는다 ② `asan`·`gdb`·`build`는 안 받는다(이름 셋) ③ 실행 환경 코드
     124~127이 대상의 판정이 아니다 ④ 채점은 `oracle_vul` 줄이 한다. 🔴 넘지 않는 선: `poc`가
     받는다고
-    적되 **점수를 낸다고는 적지 않는다**(ADR 0014 불변식 2 — 지정은 채점기 값만 읽는다)."""
+    적되 **점수를 낸다고는 적지 않는다**(ADR 0014 불변식 2 — 채점은 오라클만 한다)."""
     flat = " ".join(_prefix().split())
 
     assert "**`poc` receives your PoC.**" in flat

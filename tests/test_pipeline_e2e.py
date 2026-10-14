@@ -2759,11 +2759,14 @@ def test_several_candidates_with_the_same_bytes_are_folded_and_the_fix_leg_runs_
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
 
 
-class _OracleThatRatesTheLoserHigher(FakeOracle):
-    """둘째 `vul` 제출에만 크래시 코드를 돌려주는 대역 - 채점기 값으로 고르면 **둘째**가 이긴다.
+class _OracleThatCrashesOnlyTheSecond(FakeOracle):
+    """둘째 `vul` 제출에만 크래시 코드(139)를 돌려주고 첫째는 0이다 - 응답 코드 계단이 갈리는 대역.
 
-    규칙이 내부 등급이면 채점기가 둘째를 더 좋게 말해도 지정은 안 흔들린다. 지정이 그 값을 읽는
-    변이(`response_exit_code`가 큰 쪽 · 크래시인 쪽)는 이 대역에서 첫째 대신 둘째를 고른다.
+    ⏵ 2026-10-14 (이슈 #637 · ADR 0013 결정 2 개정) - 앞 판의 이름은
+    `_OracleThatRatesTheLoserHigher`였고
+    「지정이 채점기 값을 읽으면 둘째가 이긴다」를 **막는** 대역이었다. 지금은 읽는 것이 맞고(후보
+    자기
+    응답 코드 한 필드) 이 대역에서 **둘째가 이기는 것이 기대값**이다.
     """
 
     def submit_vul(self, poc: bytes):  # noqa: ANN201
@@ -2771,27 +2774,10 @@ class _OracleThatRatesTheLoserHigher(FakeOracle):
         return super().submit_vul(poc)
 
 
-def test_the_designation_sees_the_e4_the_validate_stage_gave(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽(E4)을 고른다.
-
-    전 판은 지정이 보는 등급이 8단계 `validate.run`의 런타임 Evidence(`produced`)를 버려 E4를
-    못 봤다 - 후보가 둘 이상이면 어느 run에서나 **E3 동점**이라 `top_grade`가 도달 불가였다
-    (적대적 리뷰 2026-10-04, `dev_fake` 실측: 8단계 `gate_eval`은 find_0001 E4 · find_0002 E3인데
-    지정이 받은 `grades`는 E3 · E3).
-
-    이 검사의 전제는 **8단계 `gate_eval`이 둘을 가른다**는 것이다 - 안 갈라지면 아래 단언이 전부
-    공허하다. 지정 근거는 그 `gate_eval`과 **같은 등급**에서 나와야 한다. 그리고 지정은 채점기
-    값을 안 읽는다 - 대역이 진 쪽(find_0002)에 더 센 크래시 코드를 돌려줘도 이긴 쪽이 안 바뀐다.
-
-    ⚠ **`designation`은 `top_grade`가 아니라 `sole_poc`이다**(⏵ 2026-10-04) - `dev_fake`의 두
-    PoC가 **바이트까지 같아** 지정이 먼저 접고, 접어서 하나면 「고를 것이 없었다」가 더 센
-    사실이다(어느 후보를 지정해도 제출이 같다). 그래서 **이 검사는 라벨로 등급을 묶지 못한다**
-    — 묶는 것은 아래 `candidate_grades`와 리포트 등급이고, 라벨 쪽은
-    `tests/test_oracle_wiring.py`가 직접 호출로 묶는다. ⚠ 같은 이유로 이긴 쪽이 `find_0001`인
-    것은 등급 때문인지 `finding_id` 꼬리 때문인지 **이 검사만으로는 안 갈린다**.
-    """
+def _run_with_second_asan_failing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, oracle: FakeOracle
+):  # noqa: ANN202
+    """재현이 **둘째 asan에서만** 실패하는 run(find_0001 E4 · find_0002 E3 - 8단계 `gate_eval`)."""
     real_repro = FakeToolRunner._run_repro
     asan_calls: list[str] = []
 
@@ -2805,9 +2791,34 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave(
         return real_repro(self, tool, kind, args, workdir)
 
     monkeypatch.setattr(FakeToolRunner, "_run_repro", second_asan_fails)
-    oracle = _OracleThatRatesTheLoserHigher()
+    return _run(tmp_path, before=_with_index(), oracle=oracle)
 
-    result, trace_path = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+def test_the_designation_sees_the_e4_the_validate_stage_gave(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 후보가 둘이고 **재현이 한 쪽만 성공하면** 지정은 그쪽(E4)을 고른다.
+
+    전 판은 지정이 보는 등급이 8단계 `validate.run`의 런타임 Evidence(`produced`)를 버려 E4를
+    못 봤다 - 후보가 둘 이상이면 어느 run에서나 **E3 동점**이라 `top_grade`가 도달 불가였다
+    (적대적 리뷰 2026-10-04, `dev_fake` 실측: 8단계 `gate_eval`은 find_0001 E4 · find_0002 E3인데
+    지정이 받은 `grades`는 E3 · E3).
+
+    이 검사의 전제는 **8단계 `gate_eval`이 둘을 가른다**는 것이다 - 안 갈라지면 아래 단언이 전부
+    공허하다. 지정 근거는 그 `gate_eval`과 **같은 등급**에서 나와야 한다. ⏵ 2026-10-14 - 대역은
+    **두 후보에 같은 코드**(77)를 돌려준다: 응답 코드 계단이 갈리면 그 계단이 등급보다 앞서
+    (이슈 #637) 이 검사가 보려는 등급 경로가 가려진다. 계단이 갈리는 run은 아래 형제 검사다.
+
+    ⚠ **`designation`은 `top_grade`가 아니라 `sole_poc`이다**(⏵ 2026-10-04) - `dev_fake`의 두
+    PoC가 **바이트까지 같아** 지정이 먼저 접고, 접어서 하나면 「고를 것이 없었다」가 더 센
+    사실이다(어느 후보를 지정해도 제출이 같다). 그래서 **이 검사는 라벨로 등급을 묶지 못한다**
+    — 묶는 것은 아래 `candidate_grades`와 리포트 등급이고, 라벨 쪽은
+    `tests/test_oracle_wiring.py`가 직접 호출로 묶는다. ⚠ 같은 이유로 이긴 쪽이 `find_0001`인
+    것은 등급 때문인지 `finding_id` 꼬리 때문인지 **이 검사만으로는 안 갈린다**.
+    """
+    oracle = FakeOracle()
+
+    result, trace_path = _run_with_second_asan_failing(tmp_path, monkeypatch, oracle)
 
     events = _events(trace_path)
     validate_grades = {
@@ -2826,6 +2837,69 @@ def test_the_designation_sees_the_e4_the_validate_stage_gave(
     # 리포트도 같은 `_grades_by_finding`을 부르므로 8단계 등급을 보인다 - 재현에 성공한 Finding이
     # `[E3]`이 아니라 `[E4]`다(그 전에는 `proven`인데 E3으로 찍혔다).
     assert sorted(re.findall(r"\*\*\[(E\d)\]", result.report.render())) == ["E3", "E4"]
+    assert result.record.is_complete
+
+
+def test_the_same_bytes_fold_still_follows_the_crashing_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이슈 #637 - **같은 바이트 접기 분기**의 귀속 검사: find_0001은 등급이 높고(E4) 응답 코드가
+    0이고, find_0002는 등급이 낮고(E3) 응답 코드가 **139(크래시)**다. `dev_fake`의 두 PoC는
+    바이트까지 같아 지정이 먼저 접으므로 `designation`은 `vul_crash`가 아니라 **`sole_poc`**다 -
+    이 검사는 접힌 묶음 안에서도 **어느 Finding으로 기록되는지**(키가 크래시 쪽을 앞세운다)를
+    문다. 응답 코드 계단이 PoC **자체**를 가르는 길은 아래 형제 검사다(바이트가 다르다).
+    개정 전에는 find_0001이 지정됐다."""
+    oracle = _OracleThatCrashesOnlyTheSecond()
+
+    result, trace_path = _run_with_second_asan_failing(tmp_path, monkeypatch, oracle)
+
+    events = _events(trace_path)
+    validate_grades = {
+        e["subject_id"]: e["data"]["grade"] for e in _of(events, "gate_eval", stage=Stage.VALIDATE)
+    }
+    assert validate_grades == {"find_0001": "E4", "find_0002": "E3"}, "8단계가 안 갈랐다(전제)"
+    assert [r.response_exit_code for r in oracle.vul_results] == [0, 139]
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == "find_0002"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "sole_poc")
+    assert oracle.vul_calls[0] == oracle.vul_calls[1]  # 접기 분기의 전제 - 바이트가 같다
+    assert oracle.final_calls == [(oracle.vul_calls[1], oracle.vul_results[1])]
+    assert result.record.is_complete
+
+
+def test_the_designation_submits_the_crashing_poc_when_the_bytes_differ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """🔴 이슈 #637 - 파이프라인 끝에서 끝까지, **바이트가 다른** 두 PoC: find_0001은 등급이
+    높고(E4) 응답 코드가 0이고, find_0002는 등급이 낮고(E3) 응답 코드가 **139(크래시)**다.
+    접기가 안 일어나므로 `designation`은 **`vul_crash`**이고 `fix` 다리·판정으로 나가는 바이트는
+    크래시한 쪽 PoC다. 계단 순서를 뒤집으면(등급이 앞서면) find_0001의 PoC가 나가 이 검사가
+    빨개진다."""
+    real_build_pov = fake_model._build_pov
+    built: list[int] = []
+
+    def distinct_bytes(context, produced_by, history):  # noqa: ANN001, ANN202
+        # PoV 스펙 호출마다 반복 바이트 수를 하나 늘려 Finding마다 다른 PoC를 만든다.
+        spec = real_build_pov(context, produced_by, history)
+        extra = len(built)
+        built.append(extra)
+        padding = spec.segments[0].model_copy(update={"count": spec.segments[0].count + extra})
+        return spec.model_copy(update={"segments": [padding, *spec.segments[1:]]})
+
+    monkeypatch.setattr(fake_model, "_build_pov", distinct_bytes)
+    oracle = _OracleThatCrashesOnlyTheSecond()
+
+    result, trace_path = _run_with_second_asan_failing(tmp_path, monkeypatch, oracle)
+
+    events = _events(trace_path)
+    assert len(built) == 2, "PoV 스펙이 Finding마다 한 번 만들어지지 않았다(전제)"
+    assert len(oracle.vul_calls) == 2
+    assert oracle.vul_calls[0] != oracle.vul_calls[1], "바이트가 같다 - 접기 분기다(전제)"
+    assert [r.response_exit_code for r in oracle.vul_results] == [0, 139]
+    (final,) = _of(events, "oracle_final")
+    assert final["subject_id"] == "find_0002"
+    assert (final["data"]["status"], final["data"]["designation"]) == ("scored", "vul_crash")
+    assert oracle.final_calls == [(oracle.vul_calls[1], oracle.vul_results[1])]
     assert result.record.is_complete
 
 

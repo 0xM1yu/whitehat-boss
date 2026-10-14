@@ -792,18 +792,18 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내고 다시 던진다(#394, `tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
 - 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
   다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
-  이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
+  이 값(중간 gen의 `query_vul` 관측)은 Evidence·내부 등급·지정 사슬에 닿지 않는다(⏵ 2026-10-14 — 지정 사슬이 읽는 채점기 값은 **후보 자기 `vul` 제출의 응답 코드 하나**뿐이다, 아래). 모델의 `submit`만 `designatable` 후보가 되고,
   `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
   (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 일곱이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
-  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
-  갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓪Critic 판정
-  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여덟이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 전순서가
+  갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓪Critic 판정
+  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
-  council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
+  council 뒤 정한 이 저장소의 규칙이다(⏵ 2026-10-14 — 「채점기 점수로는」에서 **후보 자기 `vul` 응답의 종료 코드 계단 하나**를 뺐다. 아래). 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
   `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
@@ -813,13 +813,14 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
   (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
   위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
-  (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
-  `response_exit_code`와 중간 gen의 `query_vul` 관측이 지정 시점에 손에 있는데도다
-  (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
-  반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
-  오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
-  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
-  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
+  (`runner._designate_final`). 🔴 **지정 로직이 읽는 채점기 값은 후보 자기 `vul` 제출의 `response_exit_code` 하나뿐이다**
+  (⏵ 2026-10-14 이슈 #637 — 앞 판은 그것도 안 읽었다). 환경 값으로 보는 코드(124~127·137·255·음수·255 초과 — 로컬 `poc` 도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다)와 없는 코드(`None`)는
+  크래시로 세지 않고(300도 모름이지만 서버가 300을 응답에서 0으로 덮어 응답 경로로는 닿지 않는다 — #384) 「모름」으로 크래시와 크래시 아님 사이에 둔다. 후보의 `poc_id`·`cached`와 중간 gen의
+  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `candidates`만 읽고, 정렬 키에
+  든 오라클 값은 후보가 이미 낸 자기 제출 응답의 코드 하나다 — 새 제출·`fix` 호출·승격이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — 옛 `_designate_final`이 「오라클에 물어 고르면
+  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다(⏵ 2026-10-14 — 지정 쪽의 그 거부는 #637 개정으로 물러났다: 지정이 후보 자기 응답 코드를 읽는다. 모델 쪽 구조는 그대로 남는다). 이것이 저자 FAQ Q3(제출은 여러 장 ·
   최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
