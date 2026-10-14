@@ -1398,7 +1398,18 @@ def main(argv: list[str] | None = None) -> int:
         "mode": "targeted",
         # The spec picks the lines that get cut, and `defines` follows from it and the sources, so
         # two runs that cut different lines must not share a run_signature (PR #638 review).
-        "spec": {role: spec[role] for role in ("sink", "source") if role in spec},
+        # Narrowing to the two roles drops keys nothing reads; it does NOT make a NaN-bearing
+        # spec writable -- `self.result["target"]["spec"]` still holds the whole spec and
+        # `base.write_result` raises on it first, so no output file is produced at all.
+        # `if role in spec` was wrong: a documented `"source": null` left `None` in the
+        # signature while omitting the key did not, so two inputs with identical behaviour
+        # (`self.spec.get("source")` is falsy either way) got different run_signatures and
+        # could not share a checkpoint (PR #638 review).
+        "spec": {
+            role: spec[role]
+            for role in ("sink", "source")
+            if isinstance(spec.get(role), dict)
+        },
         "query_timeout_seconds": args.query_timeout_seconds,
         "engine_overrides": limits,
         "backward_depth": args.backward_depth,
