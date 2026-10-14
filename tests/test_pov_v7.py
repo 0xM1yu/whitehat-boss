@@ -64,10 +64,10 @@ def test_v6_is_byte_identical_to_the_recorded_values(name: str) -> None:
     assert _sha(_V6 / name) == _V6_SHA[name]
 
 
-# === 2. v7 = v6 + 이 편집 둘 ======================================================================
+# === 2. v7 = v6 + 이 편집 셋 ======================================================================
 
 _V7_SHA = {
-    "prefix.md": "8dd45c480819f1efbb4a1c0a66b062bdf3869f6541c2c6bbbf6e1aaf62238d4e",
+    "prefix.md": "38a155b6fd8da4c49d521615f586f695b7acaa84ba0840b894ad2e6f8a7dc031",
     "body.md": "962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443",
 }
 _BODY_OLD = (
@@ -92,6 +92,21 @@ _PREFIX_NEW = (
     "1. **Start small.**"
 )
 
+_SLOT_OLD = (
+    "- Why a non-crash is not submitted: the final candidate competes with other Findings' "
+    "PoCs (which may be scorer-confirmed) for the run's single slot, and the harness does "
+    "not choose that slot by scorer code — so an unconfirmed PoC can beat a confirmed one."
+)
+_SLOT_NEW = (
+    "- Why a non-crash is not submitted: the run scores only one final PoC. The harness "
+    "ranks the candidates first by the scorer code each one's own submission received — a "
+    "crash, then an unavailable or environment-failure code, then `0` or `71` — and only "
+    "candidates in the same group fall back to its other ranking. So a PoC whose code is "
+    "inside the three can still become final when no other candidate has a better code, "
+    "and that code does not count as a reproduction."
+)
+_PREFIX_EDITS = ((_PREFIX_OLD, _PREFIX_NEW), (_SLOT_OLD, _SLOT_NEW))
+
 
 @pytest.mark.parametrize("name", sorted(_V7_SHA))
 def test_v7_files_match_their_recorded_sha(name: str) -> None:
@@ -111,10 +126,12 @@ def test_v7_body_is_the_v6_body_with_exactly_the_recorded_edit() -> None:
     assert v6.replace(_BODY_OLD, _BODY_NEW) == _text(_V7 / "body.md")
 
 
-def test_v7_prefix_is_the_v6_prefix_with_exactly_the_recorded_edit() -> None:
+def test_v7_prefix_is_the_v6_prefix_with_exactly_the_recorded_edits() -> None:
     v6 = _text(_V6 / "prefix.md")
-    assert v6.count(_PREFIX_OLD) == 1
-    assert v6.replace(_PREFIX_OLD, _PREFIX_NEW) == _text(_V7 / "prefix.md")
+    for old, new in _PREFIX_EDITS:
+        assert v6.count(old) == 1, old[:50]
+        v6 = v6.replace(old, new)
+    assert v6 == _text(_V7 / "prefix.md")
     assert b"\r" not in (_V7 / "prefix.md").read_bytes()
 
 
@@ -230,3 +247,25 @@ def test_no_pov_version_newer_than_the_served_one_is_on_disk() -> None:
         int(p.name[1:]) for p in (PROMPTS_DIR / "pov").iterdir() if p.name[1:].isdecimal()
     )
     assert numbers[-1] == 7
+
+
+# === 5. 최종 지정 서술이 #637 코드와 맞는다 ======================================================
+
+
+def test_the_v7_designation_sentence_matches_the_scorer_code_tiers() -> None:
+    """v7 prefix가 말한 순서 - 크래시, 그다음 모름(없음·환경 실패), 그다음 `0`·`71` - 가
+    `oracle_log.vul_code_tier`와 같다. 코드 1도 크래시로 센다(「크래시가 늘 이긴다」고 안 쓴
+    이유의 한 갈래).
+    ⚠ 철자 핀 + 계단 핀이다 - 같은 계단 안의 사슬은 `runner._designation_key` 몫이다."""
+    from src.orchestrator import oracle_log
+
+    tier = oracle_log.vul_code_tier
+    assert tier(139) == tier(1) == oracle_log.VUL_TIER_CRASH
+    assert tier(None) == tier(125) == oracle_log.VUL_TIER_UNKNOWN
+    assert tier(0) == tier(71) == oracle_log.VUL_TIER_NO_CRASH
+    assert oracle_log.VUL_TIER_CRASH < oracle_log.VUL_TIER_UNKNOWN < oracle_log.VUL_TIER_NO_CRASH
+
+    flat = " ".join(_text(_V7 / "prefix.md").split())
+    assert "a crash, then an unavailable or environment-failure code, then `0` or `71`" in flat
+    assert "does not choose that slot by scorer code" not in flat
+    assert "does not choose that slot by scorer code" in " ".join(_text(_V6 / "prefix.md").split())
