@@ -585,8 +585,10 @@ class CapsuleBudgets(HarnessModel):
 # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와 바이트
 # 동일, 이슈 #67).
 # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술은 v14와 같다).
-# ⏵ 2026-10-14 — 아홉째 `auditor_write_window_marker`(쓰기 창 생략 표지 줄, 이슈 #650)는 **꺼져 있고
-# 이 변경(#667) 시점에 선언한 판이 없다** — v15 이하는 이 줄을 서술하지 않아서다.
+# ⏵ 2026-10-14 — 아홉째 `auditor_write_window_marker`(쓰기 창 생략 표지 줄, 이슈 #650)와 열째
+# `auditor_input_context`(슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문, S20 Phase 13)는 둘 다
+# v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가 막는다). 표지 줄은
+# #667이 옵션 0으로 들였고 v16이 선언하면서 `budgets.yaml`이 1로 켠다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -598,6 +600,7 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_write_sites",
     "auditor_guards",
     "auditor_write_window_marker",
+    "auditor_input_context",
 )
 
 
@@ -755,11 +758,11 @@ class Thresholds(HarnessModel):
     # 이 옵션이 생기기 전과 바이트 동일이고, trace `write_windows_omitted`의 수는 0이어도
     # 기록한다. 쓰기 창이 꺼져 있으면(`auditor_write_sites` 0) 효과가 없다. 같은 SOURCE 문자열을
     # 받는 Critic·PoV 판도 이 줄을 받는데(`critic._SOURCE_INPUT_VERSIONS` ·
-    # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본이 0이고
-    # `budgets.yaml`도 끈다 — 이 줄을 서술·선언하지 않는 **Auditor 판**으로 켜면 `cli`의
-    # run·doctor가 막는다(`cli._undescribed_source_options`는 Auditor meta만 읽는다
-    # — `AUDITOR_SOURCE_OPTIONS`). Critic·PoV 판이 이 줄을 서술하지 않는 조합을 막는 가드는
-    # Critic v8 / PoV v7을 넣는 #676이 넣는다(docs/agent-contracts.md §4). 켜는 것은 그 판의 몫이다.
+    # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
+    # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
+    # (`cli._undescribed_source_options`는 Auditor meta만 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
+    # `budgets.yaml`은 v16이 서빙 판이라 1로 켠다. Critic·PoV 판이 이 줄을 서술하지 않는 조합을
+    # 막는 가드는 Critic v8 / PoV v7을 넣는 #676이 넣는다(docs/agent-contracts.md §4).
     auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).
     # 1이면 sink를 아는 슬라이스(Case B)의 entry 함수 바로 뒤에 `GUARDS (syntactic — may not
@@ -777,6 +780,18 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-11 — 서빙 판 v14(이슈 #67)도 같은 서술로 선언한다.
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
+    # Auditor `SOURCE`의 쓰기 지점 창 다음 마지막 블록(#650 표지 줄 앞)으로 슬라이서의
+    # `analysis.input_context`가 고른 입력 디코더 함수 본문을 붙이는가(S20 Phase 13 · council
+    # 2026-10-14). 0이면 안 붙인다 -
+    # `SOURCE`·이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 `SliceRef.input_context`가
+    # `status == "selected"`이고 `basis == "cpg"`일 때 그 `functions[]`의 본문을 같은
+    # 상한(`auditor_source_tokens`)으로 붙인다 - 이미 실린 범위(`shown`)에 통째로 든 함수는 건너뛴다
+    # (`orchestrator/source_input_context`). 새
+    # 수치 상한은 없다. `syntax` 근거·`dispatches`· `carried_decoders`는 싣지 않고 이벤트에 수만
+    # 남긴다. 키가 없는 슬라이스(`--index` 없이 돈 슬라이서)는 아무것도 안 붙는다. 필드 기본은 끈다
+    # - `budgets.yaml`이 켠다. **켠 효과는 미실측이다.** ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)·
+    # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다.
+    auditor_input_context: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
@@ -829,6 +844,8 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-11 — 서빙 판은 v14이고 그 봉투는 v12의 넷째와 같다(이슈 #67 — FACTS만 다르다).
     # ⏵ 2026-10-13 — 서빙 판은 v15이고 봉투는 다섯째 `AuditorProcedureProbeInputAction`이다(v12
     # 봉투의 서브클래스 — `probe`의 `spec` 설명만 다르다). 허용집합은 여섯이다.
+    # ⏵ 2026-10-14 — 서빙 판은 v16이고 봉투는 v15와 같다(새 봉투를 안 낸다 — 허용집합은 여섯
+    # 그대로).
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -842,12 +859,12 @@ class Thresholds(HarnessModel):
     # 「기동 조건」 절 — ⏵ 2026-10-04 정본은 v8이었고 ⏵ 2026-10-06부터 v9이며 prefix가 더 길어
     # hop0가 이보다 크다. ⏵ 2026-10-07부터 v10 — prefix 56,906자(v9는 35,501자 ·
     # `load_prompt(...).prefix`의 글자 수이고 토큰으로는 안 쟀다)라 hop0는 더 크다 · ⏵ 2026-10-09
-    # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 ·
-    # ⏵ 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
-    # 더해져 더 길다, 글자 수는 안 쟀다)을
-    # 넣으면 167,775가
-    # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비 1.22에서 `lookup` 관측
-    # 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의 `_LOOKUP_MAX_CHARS`
+    # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 · ⏵
+    # 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
+    # 더해져 더 길다, 글자 수는 안 쟀다 · ⏵ 2026-10-14 v16 — v15에 prefix 다섯 군데, 글자 수는 안
+    # 쟀다)을 넣으면 167,775가 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비
+    # 1.22에서 `lookup` 관측 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의
+    # `_LOOKUP_MAX_CHARS`
     # 주석). 이 상한은 홉이 끝없이 쌓이는 것을 막을 뿐 창은 안 막는다 — 넘으면 서버가 크기
     # 거절한다. ⏵ 2026-10-13(이슈 #514) 그러면 노드가 그 홉에 `context_overflow` 이벤트를 남기고
     # 러너가 그 후보만 버린다(run은 가고 경고 한 줄 - 후보 전부가 그러면 #296의 성공 0 백스톱이

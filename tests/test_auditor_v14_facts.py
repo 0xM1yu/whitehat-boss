@@ -20,7 +20,8 @@ v13(#591)은 같은 FACTS 변경을 v11 위에 얹어 봉투가 v11 것(`no_sign
 
 판 이름에 묶이지 않은 검사는 `tests/test_auditor_v13_facts.py`가 든다 — 서빙 좌석이 고른 판의
 FACTS(`test_the_served_auditor_seat_renders_a_facts_without_the_source`) · `facts_source: false`인
-판의 디스크 전체 집합(⏵ 2026-10-13 — `{v13, v14, v15}` 셋이다 · 그 전까지 둘) · `build_facts`
+판의 디스크 전체 집합(⏵ 2026-10-14 — `{v13, v14, v15, v16}` 넷이다 · 그 전까지 셋(⏵ 2026-10-13) ·
+그 전까지 둘) · `build_facts`
 기본값 · 로더 거절. 이 파일의 5(서빙 판 봉투 규칙)는 봉투이고 그 FACTS 쪽이 아니다.
 
 ⚠ 철자·구조 핀이다 — 모델이 산문 SOURCE 블록을 FACTS 없이도 같은 무게로 읽는지는 미측정이다.
