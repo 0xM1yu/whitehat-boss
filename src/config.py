@@ -784,7 +784,7 @@ class Thresholds(HarnessModel):
     # Critic도 같은 SOURCE를 받아 이 블록이 그 프롬프트에도 든다.
     auditor_input_context: int = Field(default=0, ge=0, le=1)
     # Auditor FACTS에 슬라이스의 정적 상태 `slice_state`(`analysis_kind` · `degraded` ·
-    # `truncated` + 사유 · 경계 사유)를 싣는가(이슈 #438 (b) · S20 Phase 14 ·
+    # `truncated` + 사유 · 경계 사유 · 상한 둘)를 싣는가(이슈 #438 (b) · S20 Phase 14 ·
     # `orchestrator/slice_state`). 0이면 안 싣는다 - Auditor 입력(SOURCE·FACTS)과
     # `auditor_source` 이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 슬라이스가 있는
     # 후보의 hop0 FACTS에 키가 붙고(Auditor 자리만 - 다른 역할의 FACTS는 그대로) 같은 값이
