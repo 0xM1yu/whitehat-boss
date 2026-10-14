@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15 → ⏵ 2026-10-14 v16)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15·v16 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15 → ⏵ 2026-10-14 v16 → ⏵ 2026-10-14 v17)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15·v16·v17 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -191,7 +191,7 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). ⏵ 2026-10-11 — 지금 배선된 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578, 옵션 서술은 v12와 바이트 동일, PR #601). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS` 아홉 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). ⏵ 2026-10-11 — 지금 배선된 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578, 옵션 서술은 v12와 바이트 동일, PR #601). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS`(v10 시점 아홉) 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
@@ -220,6 +220,19 @@ agent:
   `_skipped_size`(상한) · `_skipped_empty`(읽은 본문이 비었다 - 없는 파일) · `_carried_decoders` · `_dispatches`다. **v16부터 서술·선언한다** - v15 이하를 고르고 켜면 `cli` run·doctor가 막는다.
   ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
   상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수는 남은 줄 범위만 `shown`에 들고(`_shown_ranges`), 줄여 실은 enum은 일부만 보여 안 든다.
+  ⏵ **2026-10-14 — 열한째 옵션 `auditor_slice_state`**(S20 Phase 14 · 이슈 #438 선택지 (b) · `budgets.yaml` **0 — 꺼져 있다. 켜는 것은 측정 결정이다**: [D101](open-questions/D/D101.md)의 닫히는 조건이
+  켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정 분포가 움직일 방향은 안 쟀다). `SOURCE`가 아니라 **FACTS**를 넓힌다: 켜면 슬라이스가 있는 후보의 hop0 FACTS에 opt-in 키
+  `slice_state`가 붙는다(`prompt_loader.FACT_KEYS` · **Auditor만** — `build_facts`에 그 인자를 넘기는 곳은 `nodes/auditor.py`의 `_render_hop0` 하나다. Scout·Critic·PoV의 FACTS는 옵션과 무관하게 바이트 그대로다).
+  값은 슬라이서가 `slices.json`에 쓴 **정적 사실**을 그대로 옮긴 일곱이다(`orchestrator/slice_state.facts` — LLM이 만든 주장은 없다): `analysis_kind` · `degraded` · `truncated` · `truncation_reasons` ·
+  `sinks_capped`(Case A flows 질의가 전역 싱크 집합을 `FLOWS_SINK_CAP`에서 잘랐나) · `cross_method_flow_truncated`(대상 지정 모드가 교차 메서드 간선을 `CROSS_EDGE_LIMIT`에서 잘랐나 — 둘 다 `truncated`와 별개의 상한이라 `truncated: false`는 완전하다는 뜻이 아니다. ⚠ **상한이 이 둘뿐인 것은 아니다** — 슬라이서가 자르고도 어느 키에도 안 싣는 자리가 알려진 것만 둘이다: Case A 흐름 질의(`flows_query`)가 싱크 후보를 `CASE_B_*_CAP` 상수로 미리 자르는 절단(`sinks_capped: false`여도 안 드러난다)(`slicer_queries.py`의 `CASE_B_WRITER_CAP`·`CASE_B_OPERATOR_CAP` 등 `.take(...)`, `sinksCapped` 계산 앞) · 대상 지정 모드의 시작 노드 동점 절단(`tied_truncated`, 슬라이스가 아니라 locate note에만 남는다). 그래서 `slice_state`의 `false`·`null`은 어떤 상한에도 안 닿았다는 증거가 아니고, v17 프롬프트도 그렇게 적는다. 싣는 상한 2 대 알려진 미싣기 2) ·
+  `boundary_reasons`(의존 역추적이 끝난 자리의 사유 — `entry_parameter`는 CPG에 호출 간선이 없는 함수의 파라미터에 닿았다는 뜻이지 호출자가 **없다**는 뜻이 아니다. 슬라이서가 쓰는 다른 사유도 그대로 나간다). `analysis_kind`의 값 집합은 닫혀 있지 않다(`tools/slicer`의 `parameter_paths`·`backward_ddg`·`degraded_anchor_only`에 더해 대상 지정 모드 `tools/slicer_v2`가 `forward_ddg`·`degraded_lexical`을 쓴다 — 프롬프트는 「for example」로 적는다). **「모름」은 `false`가 아니라 `null`이다**
+  ([CLAUDE.md](../CLAUDE.md) §0): `false`·`[]`는 슬라이서가 **그 키를 실제로 적었을 때만** 나간다 — 로더가 키마다 센다(`SliceRef.truncated_recorded` · `truncation_reasons_recorded` · `boundaries_recorded` · `sinks_capped_recorded` · `cross_method_flow_truncated_recorded`). 상한 둘은 그 키를 적는 슬라이서 종류에서만 `true`·`false`고 나머지는 `null`이다.
+  그래서 Case A `parameter_paths`와 `degraded_anchor_only`(둘 다 사유·경계를 안 적는다)의 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이고, `analysis_kind`가 빈 옛 슬라이스는 `degraded`도 `null`이다
+  (슬라이서는 `degraded`를 대체 슬라이스에만 적는다). 서 있는 신호(`true`·사유가 있는 목록)는 적었는지와 무관하게 그대로 나간다. ⚠ `[]`는 「적었는데 사유가 없다」이지 슬라이스가 완전하다는 뜻이 아니다. 같은 값이 `auditor_source` 이벤트에 `slice_state_*`로 남는다(`slice_state_analysis_kind` · `_degraded` · `_truncated` ·
+  `_truncation_reasons` · `_boundary_reasons` · `_sinks_capped` · `_cross_method_flow_truncated` — 사유는 쉼표로 이은 문자열, 모름은 `None`) — **이벤트는 모델에게 보인 값이다**(러너가 한 번 만들어 노드와 이벤트가 같이 쓴다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
+  이벤트가 이 옵션이 생기기 전과 **바이트 동일**하다(`tests/test_slice_state.py`). `degraded`·`truncated`·경계는 선택지 (a)의 `gate_reasons`(`auditor_source_gate`)와 같은 신호의 다른 출구다 — 사후 집계는 이벤트가, 모델 입력은 이 키가 든다.
+  **v17부터 서술·선언한다**(v16 이하를 고르고 켜면 `cli` run·doctor가 막는다). 아직 안 쓴 것: 켠 run 짝 비교는 0건이다. ⚠ `analysis_kind`는 슬라이서의 방법 이름이다 —
+  `slice_criterion`(어느 끝을 쥐여 줬는가)이 아니고 그 키는 Auditor에 안 간다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -603,7 +616,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 · ⏵ 2026-10-14 v16)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 · ⏵ 2026-10-14 v16 · ⏵ 2026-10-14 v17)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -944,7 +957,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v16"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v17"}
 }
 ```
 
@@ -1008,8 +1021,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
 > ⏵ 2026-10-13 — **지금 고르는 것은 v15**다(v14 + 계약 문장 여섯 — 아래 「v14 → v15」). 출력 계약은 v12와 같다. 위 Finding 예시의
 > `prompt_version`도 v15로 고쳤다.
-> ⏵ 2026-10-14 — **지금 고르는 것은 v16**이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 — 아래 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
-> `prompt_version`도 v16으로 고쳤다.
+> ⏵ 2026-10-14 — **지금 고르는 것은 v17**이다(v16 + 슬라이스 상태 서술 · 「배너 없으면 첫 블록 하나」 정정 — 아래 「v16 → v17」; v16은 v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명, 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
+> `prompt_version`도 v17로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -1118,7 +1131,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
 ⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 · S19). 봉투는 v12의 넷째를 상속한 `AuditorProcedureProbeInputAction`이라 이 절의 `cwe`·`audit` 규칙은 그대로 선다. v12 자체는 여전히 미선택이다.
-⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다.
+⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다. ⏵ 같은 날 서빙 판은 v17이다(v16 + 슬라이스 상태 서술 · S20 Phase 14) - 봉투는 같다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
@@ -1183,7 +1196,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v16", "critic": "v7"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v17", "critic": "v7"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1358,6 +1371,14 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 창 조각과 일부만 겹치면 붙어 몇 줄이 중복될 수 있음 · 상한에 넘치면 통째로 뺌 · 블록이 없을 수 있고 없음은 증거가 아님 · 붙었다고 슬라이스의 데이터가 그 함수를 지난다는 뜻이 아님) ⑤ 보조 문맥 목록에 입력 맥락 함수를 더한다. 이 문장은 러너 동작과 같다
 > (`tests/test_source_input_context.py`). meta `source_options`는 v15의 여덟에 `auditor_write_window_marker`(①②③이 서술 - #667의 옵션을 v16이 처음 선언한다)와 `auditor_input_context`(④⑤가 서술)를 더한 열이고 `budgets.yaml`이 둘 다 `1`로 켠다. v16으로 돈 run은 0건이고 켠 옵션의 효과는 미실측이다. ⚠ 같은 SOURCE가 PoV·Critic(`finding_sources`)에도 가므로 디코더 본문이
 > 그 프롬프트에도 든다 - PoV·Critic 판 쪽 서술은 이 판이 안 고친다(Critic v7 prefix의 SOURCE 블록 목록에 입력 맥락 함수와 표지 줄이 없다 - 후속).
+
+> ⏵ **2026-10-14 — v16 → v17 (S20 Phase 14 · 이슈 #438 (b) · #669의 Auditor 몫).** v17 = v16 + prefix 두 군데. body·봉투·도구·옵션 열(표지 줄 · 입력 맥락 포함)의 서술은 v16과 같고 v16은 한 글자도 안 바뀌었다(규칙 1).
+> ① 「Original-source input contract」의 마지막 항목 정정 — v16은 「배너가 없으면 `SOURCE`는 첫 블록 하나」라고 했는데, 쓰기 지점 창이 **전부** 못 실리면(크기 상한 · 개수 상한 — 표지 줄의 N은 둘을 다 센다) `SOURCE`는 배너 없는 entry 함수 + 끝 줄 표지
+> (`/* ... +N more write windows not shown ... */`, #650)라 거짓이다(`runner._auditor_source`의 `anchor_text` 경로 · `tests/test_slice_targets.py::test_marker_follows_a_bare_anchor_when_every_window_is_size_dropped`).
+> v17은 그 예외를 더했다(`tests/test_auditor_v17.py`가 러너가 낸 `SOURCE`로 문다). ② 새 항목 `FACTS.slice_state`의 서술(위 「열한째 옵션」) — `null`은 `false`도 완전함도 아니고, 키가 없는 것도 완전함의 증거가 아니다. 그 서술은
+> 키가 없을 때도 참이라 옵션을 **끈 채** meta `source_options`에 선언한다(그래야 켠 run ↔ 끈 run을 같은 prefix로 짝 비교한다 — `tests/test_config.py`의 「선언 == 켜진 옵션」 검사는 이 하나만 예외로 둔다).
+> v17로 돈 run은 0건이고 켠 옵션의 효과(모델이 `slice_state`를 판정에 쓰는지)는 미실측이다. ⚠ #669의 나머지 — **Critic v7 prefix 60-62행**(SOURCE 블록 목록에 입력 맥락 함수·끝 줄 표지가 없다)과 PoV v6 — 는 이 판이 안 고친다
+> (같은 SOURCE 문자열이 거기에도 간다 · 후속). v17은 PR #668(v16 · 입력 맥락 블록) 위에 선다.
 
 > ⏵ **2026-10-13 — Scout v4의 요청 바이트가 판 번호 없이 바뀌었다**(#529). 노드가 `SOURCE`의 모양을 meta
 > `input` 선언으로 고르게 돼서, `--slices` run의 v4(`input: source`)는 슬라이스 렌더가 아니라 entry를 품는

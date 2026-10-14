@@ -489,6 +489,14 @@ class EventKind(StrEnum):
     # 안이다 - 일부만 겹치면 붙인다) · `_skipped_size`(상한에 넘침) · `_skipped_empty`(읽은 본문이
     # 비었다). 그리고 이 판이 싣지 않는 `_carried_decoders`·
     # `_dispatches`의 수다. 붙인 본문은 `functions`에 안 든다 - `input_context_added`가 센다.
+    # `auditor_slice_state`가 1이면(이슈 #438 (b)) **모델에게 보인 슬라이스 상태**가 더 실린다 -
+    # `slice_state_analysis_kind`(슬라이서가 쓴 그대로) · `_degraded` · `_truncated` ·
+    # `_truncation_reasons` · `_boundary_reasons`(사유는 쉼표로 이은 문자열, 빈 문자열은 사유 없음)
+    # · `_sinks_capped` · `_cross_method_flow_truncated`(상한 둘, 적은 슬라이서 종류만 불리언).
+    # **`None`은 모름이다** - 키마다 슬라이서가 그 사실을 안 적었을 때 `false`·빈 문자열이 아니라
+    # `None`이다(`analysis_kind`는 비었을 때, `_degraded`는 `analysis_kind`가 비었을 때, 나머지는
+    # 그 키를 안 적었을 때 - `slice_state.facts`). 이 값이 FACTS `slice_state`와 같은 것에서 나온다.
+    # 꺼져 있으면 필드가 없다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
