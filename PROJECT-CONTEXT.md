@@ -132,7 +132,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 > ⏵ 2026-10-11 — 「PoV 프롬프트는 v4이다」는 2026-10-08의 서술이고 pov 좌석은 2026-10-09 `60df731`부터 v5다(`config/models.yaml`). 위 마지막 홉 규칙의 「안이면 안 하며」는 v4의 서술이다. v5(이슈 #549 ②)는 앞선 gen이 제외 코드 밖을 받은 적이
 > 있으면 `submit`의 `poc_sha256`으로 그 gen을 지명해 낸다 — 어느 gen도 못 이겼을 때만 안 낸다.
 > ⏵ 2026-10-13 — pov 좌석은 v6이다(`config/models.yaml` · 영어로 다시 쓴 판, PR #636). v6으로 돈 run은 0건이고 효과는 미실측이다.
-> ⏵ 2026-10-14 — pov 좌석은 **v7**이다(S20 Phase 14 · 이슈 #649·#669). v6에서 body의 「JSON이 입력 사실 전부다」 문장(JSON의 Finding 데이터는 `finding_id`뿐이라고 고쳤다)과 prefix의 SOURCE 새 블록 서술 한 문단만 고쳤다(`prompts/pov/v7/meta.yaml`). v7로 돈 run은 0건이고 효과는 미실측이다.
+> ⏵ 2026-10-14 — pov 좌석은 **v7**이다(S20 Phase 14 · 이슈 #649·#669). v6에서 body의 「JSON이 입력 사실 전부다」 문장(JSON의 Finding 데이터는 `finding_id`뿐이라고 고쳤다)과 prefix의 SOURCE 새 블록 서술 한 문단, DEF-SUBMIT의 최종 지정 문장(#637에 맞춤) 셋만 고쳤다(`prompts/pov/v7/meta.yaml`). v7로 돈 run은 0건이고 효과는 미실측이다.
 > 선정됐으나 아직 배선 전인 키가 다시 생기면 이 표에 「배선 전」으로 등재해 두고(「안 쓰는」과 사유가
 > 다르다), 배선되면 §1로 올린다.
 > 되돌리기는 git 이력으로 한다(항목·checksum manifest·프로필이 한 커밋에 있다). 그날 지운 것 —

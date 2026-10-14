@@ -19,15 +19,16 @@
 #    (`tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`가 문다).
 # 제외 코드는 v6과 같은 셋(0·71·300)이다 — 정본은 `src/orchestrator/oracle_log.py` `NO_CRASH_VUL_EXIT_CODES`다.
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
-#   prefix.md sha256 `38a155b6fd8da4c49d521615f586f695b7acaa84ba0840b894ad2e6f8a7dc031`
+#   prefix.md sha256 `38be10c45410e26513817a807961faacd22c32959e9cb25b5c82403b8e6a72ce`
 #   body.md   sha256 `962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443`
-# ⚠ 이 판은 어느 run에도 안 쓰였다. 두 서술이 모델 행동을 바꾸는지(Finding 산문을 더 읽는지 · 디코더 블록을 어떻게 쓰는지)는 미실측이다.
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 세 서술이 모델 행동을 바꾸는지(Finding 산문을 더 읽는지 · 디코더 블록을 어떻게 쓰는지 · 최종 지정 문장을 어떻게 읽는지)는 미실측이다.
 # v6 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
 role: pov
 version: v7
 output_schema: PovActionNamed
 hop_header: true
 description: >-
-  PoV v6에 두 가지를 고친 판입니다. body의 「입력 사실은 JSON이 전부다」 문장을 사실대로 고쳤고(JSON의 Finding 데이터는 `finding_id`뿐이고 CWE·제목·경로·촉발 상태는
+  PoV v6에 세 가지를 고친 판입니다. body의 「입력 사실은 JSON이 전부다」 문장을 사실대로 고쳤고(JSON의 Finding 데이터는 `finding_id`뿐이고 CWE·제목·경로·촉발 상태는
   Vulnerability 절에만 있다), prefix에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트·보조 문맥이라는
-  한 문단을 더했습니다. 봉투·홉 줄·도구·DEF 규칙은 v6과 같습니다. 이 판으로 돈 run이 0건이라 효과는 미실측입니다.
+  한 문단을 더했고, DEF-SUBMIT의 최종 지정 문장을 #637(후보의 자기 채점기 코드 계단이 지정 키의 첫 성분)에 맞게 다시 썼습니다.
+  봉투·홉 줄·도구·나머지 DEF 규칙은 v6과 같습니다. 이 판으로 돈 run이 0건이라 효과는 미실측입니다.

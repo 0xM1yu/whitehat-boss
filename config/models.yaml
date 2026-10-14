@@ -934,10 +934,11 @@ models:
     # `7df25b5c667fda203e211d26beb543503ac87c029dd43627f64d6c1eff972c31`(`prompts/pov/v6/meta.yaml` 머리와
     # 같다). **실서빙 run 0건 · 효과 미실측**이다 — v6으로 돈 run이 없고, 영어로의 전환 자체가 모델 행동에 주는
     # 영향도 안 쟀다. v5와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
-    # ⏵ 2026-10-14 — v7로 올렸다(S20 Phase 14 · 이슈 #649 (a)·#669). v7은 v6에서 둘만 고쳤다: body의 「JSON이 입력 사실 전부다」
+    # ⏵ 2026-10-14 — v7로 올렸다(S20 Phase 14 · 이슈 #649 (a)·#669). v7은 v6에서 셋만 고쳤다: body의 「JSON이 입력 사실 전부다」
     # 문장(JSON의 Finding 데이터는 `finding_id`뿐이고 CWE·제목·경로·촉발 상태는 FACTS 밖 Vulnerability 절에만 있다 -
     # FACTS 바이트는 안 바꿨다)과 prefix에
-    # SOURCE 끝의 입력 맥락 함수 블록·표지 줄이 하네스 생성 텍스트라는 한 문단(`prompts/pov/v7/meta.yaml`).
+    # SOURCE 끝의 입력 맥락 함수 블록·표지 줄이 하네스 생성 텍스트라는 한 문단, 그리고 DEF-SUBMIT의 최종 지정 문장(#637 뒤
+    # 「하네스는 채점기 코드로 가르지 않는다」가 거짓이라 다시 썼다)(`prompts/pov/v7/meta.yaml`).
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v7을 더했다. **v7로 돈 run은 0건 · 효과 미실측** - v6 이하와 직접 비교하지 않는다. 위 v6
     # 문단의 sha는 v6의 값이다.
     prompt_template_version: "v7"
