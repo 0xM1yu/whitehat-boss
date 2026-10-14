@@ -238,4 +238,4 @@ SOURCE만으로 서고 `evidence_refs=[]`일 수 있다(`prompts/critic/v7/prefi
 P0b(보류) 그대로다. **추가 지표(첫 v7 run이 셀 것):** `uphold`이고 그 Decision의 `evidence_refs=[]`(Critic 출력 - `objects` 표 `kind='decision'` 행의 값이고 부착과 무관하다)인데
 Finding이 `validated`가 된 수 - `objects` 표의 `kind='decision'` 행과 `policy_decision`으로 센다. step 1이 서빙 경로에서 발동하지 않으므로(`docs/agent-contracts.md` §2.3 ⏵ 2026-10-14) 규약을 지킨 v7 `uphold`는 전부 `evidence_refs=[]`다 - 이 지표는 사실상 `critic_upheld`로 `validated`가 된 수 전수와 같아진다. 그래서 첫 run에서 **사람이** `uphold`의 `rationale`이 인용한 코드가 SOURCE에 실재하는지 표본으로 확인해야 한다(기계 확인은 P0b - 보류). ⚠ Finding의 `evidence_refs`는 6단계 부착 뒤 값이라 모델 인용 수가 아니다
 (`gate_node.py:32-41`) - 모델이 인용한 수는 `gate_eval.cited_by_model`(6단계 행)에 따로 남는다. 값은 미측정이다(v7 run 0건).
-v7이 서빙 중이므로 `normalize`를 `UPHOLD`로 되돌리는 것은 서빙을 v6으로 되돌린 뒤에만 안전하다 - 지금 되돌리면 v7 `rebut` 전부가 `validated` 사슬을 연다.
+v7이 서빙 중이므로 `normalize`를 `UPHOLD`로 되돌리는 것은 서빙을 v6으로 되돌린 뒤에만 안전하다 - 지금 되돌리면 v7 `rebut` 전부가 `validated` 사슬을 연다. ⏵ 2026-10-15 - 서빙 Critic은 v8이다(`config/models.yaml` · v8은 v7과 body가 바이트 동일이고 판정 절차·출력 규칙이 같다 - 같은 `rebut` 규약을 든다). 그래서 이 문장의 안전 조건은 「서빙을 **v8과 v7**에서 v6으로 되돌린 뒤」다.
