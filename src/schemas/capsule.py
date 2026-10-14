@@ -92,8 +92,12 @@ class CapsuleCuts(HarnessModel):
     (`used_tokens` 대 `budget_tokens`)도 못 쓴다 — 섹션이 통째로 빠지면 `used`가 예산 아래로
     내려가 오히려 여유로워 보인다.
 
-    **세지 않는 것(함정):** `_sections_for`의 `min(cost, remaining)`는 본문이 없는 자리표시자의
-    토큰만 깎아 내용을 안 바꾼다. `retrieval_truncated`는 청크 개수 상한(`MAX_CHUNKS`) 절단이라
+    **세지 않는 것(함정):** `_sections_for`의 `min(cost, remaining)`는 섹션의 토큰 계상만 깎고
+    본문을 안 바꾼다 - 보조 섹션(`static_signal`·`known_facts`)뿐 아니라 `target_function`도 같은
+    `min()`을 탄다. 그래도 세지 않는 것이 맞는 까닭: 어느 레벨이든 `LEVEL_SECTIONS`의 마지막 칸이
+    64토큰 보조 섹션이라 `target_function`이 깎여 예산이 0이 되면 그 뒤 칸에서 반드시 `break`가
+    나고 `dropped_sections`가 채워진다(`any_cut`). `min()`을 따로 세지 않아도 그 절단은 표지에 든다.
+    `retrieval_truncated`는 청크 개수 상한(`MAX_CHUNKS`) 절단이라
     다른 질문이다. 확장(`expand`)이 붙인 것도 반영하지 않는다 — 최초 조립만이다.
 
     **프롬프트에 실리지 않는다** — `build_facts`·`describe_sections`는 `sections`만 읽는다.
