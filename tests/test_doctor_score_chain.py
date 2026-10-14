@@ -82,6 +82,7 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
     "role,version",
     [
         ("critic", "v5"),
+        ("critic", "v7"),
         ("pov", "v3"),
         ("pov", "v4"),
         ("pov", "v5"),
@@ -118,6 +119,8 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("role,module,attribute,version", [
     ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v5"),
+    # v7이 서빙 판이다(2026-10-14) - 집합에서 v7이 빠지면 근거 본문·위치가 조용히 빠진다.
+    ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v7"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v3"),
     # v4가 서빙 판이다(2026-10-08) - 집합에서 v4가 빠지면 넓은 입력이 조용히 꺼진다(그 사고를
     # doctor가 막는다).

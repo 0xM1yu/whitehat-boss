@@ -112,12 +112,13 @@ def _facts(body: str) -> dict:
 # --- (a) 홉이 돈 Finding - 관측이 실리고 FACTS에 수가 든다 -------------------------------
 
 
-def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_v6_critic_prompt(
-    ctx, monkeypatch, tmp_path  # noqa: ANN001
+@pytest.mark.parametrize("version", ["v6", "v7"])
+def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_critic_prompt(
+    ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
     finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, _hopped_actions())
     assert len(sink) == 2, "전제 - 조사 홉 둘(lookup, probe)"
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
 
     critic.run(ctx, finding=finding, hop_observations=tuple(sink))
 
@@ -139,7 +140,7 @@ def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_v6_crit
 
 
 def _pre_change_critic_body(ctx, finding, decision_id: str):  # noqa: ANN001, ANN202
-    """이 PR 이전 `critic._ask_model`이 v6에 대해 조립하던 그대로(홉 인자 없이)."""
+    """이 PR 이전 `critic._ask_model`이 content-aware 판(v6·v7)에 조립하던 그대로(홉 인자 없이)."""
     version = ctx.config.model_for("critic").prompt_template_version
     template = load_prompt(Role.CRITIC, version)
     return template.render(
@@ -158,9 +159,10 @@ def _pre_change_critic_body(ctx, finding, decision_id: str):  # noqa: ANN001, AN
     )
 
 
+@pytest.mark.parametrize("version", ["v6", "v7"])
 @pytest.mark.parametrize("shape", ["one_shot", "answer_at_hop0"])
 def test_a_finding_without_hops_renders_the_critic_prompt_exactly_as_before(
-    ctx, monkeypatch, tmp_path, shape  # noqa: ANN001
+    ctx, monkeypatch, tmp_path, shape, version  # noqa: ANN001
 ) -> None:
     if shape == "one_shot":  # 루프 꺼짐 - dev_fake 한 방 판
         candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
@@ -171,7 +173,7 @@ def test_a_finding_without_hops_renders_the_critic_prompt_exactly_as_before(
     else:  # 루프 켜짐 - 첫 홉에서 곧장 answer
         finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, [_answer()])
     assert sink == [], "전제 - 홉 0이면 통로는 빈 채다"
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
 
     _, decision = critic.run(ctx, finding=finding, hop_observations=tuple(sink))
 
@@ -185,7 +187,7 @@ def test_a_finding_without_hops_renders_the_critic_prompt_exactly_as_before(
 # --- (c) 판이 문이다 - content-aware만 받는다 ----------------------------------------------
 
 
-@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6"])
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7"])
 def test_only_content_aware_critic_versions_render_the_observations(
     ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
@@ -228,25 +230,28 @@ def test_the_sink_carries_the_user_turn_observations_and_never_the_models_own_wo
 # --- (e) 입력 몫을 넘을 수 있어도 자르지 않고 사실만 남긴다 ----------------------------------
 
 
-def _hop_events_after_critic(ctx, finding, sink, *, context_limit):  # noqa: ANN001, ANN202
-    _critic_at(ctx, "v6", endpoint="http://critic.invalid/v1", context_limit=context_limit)
+def _hop_events_after_critic(ctx, finding, sink, *, context_limit, version="v6"):  # noqa: ANN001, ANN202
+    _critic_at(ctx, version, endpoint="http://critic.invalid/v1", context_limit=context_limit)
     critic.run(ctx, finding=finding, hop_observations=tuple(sink))
     return _events(ctx, EventKind.CRITIC_HOP_OBSERVATIONS)
 
 
+@pytest.mark.parametrize("version", ["v6", "v7"])
 def test_observations_that_can_exceed_the_seat_share_are_recorded_not_cut(
-    ctx, monkeypatch, tmp_path  # noqa: ANN001
+    ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
     finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, _hopped_actions())
     # 관측 없는 같은 요청의 크기를 먼저 잰다 - 몫을 그 바로 위로 잡아 **관측이 넘기게** 한다.
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
     base = _pre_change_critic_body(ctx, finding, "decision_0001")
     base_chars = len(base.prefix) + len(base.body)
     output_max = ctx.config.thresholds.output_max_for("critic")
     margin = 30  # 토큰. 관측 절은 이보다 훨씬 길다.
     share = int(base_chars / critic._WORST_CHARS_PER_TOKEN) + margin
 
-    (event,) = _hop_events_after_critic(ctx, finding, sink, context_limit=output_max + share)
+    (event,) = _hop_events_after_critic(
+        ctx, finding, sink, context_limit=output_max + share, version=version
+    )
 
     data = event.data
     assert data["window_checked"] is True
@@ -293,12 +298,13 @@ def test_a_fake_seat_has_no_window_so_it_records_no_estimate_and_no_warning(
 # --- (f) 러너 - 5단계가 모으고 7단계가 넘긴다 -----------------------------------------------
 
 
+@pytest.mark.parametrize("version", ["v6", "v7"])
 def test_the_runner_keeps_the_hop_observations_per_finding_and_hands_them_to_critic(
-    ctx, monkeypatch, tmp_path  # noqa: ANN001
+    ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
     candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
     _arm(ctx, monkeypatch, tmp_path, hops=4)
-    _critic_at(ctx, "v6")
+    _critic_at(ctx, version)
     ctx.resolve_requests = _StubResolver(_found())
     ctx.read_payload = lambda ref: PROBE_LOG
     ctx.models = _Split(_ScriptedModel(_hopped_actions()), ctx.models)
