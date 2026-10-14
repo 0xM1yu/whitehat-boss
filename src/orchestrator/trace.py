@@ -23,6 +23,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
+| 캡슐 예산 절단 (#663) | `capsule_cut` | `subject_id`(캡슐)별 - `dropped_sections`(상한)·
+`graph_stopped`·`graph_skipped`(하한)·`related_skipped`. `retrieval_truncated`(청크 개수)와
+다른 질문이다. **이벤트 부재 = 안 잘림, 단 이 이벤트가 생긴 뒤 run만** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
 | Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage
 (⏵ 2026-10-13 크기 거절당한 홉도 1건: `stop_reason=context_overflow` · action 없음, #514). **루프
@@ -789,6 +792,17 @@ class EventKind(StrEnum):
     # `retrieval.run`이 낸다 — 설명은 예산을 미리 떼어 담지만(코드 자리를 굶기지 않게 최대 절반)
     # 그 상한을 넘는 긴 설명은 잘린다. **조용히 빠지지 않게** 남긴다(§0) — `kept`·`total`은 줄 수다.
     VULN_DESCRIPTION_TRUNCATED = "vuln_description_truncated"
+    # `search`(캡슐 최초 조립)의 예산 절단이 내용을 갈랐다 (#663). `retrieval.run`이 낸다 —
+    # `ContextCapsule.cuts`(`CapsuleCuts`)가 비어 있지 않을 때만이고 **이벤트 부재 = 안 잘렸다**
+    # (`retrieval_truncated`·`scout_slice_trimmed`와 같은 읽기). ⚠ 이 이벤트가 생긴 뒤 run에서만
+    # 그렇다 - 그전 run의 부재는 「안 쟀다」다(캡슐의 `cuts=None`과 같다).
+    # `retrieval_truncated`(청크 개수 `MAX_CHUNKS`)와 다른 질문이다.
+    # `subject_id`는 캡슐이고 같은 캡슐이 Retriever 캐시에서 다시 돌려지면 `run()`이 또 부르므로
+    # **`subject_id`로 센다**(행 수가 아니다). 필드: `level` · `dropped_sections`(쉼표로 이음 - 예산
+    # break로 못 만든 kind, **상한**) · `graph_stopped` · `graph_skipped`(그래프 섹션에서 못 담은
+    # 항목 수, **하한** - break 뒤 섹션은 시도 안 해 안 센다) · `related_skipped`(선별됐는데
+    # `related`에 안 든 조각 수). 확장이 붙인 섹션은 반영 안 한다.
+    CAPSULE_CUT = "capsule_cut"
     # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
     # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
     # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**

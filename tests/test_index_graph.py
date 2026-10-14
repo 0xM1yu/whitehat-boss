@@ -453,6 +453,9 @@ def test_graph_sections_vanish_when_target_function_eats_the_budget(source: Path
 
     **심볼 단위 캡슐(D13 후속)이 들어오면 이 동작이 바뀌는 것이 의도다** —
     `target_function`이 심볼 하나로 좁혀져 예산이 남는다. 그때 이 테스트를 고친다.
+
+    ⏵ 2026-10-14 (#663) — **섹션 모양은 같지만 구별은 된다**: `cuts.graph_stopped`가 이 갈래를
+    「index.json 없음」과 가른다(없음에서는 `graph_stopped=False`).
     """
     big = source / "parser.c"
     big.write_text("void parse_header(void) { helper(); }\n" * 3000, encoding="utf-8")
@@ -462,6 +465,7 @@ def test_graph_sections_vanish_when_target_function_eats_the_budget(source: Path
 
     assert [s.kind for s in capsule.sections] == ["target_function"]
     assert capsule.used_tokens == budget
+    assert capsule.cuts is not None and capsule.cuts.graph_stopped is True
 
 
 # --- expand -------------------------------------------------------------------
