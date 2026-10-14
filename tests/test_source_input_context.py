@@ -2,8 +2,8 @@
 2026-10-14).
 
 결정(사용자 최종 승인 2026-10-14): `functions[]` 중 `status == "selected"` ∧ `basis == "cpg"`인
-것만,
-쓰기 지점 창 **뒤에** 같은 상한·`seen` 기계로 붙인다. `syntax`
+것만, 쓰기 지점 창 **뒤에**(#650 표지 줄이 있으면 그 앞) 같은 상한으로 붙인다 - 이미 실린 범위인지는
+러너의 `shown`(블록을 붙인 자리에서만 느는 목록)에 통째로 드는가로 본다. `syntax`
 근거·`dispatches`·`carried_decoders`는
 이 판에서 싣지 않고 이벤트에 수만 남긴다. 옵션은 `auditor_input_context`(기본 0 · `budgets.yaml` 1).
 
@@ -30,7 +30,12 @@ import pytest
 pytest.importorskip("tree_sitter")
 
 from src import cli  # noqa: E402
-from src.adapters.slices import SliceInputError, load_slices, slice_refs  # noqa: E402
+from src.adapters.slices import (  # noqa: E402
+    SliceInputError,
+    load_slices,
+    render_slices,
+    slice_refs,
+)
 from src.config import AUDITOR_SOURCE_OPTIONS, load_config  # noqa: E402
 from src.orchestrator import runner  # noqa: E402
 from src.schemas.common import Location  # noqa: E402
@@ -159,6 +164,31 @@ def test_a_malformed_input_context_stops_the_load(tmp_path, contexts, kind) -> N
         _load(tmp_path, _broken(kind, contexts["cpg"]))
 
 
+def test_a_decoder_path_that_escapes_the_target_root_stops_before_the_run(
+    tmp_path, contexts  # noqa: F811
+) -> None:
+    """`functions[].file`도 `slices.json`의 못 믿는 경로다 - entry·줄 경로처럼 run 전에
+    `render_slices`가 `SliceInputError`로 막는다. 안 막으면 5단계의 `read_source`가 `PathEscape`로
+    죽고 그것은 Scout가 GPU를 다 쓴 뒤다(#668 리뷰 LOW-1). 같은 모양의 루트 안 경로는 통과한다."""
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / FILE).write_bytes(EXCERPT.read_bytes())
+    (tmp_path / "outside.c").write_text("int secret;\n", encoding="utf-8")
+
+    def loaded(file: str):  # noqa: ANN202
+        context = json.loads(json.dumps(contexts["cpg"]))
+        context["functions"][0]["file"] = file
+        item = _slice(
+            "slice_0001", "B", {(FILE, eatsize_call_line()), (FILE, hextoint_line() + 1)},
+            {FILE: fixture_lines(EXCERPT)}, analysis=_backward(input_context=context),
+        )
+        return load_slices(_write(tmp_path, _document([item])))
+
+    assert set(render_slices(loaded(FILE), root)) == {"slice_0001"}, "전제 - 루트 안 경로는 통과"
+    with pytest.raises(SliceInputError, match="outside.c"):
+        render_slices(loaded("../../outside.c"), root)
+
+
 # === 2~5. `_auditor_source` =====================================================================
 
 
@@ -200,7 +230,7 @@ def test_a_cpg_function_body_follows_the_write_window_and_the_counts_match(
 
     assert decoder in got and decoder not in base
     assert window in got and got.index(window) < got.index(decoder), "쓰기 지점 창 뒤여야 한다"
-    assert got.startswith(base), "붙이기는 맨 뒤에만 일어난다"
+    assert got.startswith(base), "붙이기는 쓰기 창 뒤에만 일어난다 - 앞 블록은 안 바뀐다"
     assert "eatsize(const char **p)" in got
     assert event["input_context"] == "selected" and event["input_context_basis"] == "cpg"
     assert (event["input_context_listed"], event["input_context_added"]) == (1, 1)
@@ -436,6 +466,60 @@ def _shown_world(built, tmp_path, decoder, context, **opts):  # noqa: ANN001, AN
     )
 
 
+def test_input_context_chars_is_the_real_growth_even_when_a_banner_appears(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """entry 함수만 실린 SOURCE는 배너가 없다. 블록이 붙으면 entry에도 배너가 생긴다 - 블록 길이의
+    합이 아니라 늘어난 길이를 싣는다(#668 리뷰 LOW-2: 56 대 101)."""
+    off_source, _ = _shown_world(
+        index, tmp_path, _function(12, 14), contexts["cpg"], auditor_input_context=0
+    )
+    got, event = _shown_world(index, tmp_path, _function(12, 14), contexts["cpg"])
+    assert not off_source.startswith("/* ====="), "전제 - 옵션 0의 entry는 배너가 없다"
+    assert got.startswith("/* ====="), "전제 - 블록이 붙자 entry에도 배너가 생겼다"
+    assert event["input_context_added"] == 1
+    block_only = len("\n" + got[got.index("/* ===== other.c:12-14"):])
+    assert event["input_context_chars"] == len(got) - len(off_source) > block_only
+
+
+_SITE_HIDDEN = Location(file="other.c", symbol="setup", line_start=14, line_end=14)
+_SITE_SHOWN = Location(file="other.c", symbol="setup", line_start=8, line_end=8)
+_MARKER = "/* ... +1 more write windows not shown ... */"
+_ONE_WINDOW = {
+    "auditor_write_sites": 1, "auditor_write_window_marker": 1,
+    "writes": {"l": [_SITE_SHOWN, _SITE_HIDDEN]},
+}
+
+
+def test_the_marker_line_stays_last_and_the_decoder_block_comes_before_it(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """쓰기 창 하나만 싣고(5~11줄) 둘째 지점(14줄)은 못 싣는다 -> 표지 줄 N=1. 디코더(1~3줄)는
+    14줄을 품지 않는다 - 블록은 창 뒤 · 표지 줄 앞이고 표지 줄이 SOURCE의 마지막 줄이다
+    (#668 리뷰 LOW-3a)."""
+    got, event = _window_world(index, tmp_path, _function(1, 3), contexts["cpg"], **_ONE_WINDOW)
+    assert event["input_context_added"] == 1 and event["write_windows_omitted"] == 1
+    window, decoder = "/* ===== other.c:5-11 ===== */", "/* ===== other.c:1-3 ===== */"
+    assert got.endswith(_MARKER) and got.count("more write windows") == 1
+    assert got.index(window) < got.index(decoder) < got.index(_MARKER)
+
+
+def test_a_write_site_inside_the_decoder_block_is_not_counted_as_hidden(
+    index, tmp_path, contexts  # noqa: F811
+) -> None:
+    """못 실은 둘째 지점(14줄)이 **뒤에 붙는 디코더 본문(12~15줄) 안**이다 - SOURCE에 보인다.
+    N은 입력 맥락 블록을 붙인 뒤에 센다(앞서 세면 보이는 지점이 N에 든다 - 합친 트리의 리뷰 지적).
+    디코더가 14줄을 품지 않으면(12~13줄) 그 지점은 여전히 안 보여 N에 든다."""
+    got, event = _window_world(index, tmp_path, _function(12, 15), contexts["cpg"], **_ONE_WINDOW)
+    assert event["input_context_added"] == 1 and "s14 t14" in got, "전제 - 14줄이 보인다"
+    assert event["write_windows_omitted"] == 0 and _MARKER not in got
+    _, event = _window_world(index, tmp_path, _function(12, 13), contexts["cpg"], **_ONE_WINDOW)
+    assert event["input_context_added"] == 1
+    assert event["write_windows_omitted"] == 1, "14줄은 아직 안 보인다"
+    got, _ = _window_world(index, tmp_path, _function(12, 13), contexts["cpg"], **_ONE_WINDOW)
+    assert "s14 t14" not in got and got.endswith(_MARKER)
+
+
 def test_a_decoder_equal_to_the_untrimmed_anchor_is_carried(
     index, tmp_path, contexts  # noqa: F811
 ) -> None:
@@ -546,7 +630,10 @@ def _with_auditor_version(version: str):  # noqa: ANN202
 
 def test_v15_does_not_describe_the_option_so_the_run_and_doctor_refuse_it() -> None:
     config = _with_auditor_version("v15")
-    assert cli._undescribed_source_options(config) == ["auditor_input_context(auditor/v15)"]
+    # v15는 #667의 표지 줄 옵션도 서술하지 않는다 - 둘 다 걸린다(`AUDITOR_SOURCE_OPTIONS` 순서).
+    assert cli._undescribed_source_options(config) == [
+        "auditor_write_window_marker(auditor/v15)", "auditor_input_context(auditor/v15)",
+    ]
     (check,) = cli._check_source_options(config)
     assert check.severity.name == "ERROR" and "auditor_input_context" in check.message
 
@@ -554,5 +641,13 @@ def test_v15_does_not_describe_the_option_so_the_run_and_doctor_refuse_it() -> N
 def test_v16_describes_it_and_the_off_state_never_blocks() -> None:
     assert cli._undescribed_source_options(_with_auditor_version("v16")) == []
     config = _with_auditor_version("v15")
-    off = config.transition(thresholds=config.thresholds.transition(auditor_input_context=0))
+    only_context = config.transition(
+        thresholds=config.thresholds.transition(auditor_write_window_marker=0)
+    )
+    assert cli._undescribed_source_options(only_context) == ["auditor_input_context(auditor/v15)"]
+    off = config.transition(
+        thresholds=config.thresholds.transition(
+            auditor_input_context=0, auditor_write_window_marker=0
+        )
+    )
     assert cli._undescribed_source_options(off) == []
