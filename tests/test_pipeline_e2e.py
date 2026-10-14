@@ -1012,6 +1012,7 @@ def test_a_serving_profile_starts_from_a_task_bundle_with_slices(
         pytest.param("no-labels", "실서빙", id="serving-label-gate"),
         pytest.param("no-slices", "슬라이스 입력", id="slice-input-guard"),
         pytest.param("undescribed-option", "Auditor SOURCE 옵션", id="auditor-source-options-gate"),
+        pytest.param("undescribed-relayed", "그 좌석의 프롬프트", id="critic-pov-options-gate"),
         pytest.param("unknown-device", "장비 파일", id="swap-serving-file-gate"),
     ],
 )
@@ -1050,12 +1051,20 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         "no-labels": base + slices,
         "no-slices": base + labels,
         "undescribed-option": good,
+        "undescribed-relayed": good,
         "unknown-device": base + [*labels[:3], "no-such-device", *labels[4:]] + slices,
     }[defect]
     real_detector = cli._undescribed_source_options
+    real_relayed = cli._undescribed_relayed_options
     if defect == "undescribed-option":
         monkeypatch.setattr(
             cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
+        )
+    # Critic·PoV 좌석 가드(PR #676)도 같은 논법이다 - 저장소 설정(Critic v8 · PoV v7)은 서술하는
+    # 판이라 검출을 갈아끼워 게이트가 **서는 자리**를 본다.
+    if defect == "undescribed-relayed":
+        monkeypatch.setattr(
+            cli, "_undescribed_relayed_options", lambda config, **_: ["bogus(critic/v7)"]
         )
     # ⏵ 2026-10-07 — 슬라이스 입력 가드도 검출을 갈아끼워 세운다. v4 배선 뒤 저장소 설정으로는
     # 그 조건을 못 만든다(`cli._slice_input_prompts`의 ⏵) — Auditor 케이스와 같은 논법이고,
@@ -1077,6 +1086,7 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         raise _Stop
 
     monkeypatch.setattr(cli, "_undescribed_source_options", real_detector)
+    monkeypatch.setattr(cli, "_undescribed_relayed_options", real_relayed)
     monkeypatch.setattr(cli, "_claim_run_dir", _boom)
     with pytest.raises(_Stop):
         cli.main(good)

@@ -32,6 +32,11 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 `cli`가 run을 막는다(#351 리뷰 MEDIUM-2). **모르는 키는 거절한다** — 오타 하나가 그 가드를 조용히
 끈다(`input`과 같은 판단).
 
+**Critic·PoV meta도 이 키를 쓴다**(PR #676). 같은 `SOURCE` 문자열이 그 좌석에도 가므로
+(`runner.finding_sources`) 두 좌석의 판은 `config.RELAYED_SOURCE_OPTIONS`(쓰기 창 표지 줄 · 입력
+디코더 블록) 중 자기 prefix가 서술하는 것만 선언한다 - `cli._undescribed_relayed_options`가 읽는다.
+선언이 없는 판은 서술하지 않는 판이다.
+
 ## meta의 `tools` — 그 프롬프트 판이 모델에게 광고하는 도구
 
 `PROMPT_TOOL_NAMES` 중 그 프롬프트의 prefix가 「쓸 수 있는 도구」로 서술하는 이름의 목록이다
@@ -83,7 +88,13 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
 v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 그 블록에 `source`가 없고 body 머리 문장도
 「전부」라 하지 않는다 — 분석 대상 코드는 산문 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈
-#67). ID는 노드가 미리 발급해 여기 실어 보낸다
+#67). ⏵ 2026-10-15 — 「전부」라 하지 않는 body는 그 판들만이 아니다. **PoV v7**은
+`facts_source: false`가 아니면서도 「JSON의 Finding 데이터는 `finding_id`뿐」이라 적는다(CWE·제목·
+경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649). **Critic v4~v8**은 「전부」를 「추가 사실
+(additional facts)의 전부」로 좁힌다(CLAIM·PATH·EVIDENCE는 산문 블록이다). 「전부」를 그대로
+선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2 · scout_* v2 ·
+single v2다(2026-10-15 `prompts/*/*/body.md`를 전부 읽어 센 값 — scout_* v3·v4는 선언하지 않는다).
+ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.
 
@@ -720,7 +731,9 @@ def build_facts(
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
         # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17)은 `source`를 여기
         # 안 싣고 body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은
-        # 그 판도 싣는다.
+        # 그 판도 싣는다. ⏵ 2026-10-15 — 「전부」라 못박는 body는 모든 판이 아니다: PoV v7은
+        # 하지 않고(이슈 #649) Critic v4~v8은 「추가 사실의 전부」로 좁힌다(모듈 docstring
+        # 「body의 마지막 json 펜스」).
         "capsule_sections": [
             {
                 "kind": section.kind,

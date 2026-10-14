@@ -76,17 +76,20 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
                and "내용 인식" in c.message for c in checks)
 
 
-# pov는 v3(2026-10-05~10-08 서빙 판) · v4(10-08~) · v5(10-09~) · v6(2026-10-13~ 서빙 판)이 모두
-# 넓은 입력 판이다. ⏵ 2026-10-13 — v5·v6을 더했다(서빙 판이 v6으로 올랐다).
+# pov는 v3(2026-10-05~10-08 서빙 판) · v4(10-08~) · v5(10-09~) · v6(2026-10-13~) ·
+# v7(2026-10-14~ 서빙 판)이 모두 넓은 입력 판이다. ⏵ 2026-10-13 — v5·v6을 더했다.
+# ⏵ 2026-10-14 — v7을 더했다(서빙 판이 v7로 올랐다). critic은 v8(2026-10-14~)이 서빙 판이다.
 @pytest.mark.parametrize(
     "role,version",
     [
         ("critic", "v5"),
         ("critic", "v7"),
+        ("critic", "v8"),
         ("pov", "v3"),
         ("pov", "v4"),
         ("pov", "v5"),
         ("pov", "v6"),
+        ("pov", "v7"),
         ("auditor", "v7"),
     ],
 )
@@ -119,14 +122,18 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("role,module,attribute,version", [
     ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v5"),
-    # v7이 서빙 판이다(2026-10-14) - 집합에서 v7이 빠지면 근거 본문·위치가 조용히 빠진다.
+    # v7은 서빙 판이었고(2026-10-14) v8이 지금 서빙 판이다 - 집합에서 서빙 판이 빠지면
+    # 근거 본문·위치가 조용히 빠진다.
     ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v7"),
+    ("critic", critic, "_CONTENT_AWARE_VERSIONS", "v8"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v3"),
     # v4가 서빙 판이다(2026-10-08) - 집합에서 v4가 빠지면 넓은 입력이 조용히 꺼진다(그 사고를
     # doctor가 막는다).
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v4"),
-    # v6이 서빙 판이다(2026-10-13) - 집합에서 v6이 빠지면 같은 사고가 난다.
+    # v6은 서빙 판이었고(2026-10-13) v7이 지금 서빙 판이다(2026-10-14) - 집합에서 빠지면
+    # 같은 사고가 난다.
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v6"),
+    ("pov", pov, "_WIDE_INPUT_VERSIONS", "v7"),
     ("auditor", auditor, "_CONTENT_AWARE_VERSIONS", "v7"),
 ])
 def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, attribute, version):
