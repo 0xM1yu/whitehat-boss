@@ -421,4 +421,4 @@ def _under(root: Path, relative: str) -> Path:
     try:
         return safe_join(root, relative)
     except PathEscape as exc:
-        raise SliceInputError(f"{relative}: 대상 루트 밖을 가리킨다 — {exc}") from exc
+        raise SliceInputError(f"{relative}: {exc}") from exc
