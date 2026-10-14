@@ -160,12 +160,12 @@ NO_CRASH_VUL_EXIT_CODES = (0, 71, 300)
 # **「모름」으로 보내는 종료 코드** — 어댑터 `container_tools`의 `_POC_HARNESS_FAILURE`(124~127) ∪
 # `_POC_ENV_FATAL`(137·255)의 사본이고(오케스트레이터는 어댑터를 못 읽는다), 음수와 255 초과는
 # `vul_code_tier`가 범위로 거른다(`_poc_is_harness_failure`와 같다). ⚠ **근거는 로컬 `poc` 도구의
-# 분류를 빌려 온 것이다** — 그 주석은 우리 **로컬** 런타임만 논한다: 255(singularity FATAL)와
+# 분류를 빌려 온 것이다** — 그 주석은 우리 **로컬** 런타임을 논한다. 예: 255(singularity FATAL)와
 # 255 초과(Windows `docker.exe`)는 런타임이 낸 값이라 대상의 것이 아니라고, 137은 우리가 거는
 # `--memory` 2048의 SIGKILL이라 대상 자신의 OOM과 갈리지 않는다고 한다. **서버 응답 경로에 대한
 # 근거는 없다** — 서버가 돌려준 이 코드들의 뜻을 모르므로 크래시로도 크래시 아님으로도 못 세워
-# 「모름」이다. ⚠ **결합:** 이 집합은
-# 로컬 도구 집합과 같다는 테스트(`test_the_env_failure_codes_are_the_tool_adapters_and_cover_the_pov_node_set`, 구간 전체)가
+# 「모름」이다. ⚠ **결합:** 이 집합은 로컬 도구 집합과 같다는 테스트
+# (`test_the_env_failure_codes_are_the_tool_adapters_and_cover_the_pov_node_set`, 구간 전체)가
 # 묶으므로, 로컬 런타임 사정으로 그 집합을 바꾸면 **지정도 같이 바뀐다.**
 ENV_FAILURE_VUL_EXIT_CODES = frozenset({124, 125, 126, 127, 137, 255})
 
