@@ -38,6 +38,23 @@ def _disk_versions(role: str) -> list[int]:
     )
 
 
+def test_the_integer_version_pattern_takes_plain_versions_and_not_experiment_names() -> None:
+    """`_INT_VERSION`의 오염 핀 (CLAUDE.md §2.5 - 모듈 수준 정규식은 전부 핀을 든다).
+
+    양성·음성 **둘 다 저장소 실물 디렉터리 이름**이다: `prompts/auditor/`에 `v7`과 `v4_t1`이
+    나란히 있다. 음성이 깨지면 `v4_t1`이 정수 판으로 읽혀 `_disk_versions`가 그것을 집합에
+    없다고 신고하고(거짓 양성), 양성이 깨지면 `_integer_versions(aware)`가 비어 `floor`
+    계산이 `IndexError`로 터진다 - 조용한 초록이 아니라 빨강이지만 사유가 엉뚱해진다.
+
+    ⚠ 무는 것은 **이 철자**다 - 「실험 이름을 가린다」는 성질까지는 안 문다. 새 접미 꼴
+    (`v4-t1` 등)이 생기면 그것은 이 핀 밖이다.
+    """
+    assert _INT_VERSION.fullmatch("v7") is not None  # 양성 - prompts/auditor/v7
+    assert _INT_VERSION.fullmatch("v15") is not None  # 양성 - 두 자리
+    assert _INT_VERSION.fullmatch("v4_t1") is None  # 음성 - prompts/auditor/v4_t1
+    assert _integer_versions(["v7", "v4_t1", "v10"]) == [7, 10]
+
+
 @pytest.mark.parametrize("role", AWARE_SETS)
 def test_every_disk_version_from_the_aware_floor_up_is_in_the_set(role):
     """집합의 최소 정수 판 이상인 디스크 판은 전부 든다. 새 판이 일부러 좁은 입력을 원하면
