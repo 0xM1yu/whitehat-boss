@@ -454,11 +454,13 @@ class EventKind(StrEnum):
     # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
     # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
     # — 같은 줄은 한 번,
-    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)·`write_windows_omitted`
-    # (SOURCE 끝 `+N more write windows not shown` 줄의 N — 상한에 안 읽은 창
-    # + `write_windows_dropped`, 이미 실린 범위 안의 지점은 뺀다.
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. SOURCE에 든 코드 안의 지점도 센다)·
+    # `write_windows_omitted`(모델이 못 본 쓰기 창 수 — 상한에 안 읽은 창 + `write_windows_dropped`
+    # + 크기 상한에 못 실은 함수·창 안의 지점. SOURCE에 실제로 든 범위(줄인 entry 함수는 남은 줄)
+    # 안의 지점은 뺀다 — 줄여서 뺀 구간 안의 지점은 센다.
     # `write_sites_found - write_windows`가 아니다. `write_windows_dropped`를 이미 포함하니 둘을
-    # 더하지 않는다)가 더 실린다(#304 · #650).
+    # 더하지 않는다. `auditor_write_window_marker`가 1이면 SOURCE 끝 `+N more write windows not
+    # shown` 줄의 N이고 0이면 줄 없이 이 수만 남는다)가 더 실린다(#304 · #650).
     # `auditor_caller_lines`가 양수면
     # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
     # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
@@ -478,7 +480,8 @@ class EventKind(StrEnum):
     # `selected`. 키가 있으면 `input_context_basis`(`cpg`/`syntax`) · `_cap_hit`(슬라이서가 쓴
     # 그대로 - `none_selected`에 서 있으면 잘린 탐색일 수 있어 0이 아니라 모름) ·
     # `_cap_reasons`(쉼표로 이은 문자열) · `_listed` (슬라이서가 고른 함수 수) · `_added`(SOURCE에
-    # 붙인 수) · `_chars`(붙으며 SOURCE가 늘어난 글자 수) · 건너뜀 넷이 더 실린다:
+    # 붙인 수) · `_chars`(러너가 잰 SOURCE 길이 증가 — 블록을 붙이며 entry 배너가 새로 생기면
+    # 포함) · 건너뜀 넷이 더 실린다:
     # `_skipped_syntax`(`syntax` 근거라 안 읽음) · `_skipped_carried`(함수 전체가 이미 든 범위
     # 안이다 - 일부만 겹치면 붙인다) · `_skipped_size`(상한에 넘침) · `_skipped_empty`(읽은 본문이
     # 비었다). 그리고 이 판이 싣지 않는 `_carried_decoders`·

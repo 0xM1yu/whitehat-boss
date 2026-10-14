@@ -1,10 +1,10 @@
 """슬라이서가 고른 입력 디코더 함수의 본문을 Auditor `SOURCE`의 마지막 블록으로 싣는다
-(`auditor_input_context`).
+(`auditor_input_context` - #650 표지 줄이 있으면 그 앞).
 
 S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인. 슬라이서(`tools/slicer_v2/input_context.py`)가
 `slices[].analysis.input_context`에 **이름으로** 고른 함수(`functions[]`)를 하네스가 읽어 `SOURCE`에
 붙인다. 소스를 읽는 것도, 무엇을 얼마나 붙일지의 상한도 하네스 쪽 기계(`runner._auditor_source`의
-`cap`·`measure`·`seen`·`size`)가 이미 가진 것을 그대로 쓴다 - 새 수치 상한은 없다(ADR 0012 결정 5).
+`cap`·`measure`·`shown`·`size`)가 이미 가진 것을 그대로 쓴다 - 새 수치 상한은 없다(ADR 0012 결정 5).
 
 ## 싣는 것 / 안 싣는 것
 
@@ -28,13 +28,16 @@ S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인. 슬라이서(`tool
 건너뜀은 넷이다: `skipped_syntax`(`syntax` 근거) · `skipped_carried`(전체가 이미 든 범위) ·
 `skipped_size`(상한) · `skipped_empty`(읽은 본문이 비었다 - 없는 파일은 빈 문자열이다).
 
+`input_context_chars`(`absent`가 아닐 때)는 **러너가 잰다** - 이 블록을 붙이기 전후 `SOURCE` 길이의
+차다. entry 함수만 실렸던 `SOURCE`는 배너가 없다가 블록이 붙으면 생기므로, 블록 길이의 합이 아니다.
+
 ⚠ **PoV·Critic도 이 본문을 받는다** - `runner._step_auditor`가 이 SOURCE 문자열을
 `state.finding_sources`로 물려 주고 Critic과 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 그대로
 프롬프트에 싣는다.
 
 ⚠ **한계**: `shown`은 실린 범위만 든다 - 상한에 걸려 못 실은 창·함수 안에 든 디코더는 건너뛰지 않고
-직접 상한에 견준다(`skipped_size`). 줄여 실은 entry 함수·enum은 일부만 보이므로 `shown`에 안 든다
-(디코더가 그 함수와 같으면 다시 붙는다).
+직접 상한에 견준다(`skipped_size`). 줄여 실은 entry 함수는 **남은 줄 범위만** `shown`에 든다(뺀 구간
+안의 디코더는 다시 붙는다). 줄여 실은 enum은 일부만 보이므로 `shown`에 안 든다.
 """
 
 from collections.abc import Callable
@@ -107,9 +110,6 @@ def carry_input_context(
         "input_context_cap_reasons": ",".join(context.cap_reasons),
         "input_context_listed": listed,
         "input_context_added": len(blocks),
-        # 붙은 글자 수 - 블록마다 배너 줄과 앞에 붙는 개행 한 글자를 포함한다(= SOURCE가 늘어난
-        # 길이).
-        "input_context_chars": sum(1 + len(piece) for piece in blocks),
         "input_context_skipped_syntax": skipped_syntax,
         "input_context_skipped_carried": skipped_carried,
         "input_context_skipped_size": skipped_size,
