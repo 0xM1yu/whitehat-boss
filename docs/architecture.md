@@ -292,7 +292,7 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 경우(`OSError` → 127)는 `judge()`를 안 거치고 `container_tools._execute`가 `ok=False`와
 > 그 코드를 직접 적고, 실행 전 거절(`ContainerToolRunner._fail` - 사유는 그 docstring)은 프로세스를
 > 띄우기 전에 `ok=False`와 정수 코드를 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리
-> (`nodes/validate.py`·`trace.py`·위 §4)는 셋이 아니라 그 셋까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> (`nodes/validate.py`·`trace.py`·위 §4)는 `judge()`의 셋에 더해 `judge()` 밖의 셋(124·`OSError`→127·`_fail`)까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
 > E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
 > Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은

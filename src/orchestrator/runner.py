@@ -1717,7 +1717,7 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
         )
         parts.append(
             f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code}"
-            " - 코드는 원인을 가르지 못한다, 원인은 trace repro_not_measured의 error)"
+            " - 124 밖의 코드는 원인을 가르지 못한다, 원인은 trace repro_not_measured의 error)"
         )
     return (
         f"8단계가 재현 결과를 내지 않은 validated Finding {len(events)}건 - {' / '.join(parts)}. "
