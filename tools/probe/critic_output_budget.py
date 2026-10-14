@@ -1,3 +1,6 @@
+# ⏵ 2026-10-13(이슈 #232) `STATE_DB_SCHEMA_VERSION`이 1에서 2로 올랐다. 아래
+# `SqliteStateStore(state_db)`는 10-11·10-12 run 산출물의 `state.db`(v1)를 이 코드로 거절한다 —
+# 이 프로브는 범프 전 체크아웃에서 돌려야 한다.
 """Critic 출력 상한 실측 — `run_20260912_0001`의 Finding에서 7단계 프롬프트를 **재구성**해 잰다.
 
 `config/budgets.yaml`의 `output_max` 주석이 이 측정을 약속해 뒀다 — *"절단이 실제로 나는지는
@@ -28,7 +31,8 @@ E2 미만은 7단계에 못 간다.
 ## 프롬프트는 작다 — 21,021은 이 경로의 수가 아니다
 
 **이 probe의 metadata-only 재구성 한정이다**(`_reconstruct` — v1 입력 모양):
-프롬프트 판은 registry에서 읽어 기록하지만 v6의 SOURCE·근거 본문·위치는 재구성하지 않는다.
+프롬프트 판은 registry에서 읽어 기록하지만 v6의 SOURCE·근거 본문·위치·Auditor 홉 관측(#600)은
+재구성하지 않는다.
 그 판의 실 입력 토큰으로 읽지 않는다. SOURCE 자리표시자가 있으면 빈 문자열로 채운다.
 `build_facts`에 넘기는 인자는 `run_id`·`ids`·`evidences` **셋뿐**이다(content-aware 판은
 `evidence_bodies`·`evidence_locations`를 더 넘긴다 — 이 probe의 경로가 아니다). `capsule=`도

@@ -1,5 +1,8 @@
 """슬라이서 산출물(`slices.json`)을 읽어 Scout의 `SOURCE`로 렌더한다 (ADR 0012 결정 1).
 
+⏵ 2026-10-13 — 렌더가 `SOURCE`가 되는 것은 프롬프트가 `input: slice`를 선언했을 때다.
+`input: source` 프롬프트의 Scout는 entry를 품는 함수 본문을 받는다(#529).
+
 슬라이서(`slicer.py`)는 하네스 run 밖에서 Joern과 함께 미리 돌고, 여기는 **읽는 쪽**이다.
 `src/`는 `slicer*.py`를 import하지 않는다 — 인덱서(`index_graph.py`)와 같이 JSON 파일 하나로만
 만난다. 그래서 슬라이서의 규칙 중 이쪽이 따라야 하는 둘(줄 세기 · 바이트 해석)을 여기 다시 적는다.

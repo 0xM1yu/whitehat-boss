@@ -83,7 +83,8 @@ SCOUT_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in scout_node.ALLOWED_OUTPUT_SCHE
 # 모델 `AuditProcedure`는 허용집합에 **없다** — 집합은 「코드가 보내는 것」만 든다.
 AUDITOR_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in auditor_node.ALLOWED_OUTPUT_SCHEMAS}
 
-# pov도 판마다 갈린다(⏵ 2026-10-11 · 이슈 #549): v2~v4=`PovAction`, v5=형제 `PovActionNamed`.
+# pov도 판마다 갈린다(⏵ 2026-10-11 · 이슈 #549): v2~v4=`PovAction`, v5=형제 `PovActionNamed`
+# (⏵ 2026-10-13 v6도 `PovActionNamed`).
 POV_ALLOWED_SCHEMA_NAMES = {s.__name__ for s in pov_node.ALLOWED_OUTPUT_SCHEMAS}
 
 
@@ -545,7 +546,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
     것이 로더를 통과하는지만 본다. **고르는 쪽은 registry의 `prompt_template_version`**
     이고, 그 값이 없는 디렉터리를 가리켜도 `load_config`는 통과한다: 프롬프트는 해당
     역할의 첫 모델 호출에서 처음 열리므로 **GPU 시간을 쓴 뒤에 죽는다.** `cli doctor`의
-    `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다.
+    `_check_prompts`가 같은 것을 보지만 `run`이 `doctor`를 부르지 않아 그 앞에 서지 못한다
+    (⏵ 2026-10-13 #600 H3 — 이제 `run`이 같은 `_check_prompts`를 시작 전에 건다).
 
     실서빙 프로필은 단일 `scout`이고 registry가 `v1`이라 통과한다. **풀 프로필
     `local_balanced_pool`도 통과하는데, 그것은 이 검사가 잡을 뻔한 간극을 v2 별칭이
@@ -573,8 +575,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v14(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v14`를 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v15`를 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -601,10 +603,13 @@ def test_the_canonical_auditor_selects_prompt_v14(profile: str) -> None:
     하나로 간다. v12는 열린 PR #580이 쓰는 번호라 건너뛰었다. v11을 그 자리에서 고치지 않은 것은
     FACTS가 v11의 요청 바이트라서다(같은 규칙 1). ⏵ **v14**(2026-10-11 · 이슈 #67 · #578) = v12 +
     같은 FACTS 변경 — v13은 봉투가 v11 것이라 v12 계약인 FT 정답과 어긋났다. v13의 요청
-    바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1)."""
+    바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1). ⏵ **v15**(2026-10-13 · S19) =
+    v14 + 계약 문장 여섯(`probe`가 `spec`을 `poc`에 싣는다 등 — `prompts/auditor/v15/meta.yaml`).
+    봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
+    바뀌었다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v14"
+    assert config.model_for("auditor").prompt_template_version == "v15"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -703,8 +708,18 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     # MEDIUM-1). 뒤집히면 집합에 든 채로 그 전제가 거짓이 된다. 목록은 `test_nodes.py`의
     # `test_v5_evidence_completeness_wording`과 같고, 그쪽은 경로에 v5를 하드코딩한다.
     assert "factual summary" not in flat
+    # ⏵ 2026-10-13 — v15가 「유계 발췌이고 생성 요약이 아니다」 문장을 **일부러 뺐다**(접힌
+    # semgrep 로그는 발췌가 아니다). 대신 같은 자리가 「is bounded: …」로 시작한다.
+    # 철자는 **서빙 판의 것**이다 - 판별이 OR이면 v15에서 v14의 옛 문장이 되살아나도 통과한다.
+    excerpt_sentence = {
+        "v14": "not a generated summary",
+        "v15": "is bounded: some execution-header lines are removed",
+    }
+    assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
+    assert excerpt_sentence[version] in flat
+    has_old = "not a generated summary" in flat
+    assert has_old == (version == "v14"), "v15가 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
-        "not a generated summary",
         "`truncated` is false",
         "line containing only `...`",
         r"`\n...\n`",
@@ -1226,8 +1241,7 @@ def test_thresholds_flatten_is_float_map() -> None:
 def test_max_hops_reaches_the_run_record_and_is_provisional() -> None:
     """`max_hops`(ADR 0012 결정 6 — `capsule_expansion_max`를 대체)가 `flatten()`으로
 
-    run 기록에 실리고, `capsule_expansion_max`와 같은 자리(명세값·미실측)로
-    `PROVISIONAL_THRESHOLDS`에도 있다.
+    run 기록에 실리고, 명세값·미실측 표시인 `PROVISIONAL_THRESHOLDS`에도 든다.
     """
     thresholds = load_config("dev_fake").thresholds
     assert thresholds.max_hops >= 0

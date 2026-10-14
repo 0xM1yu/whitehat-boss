@@ -44,6 +44,11 @@ graph LR
 > 코드가 0인 재현이 간다, 2026-10-02부터 · 이슈 #232).
 > 등급이 언제 성립하고
 > 승격이 어디서 정해지는지는 §4의 두 표에 나눠 적었다.
+>
+> ⏵ 2026-10-13(#554) — 6단계는 판정 전에 타깃 관측 Evidence를
+> `evidence_refs`에 붙여 저장하므로(`gate_node.attach_observed`) **6단계를 거쳐 관측 Evidence가 붙은 Finding의** 모델 원본 인용 수는
+> 6단계 `gate_eval`의 `cited_by_model`에 남는다(7·8단계 행에는 없다). 6단계 행이 없는 Finding(5단계 도중
+> 예산 소진 등)의 `state.db` 행은 부착 전 원본이다.
 
 ## 3. 단계별 책임과 통과 조건
 
@@ -57,8 +62,16 @@ graph LR
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(슬라이스 타깃이면 걸친 함수들 — 아래 ⚠ ADR 0012 결정 1-b) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |
-| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4) |
+| 8 | Tool Validation | `Finding` + 재현 명세 | build, sanitizer, fuzz, PoC 실행 (Docker sandbox) | 실행 로그 `Evidence` | 재현 성공 **그리고** Gate E4일 때 `proven` (E4 미만이면 `validated` 유지 — 도구가 떴지만 종료 코드가 0인 재현이 그 갈래다, §4). ⏵ 2026-10-13(#232) 여기서 「재현 성공」은 **도구가 떴다**이고 E4는 **비-0 종료의 대용 지표**다 — 재현 확정이 아니며 판정은 오라클이 한다(ADR 0013·0014, §4) |
 | 9 | Dedupe & Report | `Finding[]` | 규칙 기반 중복 제거, 템플릿 리포트 생성 | 리포트 | — |
+
+> **⏵ 2026-10-13 (이슈 #326) — 8단계 `validate.run`은 서빙 점수 경로 밖이다.** `nodes/validate.py`는 `build`·`asan`을
+> 우리 clang으로 대상에 직접 컴파일한다([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)가 대상 빌드를 우리가 짓지
+> 않기로 했다). CyberGym 번들은 우리 clang으로 컴파일되지 않으므로(#507) **그 번들에서 이 경로는 E4를 못 낸다.**
+> 서빙 점수 경로는 PoV 루프의 `poc`(과제 이미지에 PoC를 먹인다)이고, `validate.run`은 `poc` 신호를 **돌리지 않는다.** 컴파일·링크가
+> 안 되거나, 대상이 안 뜨거나, 떴다가 시간 초과로 끊긴(`124`) 건과 `poc` 신호는 재현 실패(F-11)가
+> 아니라 **미시도**로 `validated`에 두고 trace
+> `repro_not_measured`를 남긴다. 고쳤다는 뜻이 아니다 - 이 경로의 E4 도달성은 그대로 미해결이다(D92).
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
 >
@@ -94,7 +107,9 @@ graph LR
 >   `queued`된다 — 루프 0건. 풀 프로필의 v3 프롬프트가 이미 슬라이스를 전제해 지금 입력과 어긋난다 →
 >   [D82](open-questions/D/D82.md)(D82 닫힘 2026-10-12 — 서빙은 v4). Phase 3·5. (⏵ 2026-09-25 — 입력 쪽은 `run --slices`로 돈 run에서 그 모양이
 >   됐다(Phase 3c): `SOURCE`가 슬라이스 렌더이고 FACTS에 `slice_criterion`이 붙으며 LIGHT 캡슐이 그 렌더를 센다.
->   need_evidence 루프는 그대로 0건이다(Phase 5).)
+>   need_evidence 루프는 그대로 0건이다(Phase 5). ⏵ 2026-10-13 #529 — 「`SOURCE`가 슬라이스 렌더이고 `slice_criterion`이 붙으며」는
+>   프롬프트가 `input: slice`를 선언했을 때만이다. `input: source`(서빙 v4)는 슬라이스 타깃에서도 entry를 품는 함수 본문이고
+>   `slice_criterion`이 없다.)
 > (⏵ 2026-09-26 — 루프가 이 변경으로 배선됐다: `runner._step_scout_open`(hop0)·`_step_scout_settle`
 > (동료 확인 → `_run_ne_hops`)이 `Stage.SCOUT`을 두 행으로 가르고, `triage_need_evidence`는 더 이상
 > `scout_threshold` 미만 취급으로 `below_scout_threshold`에 묻히지 않는다 — `policy._scout_triage`가
@@ -105,8 +120,9 @@ graph LR
 > (ATOM 스모크 전).)
 > (⏵ **2026-10-07 — 서빙 Scout 판이 v4다**(PR #524 배선). v4는 `input: source`를 선언하고 `SOURCE`를
 > 「대상 함수 본문, 줄번호·배너 없음」으로 정의하므로 **위 v3 서술은 서빙 경로가 아니다.** ⚠ 어긋남의
-> 방향이 뒤집혔다 — 노드는 여전히 슬라이스 유무로 `SOURCE`를 고르니(`nodes/scout.py`) `--slices` run에서는
-> 렌더가 가고 v4 산문과 어긋난다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
+> 방향이 뒤집혔다 — ~~노드는 여전히 슬라이스 유무로 `SOURCE`를 고르니(`nodes/scout.py`) `--slices` run에서는
+> 렌더가 가고 v4 산문과 어긋난다.~~ ⏵ 2026-10-13 고쳤다(#529): 노드가 meta `input`으로 `SOURCE`를 골라 `--slices` run에서도
+> v4는 함수 본문을 받는다. 그리고 v4는 신호가 둘이라(`triage_need_evidence` 없음) 위 NE 루프는
 > 서빙 경로에서 돌지 않는다.)
 > - **5단계 — Auditor는 원본 소스를 받는다**(결정 1-b = 넓은 (i), 2026-09-25 팀 합의 —
 >   `prompts/auditor/v3/body.md`의 `representation: original source code` — ⏵ 2026-09-29 v4, ⏵ 2026-10-03 v6, ⏵ 2026-10-04 v7, ⏵ 같은 날 **v8**(도구 루프 · body는 v6와 바이트 동일), ⏵ 2026-10-06 **v9**(v8 + `auditor_guards` 서술 · body 동일 — 그날 배선됐던 판이다), ⏵ 2026-10-07 **v10**(v7 전면 재작성 · body 동일 · 봉투가 `AuditorProcedureAction`)과 ⏵ 2026-10-09 지금 배선된 **v11**(v10 + `cwe` 서술 네 줄 · body 동일 · 봉투가 `AuditorProcedureNullableCweAction` · ⏵ 2026-10-10 지금 배선된 판은 **v13**이다, 이슈 #67 · ⏵ 2026-10-11 지금 배선된 판은 **v14**다 — v12 + 같은 FACTS 변경 · 봉투가 `AuditorProcedureAuditAlwaysAction`, PR #601)은
@@ -134,8 +150,11 @@ graph LR
 > [D12](open-questions/D/D12.md) 선택지 (a)). 2단계가 오늘 돌리는 도구는 `SIGNAL_TOOLS` = semgrep ·
 > clang-tidy · build 셋이다(`src/orchestrator/nodes/signals.py` — 러너 `_plan_targets`가 artifact마다
 > 부른다). build 신호는 Auditor가 `repro_spec`을 쓸 수 있는지를 가른다 — 빌드되는지 모르는 채 지어낸
-> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). 8단계는 재현 명세의 `steps`로 다시 빌드한 뒤
-> sanitizer·PoC를 돌린다(`nodes/validate.py`의 `BUILD_TOOL`). 위 2단계 칸의 나머지(sanitizer log·stack
+> 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). ⏵ **2026-10-13 정정 — 8단계는 `steps`로
+> 빌드하지 않는다.** `container_tools.plan`이 노드 argv(`[tool, *spec.steps]`)를 로그 헤더로만
+> 남기고 `build`는 `clang -c`, `asan`은 `clang -o`로 소스를 직접 컴파일·링크한다(`plan` docstring
+> *"노드가 만든 argv는 자리표시자다"*). 돌리는 것은 `build`와 sanitizer뿐이고 `poc` 신호는 안
+> 돌린다(`nodes/validate.py`의 `BUILD_TOOL` · 위 §3 표 뒤 주석). 위 2단계 칸의 나머지(sanitizer log·stack
 > trace 파싱, fuzz coverage, diff 분석)는 책임 정의이고, 오늘 2단계에서 그 일을 하는 도구는 없다.
 
 **Queue 규칙**: 4·6단계에서 탈락한 후보는 즉시 버리지 않고 `queued` 상태로 남긴다. ~~새 Evidence(신규 crash, 신규 정적분석 룰)가 들어오면 해당 후보만 재평가한다.~~ (⏵ 2026-09-25 — ADR 0012 결정 6으로 폐기 — 아래 ⚠)
@@ -201,9 +220,21 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 | --- | --- | --- |
 | E0 | 모델 주장만 존재 | 6 |
 | E1 | 정적분석 신호 또는 코드 경로가 후보와 일치 | 6 |
-| E2 | 경로 단계가 선언되고(`path_ok` — **모델이 쓴 `finding.path`**) GRAPH Evidence가 풀에 있고(`graph_ok`) 차단 결여 없음 · ⚠ **「call graph로 확인」이 아니다 — 이슈 #576** | 6 |
+| E2 | 모델이 쓴 `finding.path`에 source·sink 단계가 둘 다 있고(`path_ok`) **∧** 인덱서의 GRAPH Evidence가 `ok`이고(`graph_ok` — **심볼 0개로 보고되지 않았다**까지다. `judge()`는 요약 줄이 없으면 `ok`를 그대로 두고 `FakeToolRunner`는 심볼을 안 센다. **run 전역 Evidence 하나라 이 Finding의 경로를 확인한 것이 아니다**) **∧** blocking `MissingEvidence`가 없다(`unblocked`) | 6 |
 | E3 | **E2의 조건 전부** + Critic이 반박 실패 + 재현 명세 존재 | 7 — Critic 출력이 있어야 성립한다 |
-| E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **「실행됐고 비-0으로 끝났다」까지만 보증한다**(크래시의 대용 지표다 — D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
+| E4 | sanitizer/crash/PoC 실행 로그가 있고 **종료 코드가 0도 미측정도 아니다** — **E4 = 「실행됐고 비-0으로 끝났다」 — 대용 지표다. 재현 확정이 아니다. 판정은 오라클(ADR 0013·0014)** ⏵ 2026-10-13(#232) (D80) | 8 — 도구 실행 로그가 있어야 성립한다 |
+
+> ⏵ **2026-10-13 (#576) — E2의 옛 정의는 코드보다 셌다.** 이 행은 「source→sink 경로가 call graph로 확인되고
+> guard 부재가 코드로 확인」이라 적었는데, `gate.py`의 `p2 = path_ok and graph_ok and unblocked`는 그것을
+> 하지 않는다. `path_ok`는 **모델이 쓴 값**이고, `graph_ok`가 보는 GRAPH Evidence는 러너가 1단계에서 **한 번**
+> 만들어 모든 타깃의 풀에 넣은 것이라(`runner._artifact_signals`의 `return (graph, *found)`) **개별 Finding과
+> 무관하다.** guard 부재를 코드로 확인하는 항은 술어에 없다. 그래서 인덱서가 서는 동안 **E2 ≡ `path_ok ∧
+> unblocked`**, 즉 모델의 자기 신고에 「인덱서가 돌았다」가 붙은 것이고, 인덱서가 실패하면 전 타깃이 **동시에**
+> E2를 잃는다 — 등급이 근거 품질이 아니라 **인덱서 가동률**을 섞어 잰다. 같은 날 한 가지를 고쳤다: 인덱서가
+> **심볼 0개**를 내면 `ok=False`다(`container_tools.judge()`) — 전에는 빈 그래프도 `ok=True`라 E2가 열렸다.
+> 둘 다 코드 읽기에서 나온 결함이고 **확인된 관측은 0건이다**(커밋된 실서빙 run 셋(10-08·10-11·10-12) 중 심볼 수가 기록된 것은 [10-12 보고서](experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) 하나이고 그 값은 321이다 — 10-08·10-11 보고서에는 그 수가 없다. 미기록은 0이 아니다). 「Finding별로
+> 경로를 확인하는 E2」는 이 표가 약속하지 않는다 — 그것은 인덱서가 호출 간선을 Finding 단위로 내는 도구가 생긴
+> 뒤의 설계 결정이다(#576 선택지 (b)~(d)).
 
 > **E3가 E2를 포함하는 것은 2026-09-23 제안이다**(조민규 결정, 손수민 리뷰는 이 변경의 PR에서 → 2026-09-24 #251로 머지(`c301342`)했고 그 PR에
 > 손수민(`sumin0218`)의 리뷰 기록은 없다 — 리뷰는 작성자 `danielcho02`의 COMMENTED 1건뿐, `gh pr view 251`
@@ -256,7 +287,11 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 대상의 판정으로 읽을 수 없는 경우(asan은 종료 코드 `_EXEC_FAILED` = 125·126·127로, `poc`는 더 넓은
 > `_poc_is_harness_failure`로 — ADR 0014 · #513 · `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지 않는다, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
-> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다.
+> ⏵ 2026-10-14 (#326) — **`judge()` 밖에 둘이 더 있다.** 시간 초과(124)와 실행 자체가 못 난
+> 경우(`OSError` → 127)는 `judge()`를 안 거치고 `container_tools._execute`가 `ok=False`와
+> 그 코드를 직접 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리(`nodes/validate.py`·
+> `trace.py`·위 §4)는 셋이 아니라 그 둘까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
 > E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
 > Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은
@@ -265,10 +300,18 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > **그것이 크래시 판정은 아니다.** 비-0은 크래시의 **대용 지표**일 뿐이다 — asan·poc는 대상 바이너리의
 > 값이라 대상이 스스로 비-0을 돌려줘도 같고, gdb는 gdb 프로세스의 값이라 정상 종료인데 비-0인 건이
 > 있다(수치와 출처는 [D80 본문](open-questions/D/D80.md) 마지막 절). 「크래시했다」를 표현하는 필드는
-> `Evidence`에 없다. **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드도 없다** — 살아 있는
+> `Evidence`에 없다. ⏵ 2026-10-13(#232) — **관측을 *기록하는* 필드는 생겼다**: 컨테이너 러너가 대상 로그의
+> sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **기록뿐이다 — `p4`·정책·최종 지정은 읽지
+> 않는다**(철자가 문서에서 왔고 실제 로그로 대조한 것은 재생 14건뿐이라 대부분 미검증이다).
+> `crashed=True`는 exit 0과 함께 올 수 있다(LeakSanitizer·UBSan). `trace.jsonl`의 `tool_call`에
+> `crashed`(부재 = 안 쟀다)로도 실린다. **그리고 산출물이 `expected_signal`과 맞는지 대조하는 코드도 없다** — 살아 있는
 > 사용처는 `validate.tool_for()`가 신호 문자열에서 **도구 이름**을 고르는 것 하나다. 이 문서의 「재현
-> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐고 비-0으로 끝났다」까지만 보증한다.**
-> 나머지는 아직 안 정했다 — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
+> 성공」·「재현 로그」는 전부 그 뜻으로 읽는다 — **E4는 「실행됐고 비-0으로 끝났다」까지만 보증한다.
+> 대용 지표이고 재현 확정이 아니다. 판정은 오라클이 한다(ADR 0013·0014).**
+> ⏵ 2026-10-13(#232) — 위 문은 열린 결함의 선택지 (a)~(d) 어느 것도 아닌 다른 길이고 절반이다.
+> `expected_signal`을 대조하는 (a)는 **기각**됐다(합성 명세가 켜진 run에서는 하네스가 그 신호를 직접
+> 써서 대조가 순환한다). 산문을 바로잡는 것과 관측을 기록만 하는 것은 했고, `p4`가 관측을 읽게 하는
+> 전환은 실제 `poc_run` 크래시 녹음이 쌓인 뒤로 미뤘다.
 > → [open-questions.md](open-questions.md) D80(열림)
 
 `scout_threshold`는 첫 reason code가 세 신호 밖인 응답의 폴백 경로값이다(서빙 Scout는 신호로 판정 — ADR 0012 결정 2 · [open-questions.md](open-questions.md) D2 닫힘 2026-10-12).

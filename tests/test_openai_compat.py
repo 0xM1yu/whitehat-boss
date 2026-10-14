@@ -870,8 +870,8 @@ def test_the_result_carries_the_successful_attempts_raw_text_not_a_failed_ones(
 ) -> None:
     """`raw_text`는 성공한 시도의 원문이다 — 실패한 시도의 원문이 섞이면 안 된다.
 
-    사고 원문은 여기 안 담는다(Phase 8) — `_post`가 돌려주는 것 자체가
-    `message.content`뿐이라 이 테스트가 볼 수 있는 것도 그것뿐이다.
+    추론 채널은 `raw_text`가 아니라 `attempt_log`의 `reasoning`이 든다(D84) — 이 테스트가 보는 것은
+    `message.content`뿐이다.
     """
     _stub(monkeypatch, succeed_on=3)
 
@@ -1162,3 +1162,224 @@ def test_a_gateway_error_built_outside_the_adapter_still_declares_raw_texts() ->
     """어댑터가 속성을 덧붙이지 않아도 `ModelGatewayError`는 `raw_texts`를 가진다."""
     assert ModelGatewayError("x").raw_texts == ()
     assert ModelGatewayError("x", raw_texts=("a",)).raw_texts == ("a",)
+
+
+# --- 추론 채널 (D84) -----------------------------------------------------------
+#
+# `urlopen`을 갈아 끼워 **진짜 `_post`**를 돈다 — 재는 것이 `message`에서 어느 키를 읽는가다.
+# 키 이름(`reasoning` / `reasoning_content`)은 vLLM 버전마다 달라 실서빙 전에는 모른다.
+
+
+def _chat_body(
+    content: object = '{"ok": true}', *, usage: object = None, **message_extra: object
+) -> bytes:
+    message = {"role": "assistant", "content": content, **message_extra}
+    body: dict = {"choices": [{"message": message, "finish_reason": "stop"}]}
+    body["usage"] = {"prompt_tokens": 5, "completion_tokens": 3} if usage is None else usage
+    return json.dumps(body).encode("utf-8")
+
+
+def _post_once(monkeypatch: pytest.MonkeyPatch, body: bytes) -> PostedResponse:
+    _no_metrics(monkeypatch)
+    _respond(monkeypatch, body)
+    return _client()._post({})
+
+
+@pytest.mark.parametrize("name", ["reasoning", "reasoning_content"])
+def test_post_reads_the_reasoning_under_either_key_and_records_which(
+    monkeypatch: pytest.MonkeyPatch, name: str
+) -> None:
+    posted = _post_once(monkeypatch, _chat_body(**{name: "먼저 생각한다"}))
+
+    assert posted.reasoning == "먼저 생각한다"
+    assert posted.reasoning_field == name
+    assert posted.content == '{"ok": true}'
+
+
+def test_post_keeps_absent_reasoning_apart_from_empty_reasoning(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """키 없음·`null`은 `None`(추론 채널을 못 받았다), `""`는 `""`(받았고 비었다)다."""
+    absent = _post_once(monkeypatch, _chat_body())
+    nulled = _post_once(monkeypatch, _chat_body(reasoning=None, reasoning_content=None))
+    empty = _post_once(monkeypatch, _chat_body(reasoning=""))
+
+    assert (absent.reasoning, absent.reasoning_field) == (None, None)
+    assert (nulled.reasoning, nulled.reasoning_field) == (None, None)
+    assert (empty.reasoning, empty.reasoning_field) == ("", "reasoning")
+
+
+def test_post_prefers_reasoning_when_both_keys_are_strings_and_skips_a_null_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    both = _post_once(monkeypatch, _chat_body(reasoning="A", reasoning_content="B"))
+    fallback = _post_once(monkeypatch, _chat_body(reasoning=None, reasoning_content="B"))
+
+    assert (both.reasoning, both.reasoning_field) == ("A", "reasoning")
+    assert (fallback.reasoning, fallback.reasoning_field) == ("B", "reasoning_content")
+
+
+def _respond_in_order(monkeypatch: pytest.MonkeyPatch, bodies: list[bytes]) -> None:
+    _no_metrics(monkeypatch)
+    queue = list(bodies)
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda request, timeout=None: _FakeResponse(queue.pop(0)),  # noqa: ARG005
+    )
+
+
+def test_reasoning_travels_per_attempt_through_the_real_retry_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 스키마 실패(`reasoning`) -> 2차 성공(`reasoning_content`, 빈 문자열): 칸 정렬."""
+    _respond_in_order(
+        monkeypatch,
+        [
+            _chat_body('{"nope": 1}', reasoning="1차 추론"),
+            _chat_body('{"ok": true}', reasoning_content=""),
+        ],
+    )
+
+    result = _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.failed_raw_texts == ('{"nope": 1}',)
+    first, second = result.attempt_log
+    assert (first.reasoning, first.reasoning_field) == ("1차 추론", "reasoning")
+    assert (second.reasoning, second.reasoning_field) == ("", "reasoning_content")
+
+
+def test_a_schema_exhaustion_carries_each_attempts_reasoning_on_the_attempt_log(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _respond_in_order(
+        monkeypatch,
+        [_chat_body("{}", reasoning="r1"), _chat_body("{}")],  # 2차는 추론 키가 없다
+    )
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ("{}", "{}")
+    assert [a.reasoning for a in caught.value.attempt_log] == ["r1", None]
+
+
+def test_a_200_with_a_broken_usage_keeps_its_raw_text_and_reasoning_on_the_gateway_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`usage`만 깨진 200은 `ModelGatewayError`가 되지만 `message`는 읽힌다.
+    원문·추론을 잃지 않고, 이 시도가 앞 시도의 칸 뒤에 마지막 칸으로 붙는다(칸 K = K번째 시도)."""
+    _respond_in_order(
+        monkeypatch,
+        [
+            _chat_body('{"nope": 1}', reasoning="1차 추론"),
+            _chat_body('{"ok": true}', usage="깨짐", reasoning_content="2차 추론"),
+        ],
+    )
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=1).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.status is None
+    assert caught.value.raw_texts == ('{"nope": 1}', '{"ok": true}')
+    assert [(a.reasoning, a.reasoning_field) for a in caught.value.attempt_log] == [
+        ("1차 추론", "reasoning"),
+        ("2차 추론", "reasoning_content"),
+    ]
+
+
+def test_a_200_without_a_readable_message_leaves_no_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`choices`가 비면 읽을 `message`가 없다 — 칸을 지어내지 않는다(`raw_texts=()`)."""
+    _respond_in_order(monkeypatch, [json.dumps({"choices": []}).encode("utf-8")])
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ()
+    assert caught.value.raw_text is None and caught.value.reasoning is None
+    assert [(a.reasoning, a.reasoning_field) for a in caught.value.attempt_log] == [(None, None)]
+
+
+# --- 칸 규칙 (#280 3라운드) --------------------------------------------------
+#
+# 막는 명제 — **읽은 것은 칸으로 남고, 안 읽은 것을 빈 값으로 만들지 않는다**(CLAUDE.md §0).
+# 아래 둘은 리뷰에서 생존한 변이에 각각 붙는다.
+
+
+def test_a_broken_200_whose_only_readable_part_is_reasoning_still_gets_a_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """양성 핀 — `usage`가 깨지고 `content: null`인데 추론만 읽힌 200.
+
+    변이: `complete()`의 `if exc.raw_text is not None or exc.reasoning is not None:`에서 뒷
+    갈래를 떼면 `raw_texts`가 비고, `_record_failed_responses`가 `if not raw_texts: return {}`로
+    바로 나가 **그 호출의 추론이 통째로 사라진다**(`attempt_log`에 있는데 파일로 안 남는다).
+    """
+    _respond_in_order(monkeypatch, [_chat_body(None, usage="깨짐", reasoning="살아야 하는 추론")])
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    # 원문 칸은 `None`(받은 문자열이 없다)이고 칸 자체는 있다 — 추론이 매달릴 자리다.
+    assert caught.value.raw_texts == (None,)
+    assert caught.value.attempt_log[0].reasoning == "살아야 하는 추론"
+
+
+def test_a_non_string_content_stays_none_and_never_becomes_an_empty_string(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """양성 핀 — 비문자열 `content`는 `None`이다. `""`로 바꾸는 변이가 여기서 죽는다.
+
+    `openai_compat._salvage_message`의 `content if isinstance(content, str) else None`을
+    `else ""`로 바꾸면 **안 받은 문자열이 「빈 응답을 받았다」가 된다**(CLAUDE.md §0) —
+    0바이트 응답 파일이 생기고
+    `response_sha256`에 빈 문자열의 해시가 잰 값처럼 들어간다.
+
+    음성 핀 — `content`가 문자열이면 그 문자열 그대로다(`""`도 포함). 「비문자열이면 `None`」을
+    「거짓스러우면 `None`」으로 넓히는 수정이 그쪽에서 죽는다.
+    """
+    assert openai_compat._salvage_message(json.loads(_chat_body(None, reasoning="추론"))) == (
+        None,
+        "추론",
+        "reasoning",
+    )
+    assert openai_compat._salvage_message(json.loads(_chat_body(123))) == (None, None, None)
+    assert openai_compat._salvage_message(json.loads(_chat_body(""))) == ("", None, None)
+
+    _respond_in_order(monkeypatch, [_chat_body(None, usage="깨짐", reasoning="추론")])
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+    assert caught.value.raw_text is None and caught.value.raw_texts == (None,)
+
+
+def test_a_broken_200_with_neither_raw_text_nor_reasoning_leaves_no_slot_at_all(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """현 동작의 **한계**를 고정한다 — 이것은 바라는 모양이 아니라 실측이다(§2.2).
+
+    `message`는 읽혔는데 `content`가 비문자열이고 추론 키도 없으면 칸이 **아예 없다** —
+    같은 `content: null`이 스키마 실패 경로로 가면 `None` 칸이 생기므로(바로 아래 테스트)
+    두 경로의 칸 규칙이 다르다. 읽을 수 있었던 `finish_reason`("stop")도 `None`으로 남는다.
+    맞추려면 「`message`를 읽었다」를 예외에 따로 실어야 해서 이 PR에서는 안 맞췄고,
+    `model_client.py`·`trace.py`·`D84.md`의 서술이 그 차이를 적는다.
+    """
+    _respond_in_order(monkeypatch, [_chat_body(None, usage="깨짐")])
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == ()
+    assert caught.value.raw_text is None and caught.value.reasoning is None
+    # 본문에 `"finish_reason": "stop"`이 있었는데 이 갈래는 안 싣는다.
+    assert caught.value.attempt_log[0].finish_reason is None
+
+
+def test_a_null_content_with_reasoning_still_gets_a_slot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """추론이 예산을 다 먹어 `content: null`인 호출 — 원문 칸은 `None`이지만 추론은 산다."""
+    _respond_in_order(monkeypatch, [_chat_body(None, reasoning="끝없는 추론")])
+
+    with pytest.raises(SchemaParseError) as caught:
+        _client(retries=0).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert caught.value.raw_texts == (None,)
+    assert caught.value.attempt_log[0].reasoning == "끝없는 추론"

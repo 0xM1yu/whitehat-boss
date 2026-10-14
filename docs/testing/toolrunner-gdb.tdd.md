@@ -21,7 +21,7 @@
 설계 선택과 런타임별 실측 범위는 `docs/open-questions/D/D92.md`, 추적 미러는 GitHub
 [이슈 #325](https://github.com/0xM1yu/whitehat-boss/issues/325)가 들고 있다. 기존 ASAN
 실컨테이너 E4 도달 기록 0건과 분리한 수리는
-[이슈 #326](https://github.com/0xM1yu/whitehat-boss/issues/326)이 추적한다.
+[이슈 #326](https://github.com/0xM1yu/whitehat-boss/issues/326)이 추적한다. ⏵ 2026-10-13 - #326은 선택지 (c) 선언으로 닫혔다(`validate.run`은 서빙 점수 경로 밖 - `nodes/validate.py` 모듈 docstring). 자체 링크 경로의 E4 도달성은 이제 D92 / #507(e)가 든다.
 
 ## RED → GREEN
 

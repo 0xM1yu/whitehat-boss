@@ -78,6 +78,20 @@ F-11(`queued`)로 가는데 게이트 쪽은 F-10b(`validated` 홀드)로 보낸
 ⚠ **Fake 경로에는 그 방벽이 없다** — `fake_tools._run_repro()`가 실행 대신 대상 소스의 존재를 보고
 `ok=True`를 낸다.
 
+⏵ **2026-10-13 (#232) — 환경이 낸 종료 코드는 `p4`에 안 닿는다 (코드 대조).** `124`는 `_execute`가
+타임아웃을 `ok=False`로 쓰고 `judge()`까지 오지 않는다. `125`~`127`은 asan에서 `_EXEC_FAILED`로,
+`poc`에서 `_poc_is_harness_failure`로 `ok=False`가 되고 gdb는 수명주기 줄이 없으면 `ok=False`다.
+`poc`의 `137`·`255`·`>255`·음수도 `ok=False`다. ⚠ **남은 구멍 하나: asan은 `137`·`255`·`>255`·음수를
+거르지 않는다**(위 「한 도구만 바꾼다」) — 그 값이 `ok=True`로 올라와 `p4`를 참으로 만든다. 환경의
+SIGKILL(`--memory`)과 대상 자신의 OOM이 갈리지 않고, `255`는 gdb 신호 정지의 값이기도 해서
+게이트에서 일괄로 못 뺐다. 이 PR은 바꾸지 않았고 `p4` 스위치를 다시 여는 날 함께 정한다.
+
+⏵ **2026-10-13 (#232) — 크래시 관측을 기록한다 (읽지 않는다).** `observe_crash()`가 대상 로그의
+sanitizer 배너를 찾아 `Evidence.crashed`·`banner`에 싣는다. **어느 소비자도 이 값을 읽지 않는다** —
+배너 철자가 sanitizer 문서에서 왔고 실제 로그로 대조한 것은 재생 14건뿐이라 대부분 미검증이다
+(`_CRASH_BANNER` 주석). 실제 `poc_run` 크래시 녹음이 쌓이면 그것으로 철자를 대조한 뒤
+`p4`를 읽게 할지 정한다.
+
 ## 입력 바이트 — `poc`는 먹인다, 나머지 셋은 안 받는다 (ADR 0014)
 
 `ToolArgs.input_bytes`가 있으면 그 도구의 scratch(`/work`)에 `write_input`으로 쓰고, 로그 머리의
@@ -185,6 +199,22 @@ _GDB_SCRIPT = "/opt/gdb.batch"
 # `_COMPILE_SUFFIXES`를 받는다 — `.inc`가 빠져 #66의 실패가 재현된다.
 INDEX_TOOL = "index"
 
+# 인덱서가 stdout에 남기는 요약 한 줄(`indexer.main()`)의 심볼 수. `judge()`가 0개를 가른다(#576).
+# 줄 머리에 고정한다 — 줄 중간에 같은 철자가 있어도 요약으로 읽지 않는다.
+# `tests/test_indexer.py`가 실제 인덱서 출력으로 이 철자를 문다.
+#
+# **인덱서 쪽은 안 고친다.** `tools/harness-tools/indexer.py`는 심볼 0개를 실패로 안 본다(그
+# 스크립트 docstring의 「종료 코드」 절 — 헤더뿐인 대상은 정상이라 exit 0). 그리고 그 파일은
+# 이미지의 `/opt/indexer.py`와 **바이트가 같아야** 한다 — `src/preflight.py`가 sha256을 대조하고
+# 한 글자(docstring 포함)만 달라도 ERROR다. 그래서 「0개 = 근거 아님」은 읽는 쪽 `judge()`가 든다.
+# 그 스크립트가 「`judge()`는 `index`를 exit 0이면 ok로 본다」를 현재형으로 말하는 자리는
+# **셋**이다 — 모듈 docstring 둘(`judge()`가 … 판정한다 / 「빈 그래프로 E2가 열린다」는
+# 문제가 남는데 … open-questions의 그 항목에 적었다 — 이슈 #576이 그 뿌리를 든다)과
+# 코드 주석 하나(`judge()`가 exit 0을 …).
+# 셋 다 이 날 이후 낡았다(#576 — 0개는 `ok=False`로 내려 E2가 안 열린다). **그 파일은
+# 못 고친다** — 이미지와 바이트가 같아야 해서다(위). 그래서 정정은 여기와 그 항목에만 있다.
+_INDEX_SYMBOL_COUNT = re.compile(r"^# index: (\d+) symbols,", re.MULTILINE)
+
 # 런타임이 `SandboxSpec`의 어느 필드를 강제하지 못하는가. 실행 실패가 아니므로 Evidence에는
 # 남기지 않는다(모듈 docstring).
 UNENFORCED: dict[str, tuple[str, ...]] = {
@@ -288,6 +318,45 @@ _SEMGREP_OK = (0, 1)
 # `static_ok`가 꺼져 E1이 **줄어든다**(방향이 거꾸로다 · PR #553 council 2026-10-10의
 # (B) 기각 사유와 같다). 참인 것은 **「찾은 수가 하한이다」**까지다.
 _SEMGREP_PARTIAL_PARSE = "PartialParsing"
+#
+# ⏵ 2026-10-13 (이슈 #563 선택지 3) - **그 `errors` 1건이 무엇인지 쟀다.**
+# `harness-tools:v3`(id `fbd453eddf5d`) · semgrep 1.86.0 · 위 `plan()`과 같은 argv · 실 번들
+# `arvo:1065`의 `apprentice.c` 1개(**n=1**). 10-12 run의 히트와 **같은 10건**이 나왔다(시작 줄
+# 1086·1091·1116·1264·1296·1829·1841·3002·3090·3093).
+#
+# ⚠ **출처:** 아래 수치는 전부 2026-10-13 구현자의 scratch 실행이다 - 번들·스크립트를 커밋하지
+# 않았고 저장소에서 재현할 수 없다. 원천은 `harness-tools:v3`에서 하네스 argv를 직접 돌려 얻은
+# JSON(`errors[0].type[1]`의 구간 목록 · `results`)이고, 구간 분류(머리 93·`CAST` 44·그 밖 11) ·
+# sed 사본 · 합성 최소 재현 · `--lang c` 시도 · 후보 함수 본문의 구간 대조는 그 위에서
+# 손으로 낸 값이다.
+#
+# - 오류: `PartialParsing` 1건 · `warn` · `apprentice.c:118: 'int' was unexpected`. 118줄은
+#   `private int getvalue(...)`이고 `private`는 `file.h:88`의 `#define private static`이다.
+# - 건너뛴 구간: **148개 · 134줄**(구간 길이 합은 155 - 21줄은 구간 둘이 겹친다 · 3,343줄 중) -
+#   머리 매크로 93(`private` 84 · `protected` 9) ·
+#   `CAST(type, ..)` 문장 44 · 그 밖 11(`#define`·`SIZE_T_FORMAT` 문자열 이음 등). 🔴 **파일
+#   전체가 아니다** - 거의 한 줄씩이고 함수 **본문은 분석된다**.
+# - `--lang c`: **쓸 수 없다.** `--config`와 같이 주면 exit 2(`-e/--pattern and -l/--lang must
+#   both be specified`). 룰이 `languages: [c]`를 들고 확장자로 추론되니 하네스가 고를 언어
+#   플래그가 없다.
+# - 줄머리 `private`/`protected` 94줄을 sed로 풀어 쓴 사본(93은 머리 구간이고 나머지 1은 159줄
+#   `private struct {` - `static struct {`가 돼도 그 초기화 블록이 구간으로 남는다): 구간 148 ->
+#   **55**(`CAST` 44 + 그 밖 11) · 히트 **10 -> 10, 줄도 룰도 같다**.
+# - 합성 최소 재현(`private int f`·`protected void g`·`int h`, 본문에 `memset`): 풀기 전 구간
+#   2 · 히트 **3/3**, 푼 뒤 구간 0 · 히트 **3/3** - 머리 줄을 건너뛰어도 본문 히트는 안 잃는다.
+#
+# 후보 줄과의 관계: 429·486·743은 전부 **건너뛴 구간 자체**다(함수 머리 한 줄 - `private int`·
+# `protected void`·`private size_t`). 그러나 486·743 함수는 본문에 건너뛴 줄이 0이고 히트도 0이라
+# 겹침이 없는 것은 **파싱 실패가 아니라 룰이 안 걸린 것**이다. 429 함수(429~484)는 본문에 건너뛴
+# 줄이 473 하나(`printf(...)`)다. 10-12 보고서의 후보 177은 `int main(...)`(177~203)이라 머리도
+# 본문도 건너뛴 줄이 0이고 히트도 0이다 - 이것도 룰이 안 걸린 것이다.
+#
+# ⚠ **측정 한계:** 건너뛴 구간 안의 히트는 원리상 못 본다 - 위 사본 비교는 줄머리 94줄만
+# 푼 것이라 남은 55구간(`CAST`)에 숨은 히트는 열려 있다. 과제 1개 · 도구 판 1개의 값이고 다른
+# 번들은 안 쟀다. 10-12 보고서 §6은 건너뛴 구간을 「160여 개」라 적었으나 이 재현은 148이다
+# (같은 파일인지 · 같은 판인지 대조 안 함).
+# 이 측정으로 **하네스를 안 바꿨다** - 고칠 플래그가 없다(`--lang` 거부). 매크로 전개는
+# 전처리라 별 결정이다.
 
 
 def semgrep_partial_parse(stdout: str) -> tuple[str, ...]:
@@ -492,6 +561,56 @@ _GDB_TARGET_LIFECYCLE = re.compile(
     r'|Thread [\d.]+(?: "[\s\S]{0,64}")? received signal \S+'
 )
 
+# ⏵ 2026-10-13(#232) — **크래시 흔적을 로그에서 찾는 배너.** 대상의 stderr **전체**를 먼저,
+# 히트가 없으면 stdout **전체**를 찾는다 (로그 머리줄은 `# node argv: …`라 거기만 보면 안 맞는다).
+# 🔴 **철자는 sanitizer 문서에서 왔고, 이 하네스의 실제 로그로 대조한 것은 아주 적다** — 2026-10-13
+# 리뷰어가 과제 이미지에서 PoC를 재생한 **arvo-1065 4건 · oss-fuzz 10건**이 전부다(상자의
+# `mmap_rnd_bits=32`라 ASLR 잡음이 낀다. 녹음 파일은 이 저장소에 없다 — 요약만 받았다). 맞은 것:
+# libFuzzer(`==N== ERROR: libFuzzer: deadly signal`, exit 77 x2) · LeakSanitizer(exit 0 x5).
+# 못 맞은 것: **exit 139인데 셸의 `Segmentation fault (core dumped)` 한 줄뿐인 로그 x2**
+# (아래 묶음 둘이 그 구멍이다). MSan 배너는 **아직 한 건도 못 봤다**. CLAUDE.md §0: 그래서
+# `Evidence.crashed`는 **기록뿐**이고 `gate.py`·`policy.py`·최종 지정은 읽지 않는다.
+# 철자가 틀렸으면 `crashed=False`가 거짓으로 쌓인다.
+#
+# 묶음 하나 — sanitizer 보고:
+#   `==N== ERROR: <Address|Memory|UndefinedBehavior|Leak>Sanitizer` — 머리줄.
+#       `==N==` 뒤와 `ERROR:` 뒤의 공백은 있을 수도 없을 수도 있다
+#   `MemorySanitizer: use-of-uninitialized-value` — MSan은 `==N==WARNING:`으로 시작한다(미관측)
+#   `runtime error:` — UBSan. ⚠ 대상이 같은 글을 직접 찍어도 맞는다(오탐 가능)
+#   `libFuzzer: deadly signal` — libFuzzer 하네스의 치사 신호
+#   `AddressSanitizer: SEGV` — ASan의 SEGV 보고
+# 묶음 둘 — **셸이 찍는 신호 보고** (역시 기록뿐): `Segmentation fault`·`Aborted`·`Bus error`·
+#   `Illegal instruction`·`Floating point exception`, 뒤에 `(core dumped)`가 붙을 수도 있다.
+#   sanitizer 없이 신호로 죽은 대상(exit 139 등)은 이 줄만 남는다.
+#   ⚠ 일반 영어 낱말이라 대상이 직접 찍어도 맞는다(오탐 가능) — 그래서 단어 경계를 건다.
+#   ⏵ 2026-10-13 — `Illegal instruction`(SIGILL, exit 132)·`Floating point exception`
+#   (SIGFPE, exit 136)을 더했다. 빠져 있던 동안 둘 다 `crashed=False`였다(2026-10-13 실측:
+#   `observe_crash`를 직접 호출). bash가 같은 꼴로 찍는 묶음이고 `Bus error`(SIGBUS)와
+#   같은 자리다. 🔴 **이 둘도 이 하네스 로그로 대조한 것이 아니다** — 아래 철자 미대조와 같다.
+#
+# ⚠ **`crashed=True`는 exit 0과 함께 올 수 있다.** LeakSanitizer
+#   (`==N==ERROR: LeakSanitizer: detected memory leaks`)는 종료 시점 보고이고
+#   oss-fuzz 재생 5/5가 exit 0이었다 — UBSan `runtime error:`도
+#   프로그램을 계속 돌린다. 오라클은 exit 0을 크래시 없음으로 읽는다. 그래서 `Leak`을 빼지 않고
+#   **`banner`를 같이 기록한다** — 읽는 쪽이 배너를 보고 가른다.
+#   `crashed=True`를 「오라클이 크래시라 할 것」으로 읽지 않는다.
+#
+# 🕳 **알려진 구멍 — 배너가 없는 크래시.** libFuzzer의 `timeout after N seconds`·`out-of-memory`는
+#   sanitizer 배너를 안 찍는다. 오늘은 의미가 없다 — `poc`·asan 명령은 `-timeout`·`-rss_limit_mb`를
+#   안 넘기고, 샌드박스 타임아웃은 `ok=False`라 `None`이다.
+#   libFuzzer 플래그를 넘기게 되는 날 철자를 더한다.
+_CRASH_BANNER = re.compile(
+    r"==\d+==\s*ERROR:\s*(?:Address|Memory|Undefined ?Behavior|Leak)Sanitizer"
+    r"|MemorySanitizer: use-of-uninitialized-value"
+    r"|runtime error:"
+    r"|libFuzzer: deadly signal"
+    r"|AddressSanitizer: SEGV"
+    r"|\b(?:Segmentation fault|Aborted|Bus error|Illegal instruction"
+    r"|Floating point exception)\b(?: \(core dumped\))?"
+)
+# `Evidence.banner`의 글자 상한. `Evidence.banner`의 `max_length`와 같아야 한다.
+_BANNER_CHARS = 200
+
 # 타임아웃에 쓸 코드. 128+SIGKILL 관례를 따른다.
 _TIMEOUT_EXIT = 124
 
@@ -564,6 +683,11 @@ def make_payload_reader(artifacts_root: Path) -> Callable[[str], str | None]:
 
     최종 토큰 예산 절단은 `prompt_loader.evidence_summaries`가 한다. 여기서는 파일이
     폭주해도 프로세스가 죽지 않게 바이트 상한까지만 읽는다.
+
+    ⚠ **한계: 로그의 끝은 읽히지 않을 수 있다.** 읽는 것은 앞 `PAYLOAD_READ_CAP`자뿐이라, 출력이
+    그보다 길면 끝에 있는 ASan `SUMMARY: AddressSanitizer: …` 줄은 관측에 없다 — 도구가 낸
+    줄이라 하네스가 대신 달 수 없다(#573 잔여). 하네스가 만든 `poc`의 `exit=1` 모호성 줄은
+    `Evidence.harness_note`로 로그를 거치지 않는다.
     """
     root = Path(artifacts_root)
 
@@ -872,16 +996,25 @@ def compile_failure_reason(text: str, *, tagged_only: bool = False) -> str:
     found = _COMPILE_ERROR_LINE.findall(text)
     if not found:
         return ""
-    first = re.sub(r"[\x00-\x1f\x7f]", " ", found[0])[:_COMPILE_REASON_CHARS]
+    # 제어문자 + 유니코드 줄 구분자(`\x85` NEL · U+2028 LINE SEPARATOR ·
+    # U+2029 PARAGRAPH SEPARATOR) — `#error` 메시지가 노트·관측에서 새 줄을 시작하지
+    # 못하게 한다(`str.splitlines`가 줄로 읽는 것들).
+    # ⚠ 뒤 둘은 **이스케이프로** 적는다. 리터럴로 두면 에디터·린터의 「비정상 줄 종결자
+    # 제거」가 조용히 지워 접기가 사라진다 — 이 주석도 같은 이유로 코드포인트 이름만 쓴다.
+    first = re.sub(r"[\x00-\x1f\x7f\x85\u2028\u2029]", " ", found[0])[:_COMPILE_REASON_CHARS]
     return f" — 컴파일 오류 {len(found)}건, 첫 오류: {first}"
 
 
-def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | None]:
+def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int | None, str | None]:
     """실행 결과 → (ok, exit_code, error). `ok`와 `exit_code`의 의미를 섞지 않는다.
 
     - 도구가 죽음/실행 불가: `ok=False`
+    - 명령이 하나도 안 돎(`steps`가 빔): `ok=False, exit_code=None` - 돌려줄 코드가 없다
     - 돌았는데 아무것도 못 찾음: `ok=True, exit_code=0`
     - 돌아서 뭔가 찾음: `ok=True, exit_code!=0`
+    - **예외 하나 — `index`가 심볼 0개를 냈다: `ok=False, exit_code=0`** (#576). 인덱서는 그것을
+      실패로 안 보지만 빈 그래프는 E2의 근거가 못 된다. 그래서 「`ok=False`면 exit가 0이 아니다」는
+      성립하지 않는다 — `ok`를 먼저 보는 쪽(`gate.evaluate`의 `usable`)은 영향이 없다.
 
     이 관례가 깨지면 `with_signal()`이 benign 표본을 거르지 못하고 Evidence Gate E1이
     모든 Finding에서 참이 된다.
@@ -899,7 +1032,9 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
     `SIGNAL_TOOLS`는 `semgrep`·`clang-tidy`·`build` 셋이다.
     """
     if not steps:
-        return False, 127, f"{tool}: 실행된 명령이 없다"
+        # 명령이 하나도 안 돌았으면 돌려줄 종료 코드가 없다 - 127을 지어내면 「대상이 안 떴다」로
+        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). 명세의 실패다(`_refuse`와 같은 `None`).
+        return False, None, f"{tool}: 실행된 명령이 없다"
     last = steps[-1]
     code = last.exit_code
     if tool in _RUNTIME_TOOLS:
@@ -935,7 +1070,7 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                 # 테스트가 전체 철자를 문다.
                 return False, code, POC_UNREADABLE_EXIT_REASON.format(code=code)
             # 여기까지 오면 대상이 실제로 떴다. 비-0은 실패가 아니라 신호다.
-            # `1`의 애매함은 숨기지 않고 `summary_line`이 관측에 적는다.
+            # `1`의 애매함은 숨기지 않고 `summary_line`이 `Evidence.harness_note`로 관측에 적는다.
             return True, code, None
         # asan: 마지막 명령이 우리가 빌드한 대상 바이너리다.
         if code in _EXEC_FAILED:
@@ -973,11 +1108,80 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int, str | No
                 f"clang-tidy가 진단을 한 줄도 내지 않았다 (exit={code}). 로그의 stderr 참조"
             )
         return True, code, None
+    if tool == INDEX_TOOL and code == 0:
+        # ⏵ 2026-10-13 (#576) — **심볼 0개의 그래프는 근거가 못 된다.** 인덱서는 그것을 실패로 안
+        # 내지만(`indexer.py` 종료 코드 절 — 헤더뿐인 대상은 정상이다) 게이트의 `graph_ok`는 이
+        # Evidence의 `ok`만 보므로, 여기서 `ok=True`를 내면 **빈 그래프 위에서 E2가 열린다.**
+        # 요약 줄이 없거나 못 읽으면 건드리지 않는다 — 안 잰 것을 0으로 읽지 않는다(CLAUDE.md §0).
+        match = _INDEX_SYMBOL_COUNT.search(last.stdout)
+        if match is not None and int(match.group(1)) == 0:
+            return False, 0, "index: 심볼 0개 — 그래프가 비어 E2 근거가 못 된다 (#576)"
     if code == 0:
         return True, 0, None
     return False, code, f"{tool} 실패 (exit={code})" + (
         compile_failure_reason(last.stderr) if tool == "build" else ""
     )
+
+
+def _banner_line(text: str, start: int) -> str:
+    """`start`가 든 줄. 제어 문자는 공백으로, 200자로 묶는다 — 대상이 찍은 날것이다.
+
+    ⚠ **줄이 상한을 넘으면 창을 `start`에서 잡는다.** 종전에는 줄머리부터 200자를 떼서,
+    배너 앞에 긴 접두가 같은 줄에 붙으면 **배너 철자가 창 밖으로 나갔다** — 그러면 `banner`가
+    배너를 안 들고 있어 「읽는 쪽이 가른다」(`_CRASH_BANNER` 주석)가 성립하지 않는다.
+    2026-10-13 실측(이 함수를 직접 호출): `"X" * 300 + "==1==ERROR: AddressSanitizer: …"`의
+    저장된 줄이 `X` 200자였다. 접두를 버린 것은 `…`로 표시한다. 줄이 상한 안이면
+    종전 그대로 줄머리부터다 — 짧은 줄에서 접두를 잃지 않는다.
+    """
+    begin = text.rfind("\n", 0, start) + 1
+    end = text.find("\n", start)
+    end = len(text) if end == -1 else end
+    line = re.sub(r"[\x00-\x1f\x7f]", " ", text[begin:end]).strip()
+    if len(line) <= _BANNER_CHARS or start == begin:
+        return line[:_BANNER_CHARS]
+    from_hit = re.sub(r"[\x00-\x1f\x7f]", " ", text[start:end]).strip()
+    return f"…{from_hit}"[:_BANNER_CHARS]
+
+
+def observe_crash(tool: str, steps: list[Step], total: int) -> tuple[bool | None, str | None]:
+    """실행 로그에서 크래시 흔적을 관측한다 → (crashed, banner). **기록뿐이다** (#232).
+
+    - `True` — 배너(`_CRASH_BANNER`) 또는 gdb의 신호 정지 줄이 있다. `banner`는 그 첫 줄.
+    - `False` — 대상이 떴고 로그를 읽었는데 없다.
+    - `None` — **안 쟀다**: 런타임 도구가 아니거나, 명령이 다 안 돌아 대상이 안 떴다(빌드에서 끊김).
+
+    호출부가 `judge()`의 `ok`가 참일 때만 부른다 — 대상이 안 뜬 건(`poc`의 환경 실패 코드 포함)에는
+    관측이 없고 `Evidence`가 `ok=False`에 `crashed`를 못 싣게 막는다.
+
+    로그는 **마지막 명령**의 stderr과 stdout이고 **stderr를 먼저 본다**(sanitizer 보고와 셸의
+    신호 보고가 둘 다 stderr로 가므로 — 아래 주석). asan·poc는 그 명령이 대상이고, 앞 명령은 빌드라
+    컴파일러 출력이 배너 철자를 우연히 품어도 대상의 흔적으로 안 읽는다. gdb는 마지막 명령이
+    gdb 자신이라 대상 수명주기 줄(`_GDB_TARGET_LIFECYCLE`)로 가른다 — 신호 정지는 `True`, 정상
+    종료는 `False`. 같은 로그에 둘 다 있으면 신호 정지가 이긴다.
+    """
+    if tool not in _RUNTIME_TOOLS or not steps or len(steps) < total:
+        return None, None
+    last = steps[-1]
+    if tool == "gdb":
+        for match in _GDB_TARGET_LIFECYCLE.finditer(last.stdout):
+            if not match.group(0).startswith("[Inferior"):
+                return True, _banner_line(last.stdout, match.start())
+        # 수명주기 줄이 아예 없으면 대상이 안 뜬 것이고 `judge()`가 이미 `ok=False`로 내렸다.
+        return (False, None) if _GDB_TARGET_LIFECYCLE.search(last.stdout) else (None, None)
+    # ⚠ **stderr를 먼저 본다.** 종전에는 `f"{stdout}\n{stderr}"` 한 덩이에서 첫 히트를 썼고,
+    # stdout이 앞에 붙으므로 **대상이 직접 찍은 오탐 문구가 stderr의 진짜 배너를 이겼다**.
+    # 2026-10-13 실측(이 함수를 직접 호출): stdout에 `runtime error: …`(대상이 찍은 글),
+    # stderr에 `==1==ERROR: AddressSanitizer: heap-buffer-overflow`를 두니 `banner`가 stdout
+    # 줄이었다. sanitizer 보고와 셸의 신호 보고는 **둘 다 stderr로 간다**(`_CRASH_BANNER`의
+    # 묶음 둘 주석). stderr에 히트가 없으면 stdout으로 내려간다 — `2>&1`로 합쳐진 로그와
+    # stdout으로 배너를 찍는 대상이 그쪽이다.
+    # ⚠ 한 스트림 안에서는 여전히 **첫 히트**다 — 같은 stderr에 오탐이 진짜 배너보다 앞서면
+    # 오탐이 이긴다. 그것은 안 고쳤다(묶음별 우선순위가 필요하고 실측 사례가 없다).
+    for stream in (last.stderr, last.stdout):
+        match = _CRASH_BANNER.search(stream)
+        if match is not None:
+            return True, _banner_line(stream, match.start())
+    return False, None
 
 
 def judge_semgrep(step: Step) -> tuple[bool, int, str | None]:
@@ -1078,8 +1282,10 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
     """로그 머리에 붙일 줄. `--json`으로 잃은 가독성을 여기서 되돌린다.
     semgrep이 대상을 반쪽만 파싱했으면 **두 줄**이다(개행으로 이어 한 반환값).
 
-    ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** 이 줄은 `_execute`가
-    `sections[2]`에 넣고 그 로그 꼬리가 모델 관측으로 간다. 🔴 **`1`은 ASan의 기본 종료
+    ⏵ **2026-10-09 (ADR 0014) — `poc`의 `exit 1`에 애매함을 적는다.** ⏵ 2026-10-13 (#573) 이 줄은
+    `poc`에서는 로그가 아니라 `Evidence.harness_note`로 가고 두 관측(`runner._pov_observation` ·
+    `nodes/auditor._probe_observation`)이 머리줄 뒤에 붙인다 — 로그의 머리·꼬리에 두면 읽기 상한과
+    꼬리 상한에 잘렸다. 🔴 **`1`은 ASan의 기본 종료
     코드일 수도, docker·셸의 일반 실패일 수도 있어 갈리지 않는다** — 재 본 둘 중 하나가 정확히
     이 값이다(`oss-fuzz:368076871`(ASan) **1** · `arvo:1065`(MSan) **77**, 2026-10-04 실측).
     **가를 수 없으면 가른 척하지 않는다**(§0): 등급은 `judge`가 「떴다」로 두고, 모델이
@@ -1099,7 +1305,8 @@ def summary_line(tool: str, steps: list[Step]) -> str | None:
         return "# semgrep: 결과 문서 없음 — 아래 stderr 참조"
     head = f"# semgrep: {len(results)} findings"
     # ⏵ 2026-10-10 (이슈 #563 선행) — 반쪽 파싱을 **같은 반환값의 둘째 줄에** 적는다. 떨어뜨려 두면
-    # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573).
+    # 관측 꼬리 상한에서 잘려 수만 남는다(`POC_AMBIGUOUS_NOTE`가 그렇게 잘린 선례 — #573, 그 줄은
+    # 이제 로그 밖 `Evidence.harness_note`다. 이 semgrep 줄은 여전히 로그 머리에 산다).
     # ⚠ 모델 사본에서는 이 노트를 `prompt_loader`가 빼고 영어 표지를 `errors:` 줄에 싣는다 — 접기가
     # 로그 머리를 80자에서 자르기 때문이다(적대적 리뷰 2026-10-10).
     partial = semgrep_partial_parse(steps[-1].stdout)
@@ -1415,18 +1622,23 @@ class ContainerToolRunner:
         if note is not None:
             sections.append(note)
         ok, exit_code, error = judge(tool, steps, len(commands))
+        # 기록뿐이다(#232) — 대상이 뜬(`ok`) 런타임 도구에만 잰다. 게이트는 이 값을 읽지 않는다.
+        crashed, banner = observe_crash(tool, steps, len(commands)) if ok else (None, None)
         summary = summary_line(tool, steps)
-        if summary is not None:
+        harness_note = None
+        if summary is not None and tool == "poc":
+            # 🔴 **`poc`의 줄은 로그에 넣지 않고 `Evidence.harness_note`로 싣는다**(이슈 #573).
+            # 하네스가 만든 줄이라 로그를 거칠 이유가 없고, 거치면 두 상한에 잘린다: 모델 관측은
+            # 로그의 읽기 상한(`PAYLOAD_READ_CAP` 200,000자) 안에서 **마지막 2,000자**만 싣는데
+            # (`runner._POV_OBSERVATION_TAIL_CHARS`), 꼬리에 붙인 줄은 출력이 200,000자를 넘으면
+            # 읽히지도 않았다(독립 재현: 150,000자까지 있고 250,000자에서 없다). 로그에 머리·꼬리로
+            # 남겨 두면 짧은 로그에서는 관측에 같은 줄이 둘 이상 나온다. v5 prefix가 *"관측에 그
+            # 사실이 한 줄로 붙는다"*고 약속하는 자리다 — 두 소비자(`runner._pov_observation` ·
+            # `nodes/auditor._probe_observation`)가 이 필드를 머리줄 뒤에 붙인다.
+            harness_note = summary
+        elif summary is not None:
             # 머리에 넣는다 — JSON 본문 앞에 결론이 있어야 사람이 로그를 읽는다.
             sections.insert(2, summary)
-            if tool == "poc":
-                # 🔴 **꼬리에도 넣는다.** 모델 관측은 로그의 **마지막 2,000자**만 싣는다
-                # (`runner._POV_OBSERVATION_TAIL_CHARS`) — 머리에만 두면 긴 출력(ASan 보고서는
-                # 쉽게 3 KB를 넘는다)에서 **모델에게 안 닿는다**. v5 prefix가 *"관측에 그 사실이
-                # 한 줄로 붙는다"*고 약속하는 자리이고, 적대적 리뷰 2026-10-09이 3.3 KB stderr로
-                # 그 약속이 깨지는 것을 재현했다. `exit=1`에서만 붙으므로 다른 홉의 바이트는
-                # 안 바뀐다.
-                sections.append(summary)
         return self._write(
             evidence_id,
             tool,
@@ -1437,6 +1649,9 @@ class ContainerToolRunner:
             exit_code=exit_code,
             error=error,
             location=first_hit_location(tool, steps),
+            harness_note=harness_note,
+            crashed=crashed,
+            banner=banner,
         )
 
     def _kill(self, name: str) -> None:
@@ -1512,9 +1727,12 @@ class ContainerToolRunner:
         sections: list[str],
         *,
         ok: bool,
-        exit_code: int,
+        exit_code: int | None,
         error: str | None,
         location: Location | None = None,
+        harness_note: str | None = None,
+        crashed: bool | None = None,
+        banner: str | None = None,
     ) -> Evidence:
         """로그를 실제로 쓰고 그 내용의 sha256을 digest로 삼는다.
 
@@ -1544,6 +1762,9 @@ class ContainerToolRunner:
             ok=ok,
             exit_code=exit_code,
             error=error,
+            harness_note=harness_note,
+            crashed=crashed,
+            banner=banner,
         )
 
 

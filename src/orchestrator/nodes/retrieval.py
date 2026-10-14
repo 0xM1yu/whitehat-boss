@@ -80,7 +80,9 @@ def run(
     구조였다면 구현마다 적중률 정의가 갈라졌을 것이다.
 
     `slice_id`는 러너가 슬라이스 타깃의 LIGHT 캡슐에만 준다(`runner._step_retrieval`) —
-    `target_function`이 Scout가 받는 렌더를 센다. Auditor의 EXPANDED는 entry를 감싸는 함수가
+    `target_function`이 슬라이스 렌더를 센다. ⚠ 그것이 Scout가 받는 것과 같다고 읽으면 안 된다 —
+    `input: source` 선언(서빙 v4)의 Scout는 entry를 품는 함수 본문을 받으므로 이 토큰 수는 그
+    프롬프트와 다른 것을 센다(#529). Auditor의 EXPANDED는 entry를 감싸는 함수가
     대상이라 주지 않는다(`runner._auditor_target`) — 슬라이스가 걸친 다른 함수는 캡슐이 아니라
     `SOURCE`에만 붙는다(`runner._auditor_source`).
     """

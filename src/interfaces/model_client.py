@@ -44,6 +44,11 @@ SchemaT = TypeVar("SchemaT", bound=BaseModel)
 # `vllm_metrics`는 여전히 미구현이다(위 표).
 GpuMsSource = Literal["request_wall_clock", "vllm_metrics"]
 
+# `choices[0].message`에서 추론을 실어 온 키 이름. vLLM `--reasoning-parser`가 쓰는 이름이 버전마다
+# 달라(`reasoning_content` → `reasoning`) 서버가 준 이름을 그대로 기록한다 — 어느 쪽인지는 실서빙을
+# 돌려야 안다(#280).
+ReasoningField = Literal["reasoning", "reasoning_content"]
+
 
 # `ModelGatewayError.detail`과 `model_call` 실패 이벤트에 남길 최대 문자 수.
 #
@@ -115,6 +120,9 @@ class ModelGatewayError(RuntimeError):
         generating: bool | None = None,
         attempt_log: "tuple[AttemptRecord, ...]" = (),
         raw_texts: tuple[str | None, ...] = (),
+        raw_text: str | None = None,
+        reasoning: str | None = None,
+        reasoning_field: ReasoningField | None = None,
     ) -> None:
         super().__init__(message)
         self.status = status
@@ -136,9 +144,40 @@ class ModelGatewayError(RuntimeError):
         self.attempt_log = attempt_log
         # 이 시도 앞서 스키마에 실패한 시도들의 응답 원문 — 거절한 시도 자체엔 응답이 없다(#603).
         # 칸이 `None`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답(`""`)이 아니다.
-        # ⚠ 이 칸들이 비었다고 응답을 받은 적이 없다는 뜻은 아니다: 200이었으나 모양이 계약과 달라
-        # 이 예외가 된 시도의 원문은 여기 없다(`_post`의 「응답 모양이 계약과 다르다」 분기).
+        # 200이었으나 모양이 계약과 달라 이 예외가 된 시도(`_post`의 「응답 모양이 계약과 다르다」
+        # 분기)는 읽을 수 있었던 만큼 아래 셋에 싣고, `complete()`가 그 시도를 `raw_texts`의 마지막
+        # 칸으로 옮긴다. `raw_text`·`reasoning`이 **둘 다** `None`이면 칸이 안 생긴다.
+        # ⚠ 그 조건은 「읽을 `message`가 없었다」보다 **넓다** — `message`는 읽혔으나 `content`가
+        # 비문자열이고 추론 키도 없던 응답도 같은 `(None, None)`이라 칸이 없다. 그래서
+        # 「칸이 없다」만으로 `message`를 못 읽었다고 말할 수 없다(2026-10-13 실측:
+        # `usage`가 깨지고 `content: null`인 200이 `raw_texts == ()`로 왔다 —
+        # `tests/test_openai_compat.py`의 「칸 규칙」 핀).
         self.raw_texts = raw_texts
+        self.raw_text = raw_text
+        self.reasoning = reasoning
+        self.reasoning_field = reasoning_field
+
+
+# vLLM이 컨텍스트 초과 400에 싣는 문구. **이 문구가 실린 400과 413(본문 초과)만
+# 「이 후보가 크다」다**(`is_size_rejection`). 400은 크기만의 값이 아니다(#296) - vLLM 0.27.1은
+# 요청 모양(본문 검증)·서버 설정(`thinking_token_budget`인데 reasoning parser가 없다, 템플릿이
+# 모르는 `reasoning_effort`, 출력 상한 > 창)에도 400을 준다. 그 400은 다음 요청도 같다. 이 문구는
+# 0.27.1 `vllm/renderers/params.py`의 두 자리와 저장소의 실측 셋이 같은 머리다. **문구를 못 찾은
+# 400은 크기로 읽지 않는다** - 틀려도 run이 서서 드러난다. 조용히 완주하는 쪽보다 낫다.
+CONTEXT_OVERFLOW_PHRASE = "maximum context length"
+
+
+def is_size_rejection(exc: Exception) -> bool:
+    """이 실패가 **이 후보가 크다**인가 - 연속 폐기 카운터가 세지 않는 유일한 실패다(#296).
+
+    413(본문 초과)과 컨텍스트 초과 문구(`CONTEXT_OVERFLOW_PHRASE`)가 실린 400뿐이다. 게이트웨이
+    오류가 아니면(스키마 실패) 크기가 아니다. 러너(`runner._is_size_rejection`)와 Auditor 노드,
+    그리고 Critic 노드(`critic.run`의 홉 관측 폴백 - #600 H2ⓐ)가 같은 판정을 쓴다 - 노드는
+    러너를 import할 수 없어 여기에 둔다(러너가 노드를 import한다).
+    """
+    if not isinstance(exc, ModelGatewayError):
+        return False
+    return exc.status == 413 or (exc.status == 400 and CONTEXT_OVERFLOW_PHRASE in exc.detail)
 
 
 class ModelSwapError(ModelGatewayError):
@@ -261,7 +300,7 @@ class Usage(HarnessModel):
 
 
 class AttemptRecord(HarnessModel):
-    """시도 한 번이 서버에서 받은 응답의 두 사실 (#550).
+    """시도 한 번이 서버에서 받은 응답의 사실 (#550 · 추론 채널은 #280).
 
     `Usage`는 시도를 **합친** 값이라 「어느 시도가 얼마를 냈고 어떻게 끝났나」를 못 돌려준다.
     **합이 이미 주는 것과 못 주는 것을 가른다**(CLAUDE.md §2.2). 상한이 32,768일 때 두 시도의
@@ -291,6 +330,15 @@ class AttemptRecord(HarnessModel):
 
     output_tokens: int | None = Field(default=None, ge=0)
     finish_reason: str | None = None
+    # 서버가 `message.reasoning`/`message.reasoning_content`로 실어 온 추론 텍스트.
+    # **`None` = 그 키가 없었거나 문자열이 아니었다**(추론 파서가 꺼졌거나 서버가 안 줬다),
+    # **`""` = 키가 있고 비었다.** 둘을 한 값으로 합치지 않는다(CLAUDE.md §0) — 빈 파일과
+    # 파일 없음이 그 구분을 디스크에 옮긴다. trace에는 안 간다(크기 상한이 없다) — 상위가
+    # `…_reasoning[_retryK].txt`로 남긴다.
+    reasoning: str | None = None
+    # 위 텍스트를 실어 온 키 이름. `reasoning is None`이면 `None`이다. 둘 다 있으면
+    # `reasoning`이 이긴다.
+    reasoning_field: ReasoningField | None = None
 
 
 class ModelResult(HarnessModel, Generic[SchemaT]):
@@ -329,7 +377,8 @@ class ModelResult(HarnessModel, Generic[SchemaT]):
     # 수 있게 한다(#80). 재시도가 없으면 빈 튜플이다.
     retry_bodies: tuple[str, ...] = ()
     # 성공한 시도의 응답 원문(`_post`가 읽는 `message.content`. `FakeModelClient`는 낸
-    # 값의 JSON). **사고 토큰은 담지 않는다** — 그 자리는 Phase 8이다. 구현체가 안 채우면
+    # 값의 JSON). **추론 채널은 여기 없다** — 시도별 `attempt_log[K].reasoning`이 든다(#280).
+    # 구현체가 안 채우면
     # `None`이고, 이것도 미실측 표시다.
     raw_text: str | None = None
     # 스키마 검증에서 **버려진** 앞 시도들의 응답 원문, 시도 순서대로(#618). 재시도가

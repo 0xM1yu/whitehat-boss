@@ -30,6 +30,7 @@ from src.interfaces.model_client import (
     ModelGatewayError,
     ModelResult,
     Prompt,
+    ReasoningField,
     SchemaParseError,
     Usage,
     truncate_detail,
@@ -69,6 +70,10 @@ class PostedResponse:
     # 보고했다」를 가르는 것은 이 값뿐이고, `complete()`가 `AttemptRecord.output_tokens`를
     # `None`으로 두는 근거다.
     output_tokens_reported: bool
+    # `message.reasoning`/`message.reasoning_content` — `_reasoning_from`. 키가 없거나 문자열이
+    # 아니면 `None`(`""`와 다르다), 실어 온 키 이름은 `reasoning_field`.
+    reasoning: str | None = None
+    reasoning_field: ReasoningField | None = None
 
 
 # HTTP 오류 응답 본문에서 읽어 둘 최대 바이트. 서버가 거대한 본문을 주는 경우를 막는다.
@@ -247,8 +252,22 @@ class OpenAICompatModelClient:
                 # 거절이라 응답 토큰은 없지만 요청 왕복 시간은 실재한다. 앞선 재시도가 쓴 것도
                 # `spent`·`gpu_ms`에 함께 실어 상위(`context.call_model`)가 청구한다.
                 gpu_ms += int((time.monotonic() - started) * 1000)
-                # 응답을 못 받은 시도도 칸을 지킨다 — `AttemptRecord()`는 둘 다 `None`이다.
-                attempt_log.append(AttemptRecord())
+                # 응답을 못 받은 시도도 칸을 지킨다 — `AttemptRecord()`는 전부 `None`이다.
+                # 200이었으나 모양이 계약과 달라 온 예외는 읽을 수 있었던 추론을 든다.
+                attempt_log.append(
+                    AttemptRecord(reasoning=exc.reasoning, reasoning_field=exc.reasoning_field)
+                )
+                # 그 200의 원문(또는 추론)도 마지막 칸으로 올린다.
+                # ⚠ **칸이 안 생기는 조건은 「`message`를 못 읽었다」가 아니다** — 아래 둘이
+                # **같은** `(None, None)`이라 둘 다 칸이 없다: ① 읽을 `message`가 없던 응답
+                # (`choices` 비었음 등) ② `message`는 읽혔으나 `content`가 비문자열이고 추론
+                # 키도 없던 응답. ②는 스키마 실패 경로로 가면 `None` 칸이 생기므로 **두 경로의
+                # 칸 규칙이 다르다**(2026-10-13 실측 - `_chat_body(None, usage="깨짐")`로 돌려
+                # `raw_texts == ()`). 읽을 수 있었던 `finish_reason`도 이 갈래에선 `None`으로
+                # 남는다(`AttemptRecord()`가 전부 `None`이라서다). 맞추지 않은 이유는 「읽혔다」를
+                # 예외에 따로 실어야 해서고, 그 전까지 서술이 이 차이를 숨기지 않게 적어 둔다.
+                if exc.raw_text is not None or exc.reasoning is not None:
+                    raw_texts.append(exc.raw_text)
                 exc.usage = spent
                 exc.gpu_ms = gpu_ms
                 exc.gpu_ms_source = "request_wall_clock"
@@ -268,6 +287,8 @@ class OpenAICompatModelClient:
                 AttemptRecord(
                     output_tokens=usage.output_tokens if posted.output_tokens_reported else None,
                     finish_reason=posted.finish_reason,
+                    reasoning=posted.reasoning,
+                    reasoning_field=posted.reasoning_field,
                 )
             )
             try:
@@ -463,6 +484,8 @@ class OpenAICompatModelClient:
         try:
             choice = data["choices"][0]
             content = choice["message"]["content"]
+            # 추론 채널은 서버가 분리했을 때만 있다(`--reasoning-parser`). 없어도 오류가 아니다.
+            reasoning, reasoning_field = _reasoning_from(choice["message"])
             # `_usage_from`도 **같은 try 안이다**(적대적 리뷰 2026-10-02 실측): `usage: null`이면
             # `AttributeError`, `completion_tokens: null`이면 `TypeError`, `"abc"`면 `ValueError`가
             # 샜다. 모양이 깨진 응답은 content든 usage든 **한 사건**이다.
@@ -484,13 +507,50 @@ class OpenAICompatModelClient:
             # 타임아웃과 같은 사유 코드). **`detail`에 문구를 싣는 이유가 그것이다** — 둘을 가르는
             # 것은 trace의 `model_call.error_detail`뿐이고 그것은 `detail`을 읽는다.
             reason = f"응답 모양이 계약과 다르다: {type(exc).__name__}: {exc}"
-            raise ModelGatewayError(f"{self.endpoint} {reason}", detail=reason) from exc
+            # 그래도 읽을 수 있는 `message`가 있으면 원문·추론은 잃지 않는다(`usage`만 깨진 200이
+            # 흔하다) — 진단하려는 것이 바로 이 응답이다.
+            raw_text, reasoning, reasoning_field = _salvage_message(data)
+            raise ModelGatewayError(
+                f"{self.endpoint} {reason}",
+                detail=reason,
+                raw_text=raw_text,
+                reasoning=reasoning,
+                reasoning_field=reasoning_field,
+            ) from exc
         return PostedResponse(
             content=content,
             usage=usage,
             finish_reason=finish_reason,
             output_tokens_reported=output_tokens_reported,
+            reasoning=reasoning,
+            reasoning_field=reasoning_field,
         )
+
+
+def _reasoning_from(message: Mapping) -> tuple[str | None, ReasoningField | None]:
+    """`message`에서 추론 텍스트와 그것을 실어 온 키 이름을 읽는다 (#280).
+
+    vLLM은 버전에 따라 `reasoning`(0.27.1 ATOM 관측) 또는 `reasoning_content`로 싣는다 — 둘 다 보고
+    **문자열인 첫 키**를 쓴다(둘 다면 `reasoning`). 파서가 추론을 못 냈을 때 흔한 `null`은 문자열이
+    아니라 **없는 것**이다. `""`는 있는 것이다 — 빈 추론과 추론 없음을 한 값으로 합치지 않는다
+    (CLAUDE.md §0).
+    """
+    for name in ("reasoning", "reasoning_content"):
+        value = message.get(name)
+        if isinstance(value, str):
+            return value, name
+    return None, None
+
+
+def _salvage_message(data: object) -> tuple[str | None, str | None, ReasoningField | None]:
+    """모양이 깨진 200에서 읽히는 만큼의 (원문, 추론, 추론 키)를 건진다. 못 읽으면 전부 `None`."""
+    try:
+        message = data["choices"][0]["message"]  # type: ignore[index]
+        content = message.get("content")
+        reasoning, reasoning_field = _reasoning_from(message)
+    except (KeyError, IndexError, TypeError, AttributeError):
+        return None, None, None
+    return (content if isinstance(content, str) else None), reasoning, reasoning_field
 
 
 def _finish_reason_from(choice: dict) -> str | None:

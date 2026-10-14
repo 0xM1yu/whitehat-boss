@@ -1,5 +1,5 @@
-"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5는 형제 `PovActionNamed`), 그 `gen`이 싣는 PoC
-바이트 구성 스펙 `PovSpec`.
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5와 서빙 판 v6은 형제 `PovActionNamed`), 그 `gen`이
+싣는 PoC 바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가
@@ -160,6 +160,8 @@ _FIELDS_BY_ACTION: dict[str, tuple[str, ...]] = {
 # gdb 이력: `TOOL_KINDS`에 `"gdb"`가 들어온 것은 PR #327(`5cf5c20`, 2026-10-01) ·
 # `PovAction.tool`에 넣은 근거는 이슈 #360(사용자 결정) · gdb 사용 **규칙**을 프롬프트에 안 두는
 # 이유는 이슈 #325(gdb ToolRunner 결정) — ASAN 실행 경로 수리·검증(#326)이 선행 조건.
+# ⏵ 2026-10-13 - #326은 선택지 (c) 선언으로 닫혔다(`validate.run`은 서빙 점수 경로 밖 -
+# `nodes/validate.py` 모듈 docstring). 자체 링크 경로의 E4 도달성은 이제 #507(e)가 든다.
 class PovAction(HarnessModel):
     """PoV 툴 루프가 매 홉 내는 제어 액션.
 
@@ -226,7 +228,7 @@ class PovAction(HarnessModel):
 # 실패라 그 홉은 후보를 못 만든다(`strict` json_schema라 문법으로 먼저 걸릴 수 있다 — 미실측).
 # `submit` 밖에서는 읽히지 않고 무시된다.
 class PovActionNamed(PovAction):
-    """PoV 툴 루프가 매 홉 내는 제어 액션(v5 — `submit`이 앞선 gen을 지명할 수 있는 판).
+    """PoV 툴 루프가 매 홉 내는 제어 액션(v5·v6 — `submit`이 앞선 gen을 지명할 수 있는 판).
 
     `action`이 어느 필드를 쓰는지 정한다:
     - `gen`: `spec`(PovSpec)을 실어 순수 함수가 인프로세스로 바이트를 만든다. **모델이 쓴 코드를
