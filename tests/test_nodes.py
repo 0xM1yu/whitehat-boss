@@ -2439,12 +2439,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_v5_v6_and_v7() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_v6_v7_and_v8() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6", "v7"})
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6", "v7", "v8"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -2619,7 +2619,7 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
-    is_v7 = role == "critic" and version == "v7"
+    is_v7 = role == "critic" and version in ("v7", "v8")
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
@@ -2685,7 +2685,7 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
-    is_v7 = role == "critic" and version == "v7"
+    is_v7 = role == "critic" and version in ("v7", "v8")
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
@@ -2733,7 +2733,7 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(versio
     """
     prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
-    if version == "v7":  # v7(2026-10-14 서빙)은 이 조건을 SOURCE 검증 문장으로 다시 썼다
+    if version in ("v7", "v8"):  # v7(2026-10-14 서빙)은 이 조건을 SOURCE 검증 문장으로 다시 썼다
         assert "need_evidence is required when the path is not reviewable (step 3)" in normalized
         assert "a hypothetical unseen guard, or a hypothetical unseen caller is not enough" in (
             normalized

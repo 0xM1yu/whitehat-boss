@@ -587,7 +587,7 @@ def test_an_empty_cap_sample_reports_null_not_zero() -> None:
 def test_the_reconstructed_critic_prompt_carries_no_capsule_and_no_source() -> None:
     """프로브의 v1 metadata-only 재구성에는 캡슐도 대상 원문도 안 실린다.
 
-    이 핀은 `_reconstruct`만 검증한다. SOURCE를 받는 실 Critic v6·v7(서빙은 v7)의 노드 배선·
+    이 핀은 `_reconstruct`만 검증한다. SOURCE를 받는 실 Critic v6·v7·v8(서빙은 v8)의 노드 배선·
     입력 크기는 검증하지 않는다 — 그 배선은 `test_critic_v6_wiring.py`가 별도로 문다.
     """
     from src.orchestrator.prompt_loader import load_prompt
