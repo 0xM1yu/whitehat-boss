@@ -359,6 +359,13 @@ class EventKind(StrEnum):
     # `fallback_artifacts`(인덱스가 없어 파일 단위로 되돌아간 수)와
     # `no_symbol_artifacts`(인덱스는 있는데 심볼 0건)를 가른다 — `.py`처럼 인덱서에
     # 넘어가지 않는 파일과 인덱서가 아예 안 돈 run은 다른 사건이다.
+    #
+    # ⏵ 2026-10-15 — 컷의 설명 일치 예약(`runner._cut_with_reserve`)을 `candidate_desc_reserve`
+    # (설정값)와 `desc_reserved`(**예약이 없었다면 잘렸을 후보** 수 — 신호 순서로도 들어올
+    # 후보는 안 센다)로 남긴다. `count(target_planned.desc_reserved=true)`가 `desc_reserved`와 같다.
+    # `desc_reserve_filled`는 예약 몫으로 **고른** 수다 — 이미 키 순서로 들었을 것도 센다
+    # (`desc_reserved` ≤ 이 값 ≤ `candidate_desc_reserve`). 예약 자리는 서로 다른
+    # `(file, symbol)`에만 쓴다.
     TARGET_PLAN = "target_plan"
     # 4단계에 올리지 못한 target 하나 (W2). `reason`이 사유다.
     #
@@ -388,6 +395,8 @@ class EventKind(StrEnum):
     # 이 이벤트는 사유에 따라 **다른 단위**로 난다:
     #
     # - `over_candidate_max` — `_plan_targets`가 **팬아웃 전에** 낸다. **대상 단위.**
+    #   (⏵ 2026-10-15 `signal_rank`·`desc_rank`를 싣는다 — 잘린 대상이 어느 순위로 졌는지. 시도 단위
+    #   사유도 그 대상의 같은 값을 싣는다. `target_planned`와 같은 값이다.)
     # - `gateway_error`·`schema_error` — `_drop`이 `(target, 자리)` **시도마다** 낸다.
     #
     # 그래서 `count(target_skipped)`는 **두 단위의 혼합**이고 target 수도 시도 수도 아니다.
@@ -425,6 +434,10 @@ class EventKind(StrEnum):
     #
     # `count(target_planned) = target_plan.planned`이고, 그래서 이 이벤트는 분모를 새로
     # 만들지 않는다. 같은 수를 두 곳에서 말하되 한쪽은 개수, 한쪽은 이름이다.
+    #
+    # ⏵ 2026-10-15 — `signal_rank`·`desc_rank`(`target_skipped`와 같은 값)와 `desc_reserved`를
+    # 싣는다. `desc_reserved`는 설명 일치 예약이 **없었다면 컷에 잘렸을** 대상일 때만 참이다
+    # (`target_plan.desc_reserved`와 같은 정의 — 예약 몫 전체가 아니다).
     TARGET_PLANNED = "target_planned"
     CRITIC_SKIPPED = "critic_skipped"
     # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (해소).

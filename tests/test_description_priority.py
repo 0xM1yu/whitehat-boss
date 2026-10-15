@@ -84,16 +84,18 @@ class _Trace:
         self.events.append((kind, fields))
 
 
-def _ctx(description: str | None, candidate_max: int) -> SimpleNamespace:
+def _ctx(description: str | None, candidate_max: int, reserve: int = 0) -> SimpleNamespace:
     return SimpleNamespace(
         vuln_description=description,
-        config=SimpleNamespace(thresholds=SimpleNamespace(candidate_max=candidate_max)),
+        config=SimpleNamespace(
+            thresholds=SimpleNamespace(candidate_max=candidate_max, candidate_desc_reserve=reserve)
+        ),
         trace=_Trace(),
     )
 
 
 def _plan_slices(monkeypatch: pytest.MonkeyPatch, ctx: SimpleNamespace, entries: list[Location]):
-    """신호가 없는(Level 1) 슬라이스 타깃을 세우고 자른다."""
+    """정적 신호를 비운(`_artifact_signals` 없음) 슬라이스 타깃을 세우고 자른다."""
     monkeypatch.setattr(runner, "_artifact_signals", lambda *_a: ((), [], False))
     artifacts = [SimpleNamespace(path=e.file) for e in entries]
     refs = tuple(
@@ -231,3 +233,191 @@ def test_the_symbol_index_path_ranks_by_the_run_description(tmp_path) -> None:  
     assert (plan["desc_exact_matches"], plan["desc_part_matches"]) == (0, 1)
     assert plan["desc_file_matches"] == 0
     assert plan["desc_matches_deferred"] == 0
+
+
+# --- 러너: 설명 일치 예약(`candidate_desc_reserve`) ---
+
+
+def _t(file: str, signal: int, desc: int, symbol: str = "f") -> runner._Target:
+    return runner._Target(
+        artifact=None,  # type: ignore[arg-type]
+        location=Location(file=file, line_start=1, symbol=symbol),
+        evidences=(),
+        signal_rank=signal,
+        desc_rank=desc,
+    )
+
+
+def _cut(
+    items: list[runner._Target], limit: int, reserve: int
+) -> tuple[SimpleNamespace, runner._TargetPlan, runner._Accumulator]:
+    ctx = _ctx(ARVO_1065, limit, reserve)
+    plan = runner._TargetPlan(collected=list(items))
+    state = runner._Accumulator()
+    runner._order_and_cut(ctx, plan, state)  # type: ignore[arg-type]
+    return ctx, plan, state
+
+
+def _files(items: list[runner._Target]) -> list[str]:
+    return [t.location.file for t in items]
+
+
+def _rehearsal() -> list[runner._Target]:
+    """리허설 꼴 — 신호 후보 9개(`s1`..`s9`)와, 신호 없이 설명이 심볼을 부른 후보 하나."""
+    return [_t(f"s{i}.c", 2, 0) for i in range(1, 10)] + [_t("funcs.c", 0, 2, "file_regexec")]
+
+
+def test_a_description_match_survives_when_signal_candidates_fill_the_cut() -> None:
+    ctx, plan, state = _cut(_rehearsal(), 8, 2)
+    # 신호 7개 + 설명 일치 1개. 설명 일치는 키 순서상 맨 뒤라 목록 끝이다(ID 발급 순서 = 키 순서).
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 8)] + ["funcs.c"]
+    assert state.deferred == 2  # s8·s9가 잘린다
+    ((_, plan_event), *rest) = ctx.trace.events
+    assert (plan_event["planned"], plan_event["deferred"]) == (8, 2)
+    assert (plan_event["candidate_desc_reserve"], plan_event["desc_reserved"]) == (2, 1)
+    assert plan_event["desc_matches_deferred"] == 0
+    planned = [f for k, f in rest if k.value == "target_planned"]
+    skipped = [f for k, f in rest if k.value == "target_skipped"]
+    assert [f["file"] for f in skipped] == ["s8.c", "s9.c"]
+    assert [(f["signal_rank"], f["desc_rank"], f["reason"]) for f in skipped] == [
+        (2, 0, "over_candidate_max")
+    ] * 2
+    assert [f["file"] for f in planned if f["desc_reserved"]] == ["funcs.c"]  # 예약이 들인 것만
+    assert {(f["signal_rank"], f["desc_rank"]) for f in planned} == {(2, 0), (0, 2)}
+    # `target_plan.desc_reserved`는 `target_planned.desc_reserved`의 참 개수와 같은 정의다.
+    assert plan_event["desc_reserved"] == sum(f["desc_reserved"] for f in planned)
+
+
+def test_without_the_reserve_the_same_run_loses_the_match() -> None:
+    _, plan, state = _cut(_rehearsal(), 8, 0)
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 9)]
+    assert state.deferred == 2
+
+
+def test_only_the_first_reserve_description_matches_are_reserved_in_key_order() -> None:
+    items = [_t(f"s{i}.c", 2, 0) for i in range(1, 9)] + [
+        _t("zz.c", 0, 2, "part"),
+        _t("aa.c", 0, 3, "exact"),  # -desc_rank가 먼저라 zz.c·bb.c보다 앞
+        _t("bb.c", 0, 2, "part"),
+    ]
+    ctx, plan, _ = _cut(items, 8, 2)
+    # 예약은 키 순서 앞 둘(aa.c 3, bb.c 2)이고 zz.c는 못 든다 — 나머지 6자리는 신호 후보 s1..s6.
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 7)] + ["aa.c", "bb.c"]
+    assert ctx.trace.events[0][1]["desc_reserved"] == 2
+    assert "zz.c" in [f["file"] for k, f in ctx.trace.events if k.value == "target_skipped"]
+
+
+def test_a_file_name_only_match_is_not_reserved() -> None:
+    items = [_t(f"s{i}.c", 2, 0) for i in range(1, 9)] + [_t("regex.c", 0, 1, "helper")]
+    _, plan, state = _cut(items, 8, 2)
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 9)]
+    assert state.deferred == 1
+
+
+@pytest.mark.parametrize(
+    ("items", "limit", "reserve", "expected"),
+    [
+        # 설명 일치 후보가 없다 - 종전 컷(키 앞 limit개).
+        ([_t(f"s{i}.c", 2, 0) for i in (3, 1, 2)], 2, 2, ["s1.c", "s2.c"]),
+        # 예약이 0이다 - 설명 일치가 있어도 종전 컷.
+        ([_t("a.c", 2, 0), _t("b.c", 0, 3, "x"), _t("c.c", 0, 0)], 1, 0, ["a.c"]),
+        # 후보가 limit 이하다 - 전부 든다.
+        ([_t("b.c", 0, 3, "x"), _t("a.c", 2, 0)], 5, 2, ["a.c", "b.c"]),
+        # 설명 일치 후보가 이미 컷 안이다 - 예약이 아무것도 바꾸지 않는다.
+        ([_t("a.c", 2, 0), _t("b.c", 1, 3, "x"), _t("c.c", 0, 0)], 2, 2, ["a.c", "b.c"]),
+    ],
+)
+def test_the_reserve_changes_nothing_when_it_has_nothing_to_do(
+    items: list[runner._Target], limit: int, reserve: int, expected: list[str]
+) -> None:
+    ctx, plan, _ = _cut(items, limit, reserve)
+    assert _files(plan.targets) == expected
+    assert ctx.trace.events[0][1]["desc_reserved"] == 0
+
+
+def test_the_cut_list_stays_in_key_order() -> None:
+    _, plan, _ = _cut(_rehearsal(), 8, 2)
+    assert plan.targets == sorted(plan.targets, key=runner._cut_key)
+
+
+def test_the_reserve_cannot_exceed_the_cut() -> None:
+    items = [_t("a.c", 2, 0), _t("b.c", 0, 2, "x"), _t("c.c", 0, 3, "y")]
+    targets, deferred, _, _ = runner._cut_with_reserve(
+        sorted(items, key=runner._cut_key), 1, 5
+    )
+    assert _files(targets) == ["c.c"]
+    assert len(deferred) == 2
+
+
+def test_the_reserve_must_fit_inside_the_cut() -> None:
+    from pydantic import ValidationError
+
+    from src.config import load_config
+
+    thresholds = load_config("dev_fake").thresholds
+    assert thresholds.candidate_desc_reserve == 2  # budgets.yaml이 든다
+    assert thresholds.flatten()["candidate_desc_reserve"] == 2.0
+    with pytest.raises(ValidationError):
+        thresholds.transition(candidate_desc_reserve=-1)
+    with pytest.raises(ValidationError):
+        thresholds.transition(candidate_desc_reserve=thresholds.candidate_max + 1)
+    off = thresholds.transition(candidate_desc_reserve=0)
+    assert "candidate_desc_reserve" not in off.flatten()  # 기본(0)은 키를 안 만든다
+    assert thresholds.transition(candidate_desc_reserve=thresholds.candidate_max)
+
+
+def test_the_symbol_index_path_reserves_a_description_match(tmp_path) -> None:  # noqa: ANN001
+    """종단: `cli.execute` 배선 전체에서 세 이벤트가 새 값을 싣는다."""
+    target, index = _no_signal_target(tmp_path)
+    _, trace_path = _run(
+        tmp_path,
+        name="reserve",
+        target=target,
+        before=_with_index(index),
+        candidate_max=1,
+        vuln_description=ARVO_1065,
+    )
+    events = _events(trace_path)
+    plan = _plan(trace_path)
+    assert plan["candidate_desc_reserve"] == 1  # `_run`이 컷에 맞춰 min(2, 1)로 줄인다
+    assert plan["desc_reserved"] == 0  # 예약 없이도 키 순서로 이미 든다(신호가 다 0이라)
+    planned = _of(events, "target_planned")
+    assert [e["data"]["symbol"] for e in planned] == ["file_regexec"]
+    assert (planned[0]["data"]["signal_rank"], planned[0]["data"]["desc_rank"]) == (0, 2)
+    assert planned[0]["data"]["desc_reserved"] is False
+    cut = [e["data"] for e in _of(events, "target_skipped")]
+    skipped = [d for d in cut if d["reason"] == "over_candidate_max"]
+    assert [(d["symbol"], d["signal_rank"], d["desc_rank"]) for d in skipped] == [("quiet", 0, 0)]
+
+
+def test_reserved_slots_go_to_distinct_functions() -> None:
+    """슬라이스 둘이 같은 함수(entry)를 가리켜도 예약 두 자리를 다 먹지 않는다."""
+    twin_a = _t("m.c", 0, 2, "fn")
+    twin_b = _t("m.c", 0, 2, "fn")  # 같은 (file, symbol) - 다른 슬라이스라고 보면 된다
+    other = _t("n.c", 0, 2, "other")
+    items = [_t(f"s{i}.c", 2, 0) for i in range(1, 9)] + [twin_a, twin_b, other]
+    ctx, plan, _ = _cut(items, 8, 2)
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 7)] + ["m.c", "n.c"]
+    assert any(t is twin_a for t in plan.targets)  # 첫째가 예약을 받는다
+    assert not any(t is twin_b for t in plan.targets)  # 둘째는 자리가 없다
+    assert ctx.trace.events[0][1]["desc_reserve_filled"] == 2
+    # 나머지 경로로는 들어갈 수 있다 - 신호 후보가 자리를 안 채우면 둘째도 든다.
+    _, plan, _ = _cut([twin_a, twin_b, other], 3, 2)
+    assert len(plan.targets) == 3
+
+
+@pytest.mark.parametrize(
+    ("items", "limit", "reserve", "filled", "promoted"),
+    [
+        (_rehearsal(), 8, 2, 1, 1),  # 예약이 들였다
+        ([_t("a.c", 2, 0), _t("b.c", 1, 3, "x"), _t("c.c", 0, 0)], 2, 2, 1, 0),  # 이미 앞 순위
+        ([_t(f"s{i}.c", 2, 0) for i in (3, 1, 2)], 2, 2, 0, 0),  # 설명 일치 없음
+        (_rehearsal(), 8, 0, 0, 0),  # 예약 0
+    ],
+)
+def test_desc_reserve_filled_counts_the_pick_and_desc_reserved_counts_the_effect(
+    items: list[runner._Target], limit: int, reserve: int, filled: int, promoted: int
+) -> None:
+    ctx, _, _ = _cut(items, limit, reserve)
+    plan_event = ctx.trace.events[0][1]
+    assert (plan_event["desc_reserve_filled"], plan_event["desc_reserved"]) == (filled, promoted)
