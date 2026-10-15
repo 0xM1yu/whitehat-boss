@@ -125,7 +125,7 @@ from src.interfaces.model_client import (
     is_size_rejection,
     truncate_detail,
 )
-from src.interfaces.oracle import Oracle
+from src.interfaces.oracle import Oracle, VulSubmission
 from src.interfaces.retrieval import RetrievalResult
 from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
@@ -2295,10 +2295,12 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     (마지막 홉의 gen은 빼고) `_run_pov_hops`가 `designatable=False`로 `vul` 다리에 내보내
     원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
-    모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓿후보 자기 `vul` 응답 코드
-    (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은
-    바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    모델의 최종 지정 신호를 기록한다. ⏵ 2026-10-15 — 그 재제출이 일시 실패(429·5xx·연결/타임아웃)면
+    한 번 다시 내고, 재제출이 실패하면 같은 finding이 앞서 성공시킨 같은 바이트의 중간 제출을
+    그 후보의 제출로 이어받는다(`_submit_vul_to_oracle`). `fix` 다리와 판정은 8단계 끝에서 run당
+    한 번, 지정한 하나에만 돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤
+    ⓿후보 자기 `vul` 응답 코드(크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거
+    등급 ②`confidence` ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
     그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
@@ -2337,6 +2339,54 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
         state.pov_results.setdefault(finding.finding_id, _POV_ABORTED)
 
 
+def _call_submit_vul(
+    ctx: RunContext, poc: bytes, *, retry: bool
+) -> tuple[VulSubmission | None, Exception | None, int, oracle_log.FirstFailure | None]:
+    """`submit_vul` 호출 - `(제출 결과, 마지막 실패, 호출 수, 첫 실패)`. 앞의 둘 중 하나만 값이 있고
+    첫 실패는 다시 불렀을 때(호출 수 2)만 있다 - 마지막 실패만 남으면 처음 원인이 사라진다.
+
+    `retry`면(모델이 `submit`한 PoC의 제출) 일시 실패 뒤에 **한 번** 다시 부른다
+    (`oracle_log.vul_retry_wait_s` - 429는 한도 창을 `ctx.sleep`으로 기다린 뒤, 5xx·연결/타임아웃
+    실패는 바로, 그 밖의 4xx는 안 한다). 중간 gen은 재시도하지 않는다 - 그 제출은 되먹임이라
+    실패하면
+    `unavailable`로 끝나고 run이 그 홉을 기다리지 않는다. `Exception`만 잡는다(`SystemExit`·Ctrl-C는
+    올라간다).
+
+    **다시 부른 호출의 `cached`는 `None`이다**(호출 수 2) - 구현이 재시도 직전에 읽은 서버 장부에
+    이 run의 첫 호출이 쓴 행이 보일 수 있어, 그 값을 그대로 두면 이 run 자신의 측정이 「옛 판정
+    캐시(#385)」로 적힌다. 모르는 값은 모른다고 적는다(CLAUDE.md §0).
+    """
+    calls = 0
+    first: oracle_log.FirstFailure | None = None
+    while True:
+        calls += 1
+        try:
+            submission = ctx.oracle.submit_vul(poc)
+            if calls > 1:
+                submission = replace(submission, cached=None)
+            return submission, None, calls, first
+        except Exception as exc:  # 저장소 밖 서비스 - 호출부가 사유를 남긴다.
+            wait = oracle_log.vul_retry_wait_s(exc) if retry and calls == 1 else None
+            if wait is None:
+                return None, exc, calls, first
+            first = oracle_log.first_failure(exc, wait)
+            if wait:
+                ctx.sleep(wait)
+
+
+def _submit_path_fields(attempt: oracle_log.VulAttempt) -> dict[str, TraceValue]:
+    """`oracle_submitted`·`oracle_failed`가 지정 가능 제출의 경로를 싣는 필드 - 평범한 한 번 제출은
+    아무것도 안 싣는다(`trace.py` 주석)."""
+    fields: dict[str, TraceValue] = {}
+    if attempt.submit_calls > 1:
+        fields["submit_calls"] = attempt.submit_calls
+    if attempt.first_failure is not None:
+        fields |= attempt.first_failure.fields()
+    if attempt.reused_intermediate:
+        fields["reused_intermediate"] = True
+    return fields
+
+
 def _submit_vul_to_oracle(
     ctx: RunContext,
     state: _Accumulator,
@@ -2363,6 +2413,21 @@ def _submit_vul_to_oracle(
     잃는다(`_run_pov`의 추가형 계약 그대로). `Exception`만 흡수한다 — TERM·HUP(`SystemExit`)과
     Ctrl-C는 올라간다. 다만 `oracle_failed`로 **사유를 남긴다** — 그래야 「제출했는데 실패했다」가
     조용히 「미제출」(이벤트 부재)과 같아지지 않는다.
+
+    ⏵ **2026-10-15 — 모델이 `submit`한 PoC의 제출(`designatable=True`)을 전송 실패로 잃을 가능성을
+    줄인다.** ① 429(`oracle_log.RATE_LIMIT_WINDOW_S`를 기다린 뒤)·5xx·연결/타임아웃 실패면 **한 번**
+    다시 낸다(`_call_submit_vul`). 그 밖의 4xx는 다시 안 낸다. ② 재제출이 실패했고(재시도한 뒤든
+    재시도 없이 4xx든) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**이 장부에 있으면
+    (서버는 그 바이트의 `vul` 행을 이미 든다) 그 제출을 이 후보의 제출로 이어받는다
+    (`oracle_log.vul_reused` - `reused_intermediate`).
+    모델이 이미 낸 바이트이고 새 승격이 아니다(ADR 0013 결정 1 · 지정은 여전히 `vul` 응답 코드
+    하나만 읽는다 - 이어받은 후보의 응답 코드는 그 앞선 제출의 것이다). 실패한 재제출 기록은
+    그대로 장부에 남는다(실패 건수·경고). 경로는 trace(`submit_calls`·`reused_intermediate` -
+    있을 때만)와 사이드카 후보 행이 싣는다.
+    ⚠ 중간 gen의 제출은 재시도도 이어받기도 없다. 429 대기는 서버 기본 한도 창(20회/60초)이고 띄운
+    서버의 한도는 읽을 길이 없다. **덮지 못하는 경우:** 모델이 `poc_sha256` 없이 마지막 홉의 gen을
+    `submit`하면 그 바이트의 중간 제출이 없어 이어받을 것이 없다. 이 경로를 실서버로 재은 run은
+    0건이다(대역 테스트뿐).
 
     **도커 왕복을 단계 시간에 넣는다** — 이 호출은 `Stage.VALIDATE` 구간(`stage_start`~`stage_end`)
     안에서 돌고 이벤트가 `wall_ms`를 단다. 구간 밖에서 내면 이 이벤트가 8단계 `stage_end` 뒤에 나가
@@ -2397,15 +2462,16 @@ def _submit_vul_to_oracle(
             )
             state.oracle_ledger.add_attempt(attempt)
             return "oracle_vul=unavailable"
-        try:
-            submission = ctx.oracle.submit_vul(poc)
-        except Exception as exc:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
+        submission, failure, calls, first = _call_submit_vul(ctx, poc, retry=designatable)
+        if failure is not None:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
             attempt = oracle_log.vul_failed(
                 finding.finding_id,
                 poc,
-                exc,
+                failure,
                 max(0, ctx.monotonic_ms() - started),
                 designatable=designatable,
+                submit_calls=calls,
+                first_failure=first,
             )
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
@@ -2418,9 +2484,41 @@ def _submit_vul_to_oracle(
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
                 error=attempt.error,
+                **_submit_path_fields(attempt),
             )
             observation = "oracle_vul=unavailable"
+            # 모델이 이 바이트를 `submit`했는데 재제출이 안 됐다 - 같은 finding이 앞서 성공시킨
+            # 같은 바이트의 중간 제출이 서버에 행을 남겼으면 그것을 이 후보의 제출로 이어받는다.
+            # 새 승격이 아니다(모델이 이미 낸 바이트 · ADR 0013 결정 1).
+            earlier = (
+                state.oracle_ledger.intermediate_twin(finding.finding_id, attempt.poc_sha256)
+                if designatable
+                else None
+            )
+            if earlier is not None:
+                state.oracle_ledger.add_attempt(attempt)
+                attempt = oracle_log.vul_reused(
+                    finding.finding_id,
+                    earlier,
+                    attempt.wall_ms,
+                    submit_calls=calls,
+                    first_failure=first,
+                )
+                ctx.trace.emit(
+                    EventKind.ORACLE_SUBMITTED,
+                    stage=Stage.VALIDATE,
+                    subject_kind="finding",
+                    subject_id=finding.finding_id,
+                    wall_ms=attempt.wall_ms,
+                    leg="vul",
+                    designatable=True,
+                    task_id=earlier.submission.task_id if earlier.submission else None,
+                    poc_sha256=attempt.poc_sha256,
+                    poc_bytes=attempt.poc_bytes,
+                    **_submit_path_fields(attempt),
+                )
         else:
+            assert submission is not None
             exit_code: int | None = None
             query_error: Exception | None = None
             if not designatable:
@@ -2450,6 +2548,8 @@ def _submit_vul_to_oracle(
                 submission,
                 max(0, ctx.monotonic_ms() - started),
                 designatable=designatable,
+                submit_calls=calls,
+                first_failure=first,
                 observation_exit_code=exit_code,
                 observation_error=(
                     oracle_log.OBSERVATION_NO_VERDICT
@@ -2473,6 +2573,7 @@ def _submit_vul_to_oracle(
                 task_id=submission.task_id,
                 poc_sha256=attempt.poc_sha256,
                 poc_bytes=attempt.poc_bytes,
+                **_submit_path_fields(attempt),
             )
             observation = (
                 f"oracle_vul exit_code={exit_code}"
@@ -2671,7 +2772,8 @@ def _designate_final(
       그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
     - **후보가 하나다** → 그 하나가 최종이다(`sole_candidate`). **이것은 위치 규칙이 아니다** —
       고를 후보가 하나뿐이라 선택이 없고, 순위도 자리(처음·마지막)도 쓰지 않는다. 「유일한
-      것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 정확히 한 번 돈다.
+      것」이 「첫째」로 바뀌는 것이 아니다. `fix` 다리와 판정 조회는 한 번 돈다(⏵ 2026-10-15 -
+      일시 실패면 `_score`가 한 번 더 부른다).
     - **등급·`confidence`·판정 계단을 모르는 후보가 있다** → 지정하지 않는다(`grade_unknown` —
       이름은 등급 미상에서 굳었지만 이 검사는 셋을 같이 본다). **방어 분기다** —
       후보의 `finding_id`는
@@ -2735,7 +2837,10 @@ def _designate_final(
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
-    아니다(그 run의 경고가 실패 건수를 알린다).
+    아니다(그 run의 경고가 실패 건수를 알린다). ⏵ 2026-10-15 — 단 그 제출은 한 번 재시도되고,
+    그래도 실패하면 같은 finding이 앞서 같은 바이트를 중간 gen으로 성공시켰을 때 그 제출을 이어받아
+    후보가 된다(`_submit_vul_to_oracle`). 지정은 그 후보를 다른 후보와 똑같이 본다 - 읽는 응답
+    코드는 이어받은 제출의 것이다.
 
     ⏵ **2026-10-11 — 위 「읽는 것을 제한한다」는 하네스 코드를 묶는 제약이다.** 어느 gen이
     후보가 되는지는 모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면
@@ -2789,28 +2894,55 @@ def _designate_final(
 def _score(
     ctx: RunContext, oracle: Oracle, picked: oracle_log.VulAttempt, designation: str
 ) -> oracle_log.FinalAttempt:
-    """지정한 하나에 `fix` 다리와 판정 조회를 돌린다. 저장소 밖 서비스라 예외는 흡수하고 남긴다."""
+    """지정한 하나에 `fix` 다리와 판정 조회를 돌린다. 저장소 밖 서비스라 예외는 흡수하고 남긴다.
+    일시 실패면 한 번 더 부른다(`oracle_log.vul_retry_wait_s` - `_call_submit_vul`과 같은 규칙:
+    429는 한도 창을 `ctx.sleep`으로 기다린 뒤, 5xx·연결/타임아웃은 바로, 그 밖의 4xx는 안 한다).
+    호출 수는 `FinalAttempt.calls`다. `wall_ms`는 재시도와 그 대기를 품는다."""
     # 지정되는 것은 vul 제출이 성공한 시도뿐이라 바이트와 제출 결과가 있다.
     assert picked.poc is not None and picked.submission is not None
     started = ctx.monotonic_ms()
-    try:
-        outcome = oracle.finalize(picked.poc, picked.submission)
-    except Exception as exc:  # 사유를 남기고 run은 계속한다.
+    calls = 0
+    first: oracle_log.FirstFailure | None = None
+    while True:
+        calls += 1
+        try:
+            outcome = oracle.finalize(picked.poc, picked.submission)
+            if calls > 1:  # 첫 호출이 쓴 행을 `fix_cached`가 옛 판정으로 읽는다 - 모른다고 적는다.
+                outcome = replace(outcome, fix_cached=None)
+        except Exception as exc:  # 사유를 남기고 run은 계속한다.
+            # 일시 실패면 **한 번** 다시 부른다. `finalize`는 다시 불러도 안전하다 - 서버가 같은
+            # `(agent_id, task_id, sha256)`의 제출을 캐시하고 판정 행은 신원으로 고른다(어댑터 모듈
+            # docstring). 이 호출이 run의 한 장을 점수로 바꾸는 마지막 호출이라 `vul` 제출과 **같은
+            # 규칙**(`vul_retry_wait_s`)으로 덮는다: 5xx·연결/타임아웃은 바로, 429는 한도 창을
+            # 기다린 뒤. 다만 어댑터 docstring은 `/submit-fix`에 레이트리미트가 없다고 적는다
+            # (`__main__.py:169-195`, 소스 판독) - 그래서 429는 오지 않을 수도 있고, 이 갈래는
+            # 그것이 오면 덮는다는 뜻이다(안 오면 해가 없다). 그 밖의 4xx는 다시 내도 같은 답이라
+            # 바로 실패다.
+            wait = oracle_log.vul_retry_wait_s(exc) if calls == 1 else None
+            if wait is not None:
+                first = oracle_log.first_failure(exc, wait)
+                if wait:
+                    ctx.sleep(wait)
+                continue
+            return oracle_log.FinalAttempt(
+                status=oracle_log.STATUS_FAILED,
+                wall_ms=max(0, ctx.monotonic_ms() - started),
+                designation=designation,
+                attempt=picked,
+                error=type(exc).__name__,
+                error_detail=oracle_log.clip_error(exc),
+                calls=calls,
+                first_failure=first,
+            )
         return oracle_log.FinalAttempt(
-            status=oracle_log.STATUS_FAILED,
+            status=oracle_log.STATUS_SCORED,
             wall_ms=max(0, ctx.monotonic_ms() - started),
             designation=designation,
             attempt=picked,
-            error=type(exc).__name__,
-            error_detail=oracle_log.clip_error(exc),
+            outcome=outcome,
+            calls=calls,
+            first_failure=first,
         )
-    return oracle_log.FinalAttempt(
-        status=oracle_log.STATUS_SCORED,
-        wall_ms=max(0, ctx.monotonic_ms() - started),
-        designation=designation,
-        attempt=picked,
-        outcome=outcome,
-    )
 
 
 def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
@@ -2825,6 +2957,16 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     ⓿자기 `vul` 응답 코드 ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로
     하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다
     (`_designate_final`의 ⏵).
+
+    ⏵ 2026-10-15 — `finalize`가 일시 실패로 끝나면 **한 번** 다시 부른다(`_score` - `vul` 제출과
+    같은 규칙 `oracle_log.vul_retry_wait_s`): 5xx·연결/타임아웃은 바로, 429는 한도 창
+    (`RATE_LIMIT_WINDOW_S`)을 기다린 뒤, 그 밖의 4xx는 안 부른다. 어댑터 docstring은
+    `/submit-fix`에 레이트리미트가 없다고 적으므로(소스 판독) 429는 오지 않을 수도 있다 - 그
+    갈래는 오면 덮는다.
+    호출 수는 trace `oracle_final`·사이드카 `final`의 `finalize_calls`(2일 때만)가 싣고, 첫 실패와
+    기다린 초는 `first_error`·`first_error_status`·`retry_wait_s`다. 재시도가 안전한 근거는 서버가
+    제출을 캐시하고 판정 행을 신원으로 고르는 것이다(어댑터 모듈 docstring - 소스 판독이다).
+    ⚠ 이 경로를 실서버로 잰 run은 0건이다.
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
@@ -2883,6 +3025,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
             poc_bytes=None if picked is None else picked.poc_bytes,
             task_id=None if final.outcome is None else final.outcome.task_id,
             error=final.error,
+            # 호출 수가 2일 때만 호출 수와 첫 실패를 싣는다 - 한 번에 된 run과 키 집합이 같다.
+            **({} if final.calls is None or final.calls <= 1 else {"finalize_calls": final.calls}),
+            **({} if final.first_failure is None else final.first_failure.fields()),
             record_ref=ledger.record_ref,
         )
 
