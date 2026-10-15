@@ -3,6 +3,7 @@
 Fixtures use the existing real PoV loop; HTTP calls are replaced at the adapter boundary.
 """
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,11 +25,22 @@ from tests.test_pov_loop import _gen, _scripted, _served_pov_version, _with_pov_
 
 
 class ReadingOracle(FakeOracle):
-    def __init__(self, codes=(300, 71), *, query_error=None, **kwargs):
+    def __init__(self, codes=(300, 71), *, query_error=None, response_codes=None, **kwargs):
         super().__init__(**kwargs)
         self.codes = iter(codes)
         self.query_calls = []
         self.query_error = query_error
+        # 제출 응답의 종료 코드를 호출 순서대로 덮는다(없으면 `FakeOracle`의 고정 값).
+        # 관측(`codes`)과 응답은 다른 값이다(서버가 타임아웃 300을 응답에서만 0으로 덮는다, #384).
+        # ⏵ 2026-10-15 - 응답 코드가 구제 계단을 정하게 돼 그것을 고르는 검사가 생겼다.
+        self.response_codes = None if response_codes is None else iter(response_codes)
+
+    def submit_vul(self, poc):
+        result = super().submit_vul(poc)
+        if self.response_codes is not None:
+            result = dataclasses.replace(result, response_exit_code=next(self.response_codes))
+            self.vul_results[-1] = result
+        return result
 
     def query_vul(self, poc):
         self.query_calls.append(poc)
@@ -187,6 +199,7 @@ def test_wired_prefix_explains_raw_observation_and_model_designation():
         "v5": ("## 채점기 vul 관측", "중간"),
         "v6": ("## Scorer vul observation", "intermediate"),
         "v7": ("## Scorer vul observation", "intermediate"),  # 2026-10-14 - v6과 같은 절
+        "v8": ("## Scorer vul observation", "intermediate"),  # 2026-10-15 - v7과 같은 절
     }[version]
     assert heading in prefix
     for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", intermediate):

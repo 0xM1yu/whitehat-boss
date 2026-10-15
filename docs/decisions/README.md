@@ -57,7 +57,7 @@
 | [0010](0010-harness-structure-and-model-roster.md) | 하네스 구조와 모델 로스터 확정 — Scout 풀 3역할 · **Auditor A/B** · 단계 단위 실행 · Joern 슬라이서 (⚠ 제목의 A/B는 2026-09-21에 소멸했다 — 아래 0010 문단) | **승인** | 2026-09-06 (승인 2026-09-09) |
 | [0011](0011-retire-the-2x2-condition-axis.md) | 2×2 조건 축 폐기 — Scout 오케스트레이터로. `CONDITION_PATTERN`이 `@pipeline`만 받는다 | **승인** | 2026-09-20 |
 | [0012](0012-harness-canon-v2.md) | 하네스 정본 v2 — 슬라이스 입력 · need_evidence · 검색 역할 · 저장소 범위 | **승인** | 2026-09-24 (승인 2026-09-25) |
-| [0013](0013-no-auto-promotion-of-intermediate-gens.md) | 중간 `gen`을 자동 승격하지 않는다 — 지정이 채점기 값을 안 읽는 결정 유지 (#549 ⓒ 기각 · 재개 게이트 둘 · ⏵ 2026-10-14 결정 2 개정: 후보 자기 `vul` 응답 코드 계단 하나만 읽는다, #637) | 제안 | 2026-10-08 |
+| [0013](0013-no-auto-promotion-of-intermediate-gens.md) | 중간 `gen`을 자동 승격하지 않는다 — 지정이 채점기 값을 안 읽는 결정 유지 (#549 ⓒ 기각 · 재개 게이트 둘 · ⏵ 2026-10-14 결정 2 개정: 후보 자기 `vul` 응답 코드 계단 하나만 읽는다, #637 · ⏵ 2026-10-15 결정 1 개정: `submit` 없이 끝난 Finding의 크래시 응답 중간 `gen`을 제출된 후보 아래 순위로 구제한다) | 제안 | 2026-10-08 |
 | [0014](0014-poc-tool-runs-the-task-image.md) | `poc` 도구는 우리가 빌드한 바이너리가 아니라 과제의 `-vul` 이미지를 돌린다 | 제안 | 2026-10-09 |
 | [0015](0015-rebut-grounding.md) | 근거 없는 `rebut`은 `need_evidence`로 간다 - 근거는 인용 ID 또는 닫힌 어휘의 반박 축 (`RebuttalAxis` 열 값) | 제안 | 2026-10-13 |
 
