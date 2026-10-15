@@ -2,9 +2,9 @@
 # 교대 감시자 — 장비 무관. tools/serve/swap.sh가 띄운 서버($SERVE_DIR/servers의 프로세스 그룹)만 내린다.
 # **run마다 하나** 띄운다(swap.sh는 감시자가 없거나 다른 run 것이면 띄우지 않는다):
 #
-#   MAX_HOURS=24 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &
+#   setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &
 #
-# 뜨지 못하면(이미 떠 있음 · nvidia-smi · GUARD_CGROUP_DIR · GUARD_CGROUP_PCT) 사유를 stderr와
+# 뜨지 못하면(이미 떠 있음 · nvidia-smi · GUARD_CGROUP_DIR · GUARD_CGROUP_PCT · MAX_HOURS · GUARD_MAX_S) 사유를 stderr와
 # $SERVE_DIR/logs/guard.log의 「시작 거부」 줄에 남기고 exit 2다 — 위 기동 줄은 stderr를 버린다. 거부는 pid 파일·
 # STOP_GUARD를 건드리기 전이다.
 #
@@ -20,8 +20,11 @@
 # 있다」로 거부된다 — 안전한 쪽이다.
 #
 # 내리는 조건 — 걸리면 TERM → GUARD_TERM_WAIT_S(20 s) 뒤 KILL하고 $SERVE_DIR/KILLED에 사유를 남긴다.
-#   1) 마감: 감시자 시작 후 MAX_HOURS 시간 — **지키는 run의 서버만** 내린다. run 끝 내림이 안 돌았어도
-#      서버가 장비를 붙잡지 않게 하는 자리이고, 다른 run의 서버는 그 run의 감시자 몫이다.
+#   1) 마감 — **선택, 기본 꺼짐**(2026-10-15 사용자 결정; 10시간 마감이 10-12 run을 8단계 중간에 끊었다).
+#      MAX_HOURS가 양의 정수이면 감시자 시작 후 그 시간에 **지키는 run의 서버만** 내린다. 미지정·0이면 이 층이
+#      없다(시작 로그 `deadline=none`). **위험: 마감이 없으면 로컬 run이 run 끝 내림 없이 죽었을 때(PC 종료 ·
+#      Ctrl-C 뒤 내림 실패 등) 원격 서버가 GPU를 계속 잡는다 → 사람이 `HARNESS_RUN_ID=<run> bash
+#      tools/serve/swap.sh`로 내리고 vast 인스턴스를 지운다.** 다른 run의 서버는 그 run의 감시자 몫이다.
 #   2) 통합메모리(nvidia-smi 메모리 `[N/A]` — GB10 ATOM)에서만: MemAvailable < MIN_AVAIL_GIB — **swap.sh가 띄운
 #      서버를 run과 무관하게 전부** 내린다. 장비 보호다 — vLLM의 GPU 할당이 장비 전체 MemAvailable을 깎아,
 #      누구의 서버든 떠 있으면 장비 전체가 굶는다. swap.sh의 기동 전 여유 판정과 같은 하한이다.
@@ -51,11 +54,12 @@
 #   없이도 된다)이 내릴 때까지. 죽이지는 않는다. 새 감시자는 뜨면서 STOP_GUARD를 지운다.
 #
 # ⚠ run 끝 내림(swap.sh 인자 없음)이 실패해도 러너는 run 결과를 바꾸지 않고 경고로만 남긴다 — 그때는 감시자도
-#   안 멈추므로(서버가 남았다) 남은 서버를 이 감시자의 마감이나 사람의 `HARNESS_RUN_ID=<run> bash
-#   tools/serve/swap.sh`가 치운다.
+#   안 멈추므로(서버가 남았다) 남은 서버를 (마감을 켰다면) 이 감시자의 마감이나 사람의 `HARNESS_RUN_ID=<run>
+#   bash tools/serve/swap.sh`가 치운다 — 마감이 기본 꺼짐이라 보통은 사람이다.
 #
-# GUARD_MAX_S·GUARD_POLL_S·GUARD_TERM_WAIT_S는 초 단위 덮어쓰기다 — 테스트가 마감을 초로 줄이는 자리이고
-# 운영 기본값(MAX_HOURS · 5 s · 20 s)은 그대로다.
+# GUARD_MAX_S·GUARD_POLL_S·GUARD_TERM_WAIT_S는 초 단위 덮어쓰기다 — 테스트가 마감을 초로 줄이는 자리이다.
+# GUARD_MAX_S가 0이거나 없으면 MAX_HOURS를 따른다. MAX_HOURS·GUARD_MAX_S는 0 이상 정수이고 아니면 뜨지
+# 않는다. 운영 기본값은 마감 없음 · 5 s · 20 s다.
 #
 # -e는 쓰지 않는다 — 긴 감시 루프라 일시적 실패(이미 사라진 그룹에 kill, /proc 읽기)로 감시자가 죽으면 서버가
 # 감시 없이 남는다. 실패를 봐야 하는 자리는 명시적으로 검사한다.
@@ -65,11 +69,10 @@ SERVERS="$D/servers" # 한 줄에 "KEY PGID RUN_ID STARTTIME"
 LOG="$D/logs/guard.log"
 MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"
 CG_PCT="${GUARD_CGROUP_PCT:-90}" # 옛 72 GiB ÷ 80 GiB — 확정 #4의 「max의 0.9」
-MAX_HOURS="${MAX_HOURS:-24}"
-MAX_S="${GUARD_MAX_S:-$((MAX_HOURS * 3600))}"
+MAX_HOURS="${MAX_HOURS:-0}" # 0 = 마감 없음(머리 주석 1)
+GUARD_MAX_S="${GUARD_MAX_S:-0}"
 POLL_S="${GUARD_POLL_S:-5}"
 TERM_WAIT_S="${GUARD_TERM_WAIT_S:-20}"
-DEADLINE=$(($(date +%s) + MAX_S))
 mkdir -p "$D/logs"
 touch "$SERVERS"
 
@@ -114,6 +117,15 @@ case "$CG_PCT" in # 1~100 정수만 — 소수·문자는 셸 산술에서 감�
   [1-9] | [1-9][0-9] | 100) ;;
   *) refuse "GUARD_CGROUP_PCT=$CG_PCT — 1~100 정수여야 한다" ;;
 esac
+for name in MAX_HOURS GUARD_MAX_S; do # 0 이상 정수만 — 문자는 셸 산술에서 감시자가 죽는다
+  case "${!name}" in
+    '' | *[!0-9]*) refuse "$name=${!name} — 0 이상 정수여야 한다(0 = 마감 없음)" ;;
+  esac
+done
+MAX_S=$((10#$GUARD_MAX_S)) # 10#: 앞의 0을 8진수로 읽지 않는다
+[ "$MAX_S" -gt 0 ] || MAX_S=$((10#$MAX_HOURS * 3600))
+DEADLINE=""
+[ "$MAX_S" -le 0 ] || DEADLINE=$(($(date +%s) + MAX_S))
 # 이미 떠 있는 감시자 — 번호가 살아 있고 시작 시각까지 같아야 한다(머리 주석).
 if [ -f "$D/guard.pid" ]; then
   read -r old_pid old_start < "$D/guard.pid" || true
@@ -163,7 +175,9 @@ kill_rows() { # $1 사유 $2 run(빈 문자열이면 전부) — TERM → 대기
   mine && rm -f "$D/guard.pid"
 }
 
-echo "$(date -Is) guard $$ start unified=$UNIFIED min_avail=${MIN_AVAIL_GIB}GiB cgroup=${CG_DIR:-없음} cgroup_pct=$CG_PCT deadline=$(date -d @$DEADLINE -Is)" >> "$LOG"
+deadline_at=none
+[ -z "$DEADLINE" ] || deadline_at=$(date -d @"$DEADLINE" -Is)
+echo "$(date -Is) guard $$ start unified=$UNIFIED min_avail=${MIN_AVAIL_GIB}GiB cgroup=${CG_DIR:-없음} cgroup_pct=$CG_PCT deadline=$deadline_at" >> "$LOG"
 EVERY=$((30 / POLL_S))
 [ "$EVERY" -ge 1 ] || EVERY=1
 n=0
@@ -193,11 +207,13 @@ while :; do
     while read -r key pg _ start; do
       [ -n "${pg:-}" ] && group_ok "$pg" "$start" && kill -0 -- "-$pg" 2> /dev/null && up="$up $key"
     done < "$SERVERS"
+    left=none # 마감이 없으면 none, 있으면 남은 초
+    [ -z "$DEADLINE" ] || left=$((DEADLINE - $(date +%s)))s
     awk -v t="$(date -Is)" -v a="$avail_kb" -v c="$cg" -v d="$CG_DIR" -v p="$CG_PCT" -v u="$up" \
-      -v o="$(owner_run)" 'BEGIN {
+      -v o="$(owner_run)" -v l="$left" 'BEGIN {
         split(c, x, " ") # cg_anon: 3) 층이 없으면 -, 못 읽으면 ?
         g = c != "" ? sprintf("%.1fGiB cg_kill_at=%.1fGiB", x[2] / 1073741824, x[1] / 100 * p / 1073741824) : (d == "" ? "-" : "?")
-        printf "%s avail=%.1fGiB cg_anon=%s run=%s up=[%s ]\n", t, a / 1048576, g, o, u
+        printf "%s avail=%.1fGiB cg_anon=%s run=%s up=[%s ] deadline_left=%s\n", t, a / 1048576, g, o, u, l
       }' >> "$LOG"
   fi
   if [ "$UNIFIED" = 1 ] && [ "$avail_kb" -lt $((MIN_AVAIL_GIB * 1048576)) ]; then
@@ -211,7 +227,7 @@ while :; do
       exit 0
     fi
   fi
-  if [ "$(date +%s)" -gt "$DEADLINE" ]; then
+  if [ -n "$DEADLINE" ] && [ "$(date +%s)" -gt "$DEADLINE" ]; then
     run=$(owner_run)
     if [ -n "$run" ]; then
       kill_rows "deadline_${MAX_S}s" "$run"

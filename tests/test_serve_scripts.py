@@ -77,21 +77,25 @@ def test_the_constant_pattern_reads_the_real_script() -> None:
     assert _CONST.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
 
 
-# 감시자 마감 기본값. 2026-10-12 run이 10시간 마감에 8단계 중간에서 끊겨(5단계 5h47m · 8단계 3h44m)
-# 24로 올렸다 - 여유를 둔 값이지 측정이 아니다. bash 없이 텍스트로 읽으므로 이 장비에서도 돈다.
-_GUARD_DEFAULT = re.compile(r'^MAX_HOURS="\$\{MAX_HOURS:-(\d+)\}"$', re.M)
-_GUARD_EXAMPLE = re.compile(r"MAX_HOURS=(\d+) setsid nohup bash tools/serve/guard\.sh")
+# 감시자 마감은 **기본 꺼짐**이다(2026-10-15 사용자 결정 - 10시간 마감이 10-12 run을 8단계 중간에
+# 끊었다). 양의 정수를 줘야 켜진다. bash 없이 텍스트로 읽으므로 이 장비에서도 돈다.
+_GUARD_DEFAULT = re.compile(r'^MAX_HOURS="\$\{MAX_HOURS:-(\d+)\}"', re.M)
+_GUARD_S_DEFAULT = re.compile(r'^GUARD_MAX_S="\$\{GUARD_MAX_S:-(\d+)\}"$', re.M)
+_GUARD_EXAMPLE = re.compile(r"MAX_HOURS=\d+ setsid nohup bash tools/serve/guard\.sh")
 
 
-def test_the_guard_deadline_default_and_the_documented_command_agree_on_24() -> None:
+def test_the_guard_deadline_is_off_by_default_and_the_documented_command_sets_none() -> None:
     guard = (ROOT / GUARD).read_text("utf-8")
     portability = (ROOT / "docs/portability.md").read_text("utf-8")
 
-    assert _GUARD_DEFAULT.findall(guard) == ["24"]
-    assert _GUARD_EXAMPLE.findall(guard) == ["24"], "guard.sh 머리의 기동 예시"
-    assert _GUARD_EXAMPLE.findall(portability) == ["24"], "docs/portability.md의 기동 예시"
-    # 음성: 환경 변수 기본값을 든 다른 줄은 이 검출기에 안 걸린다.
+    assert _GUARD_DEFAULT.findall(guard) == ["0"], "MAX_HOURS 기본은 0(= 마감 없음)이다"
+    assert _GUARD_S_DEFAULT.findall(guard) == ["0"], "GUARD_MAX_S 기본도 0(= MAX_HOURS를 따른다)"
+    assert _GUARD_EXAMPLE.findall(guard) == [], "guard.sh 머리의 기동 예시에 MAX_HOURS가 있다"
+    assert _GUARD_EXAMPLE.findall(portability) == [], "portability.md 기동 예시에 MAX_HOURS가 있다"
+    assert "guard.sh > /dev/null" in portability, "전제 - 문서에 기동 예시가 있다"
+    # 음성: 환경 변수 기본값을 든 다른 줄은 안 걸린다. 24로 되돌린 줄은 걸리되 `0`이 아니다.
     assert _GUARD_DEFAULT.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
+    assert _GUARD_DEFAULT.findall('MAX_HOURS="${MAX_HOURS:-24}"') == ["24"]
 
 
 # 교대 순서 — 4 Scout → 5 Auditor → 7 Critic → 8 PoV(ADR 0009 「2026-09-29 제안」 절 3 · PoV 배선).
@@ -938,6 +942,9 @@ def test_the_guard_leaves_every_server_while_cgroup_anon_stays_under_the_thresho
         pytest.param("GUARD_CGROUP_PCT", "9.5", id="pct-9.5"),
         pytest.param("GUARD_CGROUP_PCT", "0", id="pct-0"),
         pytest.param("GUARD_CGROUP_PCT", "101", id="pct-101"),
+        pytest.param("MAX_HOURS", "abc", id="hours-abc"),
+        pytest.param("MAX_HOURS", "-1", id="hours-negative"),
+        pytest.param("GUARD_MAX_S", "1.5", id="max_s-1.5"),
     ],
 )
 def test_the_guard_refuses_to_start_on_a_cgroup_setting_it_cannot_use(
@@ -983,6 +990,68 @@ def test_the_guard_refuses_to_start_on_a_cgroup_setting_it_cannot_use(
     finally:
         guard.kill()
         guard.stderr.close()
+
+
+def _guard_log(rig: Rig) -> str:
+    path = rig.dir / "logs" / "guard.log"
+    return path.read_text(encoding="utf-8") if path.exists() else ""
+
+
+@needs_linux
+@pytest.mark.parametrize(
+    "env",
+    [{}, {"MAX_HOURS": "0"}, {"GUARD_MAX_S": "0"}, {"MAX_HOURS": "0", "GUARD_MAX_S": "0"}],
+    ids=["default", "hours-0", "max_s-0", "both-0"],
+)
+def test_the_guard_has_no_deadline_unless_asked(rig: Rig, env: dict[str, str]) -> None:
+    """미지정·0이면 마감이 없다 - 시작 로그 `deadline=none`, 상태 줄 `deadline_left=none`이고
+    지키는 run의 서버가 마감 없이 산다. (변이: 기본값을 24로 되돌리면 시작 로그가 날짜를 낸다.)"""
+    for name in ("MAX_HOURS", "GUARD_MAX_S"):
+        rig.env.pop(name, None)  # 개발자 환경에서 새는 값을 막는다
+    server = _setsid("sleep", "300")
+    guard = None
+    try:
+        time.sleep(0.2)
+        guard = rig.guard(**env)
+        rig.servers.write_text(
+            f"qwen3-14b {server.pid} {RUN_ID} {_starttime(server.pid)}\n", encoding="utf-8"
+        )
+        (rig.dir / "guard.owner").write_text(f"{guard.pid} {RUN_ID}\n", encoding="utf-8")
+
+        assert not _wait_exit(guard, 4), "마감이 없어야 하는데 감시자가 끝났다"
+        log = _guard_log(rig)
+        assert "deadline=none" in log and "deadline_left=none" in log, log
+        assert server.poll() is None, "마감이 없는데 서버가 내려갔다"
+        assert not (rig.dir / "KILLED").exists()
+    finally:
+        (rig.dir / "STOP_GUARD").touch()
+        if guard is not None:
+            _wait_exit(guard, 5) or guard.kill()
+        server.kill()
+        server.wait(timeout=5)
+
+
+@needs_linux
+@pytest.mark.parametrize(
+    "env",
+    [{"MAX_HOURS": "1"}, {"MAX_HOURS": "1", "GUARD_MAX_S": "0"}],
+    ids=["hours-1", "hours-1-max_s-0"],
+)
+def test_a_positive_max_hours_turns_the_deadline_on(rig: Rig, env: dict[str, str]) -> None:
+    """양의 정수를 주면 그 시간 마감이다 - 시작 로그에 시각이, 상태 줄에 남은 초가 찍힌다.
+    `GUARD_MAX_S=0`은 `MAX_HOURS`를 따른다. (실제로 서는 것은 `GUARD_MAX_S` 마감 테스트다.)"""
+    guard = None
+    try:
+        guard = rig.guard(**env)
+        assert not _wait_exit(guard, 3), "1시간 마감인데 감시자가 바로 끝났다"
+        log = _guard_log(rig)
+        assert "deadline=none" not in log and "deadline=20" in log, log
+        match = re.search(r"deadline_left=(\d+)s", log)
+        assert match and 3500 < int(match.group(1)) <= 3600, log
+    finally:
+        (rig.dir / "STOP_GUARD").touch()
+        if guard is not None:
+            _wait_exit(guard, 5) or guard.kill()
 
 
 @needs_linux
