@@ -539,7 +539,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
 - ⚠ **흔한 영어 명사가 일치를 일으킬 수 있다** -> `buffer`·`read`·`parse`·`data` 같은 낱말이 설명에 있고 저장소에 그 이름의 파일(`buffer.c`)이 있으면
-  그 파일이 우선 파일이 된다. 같은 낱말이 심볼 이름의 조각(`heap_alloc`의 `heap`)과 맞으면 심볼 조각 일치(2)도 만든다 — **파일 일치(1)와 심볼 조각(2) 둘 다**다.
+  그 파일이 우선 파일이 된다. 같은 낱말이 심볼 이름의 조각(`heap_alloc`의 `heap`)과 맞으면 심볼 조각 일치(2)도 만든다 — 후보에 따라 **파일 일치(1)나 심볼 조각 일치(2) 어느 쪽이든** 만든다(후보마다 큰 쪽 하나로 센다).
   불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_part_matches`·`desc_file_matches`가 터무니없이 크면 이것을 의심한다
 
 ```bash
