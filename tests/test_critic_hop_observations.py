@@ -419,6 +419,28 @@ def test_a_rebut_citing_an_id_only_the_observation_showed_is_recorded_not_filter
     assert event.data["decision_id"] == decision.decision_id
 
 
+def test_a_v8_rebut_citing_only_an_unknown_id_is_normalized_and_still_recorded(
+    ctx, monkeypatch, tmp_path  # noqa: ANN001
+) -> None:
+    """ADR 0015 ⏵ 2026-10-15 - 위 v6 인용은 정규화를 비껴가지만 **v8은 아니다**: 축 없이 ID만 든
+    `rebut`은 `rebut_ids_only`로 `need_evidence`가 되고, 모르는 인용 기록은 그대로 남되
+    `grounded=False`다(`verdict`는 `gate.normalize` 전의 `rebut`)."""
+    finding, sink, _ = _audit(ctx, monkeypatch, tmp_path, _hopped_actions())
+    (probe_id,) = re.findall(r"evidence_id=(\S+)", "\n".join(sink))
+    _critic_at(ctx, "v8")
+    ctx.models = _RebuttingCritic(ctx.models.real, (probe_id,))
+
+    _, decision = critic.run(ctx, finding=finding, hop_observations=tuple(sink))
+
+    assert decision.is_grounded is False and gate.was_normalized(decision) is True
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+    (normalized,) = _events(ctx, EventKind.CRITIC_NORMALIZED)
+    assert normalized.data["reason"] == "rebut_ids_only"
+    (event,) = _events(ctx, EventKind.CRITIC_UNKNOWN_EVIDENCE_REFS)
+    assert event.data["all_unknown"] is True
+    assert (event.data["verdict"], event.data["grounded"]) == ("rebut", False)
+
+
 def test_a_rebut_citing_only_the_gate_input_leaves_no_such_record(
     ctx, monkeypatch, tmp_path  # noqa: ANN001
 ) -> None:

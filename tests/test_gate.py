@@ -110,9 +110,12 @@ def _finding(
     )
 
 
-def _decision(verdict: Verdict, *, grounded: bool, axes: tuple[str, ...] = ()) -> Decision:
+def _decision(
+    verdict: Verdict, *, grounded: bool, axes: tuple[str, ...] = (), version: str | None = None
+) -> Decision:
     """`grounded`는 **인용 ID**의 유무다. 반박 축은 `axes`로 따로 준다 - 둘이 근거의 두 갈래다
-    (ADR 0015). 기본은 축 없음이라 `grounded=False`면 사유가 `empty_axis`다."""
+    (ADR 0015). 기본은 축 없음이라 `grounded=False`면 사유가 `empty_axis`다. `version`은 Critic
+    프롬프트 판이다(`produced_by.prompt_version`) - 기본은 `CRITIC`의 v1이다."""
     return Decision(
         decision_id="dec_0001",
         run_id=RUN_ID,
@@ -121,7 +124,7 @@ def _decision(verdict: Verdict, *, grounded: bool, axes: tuple[str, ...] = ()) -
         rebuttal_axis=list(axes),
         rationale="근거 서술",
         evidence_refs=["ev_graph"] if grounded else [],
-        produced_by=CRITIC,
+        produced_by=CRITIC if version is None else CRITIC.transition(prompt_version=version),
     )
 
 
@@ -470,6 +473,70 @@ def test_a_cited_id_grounds_a_rebut_whatever_the_axes_say(axes: tuple[str, ...])
     assert decision.is_grounded
     assert decision.ungrounded_reason is None
     assert gate.normalize(decision) is Verdict.REBUT
+
+
+# --- v8 이상: 근거는 반박 축뿐이다 (ADR 0015 ⏵ 2026-10-15, @danielcho02 승인) ------------------------
+
+
+@pytest.mark.parametrize("version", ["v6", "v7"])
+def test_an_id_only_rebut_of_an_older_prompt_version_stays_grounded(version: str) -> None:
+    """v6·v7은 종전 그대로다 - ID만 든 `rebut`은 근거 있는 반박이고 정규화되지 않는다."""
+    decision = _decision(Verdict.REBUT, grounded=True, version=version)
+
+    assert decision.is_grounded
+    assert gate.normalize(decision) is Verdict.REBUT
+    assert not gate.was_normalized(decision)
+
+
+def test_an_id_only_rebut_of_v8_is_normalized_with_its_own_reason() -> None:
+    """v8은 `rebut`에 Evidence ID를 금지한다 - ID만 든 `rebut`은 근거가 아니라 규약 위반이다.
+    사유는 `empty_axis`와 가르는 `rebut_ids_only`다 (`critic_normalized`의 `reason`이
+    그대로 쓴다)."""
+    decision = _decision(Verdict.REBUT, grounded=True, version="v8")
+
+    assert not decision.is_grounded
+    assert decision.ungrounded_reason == "rebut_ids_only"
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+    assert gate.was_normalized(decision)
+
+
+def test_a_v8_rebut_with_a_vocabulary_axis_stands_with_or_without_an_id() -> None:
+    for grounded in (False, True):
+        decision = _decision(Verdict.REBUT, grounded=grounded, axes=("guard",), version="v8")
+
+        assert decision.is_grounded and decision.ungrounded_reason is None
+        assert gate.normalize(decision) is Verdict.REBUT
+        assert not gate.was_normalized(decision)
+
+
+def test_a_v8_rebut_with_an_axis_outside_the_vocabulary_is_not_saved_by_an_id() -> None:
+    """ID가 있어도 v8에서는 축이 어휘 밖이면 근거가 없다 - 사유는 `invalid_axis`다."""
+    decision = _decision(Verdict.REBUT, grounded=True, axes=("guard-check",), version="v8")
+
+    assert decision.ungrounded_reason == "invalid_axis"
+    assert gate.normalize(decision) is Verdict.NEED_EVIDENCE
+
+
+def test_a_v8_id_only_rebut_does_not_raise_the_gate_to_e3() -> None:
+    """정규화된 `need_evidence`는 `upheld`를 세우지 않는다 - 게이트 `p3`이 안 선다."""
+    static = _evidence("ev_static", EvidenceKind.STATIC)
+    graph = _evidence("ev_graph", EvidenceKind.GRAPH)
+    finding = _finding(refs=[static.evidence_id, graph.evidence_id], path=FULL_PATH, repro=True)
+
+    result = gate.evaluate(
+        finding, [static, graph], [_decision(Verdict.REBUT, grounded=True, version="v8")]
+    )
+
+    assert result.predicates["upheld"] is False
+
+
+@pytest.mark.parametrize("verdict", [Verdict.UPHOLD, Verdict.NEED_EVIDENCE])
+@pytest.mark.parametrize("grounded", [True, False])
+def test_uphold_and_need_evidence_of_v8_are_never_touched(verdict: Verdict, grounded: bool) -> None:
+    decision = _decision(verdict, grounded=grounded, version="v8")
+
+    assert gate.normalize(decision) is verdict
+    assert not gate.was_normalized(decision)
 
 
 @pytest.mark.parametrize("verdict", [Verdict.UPHOLD, Verdict.NEED_EVIDENCE])
