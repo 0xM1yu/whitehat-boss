@@ -386,8 +386,8 @@ _SEMGREP_PARTIAL_PARSE = "PartialParsing"
 #   `CAST(type, ..)` 문장 44 · 그 밖 11(`#define`·`SIZE_T_FORMAT` 문자열 이음 등). 🔴 **파일
 #   전체가 아니다** - 거의 한 줄씩이고 함수 **본문은 분석된다**.
 # - `--lang c`: **쓸 수 없다.** `--config`와 같이 주면 exit 2(`-e/--pattern and -l/--lang must
-#   both be specified`). 룰이 `languages: [c]`를 들고 확장자로 추론되니 하네스가 고를 언어
-#   플래그가 없다.
+#   both be specified`). 룰이 `languages: [c, cpp]`(#689)를 들고 확장자로 추론되니 하네스가
+#   고를 언어 플래그가 없다.
 # - 줄머리 `private`/`protected` 94줄을 sed로 풀어 쓴 사본(93은 머리 구간이고 나머지 1은 159줄
 #   `private struct {` - `static struct {`가 돼도 그 초기화 블록이 구간으로 남는다): 구간 148 ->
 #   **55**(`CAST` 44 + 그 밖 11) · 히트 **10 -> 10, 줄도 룰도 같다**.
