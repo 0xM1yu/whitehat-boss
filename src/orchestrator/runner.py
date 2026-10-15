@@ -2298,8 +2298,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
     모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
     돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓿후보 자기 `vul` 응답 코드
-    (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은
-    바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓿′제출된 후보 < 구제된 중간 gen(⏵ 2026-10-15)
+    ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시의 전순서로 가른다,
+    `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
     그 전에 완료된 중간 gen 제출은 장부에 남는다.
     ⏵ 2026-10-15 (ADR 0013 결정 1 개정) — `submit` 없이 끝난 Finding(위 사유와 `GATEWAY_ERROR`·
@@ -2683,7 +2684,8 @@ def _designate_final(
     **넷으로 갈린다:**
 
     - **후보가 없다** → 지정하지 않는다(`no_poc`·`all_vul_submissions_failed`·`rate_limited` —
-      모델 `submit`이 없던 것(중간 gen이 `vul`에 나갔어도 후보가 아니다 · #620), 낸 것이 다 실패한
+      모델 `submit`도 구제된 중간 gen도 없던 것(크래시 계단이 아닌 중간 gen은 `vul`에 나갔어도
+      후보가 아니다 · #620 · ⏵ 2026-10-15 — 풀이 비었다), 낸 것이 다 실패한
       것, 한도(HTTP 429)가 전부 삼킨 것은 **서로 다른
       사건이다**, §0. 사유를 가르는 것은 `oracle_log.OracleLedger.none_reason`이고 이 함수는
       그것을 그대로 싣는다). `fix` 다리와 판정 조회는 0번이다.
@@ -2763,8 +2765,9 @@ def _designate_final(
     `test_an_exit_code_that_is_not_a_crash_never_ranks_as_one`이 문다.
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
-    위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
-    아니다(그 run의 경고가 실패 건수를 알린다).
+    위해 `vul`에 제출해도 후보가 아니며(⏵ 2026-10-15 — 단 `submit` 없이 끝난 Finding의 크래시
+    계단 중간 gen은 **구제**돼 `pool`에 든다), 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어
+    후보가 아니다(그 run의 경고가 실패 건수를 알린다).
 
     ⏵ **2026-10-11 — 위 「읽는 것을 제한한다」는 하네스 코드를 묶는 제약이다.** 어느 gen이
     후보가 되는지는 모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면
@@ -2851,9 +2854,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_unknown`)은 `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 같은 바이트를 접은 뒤
-    ⓿자기 `vul` 응답 코드 ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로
-    하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다
-    (`_designate_final`의 ⏵).
+    ⓿자기 `vul` 응답 코드 ⓿′제출 < 구제(⏵ 2026-10-15) ⓪Critic 판정 ①등급 ②confidence ③작은
+    바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유
+    (`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·

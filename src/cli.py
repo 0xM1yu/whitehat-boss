@@ -1061,8 +1061,9 @@ def _oracle_for(
         "submit한 PoC와(pov v3 이상) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
         "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
         "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 전순위로 "
-        "하나를 고른다(vul 응답 종료 코드 계단 > Critic 판정 > 내부 근거 등급 > confidence > "
-        "작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 아님 순이다). "
+        "하나를 고른다(vul 응답 종료 코드 계단 > 제출된 후보 > 구제된 중간 gen > Critic 판정 > "
+        "내부 근거 등급 > confidence > 작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 아님 "
+        "순이다). "
         "등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 보내지 않는다"
     )
     return TaskOracle(
@@ -2203,8 +2204,9 @@ def build_parser() -> argparse.ArgumentParser:
         "한다. fix 다리와 최종 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 "
         "성공한 최종 후보가 "
         "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 "
-        "전순위(vul 응답 종료 코드 계단 > Critic 판정 > 내부 근거 등급 > confidence > "
-        "작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 아님 순이다)로 고른 하나에 "
+        "전순위(vul 응답 종료 코드 계단 > 제출된 후보 > 구제된 중간 gen > Critic 판정 > "
+        "내부 근거 등급 > confidence > 작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 "
+        "아님 순이다)로 고른 하나에 "
         "돈다 - 등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 "
         "안 돈다(oracle_final은 status "
         "none, reason grade_unknown). "

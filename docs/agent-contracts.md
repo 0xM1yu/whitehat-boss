@@ -736,7 +736,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
   「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다.
   ⏵ 2026-10-12 — 정정: `no_poc`는 「PoC 0건」이 아니라 「후보(모델 `submit`) 0건」이다 — 중간 gen은
-  `vul`에 나가도 후보가 아니며 `vul_intermediate`가 센다(#620). 도구는
+  `vul`에 나가도 후보가 아니며 `vul_intermediate`가 센다(#620). ⏵ 2026-10-15 — 다시 정정: 이제
+  `no_poc`는 「풀 0건」이다 — `submit`도 구제된 중간 gen(크래시 계단, `vul_rescued`가 센다)도 없다. 도구는
   `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 도구를 `inspect`가 또
   요청하면 도구를 안 돌리고(`tool_call` 없음) 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 인프라
