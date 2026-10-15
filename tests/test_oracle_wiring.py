@@ -132,6 +132,7 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_runs_once_on_the
         "reason": None,
         "poc_sha256": hashlib.sha256(_POCS[0]).hexdigest(),
         "poc_bytes": len(_POCS[0]),
+        "rescued": False,  # ⏵ 2026-10-15 - 제출된 후보라 구제가 아니다
         "task_id": TASK_ID,
         "error": None,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
@@ -164,6 +165,7 @@ def test_exactly_one_candidate_is_the_final_and_the_fix_leg_runs_exactly_once(
         "reason": None,
         "poc_sha256": hashlib.sha256(_POCS[0]).hexdigest(),
         "poc_bytes": len(_POCS[0]),
+        "rescued": False,  # ⏵ 2026-10-15 - 제출된 후보라 구제가 아니다
         "task_id": TASK_ID,
         "error": None,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
@@ -970,9 +972,11 @@ def test_an_intermediate_gen_submission_alone_does_not_make_a_validated_stop_des
     끊기면 최종 후보는 0건이라 최종 지정이 안 돈다 - 중간 gen은 모델 입력으로만 쓰이고 정렬 키에
     안 닿는다(`VulAttempt.designatable`). `candidates`를 `submitted`로 바꾸는 변이는 여기서
     `none`/`no_poc`를 만들어 `not_reached`를 가린다. 중간 gen은 실제 제출 경로
-    (`_submit_vul_to_oracle`)로 낸다."""
+    (`_submit_vul_to_oracle`)로 낸다.
+    ⏵ 2026-10-15 - 응답 코드가 **크래시 계단이 아닌** 중간 gen이다(코드 0). 크래시 계단이면 구제돼
+    풀에 들므로 최종 지정이 돈다(`tests/test_oracle_rescue.py`)."""
     state, first, _second = _two_validated(ctx)
-    ctx.oracle = oracle = FakeOracle()
+    ctx.oracle = oracle = FakeOracle(vul_exit_code=0)
     reached: list[str] = []
 
     def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
@@ -1839,8 +1843,11 @@ def test_there_is_no_tie_refusal_left_to_fall_back_on() -> None:
     key = runner._designation_key(
         _attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 1}
     )
-    assert len(runner._DESIGNATION_CHAIN) == len(key) == 6
-    assert runner._DESIGNATION_CHAIN[:2] == ("vul_crash", "critic_verdict")
+    # ⏵ 2026-10-15 - 여섯에서 일곱(`submitted_over_rescued`가 응답 코드 계단 바로 뒤에 붙었다)
+    assert len(runner._DESIGNATION_CHAIN) == len(key) == 7
+    assert runner._DESIGNATION_CHAIN[:3] == (
+        "vul_crash", "submitted_over_rescued", "critic_verdict",
+    )
 
 
 def _trap(name: str):  # noqa: ANN202

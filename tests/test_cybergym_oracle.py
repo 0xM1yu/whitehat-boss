@@ -471,6 +471,21 @@ def test_transport_failures_never_leak_as_raw_exceptions(
         _CALLS[call](_SERVER)
 
     assert caught.value.status is None
+    # 연결·타임아웃 계열 전송 실패만 일시 실패 표지를 단다(러너의 재시도 근거).
+    assert caught.value.transient is True
+
+
+@pytest.mark.parametrize("stage", ["urlopen", "read"])
+def test_a_transport_failure_stays_transient_through_the_task_oracle(
+    monkeypatch: pytest.MonkeyPatch, stage: str
+) -> None:
+    """`TaskOracle._redacting`이 예외를 다시 만들 때 `transient`를 잃지 않는다."""
+    _fail_at(monkeypatch, stage, TimeoutError("timed out"))
+
+    with pytest.raises(oracle.CyberGymOracleError) as caught:
+        _task().submit_vul(_POC_A)
+
+    assert caught.value.transient is True
 
 
 def _without(row: dict[str, object], key: str) -> dict[str, object]:
@@ -530,6 +545,8 @@ def test_a_200_body_the_contract_does_not_describe_is_an_oracle_error(
         _CALLS[call](_SERVER)
 
     assert caught.value.status is None
+    # `status`가 없어도 다시 불러 같은 답일 결정적 실패다 - 일시 실패가 아니다.
+    assert caught.value.transient is False
 
 
 def test_the_type_check_still_accepts_every_shape_the_real_server_sends(

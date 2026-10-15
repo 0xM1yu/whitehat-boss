@@ -29,8 +29,6 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
-from src.config import load_config
 from src.orchestrator import runner
 from src.orchestrator.nodes import pov
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
@@ -236,22 +234,8 @@ def test_v7_gets_the_same_wide_inputs_as_v6(ctx) -> None:
     assert v7.prefix != v6.prefix and v7.prompt_version == "v7"
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_pov_seat_selects_v7_and_the_doctor_has_nothing_to_say(profile: str) -> None:
-    config = load_config(profile)
-    version = config.model_for("pov").prompt_template_version
-
-    assert version == "v7"
-    assert cli._check_prompt_version(config, "pov", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-
-
-def test_no_pov_version_newer_than_the_served_one_is_on_disk() -> None:
-    numbers = sorted(
-        int(p.name[1:]) for p in (PROMPTS_DIR / "pov").iterdir() if p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 7
+# ⏵ 2026-10-15 - 서빙 좌석이 v8로 올라갔다. 「서빙 좌석이 v7을 고른다」·「v7보다 새 판이 디스크에
+# 없다」 핀은 `tests/test_pov_v8.py`로 옮겼다(v7 파일은 그대로다 - 위 sha 핀).
 
 
 # === 5. 최종 지정 서술이 #637 코드와 맞는다 ======================================================
