@@ -10,6 +10,7 @@
 | `slicer_v2/` | `slicer/` 위에 얹힌 확장 — spec에서 자르는 대상 지정 모드(`case` B·F)와 `analysis.input_context`. 사본이 아니라 `slicer/`를 import한다. [README](slicer_v2/README.md) |
 | `model_checksum.py` | 모델 스냅샷의 checksum과 manifest를 낸다. registry의 `checksum`·`source`에 붙여넣을 값이고, 절차는 [model-serving.md](../docs/model-serving.md) §5 |
 | `oracle_canary.py` | **수동 실행이다 — 하네스가 부르지 않는다.** 이 장비가 **입력과 무관한 크래시**(`139`)를 내는지 네 조합 × N회로 잰다 — 참조 PoC와 무해 입력을 `-vul`·`-fix`에 돌려 기대표와 대조한다(종료 코드: 통과 0 · 어긋남 1 · 못 돌림 2 · N이 작은 약한 통과 3). 🔴 **이 도구를 호출하는 코드가 없다**(문서 밖 호출자 0건) — 사람이 돌려 보고서를 만든다. ⏵ **2026-10-04 — 그 보고서가 채점 run을 막는다**: `--oracle-canary`로 준 JSON을 `src/adapters/canary_report.py`가 읽어 `verdict != pass` · 다른 과제 · `mmap_rnd_bits > 28` · 미측정이면 **제출 전에** 거부한다. 막는 것은 **보고서**이고 호출자는 여전히 0건이다. 🔴 **실 Docker 실행은 2건이고 둘 다 통과했다** — 2026-10-03 `arvo:1065`(MSan, 40/40) · 2026-10-04 `oss-fuzz:368076871`(ASan, 40/40 · `139` 0건). 둘째는 **보고서 파일이 없다**(출처: PR #463 본문 · 같은 PR 리뷰의 재실행 1회). **`mmap_rnd_bits = 32`에서 실패하는 경우는 여전히 0회 관측**이고(통과 쪽만 봤다) argv는 보고서 §13 재현 절차의 *모양*이지 저자 `run_container` 자체가 아니다. 과제 계열은 **둘**을 안다(`arvo` → `n132/arvo` + `/bin/arvo` · `oss-fuzz` → `cybergym/oss-fuzz` + 인자 없는 `/usr/local/bin/run_poc`) — 저자 `server_utils._image_and_command_from_task_id`가 접두사와 명령을 같이 고르므로 이 표도 둘을 같이 든다. 모르는 계열은 거부하고 `--vul-image`/`--fix-image`/`--run-cmd`로 셋 다 받는다. 근거는 [2026-10-02 왕복 보고서](../docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md) · [배관 보고서](../docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md) §3(**`arvo:1065` 첫 실행만**) · 이슈 #383 |
+| `cybergym_task.py` | CyberGym Level 1 과제 번들을 **받는다**(어느 노트북에서든 같은 바이트). 아래 [절](#cybergym_taskpy--과제-번들-받기) |
 | `probe/` | **하네스를 안 거치고 서버에 직접 묻는 것들.** 아래 표 ([probe/README.md](probe/README.md)) |
 
 ### `probe/` 안의 것들
@@ -30,6 +31,25 @@
 있다. ⚠ **조건 3(Critic 반박 정확도)은 `cli bench`에도 없다** — 고정 반박 표본이 선행이고
 표본 크기·합격선은 [D4](../docs/open-questions/D/D4.md)가 정한다. 프로브가 내는 정답률은
 그 표본이 아니다(팔을 가르는 A/B용이다).
+
+## `cybergym_task.py` — 과제 번들 받기
+
+```bash
+python tools/cybergym_task.py arvo:1065 --out eval/datasets/arvo-1065 [--server http://127.0.0.1:8666]
+```
+
+- **받는 것은 두 파일뿐이다** — HF `sunblaze-ucb/cybergym`(공개·무인증)의 `repo-vul.tar.gz`·`description.txt`.
+  같은 폴더의 `error.txt`·`patch.diff`·`repo-fix.tar.gz`는 정답 자료라 **요청하지 않는다**(Level 1).
+- **revision은 커밋으로 고정**이다(`DEFAULT_REVISION`, `--revision`으로만 바꾼다). 받은 바이트는 같은
+  revision의 트리 API가 주는 sha256·크기와 대조하고, 다르면 파일을 남기지 않는다(둘 다 받아 검증한 **뒤에**
+  옮긴다). 응답이 트리의 크기를 넘으면 읽는 도중에 끊고, 크기 초과·해시 불일치는 **다시 걸지 않는다**
+  (재시도는 5xx·429·연결 오류·중간 끊김만). 트리에 sha256(`lfs`)이 없는 파일은 받지 않는다. 출력에 sha256이 찍힌다.
+- `--out`은 비어 있거나 **이 도구가 만든 같은 번들**일 때만 쓴다. 다른 파일이 있으면 거절한다(정답 자료
+  섞임 방지). 끝에서 하네스 가드(`check_task_dir`)를 그대로 통과하는지 본다.
+- `submit.sh`(채점기 신원)도 만든다. **agent_id는 run마다 새로 쓰는 것이 권장**이다(채점기가 같은 신원의
+  PoC를 캐시하지 않게) — 이미 있으면 그대로 두고 `--force-submit`일 때만 새 agent_id로 다시 만든다.
+  기존 `submit.sh`가 다른 과제의 것이거나 서버가 `--server`와 다르면 거절한다(조용히 무시하지 않는다).
+- 종료 코드: 0 성공 · 1 다운로드·검증 실패 · 2 인자·입력 거절. HTTP는 표준 라이브러리로 하지만 하네스 모듈(`src.*`)을 import하므로 **`pip install -r requirements.txt`가 먼저다**(없으면 `--help`부터 `pydantic` 없음으로 죽는다).
 
 ## harness-tools 이미지
 
