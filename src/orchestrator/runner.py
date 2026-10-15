@@ -1542,10 +1542,9 @@ def _analyze(
         # 판정을 버리지 않는다. 8단계 게이트가 `p3`을 세려면 이 값이 필요하다.
         state.decisions[finding.finding_id] = (decision,)
         state.update(after)
-    # 고른 Finding 전부에서 실패했으면 7단계는 아무것도 못 봤다(#296). 카운터가 아니다 —
-    # `_drop_finding`이 카운터를 두지 않는 이유는 그대로다.
-    if selected and state.critic_failed == len(selected):
-        _stop_if_a_caller_saw_nothing({_caller(Stage.CRITIC, Role.CRITIC)})
+    # ⏵ 2026-10-15 - 고른 Finding 전부가 실패해도 멈추지 않는다: 판정을 못 받은 Finding은
+    # Critic 미경유로 PoV 풀에 남는 것이 결정이고(ADR 0015 결정 4 ⏵), 여기서 서면 8단계가
+    # 안 돌아 그 결정이 무너진다. 「못 봤다」는 `critic_failed` 경고·trace가 알린다(#296).
     if last < Stage.VALIDATE:
         return
     # `validate.run`(유일한 결정론 E4 게이트)을 **먼저 전부** 돌린다. pov는 그 뒤에 추가로 돈다
@@ -3260,8 +3259,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v8은 형제
-    `PovActionNamed`이고 서빙 판은 v8)을 내고 도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v9는 형제
+    `PovActionNamed`이고 서빙 판은 v9)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -3292,7 +3291,7 @@ def _run_pov_hops(
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
     (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
     v6이었다**(`config/models.yaml` · S19 Phase 6-2) —
-    ⏵ 2026-10-14부터 서빙 판은 v7(⏵ 2026-10-15부터 v8)이고
+    ⏵ 2026-10-14부터 서빙 판은 v7(⏵ 2026-10-15부터 v8, 같은 날 v9)이고
     그 prefix도 같은 서술을 든다(v6과 바이트 동일한 부분). 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
@@ -3459,7 +3458,7 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6·v7·v8(서빙 판은 v8)이 그것을 선언한다.
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5~v9(서빙 판은 v9)가 그것을 선언한다.
                 named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
@@ -6080,7 +6079,7 @@ def _triage_by_candidate(
     | --- | --- | --- |
     | 후보 하나가 컨텍스트를 넘겼다 | 413, 또는 400 + 컨텍스트 초과 문구 | 그 후보만 버린다 |
     | 요청 모양·서버 설정이 틀렸다 | 그 밖의 400 | 첫 건에서 멈춘다(#296) |
-    | 서버 쪽 사건 | `status`가 없거나 5xx, 400·413·422 밖의 4xx | 즉시 멈춘다 |
+    | 서버 쪽 사건 | `status`가 없거나 5xx, 400·413·422 밖의 4xx | 멈춘다(단절은 185초 재시도 뒤) |
     | 스키마를 못 맞췄다 | `SchemaParseError` | 그 후보만 버린다 |
 
     **사유를 가르지 않고 센다.** 게이트웨이와 스키마를 따로 세면 둘이 번갈아
@@ -6277,9 +6276,9 @@ def _drop_finding(
     태우는 것을 막으려는 것인데 `selected`는 `critic_top_n`으로 이미 묶여 있다(실측 8 이하).
     상한이 다른 두 루프에 같은 카운터를 두면 어느 쪽이 상한에 닿았는지가 사유에서 사라진다.
 
-    **카운터가 아닌 정지 둘은 여기도 있다(#296).** 크기가 아닌 400은 기록한 뒤 첫 건에서
-    멈추고(다음 Finding도 같다), 고른 Finding 전부가 실패하면 `_analyze`가 루프 끝에서 멈춘다.
-    둘 다 `stopped_after`가 7이라 어느 루프였는지가 사유에서 안 사라진다.
+    **카운터가 아닌 정지는 여기도 있다(#296).** 크기가 아닌 400은 기록한 뒤 첫 건에서
+    멈춘다(다음 Finding도 같다). ⏵ 2026-10-15 - 고른 Finding 전부가 실패해도 `_analyze`는
+    멈추지 않는다: 그 Finding들은 Critic 미경유로 PoV 풀에 남는다(ADR 0015 결정 4 ⏵).
 
     **`state.dropped`가 아니라 `critic_failed`를 올린다.** 그쪽은 시도를 세고 이쪽은
     Finding을 세므로 한 수로 묶으면 분모가 섞인다(`_Accumulator` 주석과 같은 판단).

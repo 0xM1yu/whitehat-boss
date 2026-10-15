@@ -14,10 +14,11 @@ model-serving.md §6: 도메인 로직은 `ModelClient` 인터페이스에만 �
 
 import http.client
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import BaseModel, ValidationError
@@ -38,6 +39,37 @@ from src.interfaces.model_client import (
 from src.schemas.enums import Role
 
 _TIMEOUT_S = 300
+
+_log = logging.getLogger(__name__)
+
+# 연결 단계에서 끊긴 요청을 다시 보내기 전의 대기(초). 터널(`tools/serve/vast-tunnel.sh --loop`)이
+# ssh 단절 5초 뒤 다시 붙는 것과 ssh 재접속을 덮는 값이다. 합 185초는 계산·추정이고 실측이 아니다.
+_RECONNECT_WAITS_S = (5, 10, 20, 30, 60, 60)
+# 이것들만 재시도한다. `ConnectionRefusedError`는 요청이 서버에 안 닿았다(토큰 없음). 리셋·중단·
+# `RemoteDisconnected`는 응답을 읽는 도중(서버가 생성하던 중)에도 나서 서버가 토큰을 만들었을 수
+# 있다 - 그 토큰은 장부에 안 잡히고(과소 계상) 실패한 왕복 시간은 `gpu_ms`에 든다(대기만 뺀다).
+# `HTTPError`(상태 있음)·`TimeoutError`
+# (`generating` 판정)·디코드 오류·그 밖 `OSError`는 재시도하지 않는다.
+_CONNECTION_DROPS = (
+    ConnectionRefusedError,
+    ConnectionResetError,
+    ConnectionAbortedError,
+    BrokenPipeError,
+    http.client.RemoteDisconnected,
+)
+
+
+def _root_cause(exc: ModelGatewayError) -> object:
+    """`_post`가 올린 오류의 원인 - `URLError`면 그 `reason`을 푼다(`HTTPError`는 풀지 않는다)."""
+    cause = exc.__cause__
+    if isinstance(cause, urllib.error.URLError) and not isinstance(cause, urllib.error.HTTPError):
+        return cause.reason
+    return cause
+
+
+def _is_connection_drop(exc: ModelGatewayError) -> bool:
+    """`_post`가 올린 오류의 원인이 연결 단절인가 — 직접이든 `URLError.reason`이든."""
+    return isinstance(_root_cause(exc), _CONNECTION_DROPS)
 
 
 @dataclass(frozen=True)
@@ -167,8 +199,11 @@ class OpenAICompatModelClient:
         timeout_s: float | None = None,
         retries: int = 1,
         api_key: str = "EMPTY",
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self.endpoint = endpoint.rstrip("/")
+        # 연결 재시도의 대기. 테스트가 실제로 자지 않게 주입한다(`RunContext.sleep`과 같은 관례).
+        self._sleep = sleep
         self.model_name = model_name
         self.temperature = temperature
         self.top_p = top_p
@@ -241,8 +276,12 @@ class OpenAICompatModelClient:
                 # 이 body는 직전 회차의 스키마 오류 핸들러가 만든 것이고, 지금 보내진다.
                 retry_bodies.append(body)
             started = time.monotonic()
+            # 연결 재시도가 잔 시간 — 요청 왕복이 아니라서 `gpu_ms`에서 뺀다.
+            waited: list[float] = []
             try:
-                posted = self._post(self._request_payload(prompt.prefix, body, schema, history))
+                posted = self._post_reconnecting(
+                    self._request_payload(prompt.prefix, body, schema, history), waited
+                )
             except ModelGatewayError as exc:
                 # 게이트웨이 거절(컨텍스트 초과 400 등)은 재시도 대상이 아니라 그대로 올린다.
                 # **이 시도가 태운 wall-clock을 먼저 누적한다.** 안 그러면 재보지도 않은 0에
@@ -251,11 +290,16 @@ class OpenAICompatModelClient:
                 # 가장 비싼 실패(타임아웃, `_TIMEOUT_S`)가 장부에 0으로 잡힌다(#82 리뷰 F1).
                 # 거절이라 응답 토큰은 없지만 요청 왕복 시간은 실재한다. 앞선 재시도가 쓴 것도
                 # `spent`·`gpu_ms`에 함께 실어 상위(`context.call_model`)가 청구한다.
-                gpu_ms += int((time.monotonic() - started) * 1000)
+                gpu_ms += int((time.monotonic() - started - sum(waited)) * 1000)
                 # 응답을 못 받은 시도도 칸을 지킨다 — `AttemptRecord()`는 전부 `None`이다.
                 # 200이었으나 모양이 계약과 달라 온 예외는 읽을 수 있었던 추론을 든다.
                 attempt_log.append(
-                    AttemptRecord(reasoning=exc.reasoning, reasoning_field=exc.reasoning_field)
+                    AttemptRecord(
+                        reasoning=exc.reasoning,
+                        reasoning_field=exc.reasoning_field,
+                        reconnects=len(waited),
+                        reconnect_wait_s=sum(waited),
+                    )
                 )
                 # 그 200의 원문(또는 추론)도 마지막 칸으로 올린다.
                 # ⚠ **칸이 안 생기는 조건은 「`message`를 못 읽었다」가 아니다** — 아래 둘이
@@ -277,7 +321,7 @@ class OpenAICompatModelClient:
                 # 앞 시도가 스키마 실패였다면 그 원문도 올린다(#603).
                 exc.raw_texts = tuple(raw_texts)
                 raise
-            gpu_ms += int((time.monotonic() - started) * 1000)
+            gpu_ms += int((time.monotonic() - started - sum(waited)) * 1000)
             raw, usage = posted.content, posted.usage
             spent = _add(spent, usage)
             # 서버가 `completion_tokens`를 안 실었으면 합(`spent`)에는 0이 들어가지만 이 칸은
@@ -289,6 +333,8 @@ class OpenAICompatModelClient:
                     finish_reason=posted.finish_reason,
                     reasoning=posted.reasoning,
                     reasoning_field=posted.reasoning_field,
+                    reconnects=len(waited),
+                    reconnect_wait_s=sum(waited),
                 )
             )
             try:
@@ -411,6 +457,36 @@ class OpenAICompatModelClient:
             payload["reasoning_effort"] = self.reasoning_effort
         return {**payload, **self.extra_params}
 
+    def _post_reconnecting(self, payload: dict, waited: list[float]) -> PostedResponse:
+        """`_post`에 연결 단절 재시도를 건다 - 터널 순단 한 번에 run을 잃지 않으려는 것이다.
+
+        스키마 재시도(`retries`)는 안 센다. 연결 거절은 서버가 요청을 못 받았지만 리셋·중단은 생성
+        도중에도 나서, 서버가 만든 토큰은 장부에 안 잡힌다(과소 계상). 실패한 왕복 시간은 `gpu_ms`에
+        들고 대기 시간만 뺀다 - 횟수·잔 시간은 `waited`에 쌓아 `complete()`가 빼고 `AttemptRecord`로
+        trace까지 싣는다.
+        마지막 오류가 단절이었으면 같은 `ModelGatewayError`에 횟수를 붙여 올린다.
+        """
+        for tried, wait in enumerate((*_RECONNECT_WAITS_S, None)):
+            try:
+                return self._post(payload)
+            except ModelGatewayError as exc:
+                if wait is not None and _is_connection_drop(exc):
+                    _log.warning(
+                        "%s 연결 단절(%s) - %s초 뒤 재시도 %d/%d",
+                        self.endpoint, type(_root_cause(exc)).__name__, wait, tried + 1,
+                        len(_RECONNECT_WAITS_S),
+                    )
+                    slept = time.monotonic()
+                    self._sleep(wait)
+                    waited.append(time.monotonic() - slept)
+                    continue
+                if tried and _is_connection_drop(exc):
+                    note = f" (연결 재시도 {tried}회 뒤에도 실패)"
+                    exc.args = (f"{exc.args[0]}{note}",)
+                    exc.detail = f"{exc.detail}{note}"
+                raise
+        raise AssertionError("unreachable")  # pragma: no cover - 마지막 wait가 None이다
+
     def _post(self, payload: dict) -> PostedResponse:
         """요청 한 번. `content`·`usage`·`finish_reason`을 `PostedResponse`로 돌려준다 (#550).
 
@@ -459,8 +535,9 @@ class OpenAICompatModelClient:
                 generating=generating,
             ) from exc
         except (urllib.error.URLError, json.JSONDecodeError) as exc:
-            # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
-            # 이것을 서버 쪽 사건(`model_gateway_unavailable`)으로 읽고 즉시 멈춘다.
+            # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는 이것을 서버 쪽
+            # 사건(`model_gateway_unavailable`)으로 읽고 멈춘다 - 연결 단절이면
+            # `_post_reconnecting`이 최대 185초(`_RECONNECT_WAITS_S`, 추정) 재시도한 **뒤**다.
             raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc
         except (OSError, http.client.HTTPException, UnicodeDecodeError) as exc:
             # ⏵ **2026-10-02 — 끊긴 연결이 여기까지 새고 있었다.** 위 셋만 잡던 동안 아래가
