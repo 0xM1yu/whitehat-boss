@@ -342,7 +342,7 @@ def test_the_swap_script_launches_reports_and_tears_down_only_its_own_run(rig: R
         assert re.fullmatch(r"qwen3-14b\.run_x\.\d{8}T\d{6}Z\.log", log.name)
         argv = log.read_text(encoding="utf-8")
         assert "--max-model-len 40960" in argv
-        assert "--revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4" in argv
+        assert "--revision 40c069824f4251a91eefaf281ebe4c544efd3e18" in argv
         ours = [line.split() for line in rig.servers.read_text().splitlines() if RUN_ID in line]
         assert [(key, run) for key, _, run, *_ in ours] == [("qwen3-14b", RUN_ID)]
 
@@ -424,13 +424,14 @@ def test_one_call_stops_the_previous_key_and_launches_the_next(rig: Rig) -> None
     assert rig.run("qwen3-14b").code == 0
     before = rig.pgid("qwen3-14b")
 
-    swapped = rig.run("qwen3-14b")
+    # ⏵ 2026-10-15 — 같은 키를 다시 부르면 내리지 않고 둔다(keep). 교대는 **다른** 키라야 일어난다.
+    swapped = rig.run("qwen3.8-27b")
 
     assert swapped.code == 0, swapped.stderr
     assert swapped.report["server"]["qwen3-14b"]["action"] == "stop"
-    assert swapped.report["server"]["qwen3-14b"]["action"] == "launch"
+    assert swapped.report["server"]["qwen3.8-27b"]["action"] == "launch"
     assert not _alive_group(before)
-    assert [line.split()[0] for line in rig.servers.read_text().splitlines()] == ["qwen3-14b"]
+    assert [line.split()[0] for line in rig.servers.read_text().splitlines()] == ["qwen3.8-27b"]
 
 
 @needs_linux
