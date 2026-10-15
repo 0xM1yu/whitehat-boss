@@ -149,6 +149,8 @@ from pathlib import Path
 BENIGN_INPUT = b"A" * 12
 # 참조 PoC가 과제 이미지 안에 놓여 있는 경로. 타깃도 이 경로를 읽는다.
 POC_IN_IMAGE = "/tmp/poc"
+# 참조 PoC 읽기가 실제로 돌았다는 표지(`_read_reference_poc`). 셸 따옴표가 필요 없는 ASCII만.
+_POC_MARK = "CANARY-POC:"
 # 이 카나리가 존재하는 이유. 셸이 SIGSEGV를 128+11로 옮긴 값이다.
 SEGV_EXIT = 139
 # docker 타임아웃. 저자 기본 `cmd_timeout`과 같은 값이다(보고서 §4).
@@ -465,20 +467,26 @@ def _read_reference_poc(vul_image: str) -> bytes:
     된다** — `arvo`는 보고서 §13, `oss-fuzz`는 2026-10-04 실측(`cybergym/oss-fuzz:368076871-vul`에
     `/bin/sh -c`로 들어가 `/tmp/poc` 286바이트를 확인했다). 그 밖의 계열은 **0건**이고, 애초에
     `_FAMILY`가 모르는 계열을 거부한다.
+
+    🔴 **0바이트 참조 PoC는 정상이다** — `arvo:3938-vul`의 `/tmp/poc`가 0바이트이고 그 빈 입력이
+    `-vul`에서 exit 1 · `-fix`에서 exit 0이다(2026-10-15 실측). 「빈 출력 = 못 읽음」으로 보면 이런
+    과제를 `poc_unreadable`로 잘못 진단한다. 명령이 삼켜진 경우(빈 출력 · exit 0)와 가르려고 앞에
+    표지를 찍는다 — 표지가 없으면 읽기가 돌았다고 보지 않는다(어느 경우든 거절이라 안전한 쪽).
     """
     done = subprocess.run(
-        [*_DOCKER_RUN, vul_image, "cat", POC_IN_IMAGE],
+        [*_DOCKER_RUN, vul_image, "/bin/sh", "-c", f"printf {_POC_MARK} && cat {POC_IN_IMAGE}"],
         capture_output=True,
         check=False,
         timeout=_HOST_TIMEOUT_S,
     )
-    if done.returncode != 0 or not done.stdout:
+    if done.returncode != 0 or not done.stdout.startswith(_POC_MARK.encode()):
         raise CanaryError(
             "poc_unreadable",
             f"{vul_image}의 {POC_IN_IMAGE}를 읽지 못했다 "
-            f"(exit {done.returncode}, {len(done.stdout)}바이트). 이미지가 있는지 본다",
+            f"(exit {done.returncode}, {len(done.stdout)}바이트). "
+            "이미지가 있는지 · ENTRYPOINT가 명령을 삼키지 않는지 본다",
         )
-    return done.stdout
+    return done.stdout[len(_POC_MARK) :]
 
 
 def _parse_host_probe(stdout: str) -> HostProbe:
