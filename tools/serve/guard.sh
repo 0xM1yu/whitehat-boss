@@ -2,7 +2,7 @@
 # 교대 감시자 — 장비 무관. tools/serve/swap.sh가 띄운 서버($SERVE_DIR/servers의 프로세스 그룹)만 내린다.
 # **run마다 하나** 띄운다(swap.sh는 감시자가 없거나 다른 run 것이면 띄우지 않는다):
 #
-#   MAX_HOURS=12 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &
+#   MAX_HOURS=24 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &
 #
 # 뜨지 못하면(이미 떠 있음 · nvidia-smi · GUARD_CGROUP_DIR · GUARD_CGROUP_PCT) 사유를 stderr와
 # $SERVE_DIR/logs/guard.log의 「시작 거부」 줄에 남기고 exit 2다 — 위 기동 줄은 stderr를 버린다. 거부는 pid 파일·
@@ -65,7 +65,7 @@ SERVERS="$D/servers" # 한 줄에 "KEY PGID RUN_ID STARTTIME"
 LOG="$D/logs/guard.log"
 MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"
 CG_PCT="${GUARD_CGROUP_PCT:-90}" # 옛 72 GiB ÷ 80 GiB — 확정 #4의 「max의 0.9」
-MAX_HOURS="${MAX_HOURS:-12}"
+MAX_HOURS="${MAX_HOURS:-24}"
 MAX_S="${GUARD_MAX_S:-$((MAX_HOURS * 3600))}"
 POLL_S="${GUARD_POLL_S:-5}"
 TERM_WAIT_S="${GUARD_TERM_WAIT_S:-20}"
