@@ -1377,7 +1377,8 @@ def _ladder_state() -> runner._Accumulator:
 
 
 def test_the_verdict_ranks_are_uphold_then_uncritiqued_then_held_then_rebutted() -> None:
-    """판정 계단은 이슈 #604 (b)의 순서 그대로 **넷**이다 - `uphold 0 < 미경유 1 < 보류 2 < 반박 3`.
+    """판정 계단은 이슈 #604 (b)의 순서 그대로 **넷**이다 -
+    `uphold 0 < 미경유·판정 호출 실패 1 < 보류 2 < 반박 3`.
     반박(3)은 `_critic_set_aside`가 풀에서 빼므로 **지금 정렬에는 닿지 않는 값**이다 - 이 검사가
     값 자체를 문다(반박을 보류와 같은 2나 uphold와 같은 0에 두는 변이)."""
     assert runner._verdict_ranks_by_finding(_ladder_state()) == {

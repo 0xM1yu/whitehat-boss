@@ -1535,7 +1535,8 @@ def test_two_pocs_from_one_finding_are_separated_by_the_smaller_bytes() -> None:
 # `confidence`로 공식 최종 제출이 되지 않도록 판정이 등급보다 **앞**이다(⏵ 2026-10-14 - 사슬의
 # 맨 앞은 이제 ⓿ 후보 자기 `vul` 응답 코드이고 판정은 그 바로 뒤다, 아래 「지정 키의 첫 계단」 절
 # · #637).
-# 0 = uphold, 1 = 판정 없음(미경유), 2 = 보류 (이슈 #604 (b)의 순서 - 반박은 3이고 풀 밖이다).
+# 0 = uphold, 1 = 판정 없음(미경유·판정 호출 실패), 2 = 보류
+# (이슈 #604 (b)의 순서 - 반박은 3이고 풀 밖이다).
 
 
 def test_an_upheld_poc_is_designated_over_a_held_poc_with_a_higher_confidence() -> None:
