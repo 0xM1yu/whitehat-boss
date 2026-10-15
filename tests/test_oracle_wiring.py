@@ -868,9 +868,11 @@ def test_an_intermediate_gen_submission_alone_does_not_make_a_validated_stop_des
     끊기면 최종 후보는 0건이라 최종 지정이 안 돈다 - 중간 gen은 모델 입력으로만 쓰이고 정렬 키에
     안 닿는다(`VulAttempt.designatable`). `candidates`를 `submitted`로 바꾸는 변이는 여기서
     `none`/`no_poc`를 만들어 `not_reached`를 가린다. 중간 gen은 실제 제출 경로
-    (`_submit_vul_to_oracle`)로 낸다."""
+    (`_submit_vul_to_oracle`)로 낸다.
+    ⏵ 2026-10-15 - 응답 코드가 **크래시 계단이 아닌** 중간 gen이다(코드 0). 크래시 계단이면 구제돼
+    풀에 들므로 최종 지정이 돈다(`tests/test_oracle_rescue.py`)."""
     state, first, _second = _two_validated(ctx)
-    ctx.oracle = oracle = FakeOracle()
+    ctx.oracle = oracle = FakeOracle(vul_exit_code=0)
     reached: list[str] = []
 
     def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202

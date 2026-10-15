@@ -1,6 +1,6 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(v5와 서빙 판 v6·v7은 `PovActionNamed`) — gen/inspect/submit 하나를
+매 홉 모델이 `PovAction`(v5~v8은 `PovActionNamed`이고 서빙 판은 v8) — gen/inspect/submit 하나를
 낸다. `gen`은
 `PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
 대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
@@ -39,7 +39,7 @@ OUTPUT_SCHEMA = PovAction
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
 # 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언한다.
-# ⏵ 2026-10-14 — v7(서빙 판)도 그렇다.
+# ⏵ 2026-10-14 — v7도 그렇다. ⏵ 2026-10-15 — v8(서빙 판)도 그렇다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 

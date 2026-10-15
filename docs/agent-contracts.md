@@ -732,7 +732,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
   ⚠ **그 두 예외 밖의 예외는 안 덮는다**(예외 종류) — 낸 PoC가 있든 추가 대상이든 최종 지정이 안
   돌고 `oracle.final`이 `not_reached`다.
-  ⚠ **그 두 예외라도 낸 PoC 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무).
+  ⚠ **그 두 예외라도 낸 PoC도 구제된 중간 gen(⏵ 2026-10-15, `OracleLedger.pool`)도 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무). 구제된 행만 있어도 끊긴 run은 최종 지정을 하고 끝난다.
   추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
   「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다.
   ⏵ 2026-10-12 — 정정: `no_poc`는 「PoC 0건」이 아니라 「후보(모델 `submit`) 0건」이다 — 중간 gen은
@@ -784,7 +784,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
   서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
   ⏵ 2026-10-14 — 서빙 pov 판이 **v7**이다(S20 Phase 14). v7 prefix도 그 재질문 턴을 서술한다(v6과 바이트 동일한 부분). v6과 다른 곳은 셋이다: body의 「JSON이 입력 사실 전부다」 문장을 "Vulnerability·Target·Source 절과 JSON이 입력에 든다(전부라고 하지 않는다 - hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) · JSON의 Finding 데이터는 `finding_id`뿐이다"로 고쳤고(Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 `{{FINDING}}` 산문에만 있다 - `nodes/pov._describe_finding` · `_render_prompt`는 `build_facts`에 `ids={"finding_id": ...}`만 넘긴다 · FACTS 바이트는 안 바꿨다), prefix의 「How to reach the vulnerable path」 머리에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트라는 한 문단을 더했고, DEF-SUBMIT의 「Why a non-crash is not submitted」 한 줄을 #637(PR #673 - 지정 키의 첫 성분이 후보 자기 `vul` 응답 코드의 계단)에 맞게 다시 썼다(v6은 "하네스는 그 자리를 채점기 코드로 가르지 않는다"고 적었다)(이슈 #649 · #669 · #637). v7로 돈 run은 0건이다.
-  ⏵ 2026-10-15 — 서빙 pov 판이 **v8**이다(S20 Phase 15 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 2026-10-15 개정). v8은 v7에 prefix 「Hop budget」 한 줄만 더했다 — `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 제출된 후보보다 아래 순위로 구제될 수 있으니 기대지 말라(body·봉투·도구·나머지 규칙·`source_options` 선언은 v7과 같다). v8로 돈 run은 0건이고 효과는 미실측이다.
+  ⏵ 2026-10-15 — 서빙 pov 판이 **v8**이다(S20 Phase 15 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 2026-10-15 개정). v8은 v7에 prefix 「Hop budget」 한 줄만 더했다 — `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있으니 기대지 말라(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다)(body·봉투·도구·나머지 규칙·`source_options` 선언은 v7과 같다). v8로 돈 run은 0건이고 효과는 미실측이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -818,7 +818,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (`runner._designate_final`). 🔴 **지정 로직이 읽는 채점기 값은 후보 자기 `vul` 제출의 `response_exit_code` 하나뿐이다**
   (⏵ 2026-10-14 이슈 #637 — 앞 판은 그것도 안 읽었다). 환경 값으로 보는 코드(124~127·137·255·음수·255 초과 — 로컬 `poc` 도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다)와 없는 코드(`None`)는
   크래시로 세지 않고(300도 모름이지만 서버가 300을 응답에서 0으로 덮어 응답 경로로는 닿지 않는다 — #384) 「모름」으로 크래시와 크래시 아님 사이에 둔다. 후보의 `poc_id`·`cached`와 중간 gen의
-  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). ⏵ **2026-10-15 — 구제(rescued)**([ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 1 개정, council → 조민규 승인). `submit` 없이 끝난 Finding(루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊었다 — `designatable` 시도가 하나도 없다)의 중간 gen 중 **자기 `vul` 제출 응답 코드가 크래시 계단**인 것이 지정 풀(`OracleLedger.pool` = 제출된 후보 + `rescued`)에 든다. 새 제출·새 조회는 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번 돈다. 같은 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`). `submit`한 Finding은 구제가 없다(틀린 `submit`·실패한 제출도 마찬가지). trace `oracle_final.rescued`·사이드카 `candidates[*].rescued`·`final.rescued`가 표시하고 파생 플래그는 후보에 안 찍는다(결정 5). 한계: 구제된 크래시가 다른 버그·호스트 잡음이면 `fix` 다리도 크래시라 0점(구제 없던 때보다 나빠지진 않는다) · v8 문장의 행동 효과·구제 비율은 미실측.
+  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). ⏵ **2026-10-15 — 구제(rescued)**([ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 1 개정, council → 조민규 승인). `submit` 없이 끝난 Finding(루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊었다 — `designatable` 시도가 하나도 없다)의 중간 gen 중 **자기 `vul` 제출 응답 코드가 크래시 계단**인 것이 지정 풀(`OracleLedger.pool` = 제출된 후보 + `rescued`)에 든다. 새 제출·새 조회는 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번 돈다. 같은 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`). `submit`한 Finding은 구제가 없다(틀린 `submit`·실패한 제출도 마찬가지). trace `oracle_final.rescued`·사이드카 `candidates[*].rescued`·`final.rescued`가 표시하고 파생 플래그는 후보에 안 찍는다(결정 5). 한계: 구제된 크래시가 다른 버그·호스트 잡음이면 `fix` 다리도 크래시라 0점(모든 Finding이 후보 0건인 `no_poc` run보다 나쁘진 않지만, 다른 Finding의 제출된 후보를 모름·크래시 아님 계단에서 **밀어낼 수는 있다**) · v8 문장의 행동 효과·구제 비율은 미실측.
   🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
   반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `pool`(제출된 후보 + 구제된 중간 gen — ⏵ 2026-10-15)만 읽고, 정렬 키에
   든 오라클 값은 후보가 이미 낸 자기 제출 응답의 코드 하나다 — 새 제출·`fix` 호출·승격이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당

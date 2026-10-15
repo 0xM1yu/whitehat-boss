@@ -122,7 +122,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 > v3가 켠 두 입력 변경은 v4가 그대로 물려받는다:
 > Auditor 최초 읽기의 넓은 SOURCE와, 중간 gen PoC를 vul 다리에 낸 원시 종료 코드 되먹임이다.
 > 되먹임은 `run --oracle-submit`일 때만 켜진다(꺼져 있으면 모든 gen이 `oracle_vul=unavailable`을 받는다).
-> 모델이 submit한 PoC만 최종 지정 후보이고 fix 다리는 지정 뒤 한 번이다. **실모델 입력 토큰은 잰 값이 있다** —
+> 모델이 submit한 PoC만 최종 지정 후보이고(⏵ 2026-10-15: submit 없이 끝난 Finding의 크래시 응답 중간 gen은 대체 후보로 구제된다) fix 다리는 지정 뒤 한 번이다. **실모델 입력 토큰은 잰 값이 있다** —
 > v3 prefix로 호출당 60,446~61,018(서버가 센 값, 한 finding의 네 호출 · n=1 · v4 prefix는 아직 안 쟀다,
 > [2026-10-06 프로브](docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md)의 「호출당 입력」 행). ⚠ **전형값이
 > 아니다** - 그 프로브는 `tool_runner: fake`라 도구 출력 꼬리가 없었고, 같은 run의 다른 finding hop0은 6,572토큰으로
@@ -133,7 +133,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 > 있으면 `submit`의 `poc_sha256`으로 그 gen을 지명해 낸다 — 어느 gen도 못 이겼을 때만 안 낸다.
 > ⏵ 2026-10-13 — pov 좌석은 v6이다(`config/models.yaml` · 영어로 다시 쓴 판, PR #636). v6으로 돈 run은 0건이고 효과는 미실측이다.
 > ⏵ 2026-10-14 — pov 좌석은 **v7**이다(S20 Phase 14 · 이슈 #649·#669). v6에서 body의 「JSON이 입력 사실 전부다」 문장(JSON의 Finding 데이터는 `finding_id`뿐이라고 고쳤다)과 prefix의 SOURCE 새 블록 서술 한 문단, DEF-SUBMIT의 최종 지정 문장(#637에 맞춤) 셋만 고쳤다(`prompts/pov/v7/meta.yaml`). v7로 돈 run은 0건이고 효과는 미실측이다.
-> ⏵ 2026-10-15 — pov 좌석은 **v8**이다(S20 Phase 15 · ADR 0013 2026-10-15 개정). v7에서 prefix 「Hop budget」 한 줄에 세 문장만 더했다: `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 제출된 후보보다 아래 순위로 구제될 수 있다(`prompts/pov/v8/meta.yaml`). v8로 돈 run은 0건이고 효과는 미실측이다.
+> ⏵ 2026-10-15 — pov 좌석은 **v8**이다(S20 Phase 15 · ADR 0013 2026-10-15 개정). v7에서 prefix 「Hop budget」 한 줄에 두 문장만 더했다: `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있다(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다)(`prompts/pov/v8/meta.yaml`). v8로 돈 run은 0건이고 효과는 미실측이다.
 > 선정됐으나 아직 배선 전인 키가 다시 생기면 이 표에 「배선 전」으로 등재해 두고(「안 쓰는」과 사유가
 > 다르다), 배선되면 §1로 올린다.
 > 되돌리기는 git 이력으로 한다(항목·checksum manifest·프로필이 한 커밋에 있다). 그날 지운 것 —
