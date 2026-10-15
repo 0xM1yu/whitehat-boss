@@ -29,7 +29,7 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6·v7은
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5·v6·v7·v8은
 # `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
 # (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
@@ -57,7 +57,8 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # 넓은 입력(Auditor가 본 SOURCE·퍼즈 진입점·경로 심볼)을 받는 판 — `critic._CONTENT_AWARE_VERSIONS`
 # ·`auditor._CONTENT_AWARE_VERSIONS`와 같은 패턴이다(자기 상수다, 다른 노드 것을 import하지
 # 않는다). 2026-10-05부터 v3가, 2026-10-08부터 v4가, 2026-10-09부터 v5가,
-# 2026-10-13부터 v6이 `config/models.yaml`의 실 PoV 좌석이라 이 넓은 입력을 받는다.
+# 2026-10-13부터 v6이 `config/models.yaml`의 실 PoV 좌석이라 이 넓은 입력을 받는다
+# (⏵ 2026-10-15부터 v8).
 # v2는 2026-10-02 PR 전과 바이트가 같아야 한다(`docs/evaluation.md` §2.3-4,
 # 프롬프트가 바뀌면 이전 run과 직접 비교하지 않는다. v2로 돈 run은 0건이라 비교가 깨질 대상도
 # 없지만, v2는 이 PR 전과 같은 입력 모양을 유지하는 판이다. v3 배선으로 SOURCE 확대와 채점기
@@ -70,7 +71,8 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7"})  # v7: 2026-10-14
+# v7: 2026-10-14 · v8: 2026-10-15
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7", "v8"})
 
 # 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
 # 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다

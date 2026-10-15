@@ -2300,7 +2300,12 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은
     바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
-    그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
+    그 전에 완료된 중간 gen 제출은 장부에 남는다.
+    ⏵ 2026-10-15 (ADR 0013 결정 1 개정) — `submit` 없이 끝난 Finding(위 사유와 `GATEWAY_ERROR`·
+    `CONTEXT_OVERFLOW`·예산 중단 전부)의 그 중간 gen 중 **자기 `vul` 응답 코드가 크래시 계단인
+    것**은 `OracleLedger.rescued`로 지정 풀에 든다 — 이 함수는 새 제출을 하지 않고
+    `_designate_final`이 장부에서 계산한다. `submit`한 Finding은 구제가 없다.
+    그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
     """
     capsule = state.finding_capsules.get(finding.finding_id)
@@ -2595,6 +2600,7 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
 # `zip(..., strict=True)`가 터진다(키를 늘리고 이름을 안 붙이는 변이를 그 자리가 막는다).
 _DESIGNATION_CHAIN = (
     oracle_log.DESIGNATION_VUL_CRASH,
+    oracle_log.DESIGNATION_SUBMITTED_OVER_RESCUED,
     oracle_log.DESIGNATION_CRITIC_VERDICT,
     oracle_log.DESIGNATION_TOP_GRADE,
     oracle_log.DESIGNATION_TOP_CONFIDENCE,
@@ -2608,11 +2614,12 @@ def _designation_key(
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
     verdicts: Mapping[str, int],
-) -> tuple[int, int, int, float, int, str]:
+) -> tuple[int, int, int, int, float, int, str]:
     """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값과, 후보 자기 `vul`
     제출의 종료 코드 **하나**뿐이다.
 
     ⓿자기 `vul` 응답 코드의 계단(크래시 0 < 모름 1 < 크래시 아님 2 — `oracle_log.vul_code_tier`)
+    ⓿′제출 여부(모델이 `submit`한 후보 0 < 구제된 중간 gen 1 — ⏵ 2026-10-15)
     ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
     ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
 
@@ -2632,6 +2639,13 @@ def _designation_key(
     계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` · 환경 실패 코드)은 크래시도 아니고
     크래시 아님도 아니다**(§0) — 둘 사이에 둔다.
 
+    ⏵ 2026-10-15 — ⓿′을 ⓿ **바로 뒤**에 붙였다(ADR 0013 결정 1 개정). 풀에는 `submit` 없이 끝난
+    Finding의 크래시 계단 중간 gen이 **구제**돼 들어온다(`OracleLedger.rescued`). 같은 응답 코드
+    계단에서는 제출된 후보가 구제된 것보다 **늘 앞선다** — Critic 판정·등급·`confidence`가 구제된
+    쪽에 유리해도 그렇다. 계단이 다르면 ⓿이 먼저라 구제된 크래시가 제출된 비-크래시를 이긴다(의도한
+    것이다). ⓿′은 후보의 `designatable` 속성(하네스가 정한 값)을 읽고 채점기 값이 아니다. 같은
+    바이트가 제출과 구제 양쪽에 있으면 제출된 쪽이 지정돼 구제로 안 센다.
+
     🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 다섯이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
     (처음·마지막)가 아니다. 자리로 고르지 않는다는 규칙은 그대로다 — 같은 후보 묶음을 어떤
@@ -2645,6 +2659,7 @@ def _designation_key(
     code = None if submission is None else submission.response_exit_code
     return (
         oracle_log.vul_code_tier(code),
+        0 if attempt.designatable else 1,
         verdicts[attempt.finding_id],
         -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
         -confidences[attempt.finding_id],
@@ -2681,8 +2696,8 @@ def _designate_final(
     - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
-      `designation`이다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·
-      `poc_digest`).
+      `designation`이다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·
+      `top_confidence`·`smallest_poc`·`poc_digest`).
       `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
       기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, sumin 리뷰).
 
@@ -2693,6 +2708,16 @@ def _designate_final(
     고친 모양은 둘이다 — ① 같은 바이트는 **접는다**(선택이 없는 것을 선택 실패로 적지 않는다)
     ② 남은 동점은 거부가 아니라 **사슬의 다음 단계**로 넘긴다. 사슬의 끝(PoC 해시)이 전순서라
     `grade_tie`가 닿지 않는 분기가 되어 **사유 상수째 지웠다**(`oracle_log`).
+
+    ⏵ **2026-10-15 — 풀이 넓어졌다**(ADR 0013 결정 1 개정, council → 조민규 승인). 후보 풀은 모델이
+    `submit`한 후보(`ledger.candidates`)에 **구제된 중간 gen**(`ledger.rescued` — `submit` 없이 끝난
+    Finding의 중간 gen 중 자기 `vul` 응답 코드가 크래시 계단인 것)을 더한 `ledger.pool`이다. 같은
+    응답 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`).
+    **안 바뀌는 것:** 새 제출·새 조회가 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번
+    돈다, 읽는 채점기 값은 여전히 후보 자기 응답 코드 하나다(구제 여부는 `designatable`·`submit`
+    유무라는 하네스 값에서 나온다), 후보에 파생 플래그를 찍지 않는다(결정 5). 한계: 구제된 크래시가
+    다른 버그나 호스트 잡음이면 `fix` 다리도 크래시라 0점이다 - 구제가 없던 때(`no_poc`)보다
+    나빠지지는 않는다.
 
     🔴 **이 함수가 읽는 채점기 값은 후보 자기 `vul` 제출의 종료 코드 하나다**
     (`submission.response_exit_code` → `oracle_log.vul_code_tier` — 크래시 < 모름 < 크래시 아님,
@@ -2742,7 +2767,7 @@ def _designate_final(
     마지막 gen) 그것은 이 제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이
     제약이 막지 않는다(council).
     """
-    candidates = ledger.candidates
+    candidates = ledger.pool  # 제출된 후보 + 구제된 중간 gen(⏵ 2026-10-15)
     if not candidates:
         return None, "", ledger.none_reason()
     if len(candidates) == 1:
@@ -2862,10 +2887,10 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
         else:
             final = _score(ctx, ctx.oracle, picked, designation)
         # 지정이 읽은 등급을 사이드카에 남긴다(후보가 둘 이상일 때만 읽는다). 같은 `grades`다.
-        candidates = ledger.candidates
+        pool = ledger.pool
         read = (
-            {a.finding_id: grades[a.finding_id].value for a in candidates if a.finding_id in grades}
-            if len(candidates) > 1
+            {a.finding_id: grades[a.finding_id].value for a in pool if a.finding_id in grades}
+            if len(pool) > 1
             else None
         )
         ledger.set_final(final, grades=read)
@@ -2881,6 +2906,10 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
             reason=final.reason,
             poc_sha256=None if picked is None else picked.poc_sha256,
             poc_bytes=None if picked is None else picked.poc_bytes,
+            # 지정된 후보가 `submit` 없이 구제된 중간 gen인가(⏵ 2026-10-15 · ADR 0013) - 지정이
+            # 없으면 `None`. 응답 코드에 달린 값이라 `designation`처럼 Fake 경로 밖에서는 결정론이
+            # 아니다.
+            rescued=None if picked is None else not picked.designatable,
             task_id=None if final.outcome is None else final.outcome.task_id,
             error=final.error,
             record_ref=ledger.record_ref,
@@ -2921,8 +2950,9 @@ def _run_pov_hops(
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
     (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
-    v6이었다**(`config/models.yaml` · S19 Phase 6-2) — ⏵ 2026-10-14부터 서빙 판은 v7이고 그 prefix도
-    같은 서술을 든다(v6과 바이트 동일한 부분). 이 한계는 v5로 되돌린 설정에만 남는다.
+    v6이었다**(`config/models.yaml` · S19 Phase 6-2) —
+    ⏵ 2026-10-14부터 서빙 판은 v7(⏵ 2026-10-15부터 v8)이고
+    그 prefix도 같은 서술을 든다(v6과 바이트 동일한 부분). 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
@@ -3088,7 +3118,7 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6·v7(서빙 판은 v7)이 그것을 선언한다.
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6·v7·v8(서빙 판은 v8)이 그것을 선언한다.
                 named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(

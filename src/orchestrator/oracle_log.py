@@ -43,6 +43,13 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
 
+⏵ 2026-10-15 - **구제(`rescued`, ADR 0013 결정 1 개정).** `submit` 없이 끝난 Finding(`designatable`
+시도가 하나도 없다)의 중간 gen 중 자기 `vul` 제출 응답 코드가 크래시 계단(`vul_code_tier`)인 것은
+지정 풀에 든다(`OracleLedger.rescued`·`pool`). 새 제출은 없다 - 이미 쌓인 행이다. 그런 행은
+`candidates`에 `rescued: true`가 붙고(구제가 없던 run의 행은 옛 모양 그대로다), `final`은 지정된
+후보가 구제된 것인지를 `rescued`(true/false)로 싣는다. 이 둘은 응답 코드에 달린 값이라 trace의
+`oracle_final.rescued`와 함께 Fake 경로 밖에서는 결정론이 아니다.
+
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
 `null`인 것은 `vul`에서 크래시가 안 나 채점기가 `fix`를 안 돌린 경우다. `final.status`가 `none`인 것
 (지정된 후보가 없었다)과 `failed`인 것(지정했는데 판정을 못 읽었다)은 다른 사건이다 —
@@ -207,9 +214,13 @@ def vul_code_tier(code: int | None) -> int:
 # **내용 해시로** 갈린 것이다 — 약한 근거이고, 그렇게 적혀 있어야 읽는 쪽이 안다.
 # ⏵ 2026-10-11 — 사슬 맨 앞에 `critic_verdict`가 붙어 일곱이고 사슬은 다섯이다.
 # ⏵ 2026-10-14 — 그 앞에 `vul_crash`가 붙어 여덟이고 사슬은 여섯이다(이슈 #637).
+# ⏵ 2026-10-15 — `vul_crash` 바로 뒤에 `submitted_over_rescued`가 붙어 아홉이고 사슬은 일곱이다
+# (ADR 0013 결정 1 개정): 같은 응답 코드 계단에서 모델이 `submit`한 후보는 구제된 중간 gen
+# (`OracleLedger.rescued`)보다 늘 앞선다.
 DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택이 없었다
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
 DESIGNATION_VUL_CRASH = "vul_crash"  # 자기 vul 응답 코드 — 크래시 < 모름 < 크래시 아님 순
+DESIGNATION_SUBMITTED_OVER_RESCUED = "submitted_over_rescued"  # 같은 계단 - 제출이 구제를 이겼다
 DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유 < 보류 순으로 앞선다
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
@@ -397,6 +408,31 @@ class OracleLedger:
         return [attempt for attempt in self.attempts if attempt.ok and attempt.designatable]
 
     @property
+    def rescued(self) -> list[VulAttempt]:
+        """⏵ 2026-10-15 (ADR 0013 결정 1 개정) - **`submit` 없이 끝난 Finding의 중간 gen 중 자기
+        `vul` 제출 응답 코드가 크래시 계단인 것.** 새 제출 없이 이미 쌓인 행을 그대로 쓴다.
+
+        - 「`submit`했다」는 그 Finding에 `designatable` 시도가 하나라도 있다는 뜻이다 - 제출이
+          실패했거나 0바이트라 건너뛴 것도 센다(모델은 `submit`했다 · 틀린 `submit`도 구제가 없다).
+        - 크래시 계단만이다(`vul_code_tier` - 환경 값·`None`·크래시 아님은 안 든다).
+        - 후보에 플래그를 찍지 않는다(ADR 0013 결정 5): 장부에서 **지정 시점에** 계산한다.
+        """
+        submitters = {a.finding_id for a in self.attempts if a.designatable}
+        return [
+            a
+            for a in self.attempts
+            if not a.designatable
+            and a.finding_id not in submitters
+            and a.submission is not None
+            and vul_code_tier(a.submission.response_exit_code) == VUL_TIER_CRASH
+        ]
+
+    @property
+    def pool(self) -> list[VulAttempt]:
+        """최종 지정이 고르는 풀 - 제출된 후보 + 구제된 중간 gen(제출된 쪽이 앞이다)."""
+        return [*self.candidates, *self.rescued]
+
+    @property
     def submitted(self) -> int:
         """성공한 vul 제출 **전부** — 중간 gen 포함이다. 최종 후보 수는 `candidates`다."""
         return sum(1 for attempt in self.attempts if attempt.ok)
@@ -476,8 +512,12 @@ class OracleLedger:
 
     def record(self) -> dict[str, object]:
         """사이드카의 내용. 값의 뜻은 모듈 docstring이다."""
+        rescued_ids = {id(attempt) for attempt in self.rescued}
         return {
-            "candidates": [_attempt_record(attempt) for attempt in self.attempts],
+            "candidates": [
+                _attempt_record(attempt, rescued=id(attempt) in rescued_ids)
+                for attempt in self.attempts
+            ],
             "final": None
             if self.final is None
             else _final_record(self.final, self.attempts, self.grades),
@@ -527,6 +567,12 @@ class OracleLedger:
         elif final.status == STATUS_NONE:
             out.append(_none_warning(final, len(self.candidates)))
         else:
+            if final.attempt is not None and not final.attempt.designatable:
+                out.append(
+                    "최종 PoC는 모델이 submit하지 않은 중간 gen이다 - 자기 vul 응답 코드가 "
+                    "크래시 계단이라 구제됐다(ADR 0013 2026-10-15). "
+                    "같은 코드가 다른 버그나 호스트 잡음일 수 있다"
+                )
             legs = _cached_legs(final, self.attempts)
             if legs:
                 joined = " 와 ".join(legs)
@@ -604,7 +650,7 @@ def _cached_legs(final: FinalAttempt, attempts: Sequence[VulAttempt]) -> list[st
     return legs
 
 
-def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
+def _attempt_record(attempt: VulAttempt, *, rescued: bool = False) -> dict[str, object]:
     row: dict[str, object] = {
         "finding_id": attempt.finding_id,
         "poc_sha256": attempt.poc_sha256,
@@ -614,6 +660,8 @@ def _attempt_record(attempt: VulAttempt) -> dict[str, object]:
     }
     if not attempt.designatable:
         row["designatable"] = False
+    if rescued:  # 0이 아닐 때만 - 구제가 없던 run의 행은 옛 모양 그대로다
+        row["rescued"] = True
     if attempt.skipped:
         return {**row, "status": "skipped", "error": attempt.error,
                 "error_detail": attempt.error_detail}
@@ -659,6 +707,7 @@ def _final_record(
         "finding_id": attempt.finding_id,
         "poc_sha256": attempt.poc_sha256,
         "poc_bytes": attempt.poc_bytes,
+        "rescued": not attempt.designatable,
     }
     if final.status == STATUS_FAILED:
         return {**row, "error": final.error, "error_detail": final.error_detail}
