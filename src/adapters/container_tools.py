@@ -151,8 +151,9 @@ import os
 import re
 import shutil
 import subprocess
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -296,6 +297,11 @@ _CXX_SUFFIXES = (".cc", ".cpp", ".cxx", ".c++", ".cp")
 # `[]`)을 내고, 프로세스 경계를 넘는 확장자 목록이 하나 더 생긴다. 헤더는 여전히 clang에
 # 직접 주지 않는다 — 단독 컴파일 대상이 아니다(`_COMPILE_SUFFIXES`).
 #
+# ⚠ `tools/harness-tools/indexer.py` ~212줄의 주석(*"`.hpp`는 알지만 아직 넘어오지 않는다"*)은
+# **낡았다** - 지금은 이 목록이 `.hpp`를 보낸다. 그 파일은 이미지 sha 핀
+# (`_BAKED_INDEXER_SHA256`)이라 주석 한 줄도 못 고친다 - 이 줄이 정정이다.
+# 인덱서가 안 받는 SOURCE는 로그 머리의 `# 인덱서 미전달: …`이 센다.
+#
 # ⚠ **대상 트리 밖의 헤더는 여전히 안 온다** — 인덱서는 `sources(workdir)`(대상 트리)만 받는다.
 # 평가 표본의 `build_context/generated_headers`(설정 매크로)는 슬라이서만 `-I`로 본다
 # (`slicer_compile.py`의 generated_headers).
@@ -324,6 +330,13 @@ _INDEX_SUFFIXES = (".c", ".cc", ".cpp", ".inc", ".h", ".hpp")
 # 방언이 다르고 `compile_commands.json`이 있으면 그쪽을 따라야 한다 — 그 시점에
 # budgets/config로 옮긴다. **`_include_args()`도 같은 범주다**(이슈 #74).
 _STD_ARGS = {"c": "-std=gnu17", "c++": "-std=gnu++17"}
+
+# 언어를 명시하는 `-x`. **clang이 확장자 표로 언어를 고르게 두지 않는다.** 그 표는 대소문자를 가려
+# `.Cxx`·`.Cc`처럼 표에 없는 철자는 컴파일 입력이 아니라 링커 입력으로 읽힐 수 있고, 그러면 컴파일
+# 없이 exit 0이 나와 가짜 build 성공이 된다(검토에서 지적, clang 동작은 미실측).
+# `_by_language`가 이미 소스를 언어별로 가르므로 그룹마다 `-x <언어>`를 소스 목록 앞에 둔다.
+# `_STD_ARGS`와 같은 축이다.
+_X_ARGS = {"c": ["-x", "c"], "c++": ["-x", "c++"]}
 
 # semgrep이 예외로 죽었는지 보는 표지. `--json`이 stdout만 바꾸므로 크래시 흔적은
 # 여전히 stderr에 남는다(이번 진단을 가능하게 한 것도 그 stderr다).
@@ -674,6 +687,8 @@ class Command:
     # 이 명령이 돌기 전에 scratch에 쓸 파일: (파일 이름, 바이트). 명령줄에 못 싣는 큰 입력용이다
     # (`INDEX_LIST_FILE`). 컨테이너 안에서는 `{SCRATCH}/<이름>`이다.
     scratch_files: tuple[tuple[str, bytes], ...] = ()
+    # 이 명령 앞에 로그 머리로 남길 줄(`# …`). 명령줄에 안 보이는 사실(인덱서가 안 받은 소스)용이다.
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -789,7 +804,8 @@ def plan(
             Command(
                 [
                     "clang-tidy", "--quiet", "--warnings-as-errors=*",
-                    *sources_, "--", _STD_ARGS[language], *_include_args(cwd),
+                    *sources_, "--", *_X_ARGS[language], _STD_ARGS[language],
+                    *_include_args(cwd),
                 ],
                 cwd=cwd,
             )
@@ -823,7 +839,7 @@ def plan(
             Command(
                 [
                     "clang", "-c", "-g", "-O1",
-                    _STD_ARGS[language], *_include_args(cwd), *sources_,
+                    _STD_ARGS[language], *_include_args(cwd), *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             )
@@ -847,7 +863,7 @@ def plan(
                 [
                     "clang", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                     "-g", "-O1", _STD_ARGS[language], *_include_args(cwd),
-                    "-o", binary, *sources_,
+                    "-o", binary, *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             ),
@@ -870,7 +886,8 @@ def plan(
             Command(
                 [
                     "clang", "-g", "-O0", "-fno-omit-frame-pointer",
-                    _STD_ARGS[language], *_include_args(cwd), "-o", binary, *sources_,
+                    _STD_ARGS[language], *_include_args(cwd), "-o", binary,
+                    *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             ),
@@ -1558,17 +1575,20 @@ class ContainerToolRunner:
         # 리터럴이 아니라 상수를 본다. 갈리면 인덱서가 조용히 `_COMPILE_SUFFIXES`를 받아
         # `.inc`가 빠지고, #66이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고
         # 17KB를 보지 않았다)가 그대로 재현된다.
-        return plan(
+        candidates = sources(resolved)
+        commands = plan(
             tool,
             target=_in_container(self.root, resolved),
             compile_sources=[
-                _in_container(self.root, path)
-                for path in sources(resolved)
-                if _wanted(tool, path)
+                _in_container(self.root, path) for path in candidates if _wanted(tool, path)
             ],
             cwd=_in_container(self.root, resolved if resolved.is_dir() else resolved.parent),
             poc_target=self.poc_target,
         )
+        withheld = _withheld_note(tool, candidates)
+        if withheld is None:
+            return commands
+        return [replace(command, notes=(withheld,)) for command in commands]
 
     def _execute(
         self,
@@ -1612,6 +1632,10 @@ class ContainerToolRunner:
                 return self._fail(
                     evidence_id, tool, kind, args, 2, f"입력 파일을 scratch에 쓰지 못했다: {reason}"
                 )
+            # 로그 머리가 무엇을 읽혔는지 말한다 - 목록 파일은 명령줄에 안 실려서 이 줄이 없으면
+            # `digest`가 목록과 이어지지 않는다(같은 명령줄에 목록만 다른 두 run이 구별되지 않는다).
+            sections.extend(command.notes)
+            sections.extend(_scratch_file_line(name, data) for name, data in command.scratch_files)
             # `container_argv`는 입력을 받는 명령에 경로가 없으면 던진다(ADR 0014). 그것은
             # **배선 결함**이지 샌드박스 부재가 아니므로 `ToolRunner` 계약대로 Evidence로 낸다 —
             # 예외를 던지는 것은 Evidence조차 만들 수 없는 경우뿐이다.
@@ -1875,6 +1899,27 @@ def _write_scratch_files(scratch: Path, files: tuple[tuple[str, bytes], ...]) ->
         path.unlink(missing_ok=True)
         with open(path, "xb") as handle:
             handle.write(data)
+
+
+def _scratch_file_line(name: str, data: bytes) -> str:
+    """scratch에 쓴 목록 파일을 로그에 묶는 줄. 항목은 NUL로 가른다(`INDEX_LIST_FILE`)."""
+    entries = data.count(bytes(1)) + 1 if data else 0
+    return f"# scratch file {name}: {entries} entries sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+def _withheld_note(tool: str, candidates: list[Path]) -> str | None:
+    """인덱서가 안 받은 소스를 확장자별로 센 줄. 없으면 `None`.
+
+    분류(`sources`)는 SOURCE로 읽었지만 `_INDEX_SUFFIXES`에 없어 보내지 않은 파일이다(`.hh`·`.cxx`·
+    `.CPP`…). 세지 않으면 그 파일들은 인덱스에서 이유도 개수도 없이 빠진다. 철자는 원문 그대로 센다.
+    """
+    if tool != INDEX_TOOL:
+        return None
+    counts = Counter(path.suffix for path in candidates if not _wanted(tool, path))
+    if not counts:
+        return None
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return "# 인덱서 미전달: " + " ".join(f"{suffix}×{count}" for suffix, count in ranked)
 
 
 def _wanted(tool: str, path: Path) -> bool:

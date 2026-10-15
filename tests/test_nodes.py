@@ -233,6 +233,22 @@ def test_preprocess_reports_the_classification_counts_inside_the_stage(ctx: RunC
     assert start < events.index(event) < end
 
 
+def test_preprocess_emits_no_classification_event_when_stage_zero_raises(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이벤트는 0단계가 **끝난** run에만 1건이다. 파일을 읽다 예외로 서면 분류 전이라 0건이다."""
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(preprocess, "_artifact", boom)
+
+    with pytest.raises(OSError):
+        preprocess.run(ctx, source_root=_root_of(ctx))
+
+    assert [e for e in ctx.trace.events if e.kind is EventKind.PREPROCESS_CLASSIFIED] == []
+
+
 def test_preprocess_caps_the_unknown_suffix_list_and_says_how_many_were_cut(
     ctx: RunContext,
 ) -> None:
