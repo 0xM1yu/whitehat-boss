@@ -23,6 +23,8 @@ from tests.test_pov_loop import _gen, _scripted, _with_pov_version
 from tests.test_pov_oracle_feedback import ReadingOracle
 
 SHA_A = hashlib.sha256(b"A").hexdigest()
+# 재시도한 기록만 싣는 첫 실패 키 셋 - 한 번에 된 run과 키 집합이 같아야 해서다.
+FIRST_KEYS = {"first_error", "first_error_status", "retry_wait_s"}
 
 
 def _http(status: int) -> CyberGymOracleError:
@@ -81,10 +83,16 @@ def test_p1_resubmit_fails_twice_and_the_earlier_ok_submission_of_the_same_bytes
     assert ledger.final.designation == oracle_log.DESIGNATION_SOLE_CANDIDATE
     row = ledger.record()["candidates"][3]
     assert row["reused_intermediate"] is True and row["submit_calls"] == 2
+    # 실패한 재제출 행은 마지막 실패(`error_status`)와 첫 실패를 따로 든다.
+    assert row["first_error"] == "CyberGymOracleError" and row["first_error_status"] == 500
+    failed_row = ledger.record()["candidates"][2]
+    assert failed_row["first_error_status"] == 500 and failed_row["error_status"] == 500
     submitted = [e for e in scripted.trace.events if e.kind is EventKind.ORACLE_SUBMITTED]
     assert [e.data.get("reused_intermediate") for e in submitted] == [None, None, True]
     failed = [e for e in scripted.trace.events if e.kind is EventKind.ORACLE_FAILED]
     assert [e.data["submit_calls"] for e in failed] == [2]
+    assert failed[0].data["first_error_status"] == 500 and failed[0].data["retry_wait_s"] == 0.0
+    assert submitted[-1].data["first_error"] == "CyberGymOracleError"
 
 
 def test_a_transient_failure_then_success_is_scored_with_the_retry_recorded(ctx) -> None:  # noqa: F811
@@ -101,9 +109,28 @@ def test_a_transient_failure_then_success_is_scored_with_the_retry_recorded(ctx)
     assert ledger.final.status == oracle_log.STATUS_SCORED
     row = ledger.record()["candidates"][2]
     assert row["submit_calls"] == 2 and "reused_intermediate" not in row
+    # 성공한 재시도도 첫 실패의 원인을 남긴다.
+    assert row["first_error"] == "CyberGymOracleError"
+    assert row["first_error_status"] == 503 and row["retry_wait_s"] == 0.0
     sent = [e for e in scripted.trace.events if e.kind is EventKind.ORACLE_SUBMITTED][-1]
     assert sent.data["submit_calls"] == 2 and "reused_intermediate" not in sent.data
+    assert sent.data["first_error_status"] == 503 and sent.data["retry_wait_s"] == 0.0
     assert ledger.failed == 0  # 최종 결과가 성공이면 실패 시도로 세지 않는다
+
+
+def test_a_single_successful_submit_carries_no_first_error_keys(ctx) -> None:  # noqa: F811
+    scripted, state = _run(ctx, ReadingOracle(codes=(139, 0), vul_exit_code=139))
+
+    assert all(FIRST_KEYS.isdisjoint(row) for row in state.oracle_ledger.record()["candidates"])
+    assert FIRST_KEYS.isdisjoint(state.oracle_ledger.record()["final"])
+    assert all(FIRST_KEYS.isdisjoint(e.data) for e in scripted.trace.events)
+
+
+def test_a_connection_failure_then_success_records_a_null_status(ctx) -> None:  # noqa: F811
+    _, state = _run(ctx, ReadingOracle(codes=(139, 0), vul_exit_code=139, vul_errors={2: _conn()}))
+
+    row = state.oracle_ledger.record()["candidates"][2]
+    assert row["first_error"] == "CyberGymOracleError" and row["first_error_status"] is None
 
 
 def test_a_429_waits_out_the_documented_window_before_the_one_retry(ctx) -> None:  # noqa: F811
@@ -115,6 +142,53 @@ def test_a_429_waits_out_the_documented_window_before_the_one_retry(ctx) -> None
     assert sleeps == [oracle_log.RATE_LIMIT_WINDOW_S]
     assert state.oracle_ledger.candidates[0].submit_calls == 2
     assert state.oracle_ledger.final.status == oracle_log.STATUS_SCORED
+    row = state.oracle_ledger.record()["candidates"][2]
+    assert row["first_error_status"] == 429 and row["retry_wait_s"] == 60.0
+
+
+def test_a_429_twice_waits_once_then_falls_back_to_the_earlier_submission(ctx) -> None:  # noqa: F811
+    oracle = ReadingOracle(
+        codes=(139, 0), vul_exit_code=139, vul_errors={2: _http(429), 3: _http(429)}
+    )
+    sleeps: list[float] = []
+
+    _, state = _run(ctx, oracle, sleeps)
+
+    ledger = state.oracle_ledger
+    assert sleeps == [60]  # 두 번째 429는 기다리지 않는다
+    assert len(oracle.vul_calls) == 4
+    candidate = ledger.candidates[0]
+    assert candidate.reused_intermediate and candidate.submit_calls == 2
+    # 실패한 재제출 행이 마지막 429를 든다 - 경고의 레이트리미트 건수가 이 행을 센다.
+    assert ledger.rate_limited == 1
+    assert ledger.final.status == oracle_log.STATUS_SCORED
+
+
+def test_a_429_then_a_4xx_is_one_wait_and_then_reuse(ctx) -> None:  # noqa: F811
+    oracle = ReadingOracle(
+        codes=(139, 0), vul_exit_code=139, vul_errors={2: _http(429), 3: _http(400)}
+    )
+    sleeps: list[float] = []
+
+    _, state = _run(ctx, oracle, sleeps)
+
+    assert sleeps == [60] and len(oracle.vul_calls) == 4
+    failed = state.oracle_ledger.attempts[2]
+    assert failed.first_failure.status == 429 and failed.error_status == 400
+    assert state.oracle_ledger.candidates[0].reused_intermediate
+
+
+def test_call_submit_vul_sleeps_exactly_once_for_two_429s(ctx) -> None:  # noqa: F811
+    oracle = FakeOracle(vul_errors={0: _http(429), 1: _http(429)})
+    sleeps: list[float] = []
+    scripted = _scripted(ctx, [])
+    scripted.oracle = oracle
+    scripted.sleep = sleeps.append
+
+    submission, failure, calls, first = runner._call_submit_vul(scripted, b"A", retry=True)
+
+    assert submission is None and calls == 2 and sleeps == [60]
+    assert failure.status == 429 and first.status == 429 and first.wait_s == 60.0
 
 
 def test_a_5xx_or_connection_failure_retries_at_once_without_waiting(ctx) -> None:  # noqa: F811
@@ -232,7 +306,11 @@ def test_finalize_retries_a_transient_failure_once_and_records_both_calls(ctx) -
     assert final.status == oracle_log.STATUS_SCORED and final.calls == 2
     assert isinstance(final.outcome, OracleOutcome) and len(oracle.final_calls) == 2
     assert _final_data(scripted)["finalize_calls"] == 2
-    assert state.oracle_ledger.record()["final"]["finalize_calls"] == 2
+    record = state.oracle_ledger.record()["final"]
+    assert record["finalize_calls"] == 2
+    # 재시도 전 첫 실패의 원인 - finalize는 기다리지 않는다.
+    assert record["first_error"] == "CyberGymOracleError" and record["first_error_status"] == 503
+    assert record["retry_wait_s"] == 0.0 and _final_data(scripted)["first_error_status"] == 503
 
 
 def test_finalize_gives_up_after_the_one_retry(ctx) -> None:  # noqa: F811
@@ -244,6 +322,9 @@ def test_finalize_gives_up_after_the_one_retry(ctx) -> None:  # noqa: F811
     assert final.status == oracle_log.STATUS_FAILED and final.calls == 2
     assert len(oracle.final_calls) == 2
     assert _final_data(scripted)["finalize_calls"] == 2
+    # 마지막 실패는 500이고 첫 실패는 연결 실패다 - 처음 원인이 남는다.
+    assert final.first_failure.status is None and "500" in final.error_detail
+    assert state.oracle_ledger.record()["final"]["first_error_status"] is None
 
 
 @pytest.mark.parametrize("status", [400, 403, 404, 429])
@@ -257,6 +338,8 @@ def test_finalize_does_not_retry_a_4xx(ctx, status) -> None:  # noqa: ANN001, F8
     assert len(oracle.final_calls) == 1
     assert _final_data(scripted)["finalize_calls"] == 1
     assert "finalize_calls" not in state.oracle_ledger.record()["final"]
+    assert FIRST_KEYS.isdisjoint(state.oracle_ledger.record()["final"])
+    assert FIRST_KEYS.isdisjoint(_final_data(scripted))
 
 
 def test_a_final_with_no_candidate_has_no_finalize_call_count(ctx) -> None:  # noqa: F811
@@ -304,13 +387,13 @@ def test_a_retried_vul_call_reports_cached_as_unknown(ctx) -> None:  # noqa: F81
     scripted = _scripted(ctx, [])
     scripted.oracle = oracle
 
-    retried, failure, calls = runner._call_submit_vul(scripted, b"A", retry=True)
-    assert failure is None and calls == 2
+    retried, failure, calls, first = runner._call_submit_vul(scripted, b"A", retry=True)
+    assert failure is None and calls == 2 and first.status == 503
     assert retried is not None and retried.cached is None
 
     # 재시도 없이 한 번에 된 호출은 어댑터가 가른 값을 그대로 든다.
-    once, _, calls = runner._call_submit_vul(scripted, b"A", retry=True)
-    assert calls == 1 and once is not None and once.cached is True
+    once, _, calls, first = runner._call_submit_vul(scripted, b"A", retry=True)
+    assert calls == 1 and first is None and once is not None and once.cached is True
 
 
 def _scored_final(ctx, oracle):  # noqa: ANN001, ANN202, F811
@@ -362,3 +445,59 @@ def test_a_run_without_a_reused_row_has_no_vul_reused_key(ctx) -> None:  # noqa:
     _, state = _run(ctx, ReadingOracle(codes=(139, 0), vul_exit_code=139))
 
     assert "vul_reused" not in state.oracle_ledger.summary()
+
+
+# --- 이어받기는 같은 finding·같은 바이트의 앞선 성공 제출만 (`OracleLedger.intermediate_twin`) ---
+
+
+def _submit(scripted, state, finding, poc, *, designatable):  # noqa: ANN001, ANN202
+    runner._submit_vul_to_oracle(
+        scripted, state, finding, poc, designatable=designatable, in_validate_span=False
+    )
+
+
+def _twin_setup(ctx, oracle):  # noqa: ANN001, ANN202, F811
+    state, finding = _pov_state(ctx)
+    state.oracle_ledger = oracle_log.OracleLedger(wired=True)
+    scripted = _scripted(ctx, [])
+    scripted.oracle = oracle
+    return scripted, state, finding
+
+
+def test_another_findings_earlier_submission_of_the_same_bytes_is_not_inherited(ctx) -> None:  # noqa: F811
+    # F1의 중간 제출 A는 성공(호출 0). F2가 A를 submit하는데 그 재제출이 두 번 다 실패한다.
+    oracle = FakeOracle(vul_errors={1: _http(500), 2: _http(500)})
+    scripted, state, f1 = _twin_setup(ctx, oracle)
+    f2 = f1.model_copy(update={"finding_id": "F2"})
+
+    _submit(scripted, state, f1, b"A", designatable=False)
+    _submit(scripted, state, f2, b"A", designatable=True)
+
+    ledger = state.oracle_ledger
+    assert len(oracle.vul_calls) == 3
+    assert ledger.candidates == [] and ledger.reused == 0
+    assert ledger.none_reason() == oracle_log.REASON_ALL_VUL_FAILED
+
+
+def test_the_same_finding_with_different_bytes_is_not_inherited(ctx) -> None:  # noqa: F811
+    # 같은 finding의 중간 제출은 A, submit은 B - B의 재제출이 실패해도 A로 대신하지 않는다.
+    oracle = FakeOracle(vul_errors={1: _http(500), 2: _http(500)})
+    scripted, state, f1 = _twin_setup(ctx, oracle)
+
+    _submit(scripted, state, f1, b"A", designatable=False)
+    _submit(scripted, state, f1, b"B", designatable=True)
+
+    ledger = state.oracle_ledger
+    assert ledger.candidates == [] and ledger.reused == 0
+    assert ledger.none_reason() == oracle_log.REASON_ALL_VUL_FAILED
+
+
+def test_the_same_finding_and_bytes_is_inherited_in_the_same_setup(ctx) -> None:  # noqa: F811
+    # 위 둘의 대조군 - 같은 장치에서 조건이 맞으면 이어받는다(두 음성이 장치 탓으로 초록이 아니다).
+    oracle = FakeOracle(vul_errors={1: _http(500), 2: _http(500)})
+    scripted, state, f1 = _twin_setup(ctx, oracle)
+
+    _submit(scripted, state, f1, b"A", designatable=False)
+    _submit(scripted, state, f1, b"A", designatable=True)
+
+    assert [a.reused_intermediate for a in state.oracle_ledger.candidates] == [True]
