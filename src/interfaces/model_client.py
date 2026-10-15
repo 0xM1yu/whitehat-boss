@@ -86,6 +86,8 @@ def error_detail(exc: BaseException) -> str:
 class ModelGatewayError(RuntimeError):
     """게이트웨이에 도달하지 못했거나 HTTP 오류. 재시도 대상이 아니다.
 
+    (예외 하나: 연결 단절은 어댑터가 이 예외를 올리기 전에 짧게 재시도한다.)
+
     **`status`가 러너의 판정 입력이다.** 요청 하나가 거절된 것(400·413·422 — 컨텍스트
     초과가 여기 온다)과 서버 쪽 사건(연결 실패·타임아웃·계약 밖 200이면 `None`, 서버 오류면
     5xx, 이 밖의 4xx도 같다)은 같은 예외에 뭉쳐 있었고, 그래서 러너가 가릴 수단이 없었다.
@@ -339,6 +341,12 @@ class AttemptRecord(HarnessModel):
     # 위 텍스트를 실어 온 키 이름. `reasoning is None`이면 `None`이다. 둘 다 있으면
     # `reasoning`이 이긴다.
     reasoning_field: ReasoningField | None = None
+    # 이 시도의 요청이 연결 단절로 다시 나간 횟수와 그동안 잔 시간(초) - 어댑터가 재시도를 안에서
+    # 삼켜 한 건으로 내지 않게 trace까지 싣는다(`model_call.attempt_reconnects`·
+    # `attempt_reconnect_wait_s`). `0`은 재시도가 없었다는 뜻이다. 기본 Fake는 `attempt_log`를
+    # 안 싣고(trace의 두 키 `null`) 대본(`scripted_attempts`)을 줄 때만 `0`이다.
+    reconnects: int = Field(default=0, ge=0)
+    reconnect_wait_s: float = Field(default=0.0, ge=0)
 
 
 class ModelResult(HarnessModel, Generic[SchemaT]):

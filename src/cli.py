@@ -1584,7 +1584,9 @@ def _terminate_as_exit() -> Iterator[None]:
       돌려준다.
     - **첫 신호 뒤에는 두 신호를 무시한다** — 내림 도중에 온 재촉이 내림을 끊으면 서버가 남는다.
       끊어야 하면 KILL이고 그것은 감독자 몫이다.
-    - **못 받는 것** — KILL·OOM·전원에는 내림이 안 돈다(장비 쪽 감시자 몫이다). 내림이 이미 도는
+    - **못 받는 것** — KILL·OOM·전원에는 내림이 안 돈다(마감을 켠 감시자 몫 — 기본은 마감이
+      없어 사람이 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`로 내린다,
+      `tools/serve/guard.sh` 머리 주석 1)). 내림이 이미 도는
       중에 온 **첫** 신호는 그 내림을 끊는다. 신호로 끝난 run은 `run_manifest.json`을 안 남긴다 —
       매니페스트는 러너의 `finally` 뒤에 쓴다(Ctrl-C도 같다).
     - 메인 스레드에서만 건다(`signal.signal`의 제약) — 다른 스레드에서는 아무것도 안 한다. 끝나면

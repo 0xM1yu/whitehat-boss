@@ -110,13 +110,15 @@ def _tail_whitespace_verdicts(
 def _attempt_fields(
     log: Sequence[AttemptRecord], texts: Sequence[str | None] = ()
 ) -> dict[str, TraceValue]:
-    """시도별 출력 토큰·종료 사유·꼬리 판정을 `model_call`의 세 키로 (#550·#79). 정본: `trace.py`.
+    """시도별 출력 토큰·종료 사유·꼬리 판정·연결 재시도를 `model_call`의 다섯 키로 (#550·#79).
+
+    정본: `trace.py`.
 
     **값은 JSON 배열 문자열이다**(`TraceValue`가 스칼라라서). 쉼표로 잇지 않는 것은 미측정 칸
     (`null`)을 빈 칸이나 지어낸 문자열로 쓰지 않으려는 것이다 — `json.loads`로 읽으면 `None`이
     `None`으로 온다.
 
-    **`log`가 비면 두 키 모두 `None`이다** — 어댑터가 안 실은 호출(Fake·소비를 안 든 예외)이거나,
+    **`log`가 비면 다섯 키 모두 `None`이다** — 어댑터가 안 실은 호출(Fake·소비를 안 든 예외)이거나,
     실었는데 잃은 호출(측정된 뒤 생 예외가 `complete()`를 뚫은 경우)이다. 둘은 여기서 안 갈린다
     (`trace.py` 읽는 규칙 2). `"[]"`이 아니다: 시도가 없었다는 뜻으로 읽히고, 키 집합은 성공·실패
     행에서 같아야 한다.
@@ -126,12 +128,18 @@ def _attempt_fields(
             "attempt_output_tokens": None,
             "attempt_finish_reasons": None,
             "attempt_tail_whitespace_only": None,
+            "attempt_reconnects": None,
+            "attempt_reconnect_wait_s": None,
         }
     tails = _tail_whitespace_verdicts(log, texts)
     return {
         "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
         "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
         "attempt_tail_whitespace_only": json.dumps(tails, separators=(",", ":")),
+        "attempt_reconnects": json.dumps([a.reconnects for a in log], separators=(",", ":")),
+        "attempt_reconnect_wait_s": json.dumps(
+            [round(a.reconnect_wait_s, 3) for a in log], separators=(",", ":")
+        ),
     }
 
 

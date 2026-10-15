@@ -91,7 +91,8 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
         ("pov", "v5"),
         ("pov", "v6"),
         ("pov", "v7"),
-        ("pov", "v8"),  # 2026-10-15 - 서빙 판
+        ("pov", "v8"),
+        ("pov", "v9"),  # 2026-10-15 - 서빙 판
         ("auditor", "v7"),
     ],
 )
@@ -136,8 +137,9 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
     # 같은 사고가 난다.
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v6"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v7"),
-    # v8이 지금 서빙 판이다(2026-10-15)
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v8"),
+    # v9가 지금 서빙 판이다(2026-10-15)
+    ("pov", pov, "_WIDE_INPUT_VERSIONS", "v9"),
     ("auditor", auditor, "_CONTENT_AWARE_VERSIONS", "v7"),
 ])
 def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, attribute, version):

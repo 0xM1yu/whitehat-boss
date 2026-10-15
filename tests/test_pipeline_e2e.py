@@ -5926,18 +5926,25 @@ def test_an_auditor_that_never_succeeds_stops_the_run_even_when_the_scout_seat_d
     assert not result.record.is_complete, "Auditor가 한 번도 성공 못 했는데 run이 완주로 남는다"
 
 
-def test_a_critic_that_never_succeeds_stops_the_run(
+def test_a_critic_that_never_succeeds_still_lets_pov_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """고른 Finding 전부에서 Critic이 실패하면 7단계는 아무것도 못 봤다 (D88)."""
+    """**고른 Finding 전부에서 Critic이 실패해도 8단계가 돈다 (2026-10-15 @danielcho02 결정).**
+
+    판정을 못 받은 Finding은 Critic 미경유로 PoV 풀에 남는다(ADR 0015 결정 4 ⏵). 예전에는
+    여기서 7단계가 서서 그 결정이 무너졌다(D88 성공 0 백스톱). 「못 봤다」는 경고·trace가 알린다.
+    """
     _every_call_fails(monkeypatch, Role.CRITIC, _critic_context_overflow())
 
     result, trace_path = _run(tmp_path, name="critic-starved", before=_with_index())
 
     critic = _calls(trace_path, Role.CRITIC)
     assert len(critic) > 1, "전제: Critic이 둘 이상을 봤다 — 하나뿐이면 첫 건 정지와 못 가른다"
-    assert result.record.stopped_after == int(Stage.CRITIC)
-    assert not result.record.is_complete
+    assert len(_of(_events(trace_path), "critic_failed")) == len(critic), "전제: 전부 실패했다"
+    assert result.record.stopped_after is None
+    assert result.record.is_complete
+    assert _of(_events(trace_path), "pov_generated"), "Critic 미경유 Finding에 PoV가 안 돌았다"
+    assert any("7단계 critic 호출 실패" in w for w in result.warnings), result.warnings
 
 
 def test_a_seat_whose_only_attempt_fails_saw_nothing(
