@@ -27,13 +27,17 @@
 ⚠ **교체판의 근거는 그 둘에 아직 없다** — 오늘 이 저장소가 드는 것은 실험팀 2026-09-20 결과와
 `config/models.yaml`의 「확정 로스터」 주석이고, 선정을 가른 실측(GT 품질·처리량)은 아직 registry에
 안 들어왔다([CLAUDE.md](CLAUDE.md) §0).
+**→ 2026-10-14 `scout_boundary`를 `qwen3-14b`로 바꿨다** — 실험팀 프롬프트 개선 작업에서 정해진 교체다.
+원천은 팀 Notion이고 이 저장소는 배선만 든다([ADR 0012](docs/decisions/0012-harness-canon-v2.md) 결정 5).
+그 결과 **Scout 세 자리가 한 키**이고 `seccoderx-8b`는 로스터에서 내려와 registry에서 지웠다(§3 ②).
+⚠ **선정을 가른 실측은 이 저장소에 없다** — run ID 없음(CLAUDE.md §0).
 
 | 자리 | registry 키 | registry 등재 |
 | --- | --- | --- |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | ✅ |
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | ✅ |
 | 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `qwen3-14b` | ✅ |
-| 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `seccoderx-8b` | ✅ |
+| 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `qwen3-14b` | ✅ |
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
 | 5단계 · Auditor | `qwen3.8-27b` (`reasoning_effort: xhigh`) | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
@@ -43,19 +47,26 @@
 함께 올렸다. 좌석 배치는 안 바꿨다). ⚠ **위 표의 CWE 열거보다 서빙 프롬프트가 두 칸 넓다** —
 `scout_memory/v4/prefix.md`가 `CWE-822`를, `scout_injection/v4/prefix.md`가 `CWE-22`를 더 든다.
 표를 안 고친 것은 4단계 CWE 분담이 팀이 정한 것이기 때문이다 — 확인은 실험팀 몫이다(이슈 #531, 2026-10-12 닫음 — 하네스 저장소가 정할 일이 아니다).
-⚠ **boundary 좌석(`seccoderx-8b`)에서 v4를 돌린 실측은 없다** — 그 프롬프트의 원본 실험은 `qwen3-14b`로 쟀다.
+~~⚠ **boundary 좌석(`seccoderx-8b`)에서 v4를 돌린 실측은 없다** — 그 프롬프트의 원본 실험은 `qwen3-14b`로 쟀다.~~
+⏵ **2026-10-14 — 좌석이 `qwen3-14b`가 되며 그 어긋남은 사라졌다**(프롬프트의 원본 실험과 같은 키다).
+⚠ **그렇다고 이 좌석이 실측됐다는 말은 아니다** — 원본 실험은 v4 자체가 아니라 그 원본(실험 v9)을 쟀고,
+`qwen3-14b`의 `checksum`은 여전히 0이다.
 
-⚠ **scout_memory·injection은 같은 키 `qwen3-14b` 한 벌이다**(2026-09-25부터 — 그 전에는
-memory·boundary가 `seccoderx-8b` 한 벌이었다) — 프롬프트가 역할 폴더로 갈린다(`scout_memory/v3`=옛
-실험 v14s · `scout_injection/v3`). 같은 weights라 별칭 키를 새로 두지 않는다 — 같은 서버(포트)를 두
-자리가 함께 쓴다. ⚠ **그 결과 공동오답 행렬(ADR 0010 §3 · `candidate.py` `scout_member`)의
-memory↔injection 축이 재는 것은 모델 차이가 아니라 프롬프트 차이다** — 그 축에서 "모델을 자리
-사이에서 옮기는 근거"는 성립하지 않는다. boundary만 다른 키(`seccoderx-8b`)라 모델 대비가 산다.
-⚠ **부수로 `prompt_template_version`이 모델 엔트리 단위이므로 memory·injection을 독립으로 버전 올릴
-수 없다**(D67) — memory 프롬프트를 새 버전으로 올리면 injection에도 그 버전 폴더가 있어야 한다.
-파인튜닝 체크포인트가 새 키로 들어오면 풀린다. ⚠ **프롬프트는 이 교체에서 안 바꿨다** — boundary를
-SecCoderX가 파인튜닝에 쓴 전용 프롬프트로 바꾸는 것(출력 스키마가 크게 달라 하네스 수정이 따른다)과
-memory 프롬프트 개선(스키마 재조정 가능)은 실험팀이 변경을 정리해 공유한 뒤의 일이다.
+⚠ **Scout 세 자리가 같은 키 `qwen3-14b` 한 벌이다**(⏵ 2026-10-14 — memory·injection은 2026-09-25부터,
+boundary가 그날 합류했다. 그 전에는 memory·boundary가 `seccoderx-8b` 한 벌이었다) — 프롬프트가 역할
+폴더로 갈린다(`scout_{memory,boundary,injection}/v4`). 같은 weights라 별칭 키를 새로 두지 않는다 —
+같은 서버(포트)를 세 자리가 함께 쓴다. ⚠ **그 결과 공동오답 행렬(ADR 0010 §3 · `candidate.py`
+`scout_member`)의 세 축이 재는 것은 전부 모델 차이가 아니라 프롬프트 차이다** — 그 행렬에서
+"모델을 자리 사이에서 옮기는 근거"는 더는 성립하지 않는다.
+⏵ **2026-10-14 — 그 전까지는 boundary만 다른 키라 모델 대비가 살아 있었고, 이 교체가 그것을 없앴다.**
+모델 대비를 다시 세우려면 자리 하나에 다른 키를 넣는 수밖에 없다.
+⚠ **부수로 `prompt_template_version`이 모델 엔트리 단위이므로 이제 세 자리를 독립으로 버전 올릴
+수 없다**(D67 — ⏵ 2026-10-14 범위가 둘에서 셋으로 넓어졌다) — 한 역할의 프롬프트를 새 버전으로
+올리면 나머지 둘에도 그 버전 폴더가 있어야 한다.
+파인튜닝 체크포인트가 새 키로 들어오면 풀린다. ⚠ **프롬프트는 2026-09-25 교체에서 안 바꿨다** —
+~~boundary를 SecCoderX가 파인튜닝에 쓴 전용 프롬프트로 바꾸는 것(출력 스키마가 크게 달라 하네스 수정이
+따른다)과~~ memory 프롬프트 개선(스키마 재조정 가능)은 실험팀이 변경을 정리해 공유한 뒤의 일이다.
+⏵ **2026-10-14 — 취소선 쪽은 좌석이 `qwen3-14b`가 되며 선택지에서 사라졌다.**
 
 **Auditor의 A/B가 소멸했다.** 2026-09-21 교체가 5단계를 `qwen3.6-35b-a3b` 한 자리로 놓으면서,
 문헌이 정면으로 갈린 둘을 실측으로 가르려던 갈래가 §1에서 없어졌다 — B안 `nemotron-3-super-120b-a12b`도
@@ -87,11 +98,13 @@ memory 프롬프트 개선(스키마 재조정 가능)은 실험팀이 변경을
 | --- | --- | --- | --- | --- | --- |
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | fp16 | 1.76 GiB | 해당 없음 | — |
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | bf16 | 8.12~8.15 GiB | 해당 없음 | — |
-| 4단계 · boundary | `seccoderx-8b`(SecCoderX RM, Qwen3-8B 기반) | bf16 | 16.05 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다(스모크 §3 실험 1) | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
-| 4단계 · memory·injection | `qwen3-14b` | bf16 | 28.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 위와 같다 |
+| 4단계 · Scout 셋(memory·boundary·injection) | `qwen3-14b` | bf16 | 28.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
 | 5단계 · Auditor | `qwen3.8-27b`(dense 27.8B · GDN hybrid · VLM) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값, HF safetensors 크기 합) | **사고를 켰다**(2026-09-26) — `reasoning_effort: xhigh` · ⏵ **2026-10-03 사고 상한 57,344 · 출력 상한 65,536**(그 전 28,672·32,768 — @danielcho02 승인 · 근거와 한계는 `config/models.yaml` 예산 절의 그 ⏵. 속도 근거가 외부 보고 4.5에서 vast 실측 16.2 tok/s로 바뀐 것이 올린 조건이다). 우리 장비에서 사고 켠 판을 띄운 적은 없다 | 등급이 있다 — `xhigh`(기본)·`medium`·`low`(`high`는 템플릿이 예외를 낸다). reasoning parser(`qwen3`)를 걸어야 사고가 살고 `thinking_token_budget`도 받는다(hybrid라 V1 러너 — vLLM 0.27.1 소스 판독, 미실측) |
 | 7단계 · Critic | `gpt-oss-20b` | MXFP4(원래 형식) | 14.65 GiB | `reasoning_effort: high` | 등급 low·medium·high가 harmony system message에 실제로 들어간다. 길이 예산은 못 쓴다 |
 | 8단계 · PoV | `feyospace-v1-small`(Qwen3.8-27B 사이버 post-train · Auditor와 같은 베이스) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값 — 파라미터 BF16 27,781,427,952 × 2 B ÷ 2³⁰ = 51.747 GiB. 12개 파일의 크기 합은 안 쟀다 — Auditor 행의 51.75는 그쪽 18개 파일 합이다) | **사고를 켰다** — `reasoning_effort: xhigh` · 사고 상한 28,672 · 출력 상한 32,768(Auditor 손잡이 물려받음) · 우리 장비 미실측 | Auditor와 같다 — `xhigh`(기본)·`medium`·`low` · parser(`qwen3`) 걸어야 사고가 살고 `thinking_token_budget`을 받는다(hybrid V1 러너) |
+
+⏵ **2026-10-14 — boundary 행(`seccoderx-8b` · 적재 16.05 GiB 실측)을 접었다.** 좌석이 `qwen3-14b`가 되어
+Scout 셋이 한 행이다. 그 16.05 GiB는 지워진 것이 아니라 `docs/experiments/` 아래 스모크 보고서에 남아 있다.
 
 ⚠ 「추론 손잡이」 칸은 vLLM `v0.27.1` 태그의 소스에서 읽은 것이다(줄 번호는 2026-09-24에 그 태그와 다시 대조했다 ·
 parser 이름 `qwen3`·`deepseek_r1`은 둘 다 `vllm/reasoning/__init__.py`에 등록돼 있다) — `vllm/v1/engine/input_processor.py:111-125`(V2 러너나

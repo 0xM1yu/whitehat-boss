@@ -82,6 +82,7 @@ v8 이상 run은 `rebut_ids_only`도 분자에 더하므로(2026-10-15) 그 앞 
 | 정책 A/B 비교 | `policy_decision` | 정책별 route 분포 (v1은 기준선) |
 | 발급값 이탈 | `issued_override` | `fields`별 `count(*)`. **이벤트 부재 = 발급값 그대로**(아래) |
 | 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
+| Scout 창 폴백 | `scout_window_fallback` | FACTS.target이 ±창. **부재 = 심볼 범위** |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
 | 0단계 분류 | `preprocess_classified` | `unknown / files`. run당 1건(0단계 예외면 0) |
@@ -910,6 +911,17 @@ class EventKind(StrEnum):
     # run이 그렇다). `issued_override`가 아닌 이유는 그 이벤트의 읽기(부재 = 모델이 발급값을
     # 그대로 썼다)를 지키려는 것이다 — `location`은 발급값이 아니다(`RunContext.stamp_issued`).
     SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
+    # Scout `source` 선언의 SOURCE가 **심볼 범위가 아니라 entry ±창**으로 폴백했다
+    # (`entry_scope.enclosing_scope`가 entry 줄을 품는 심볼을 못 찾았다). 내는 곳은
+    # `nodes/scout._ask_model`이고 폴백한 호출마다 1행이다. 이때 요청의 `FACTS.target`은
+    # `{symbol: 슬라이스가 든 심볼의 이름, line_start: l-창, line_end: l+창}`이라 `symbol`은 그
+    # 범위의 이름이 아니고 `line_end`는 파일 끝을 넘을 수 있다. **요청 바이트는 안 바꿨다**(서빙 v4
+    # 요청 payload - `docs/agent-contracts.md` §4 규칙 1) - 이 이벤트가 그 사실을 남기는 유일한
+    # 자리다. 필드: `labeled_symbol`(요청에 실린 이름, 없으면 빈 문자열) · `line_start` ·
+    # `line_end`(요청에 실린 값) ·
+    # `shown_end`(SOURCE가 실제로 닿은 마지막 줄 - `line_end`가 이보다 크면 EOF 너머다).
+    # **이벤트 부재 = 심볼 범위**(또는 슬라이스 없음·`slice` 선언).
+    SCOUT_WINDOW_FALLBACK = "scout_window_fallback"
     # 단계 경계 모델 교대 한 번 (ADR 0012 Phase 6.5 — 콜드 재기동). 내는 곳은
     # `RunContext.record_model_swap`이다.
     #

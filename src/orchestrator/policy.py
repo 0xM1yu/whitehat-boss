@@ -114,8 +114,9 @@ class FixedThresholdPolicy:
         """C-2 / C-3.
 
         **판정은 최종 신호다**(ADR 0012 결정 2) — `signals`에 `"signal"`이 있으면(v3) 점수를
-        보지 않고 그 신호로 가른다. review는 약한 것도 승격 대상이다(v3 프롬프트 계약, 점수는
-        `basis`에만 참고로 남는다). 없으면(v1·v2, 또는 세 신호 밖 접두) 지금 점수 경로다.
+        보지 않고 그 신호로 가른다. review는 약한 것도 승격 대상이다(v3 프롬프트 계약). 신호 경로의
+        `basis`는 `{"signal": ...}`뿐이다 - 점수는 판정에 안 쓰이고 `Candidate.score`에만 남는다.
+        없으면(v1·v2, 또는 첫 reason code가 세 신호 밖) 지금 점수 경로다.
         """
         signal = request.signals.get("signal")
         if signal is not None:

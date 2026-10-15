@@ -548,8 +548,8 @@ def build_deps(
         로드(수 MB 파싱)와 "파일이 있는데 깨짐 → 예외"가 `runner._step_retrieval`이 아니라 조립
         시점에 일어난다. 의도다 — `token_counter`는 **모델을 부르기 전에** 나와야 하고
         (`orchestrator/trace.py`), 깨진 토크나이저로 도는 run은 첫 호출 전에 죽는 편이 낫다.
-        `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않고, `doctor`는
-        `describe_wiring()`만 쓰므로 이 경로를 지나지 않는다.
+        `counter_for_source`가 캐시하므로 로드 횟수는 늘지 않는다. `doctor`는 `build_deps()`를
+        지나지 않지만 `cli._check_tokenizers`가 같은 판정을 따로 돌려 깨짐을 ERROR로 보고한다.
 
         **해석된 경로는 담지 않는다** — trace 재현성 기준이 경로 절댓값을 금지하고
         (`orchestrator/trace.py`) HF 캐시 경로는 `Path.home()`을 지난다. `source`에 리비전이
