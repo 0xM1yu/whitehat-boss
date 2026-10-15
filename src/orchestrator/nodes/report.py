@@ -139,7 +139,7 @@ class Report:
     oracle_final: dict[str, str | None] | None = None
 
     def _oracle_lines(self) -> list[str]:
-        """최종 PoC 줄. 판정 값은 trace 밖 `oracle/verdict.json`이 든다 - 여기서 지어내지 않는다."""
+        """최종 PoC 줄. 판정 값은 trace 밖 사이드카가 든다 - 여기서 지어내지 않는다."""
         final = self.oracle_final
         if final is None:
             return []
@@ -158,7 +158,10 @@ class Report:
             parts.append(f"대상 Finding {where}")
         if final.get("poc_sha256"):
             parts.append(f"PoC sha256 {final['poc_sha256']}")
-        pointer = " (판정 값은 oracle/verdict.json)" if final.get("status") == "scored" else ""
+        pointer = ""
+        if final.get("status") == "scored":
+            ref = final.get("record_ref")
+            pointer = f" (판정 값은 {ref})" if ref else " (판정 파일 없음)"
         return ["### 최종 PoC (채점기)", "", " · ".join(parts) + pointer, ""]
 
     def _grade_of(self, finding: Finding) -> str | None:

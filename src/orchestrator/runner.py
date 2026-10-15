@@ -1839,11 +1839,11 @@ def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
 
 
 def _oracle_final_summary(
-    trace: TraceWriter, *, wired: bool = False
+    trace: TraceWriter, *, wired: bool
 ) -> dict[str, str | None] | None:
     """`oracle_final` 이벤트(run당 0~1건)를 리포트의 최종 PoC 줄 재료로 줄인다.
 
-    이벤트가 없으면 채점기를 붙인 run(`wired`)은 `not_reached`(사이드카 `final`과 같은 판정),
+    이벤트가 없으면 채점기를 붙인 run(`wired`, 필수)은 `not_reached`(사이드카 `final`과 같은 판정),
     안 붙인 run은 `None`이다."""
     for event in trace.events:
         if event.kind is EventKind.ORACLE_FINAL:
@@ -1856,6 +1856,8 @@ def _oracle_final_summary(
                 "error": _opt_str(data.get("error")),
                 "subject": event.subject_id,
                 "poc_sha256": _opt_str(data.get("poc_sha256")),
+                # 사이드카를 못 썼으면 `None`이다 - 리포트가 있는 척 가리키지 않는다.
+                "record_ref": _opt_str(data.get("record_ref")),
             }
     return {"status": oracle_log.STATUS_NOT_REACHED} if wired else None
 
