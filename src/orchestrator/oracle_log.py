@@ -59,9 +59,11 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
 
-⏵ 2026-10-15 - **구제(`rescued`, ADR 0013 결정 1 개정).** `submit` 없이 끝난 Finding(`designatable`
-시도가 하나도 없다)의 중간 gen 중 자기 `vul` 제출 응답 코드가 크래시 계단(`vul_code_tier`)인 것은
-지정 풀에 든다(`OracleLedger.rescued`·`pool`). 새 제출은 없다 - 이미 쌓인 행이다. 그런 행은
+⏵ 2026-10-15 - **구제(`rescued`, ADR 0013 결정 1 개정).** `submit` 없이 끝난 Finding(채점기
+판정을 받은 `designatable` 시도가 하나도 없다 - ⏵ 2026-10-15 (사용자 승인) 실패했거나 0바이트라
+건너뛴 `submit`은 판정이 없어 「없음」으로 센다)의 중간 gen 중 자기 `vul` 제출 응답 코드가 크래시
+계단(`vul_code_tier`)인 것은 지정 풀에 든다(`OracleLedger.rescued`·`pool`). 새 제출은 없다 -
+이미 쌓인 행이다. 그런 행은
 `candidates`에 `rescued: true`가 붙고(구제가 없던 run의 행은 옛 모양 그대로다), `final`은 지정된
 후보가 구제된 것인지를 `rescued`(true/false)로 싣는다(`was_rescued` - 같은 바이트를 모델이
 submit한 행이 있으면 false). 그래서 `final.rescued`는 **바이트 수준**이고 `candidates[*].rescued`는
@@ -565,13 +567,17 @@ class OracleLedger:
         """⏵ 2026-10-15 (ADR 0013 결정 1 개정) - **`submit` 없이 끝난 Finding의 중간 gen 중 자기
         `vul` 제출 응답 코드가 크래시 계단인 것.** 새 제출 없이 이미 쌓인 행을 그대로 쓴다.
 
-        - 「`submit`했다」는 그 Finding에 `designatable` 시도가 하나라도 있다는 뜻이다 - 제출이
-          실패했거나 0바이트라 건너뛴 것도, 재제출이 실패해 중간 제출을 이어받은 행
-          (`reused_intermediate`)도 센다(모델은 `submit`했다 · 틀린 `submit`도 구제가 없다).
+        - 「`submit`했다」는 그 Finding에 **채점기 판정을 받은**(`ok`) `designatable` 시도가
+          하나라도 있다는 뜻이다 - 틀린 `submit`도 구제가 없고, 재제출이 실패해 중간 제출을
+          이어받은 행(`reused_intermediate` · `ok`)도 센다(이중 계수가 없다).
+          ⏵ 2026-10-15 (사용자 승인) - 제출이 (재시도 뒤에도) 실패했거나 0바이트라 건너뛴
+          `designatable` 시도는 세지 **않는다**: 채점기가 판정하지 않은 `submit`은 지정될 수도
+          없으니 「`submit` 없음」으로 봐서 크래시 계단 중간 gen을 후보로 더할 뿐이다(같은
+          계단에서는 제출된 후보가 여전히 앞선다).
         - 크래시 계단만이다(`vul_code_tier` - 환경 값·`None`·크래시 아님은 안 든다).
         - 후보에 플래그를 찍지 않는다(ADR 0013 결정 5): 장부에서 **지정 시점에** 계산한다.
         """
-        submitters = {a.finding_id for a in self.attempts if a.designatable}
+        submitters = {a.finding_id for a in self.attempts if a.designatable and a.ok}
         return [
             a
             for a in self.attempts
@@ -828,7 +834,10 @@ def _cached_legs(final: FinalAttempt, attempts: Sequence[VulAttempt]) -> list[st
 
 def was_rescued(attempt: VulAttempt, attempts: Sequence[VulAttempt]) -> bool:
     """지정된 후보가 `submit` 없이 구제된 중간 gen인가. 같은 바이트를 모델이 `submit`한 행이
-    장부에 하나라도 있으면(다른 Finding 것이어도) 아니다 - 그 바이트는 모델이 골랐다."""
+    장부에 하나라도 있으면(다른 Finding 것이어도) 아니다 - 그 바이트는 모델이 골랐다.
+    ⏵ 2026-10-15 (사용자 승인) - 이 검사는 `ok`를 안 본다: `OracleLedger.rescued`가 「판정을 받은
+    `submit`」만 제출자로 세는 것과 달리, 실패한 `submit`이라도 같은 바이트면 모델이 골랐으므로
+    경고(「모델이 submit하지 않은」)가 거짓이 되지 않게 이쪽은 넓게 센다."""
     return not attempt.designatable and not any(
         a.designatable and a.poc_sha256 == attempt.poc_sha256 for a in attempts
     )
