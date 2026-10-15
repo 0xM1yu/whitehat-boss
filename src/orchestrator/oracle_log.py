@@ -39,7 +39,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 때만)와 `reused_intermediate`(참일 때만)를 싣고 이어받은 행은 앞선 제출의 `poc_id`·
 `response_exit_code`·`cached`를 그대로 든다. 재시도한 호출의 `cached`·`fix_cached`는 `null`이다 -
 재시도 직전에 읽은 서버 장부에 이 run의 첫 호출이 쓴 행이 보일 수 있어 옛 판정인지 가를 수 없다.
-`final`은 `finalize_calls`(2일 때만)를 싣는다. 호출 수가 2인 행은 첫 호출의 실패도 `first_error`
+`final`은 `finalize_calls`(2일 때만)를 싣는다(trace `oracle_final`도 같다). 호출 수가 2인 행은
+첫 호출의 실패도 `first_error`
 (예외 클래스 이름)·`first_error_status`(HTTP 상태, 아니면 `null`)·`retry_wait_s`(재시도 전에 기다린
 초 - 429만 0보다 크다)로 싣는다 - `error`는 마지막 호출의 것이라 처음 원인이 안 남는다.
 ⚠ **덮지 못하는 경우:** 모델이 `poc_sha256` 없이
