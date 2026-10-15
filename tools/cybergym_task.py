@@ -68,20 +68,26 @@ class Failed(Exception):
     """다운로드·검증 실패 — 종료 코드 1."""
 
 
+class Mismatch(Failed):
+    """응답이 트리 API와 다르다(크기 초과·해시 불일치) — 응답이 결정적이라 다시 걸지 않는다."""
+
+
 def _open(url: str):
     return urllib.request.urlopen(url, timeout=TIMEOUT_S)  # noqa: S310 — https 고정 URL만 만든다
 
 
 def _retrying(action, what: str):
-    """HF 일시 오류(5xx·429·연결·중간 끊김·해시 불일치)만 짧게 다시 건다. 4xx는 바로 실패."""
+    """HF 일시 오류(5xx·429·연결·중간 끊김)만 짧게 다시 건다. 4xx·`Mismatch`는 바로 실패."""
     for attempt in range(1, ATTEMPTS + 1):
         try:
             return action()
+        except Mismatch:
+            raise
         except urllib.error.HTTPError as error:
             if error.code < 500 and error.code != 429:
                 raise Failed(f"{what}: HTTP {error.code}") from error
             last = f"HTTP {error.code}"
-        except (OSError, http.client.HTTPException, Failed) as error:
+        except (OSError, http.client.HTTPException) as error:
             last = str(error) or type(error).__name__
         if attempt < ATTEMPTS:
             time.sleep(RETRY_DELAY_S)
@@ -115,10 +121,16 @@ def expected_files(family: str, number: str, revision: str) -> dict[str, tuple[s
     try:
         entries = json.loads(_retrying(read, "트리 API"))
         by_path = {entry["path"].rsplit("/", 1)[-1]: entry for entry in entries}
-        return {
-            name: (by_path[name]["lfs"]["oid"], int(by_path[name]["lfs"]["size"]))
-            for name in DATA_FILES
-        }
+        found = {}
+        for name in DATA_FILES:
+            lfs = by_path[name].get("lfs")
+            if not lfs:
+                # 검증값을 약하게 바꾸지 않는다 — sha256이 없으면 받지 않는다.
+                raise Failed(
+                    f"{name}은 HF에서 LFS가 아니라 sha256 검증값이 없다 — 받지 않는다: {url}"
+                )
+            found[name] = (lfs["oid"], int(lfs["size"]))
+        return found
     except (ValueError, KeyError, TypeError, AttributeError) as error:
         raise Failed(
             f"트리 API 응답에서 {DATA_FILES}의 lfs.oid·size를 못 읽었다"
@@ -139,11 +151,15 @@ def _download(url: str, dest: Path, sha256: str, size: int) -> None:
         digest, total = hashlib.sha256(), 0
         with _open(url) as response, dest.open("wb") as handle:
             while chunk := response.read(_CHUNK):
+                total += len(chunk)
+                if total > size:  # 끝없는 응답이 디스크를 채우지 않게 읽는 도중에 끊는다
+                    raise Mismatch(f"받은 바이트가 트리 API의 {size} B를 넘었다")
                 handle.write(chunk)
                 digest.update(chunk)
-                total += len(chunk)
-        if (digest.hexdigest(), total) != (sha256, size):
-            raise Failed(f"받은 바이트가 트리 API와 다르다(sha256 {digest.hexdigest()}, {total} B)")
+        if total < size:  # 중간에 끊긴 것 — 일시 실패다
+            raise OSError(f"{size} B 중 {total} B만 받고 끊겼다")
+        if digest.hexdigest() != sha256:
+            raise Mismatch(f"받은 바이트의 sha256이 트리 API와 다르다({digest.hexdigest()})")
 
     _retrying(once, f"다운로드 {dest.name}")
 
@@ -155,12 +171,20 @@ def prepare_out(out: Path, expected: dict[str, tuple[str, int]]) -> list[str]:
     """
     if out.exists() and not out.is_dir():
         raise InputRejected(f"--out이 디렉터리가 아니다: {str(out)!r}")
-    out.mkdir(parents=True, exist_ok=True)
-    allowed = {*DATA_FILES, SUBMIT_SCRIPT_NAME}
-    extras = sorted(entry.name for entry in out.iterdir() if entry.name not in allowed)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        allowed = {*DATA_FILES, SUBMIT_SCRIPT_NAME}
+        extras = sorted(entry.name for entry in out.iterdir() if entry.name not in allowed)
+    except OSError as error:
+        raise InputRejected(f"--out을 만들거나 읽을 수 없다({error}): {str(out)!r}") from error
     if extras:
+        hint = (
+            " — `.part-*`는 강제 종료로 남은 임시 폴더라 지워도 된다"
+            if any(name.startswith(".part-") for name in extras)
+            else ""
+        )
         raise InputRejected(
-            f"--out에 이 도구가 만든 것이 아닌 항목이 있다: {', '.join(map(repr, extras))} — "
+            f"--out에 이 도구가 만든 것이 아닌 항목이 있다: {', '.join(map(repr, extras))}{hint} — "
             "빈 디렉터리를 쓴다(정답 자료가 섞이지 않게)"
         )
     missing = []
@@ -184,6 +208,11 @@ def write_submit_sh(out: Path, task: str, server: str, *, force: bool) -> str:
             raise InputRejected(
                 f"기존 {SUBMIT_SCRIPT_NAME}을 못 읽거나 다른 과제의 것이다 "
                 "— --force-submit으로 다시 만든다"
+            )
+        if existing.server != server:
+            raise InputRejected(
+                f"기존 {SUBMIT_SCRIPT_NAME}의 서버({existing.server})가 --server({server})와 "
+                "다르다 — --force-submit으로 새 agent_id와 함께 다시 만든다"
             )
         return existing.agent_id
     agent_id = uuid.uuid4().hex
@@ -223,11 +252,11 @@ def run(args: argparse.Namespace) -> int:
     # 임시 폴더는 `--out` 안에 둔다 — 같은 파일시스템이라 검증 뒤 이름 바꾸기가 원자적이고,
     # 실패하면 폴더째 지워져 검증 안 된 파일이 남지 않는다.
     with tempfile.TemporaryDirectory(prefix=".part-", dir=out) as tmp:
-        for name in missing:
+        for name in missing:  # 전부 받아 검증한 **뒤에** 옮긴다 — 둘째가 실패해도 첫째가 안 남는다
             url = f"{_base(family, number, args.revision, 'resolve')}/{name}"
-            part = Path(tmp) / name
-            _download(url, part, *expected[name])
-            os.replace(part, out / name)
+            _download(url, Path(tmp) / name, *expected[name])
+        for name in missing:
+            os.replace(Path(tmp) / name, out / name)
     agent_id = write_submit_sh(out, args.task, args.server, force=args.force_submit)
     check_task_dir(out)  # 하네스 가드를 그대로 통과하는지
 
@@ -258,7 +287,7 @@ def main(argv: list[str] | None = None) -> int:
     except InputRejected as error:
         print(f"거절: {error}", file=sys.stderr)
         return 2
-    except Failed as error:
+    except (Failed, OSError) as error:  # OSError — 디스크·권한(입력이 아니라 환경 문제)
         print(f"실패: {error}", file=sys.stderr)
         return 1
 

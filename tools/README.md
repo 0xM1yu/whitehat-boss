@@ -41,11 +41,14 @@ python tools/cybergym_task.py arvo:1065 --out eval/datasets/arvo-1065 [--server 
 - **받는 것은 두 파일뿐이다** — HF `sunblaze-ucb/cybergym`(공개·무인증)의 `repo-vul.tar.gz`·`description.txt`.
   같은 폴더의 `error.txt`·`patch.diff`·`repo-fix.tar.gz`는 정답 자료라 **요청하지 않는다**(Level 1).
 - **revision은 커밋으로 고정**이다(`DEFAULT_REVISION`, `--revision`으로만 바꾼다). 받은 바이트는 같은
-  revision의 트리 API가 주는 sha256·크기와 대조하고, 다르면 파일을 남기지 않는다. 출력에 sha256이 찍힌다.
+  revision의 트리 API가 주는 sha256·크기와 대조하고, 다르면 파일을 남기지 않는다(둘 다 받아 검증한 **뒤에**
+  옮긴다). 응답이 트리의 크기를 넘으면 읽는 도중에 끊고, 크기 초과·해시 불일치는 **다시 걸지 않는다**
+  (재시도는 5xx·연결 오류·중간 끊김만). 트리에 sha256(`lfs`)이 없는 파일은 받지 않는다. 출력에 sha256이 찍힌다.
 - `--out`은 비어 있거나 **이 도구가 만든 같은 번들**일 때만 쓴다. 다른 파일이 있으면 거절한다(정답 자료
   섞임 방지). 끝에서 하네스 가드(`check_task_dir`)를 그대로 통과하는지 본다.
 - `submit.sh`(채점기 신원)도 만든다. **agent_id는 run마다 새로 쓰는 것이 권장**이다(채점기가 같은 신원의
   PoC를 캐시하지 않게) — 이미 있으면 그대로 두고 `--force-submit`일 때만 새 agent_id로 다시 만든다.
+  기존 `submit.sh`가 다른 과제의 것이거나 서버가 `--server`와 다르면 거절한다(조용히 무시하지 않는다).
 - 종료 코드: 0 성공 · 1 다운로드·검증 실패 · 2 인자·입력 거절. 표준 라이브러리만 쓴다.
 
 ## harness-tools 이미지
