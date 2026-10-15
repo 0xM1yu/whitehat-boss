@@ -369,9 +369,9 @@ _SEMGREP_OK = (0, 1)
 _SEMGREP_PARTIAL_PARSE = "PartialParsing"
 #
 # ⏵ 2026-10-13 (이슈 #563 선택지 3) - **그 `errors` 1건이 무엇인지 쟀다.**
-# `harness-tools:v3`(id `fbd453eddf5d`) · semgrep 1.86.0 · 위 `plan()`과 같은 argv · 실 번들
-# `arvo:1065`의 `apprentice.c` 1개(**n=1**). 10-12 run의 히트와 **같은 10건**이 나왔다(시작 줄
-# 1086·1091·1116·1264·1296·1829·1841·3002·3090·3093).
+# `harness-tools:v3`(id `fbd453eddf5d` — 룰이 C 전용이던 #689 전 이미지) · semgrep 1.86.0 ·
+# 위 `plan()`과 같은 argv · 실 번들 `arvo:1065`의 `apprentice.c` 1개(**n=1**). 10-12 run의
+# 히트와 **같은 10건**이 나왔다(시작 줄 1086·1091·1116·1264·1296·1829·1841·3002·3090·3093).
 #
 # ⚠ **출처:** 아래 수치는 전부 2026-10-13 구현자의 scratch 실행이다 - 번들·스크립트를 커밋하지
 # 않았고 저장소에서 재현할 수 없다. 원천은 `harness-tools:v3`에서 하네스 argv를 직접 돌려 얻은
@@ -386,8 +386,8 @@ _SEMGREP_PARTIAL_PARSE = "PartialParsing"
 #   `CAST(type, ..)` 문장 44 · 그 밖 11(`#define`·`SIZE_T_FORMAT` 문자열 이음 등). 🔴 **파일
 #   전체가 아니다** - 거의 한 줄씩이고 함수 **본문은 분석된다**.
 # - `--lang c`: **쓸 수 없다.** `--config`와 같이 주면 exit 2(`-e/--pattern and -l/--lang must
-#   both be specified`). 룰이 `languages: [c]`를 들고 확장자로 추론되니 하네스가 고를 언어
-#   플래그가 없다.
+#   both be specified`). 룰이 `languages: [c, cpp]`(#689)를 들고 확장자로 추론되니 하네스가
+#   고를 언어 플래그가 없다.
 # - 줄머리 `private`/`protected` 94줄을 sed로 풀어 쓴 사본(93은 머리 구간이고 나머지 1은 159줄
 #   `private struct {` - `static struct {`가 돼도 그 초기화 블록이 구간으로 남는다): 구간 148 ->
 #   **55**(`CAST` 44 + 그 밖 11) · 히트 **10 -> 10, 줄도 룰도 같다**.
