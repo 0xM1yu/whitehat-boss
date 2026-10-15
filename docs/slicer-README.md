@@ -533,13 +533,14 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   샤드·재개가 같은 `--description`을 안 주면 `Checkpoint mismatch: run_contract`/`Shard mismatch on run_contract`. `slice_sharded.py`는 `--` 뒤 인자를
   준비·샤드에 모두 넘긴다. 손으로 `--resume --cpg`를 돌릴 때는 준비 때와 같은 파일을 다시 준다
 - 정답 자료 -> 입력은 설명 파일 하나다. `patch.diff`·`error.txt`에서 만든 설명을 주면 정답 누출이다(위 「목록의 출처」)
-- 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서 심볼 이름
-  전체 이름이 토큰(3) > `_`·`::`로 나눈 조각이 토큰 또는 그 조각(2) > 파일 이름(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
+- 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서
+  심볼 전체 이름이 토큰(3) > 심볼의 `_`·`::` 조각이 원 토큰이거나 심볼 전체 이름이 토큰의 `_` 조각(2) > 파일 이름이 토큰 또는 그 조각(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
   `target_plan` 이벤트의 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches`·`desc_matches_deferred`(컷에 잘린 일치)가 그 수를 남긴다. 토큰 규칙은 `src/orchestrator/description_match.py`와
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
 - ⚠ **흔한 영어 명사가 일치를 일으킬 수 있다** -> `buffer`·`read`·`parse`·`data` 같은 낱말이 설명에 있고 저장소에 그 이름의 파일(`buffer.c`)이 있으면
-  그 파일이 우선 파일이 된다. 불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_file_matches`가 터무니없이 크면 이것을 의심한다
+  그 파일이 우선 파일이 된다. 같은 낱말이 심볼 이름의 조각(`heap_alloc`의 `heap`)과 맞으면 심볼 조각 일치(2)도 만든다 — **파일 일치(1)와 심볼 조각(2) 둘 다**다.
+  불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_part_matches`·`desc_file_matches`가 터무니없이 크면 이것을 의심한다
 
 ```bash
 python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkpoint /work/state.db \
