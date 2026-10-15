@@ -736,7 +736,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
   run은, 오라클에 이미 낸 후보나 구제된 중간 gen(`OracleLedger.pool`)이 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
-  ⏵ 2026-10-15(@danielcho02 승인) — **낸 PoC가 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
+  ⏵ 2026-10-15(@danielcho02 승인) — **낸 PoC나 구제된 중간 gen(`OracleLedger.pool`)이 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
   `Exception`이든(위 두 예외 밖의 예상 밖 예외 포함) 최종 지정을 하고 **원 예외를 그대로** 올린다 — 최종 지정이
   던지면 그 사유는 원 예외의 노트로 붙고 원 예외가 이긴다. 최종 지정은 run당 한 번이다(`_Accumulator.oracle_finalized`가
   채점기 호출 전에 선다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다.
