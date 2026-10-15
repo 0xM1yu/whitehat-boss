@@ -195,6 +195,75 @@ def test_include_fragment_is_classified_as_analyzable_source() -> None:
     assert kind in runner._ANALYZABLE
 
 
+def test_cpp_spellings_and_case_variants_are_classified_as_analyzable_source() -> None:
+    """`unknown`이면 `runner._ANALYZABLE`이 걸러 그 파일의 슬라이스 타깃이 조용히 버려진다."""
+    for name in (
+        "a.hpp", "a.hh", "a.hxx", "a.tcc", "a.cxx", "a.c++", "a.cp",  # 새로 든 철자
+        "A.CPP", "A.HPP", "A.C", "A.H", "a.Cxx",  # 대소문자
+    ):
+        kind = preprocess.classify(Path(name))
+
+        assert kind is ArtifactKind.SOURCE, name
+        assert kind in runner._ANALYZABLE, name
+
+
+def test_preprocess_reports_the_classification_counts_inside_the_stage(ctx: RunContext) -> None:
+    """0단계에는 차단 조건이 없다 - 분류 실패(`unknown`)는 이 이벤트로만 센다."""
+    root = _root_of(ctx)
+    for name in ("a.hpp", "conf.yaml", "blob.bin", "x.xyz", "y.XYZ", "Makefile"):
+        (root / name).write_text("x", encoding="utf-8")
+
+    preprocess.run(ctx, source_root=root)
+
+    events = ctx.trace.events
+    (event,) = [e for e in events if e.kind is EventKind.PREPROCESS_CLASSIFIED]
+    assert event.stage == int(Stage.PREPROCESS)
+    assert event.data == {
+        "files": 8,  # parser.c · util.c + 위 여섯
+        "source": 3,
+        "config": 1,
+        "binary": 1,
+        "firmware": 0,
+        "unknown": 3,
+        "unknown_suffixes": '{".xyz": 2, "": 1}',
+        "unknown_suffixes_omitted": 0,
+    }
+    kinds = [e.kind for e in events]
+    start, end = kinds.index(EventKind.STAGE_START), kinds.index(EventKind.STAGE_END)
+    assert start < events.index(event) < end
+
+
+def test_preprocess_emits_no_classification_event_when_stage_zero_raises(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이벤트는 0단계가 **끝난** run에만 1건이다. 파일을 읽다 예외로 서면 분류 전이라 0건이다."""
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(preprocess, "_artifact", boom)
+
+    with pytest.raises(OSError):
+        preprocess.run(ctx, source_root=_root_of(ctx))
+
+    assert [e for e in ctx.trace.events if e.kind is EventKind.PREPROCESS_CLASSIFIED] == []
+
+
+def test_preprocess_caps_the_unknown_suffix_list_and_says_how_many_were_cut(
+    ctx: RunContext,
+) -> None:
+    root = _root_of(ctx)
+    for i in range(12):
+        (root / f"f.ext{i:02d}").write_text("x", encoding="utf-8")
+
+    preprocess.run(ctx, source_root=root)
+
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.PREPROCESS_CLASSIFIED]
+    assert event.data["unknown"] == 12
+    assert len(json.loads(str(event.data["unknown_suffixes"]))) == 10
+    assert event.data["unknown_suffixes_omitted"] == 2  # 파일 수가 아니라 확장자 종류 수
+
+
 def test_static_tool_failure_is_recorded_not_raised(ctx: RunContext) -> None:
     """도구 실패는 예외가 아니라 Evidence로 남는다 (engineering-guide.md §8.3)."""
     evidences = signals.run(ctx, workdir="../outside")
@@ -1077,10 +1146,10 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 # 두지만 계단은 순서일 뿐 거르지 못하므로, 아래 검사들은 **상한에 자리가 남는 모양**으로 필터
 # 자체를 문다(⏵ 2026-10-12 - 전엔 상한 1에서 `confidence` 순서가 필터를 대신 시험했다).
 # 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
-# 반박으로 판정했거나 판정 호출이 실패해 버려진 Finding은 뺀다(⏵ 2026-10-11 - 보류
-# (`need_evidence`)는 든다, 이슈 #604). Critic을
-# **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과 재현 명세가
-# 없어 멈춘 것(F-9)은 든다.
+# 반박으로 판정한 Finding만 뺀다(⏵ 2026-10-11 - 보류 (`need_evidence`)는 든다, 이슈 #604.
+# ⏵ 2026-10-15 - 판정 호출이 실패해 버려진 Finding도 든다: 판정이 없어 Critic을 안 거친 것과
+# 같다). Critic을 **안 거친** Finding(`critic_top_n`에 잘림 · 6단계 게이트가 E0로 QUEUED한 것)과
+# 재현 명세가 없어 멈춘 것(F-9)은 든다.
 
 
 def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> Decision:
@@ -1110,8 +1179,8 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
             id="critic_asked_for_evidence_with_citations_F7",
         ),
         pytest.param(
-            FindingState.HYPOTHESIZED, None, False, True, False,
-            id="critic_call_failed_and_the_finding_was_dropped",
+            FindingState.HYPOTHESIZED, None, False, True, True,
+            id="critic_call_failed_and_the_finding_was_dropped_stays_in_the_pool",
         ),
         pytest.param(
             FindingState.HYPOTHESIZED, Verdict.UPHOLD, True, False, True,
@@ -1131,7 +1200,7 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
         ),
     ],
 )
-def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
+def test_the_extra_pov_pool_excludes_what_the_critic_set_aside(
     ctx: RunContext,
     finding_state: FindingState,
     verdict: Verdict | None,
@@ -1163,6 +1232,78 @@ def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
     targets = runner._pov_targets(ctx, state, [])
 
     assert [f.finding_id for f in targets] == (["find_0001"] if in_pool else [])
+
+
+def test_a_dropped_finding_ranks_with_the_uncritiqued_not_with_the_rebutted(
+    ctx: RunContext,
+) -> None:
+    """판정 호출이 실패해 버려진 Finding(`critic_failed_ids`)은 판정이 없으므로 **Critic을
+    안 거친 것과 같은 계단 1**이다 (2026-10-15 조민규 승인 - 전엔 반박처럼 풀에서 빠졌다). 같은
+    계단 안에서는 `confidence`가 가른다 - 미경유(0.5)가 버려진 것(0.2)보다 앞서고 둘 다
+    보류(0.9)보다 앞선다. 버려진 것을 반박(3)·보류(2)에 두는 변이는 순서가 바뀌어 빨개진다."""
+    state = runner._Accumulator()
+    for finding_id, confidence, verdict in (
+        ("find_0001", 0.1, Verdict.UPHOLD),
+        ("find_0002", 0.5, None),  # 미경유
+        ("find_0003", 0.2, None),  # 판정 호출 실패 - 아래에서 버린다
+        ("find_0004", 0.9, Verdict.NEED_EVIDENCE),
+    ):
+        finding = _finding(finding_id, state=FindingState.HYPOTHESIZED, confidence=confidence)
+        state.update(finding)
+        if verdict is not None:
+            state.decisions[finding_id] = (_critic_decision(finding_id, verdict, grounded=True),)
+    runner._drop_finding(
+        ctx, state, state.findings["find_0003"], "schema_parse_failed", SchemaParseError("bad")
+    )
+    _with_top_n(ctx, 4)
+
+    assert runner._verdict_ranks_by_finding(state)["find_0003"] == 1
+    assert not runner._critic_set_aside(state, "find_0003")
+    targets = runner._pov_targets(ctx, state, [])
+
+    assert [f.finding_id for f in targets] == ["find_0001", "find_0002", "find_0003", "find_0004"]
+    assert state.critic_failed == 1, "critic_failed 계수는 그대로다"
+
+
+def test_analyze_runs_pov_on_a_finding_whose_critic_call_failed(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**실제 7단계의 호출 실패가 풀에 읽힌다** - `critic.run`의 모델 호출만 갈아 끼워 한 Finding의
+    응답을 스키마 파싱 실패로 만든다. `critic_failed` trace·경고용 계수는 남고(`_drop_finding`)
+    그 Finding도 PoV 대상에 든다(상한 2 · 판정 계단 uphold가 앞)."""
+    state, (kept, failing) = _outside_validated(ctx, [("find_0001", 0.5), ("find_0002", 0.99)])
+
+    def ask(
+        ctx_: RunContext,
+        *,
+        decision_id: str,
+        finding: Finding,
+        evidences: list,
+        source=None,
+        hop_observations=(),
+    ) -> Decision:
+        if finding.finding_id == failing.finding_id:
+            raise SchemaParseError("응답이 스키마에 안 맞는다")
+        return Decision(
+            decision_id=decision_id,
+            run_id=RUN_ID,
+            finding_id=finding.finding_id,
+            verdict=Verdict.UPHOLD,
+            rationale="근거 서술",
+            evidence_refs=["ev_0001"],
+            produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v1"),
+        )
+
+    monkeypatch.setattr(critic, "_ask_model", ask)
+    _with_top_n(ctx, 2)
+
+    runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert state.critic_failed_ids == {failing.finding_id}, "전제 - 호출이 실제로 실패했다"
+    assert [e.subject_id for e in ctx.trace.events if e.kind is EventKind.CRITIC_FAILED] == [
+        failing.finding_id
+    ]
+    assert _pov_subjects(ctx) == [kept.finding_id, failing.finding_id]
 
 
 def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing_repro_spec(
@@ -1236,7 +1377,8 @@ def _ladder_state() -> runner._Accumulator:
 
 
 def test_the_verdict_ranks_are_uphold_then_uncritiqued_then_held_then_rebutted() -> None:
-    """판정 계단은 이슈 #604 (b)의 순서 그대로 **넷**이다 - `uphold 0 < 미경유 1 < 보류 2 < 반박 3`.
+    """판정 계단은 이슈 #604 (b)의 순서 그대로 **넷**이다 -
+    `uphold 0 < 미경유·판정 호출 실패 1 < 보류 2 < 반박 3`.
     반박(3)은 `_critic_set_aside`가 풀에서 빼므로 **지금 정렬에는 닿지 않는 값**이다 - 이 검사가
     값 자체를 문다(반박을 보류와 같은 2나 uphold와 같은 0에 두는 변이)."""
     assert runner._verdict_ranks_by_finding(_ladder_state()) == {
@@ -2092,6 +2234,53 @@ def test_a_v7_shaped_rebut_with_vocabulary_axes_is_a_real_rebuttal(ctx: RunConte
     assert _normalized_events(ctx) == []
     assert _critic_verdict_policy(ctx).data["reason"] == "critic_rebutted"
     assert after.state is FindingState.QUEUED
+
+
+def test_a_v8_id_only_rebut_goes_through_the_single_normalization_point(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ADR 0015 ⏵ 2026-10-15 - v8은 `rebut`에 Evidence ID를 금지한다. ID만 든 v8 `rebut`은
+    `critic.run`이 `gate.normalize`로 `need_evidence`(F-7)에 보내고 `critic_normalized`에 **다른
+    사유**(`rebut_ids_only`)로 남는다. 같은 응답을 v7 판으로 내면 근거 있는 반박(F-6)이다."""
+    candidate, capsule, _ = _triage(ctx, BENIGN_TARGET)
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule)
+
+    def ask(version: str):  # noqa: ANN202
+        def _ask(ctx_, *, decision_id, finding, evidences, source=None, hop_observations=()):  # noqa: ANN001, ANN202
+            return Decision(
+                decision_id=decision_id,
+                run_id=RUN_ID,
+                finding_id=finding.finding_id,
+                verdict=Verdict.REBUT,
+                rationale="근거 서술",
+                evidence_refs=["ev_0001"],
+                produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version=version),
+            )
+
+        return _ask
+
+    monkeypatch.setattr(critic, "_ask_model", ask("v8"))
+    after, decision = critic.run(ctx, finding=finding)
+
+    (event,) = _normalized_events(ctx)
+    assert event.data["reason"] == "rebut_ids_only"
+    assert event.data["invalid_axes"] == "[]"
+    assert not decision.is_grounded
+    assert _critic_verdict_policy(ctx).data["basis.verdict"] == "need_evidence"
+    assert after.state is FindingState.QUEUED  # F-7 - 모델이 낸 need_evidence와 같은 길이다
+
+    monkeypatch.setattr(critic, "_ask_model", ask("v7"))
+    after_v7, decision_v7 = critic.run(ctx, finding=finding)
+
+    assert decision_v7.is_grounded
+    assert len(_normalized_events(ctx)) == 1, "v7 rebut은 사건을 더 만들지 않는다"
+    last_policy = [
+        e
+        for e in ctx.trace.events
+        if e.kind is EventKind.POLICY_DECISION and e.data["point"] == "critic_verdict"
+    ][-1]
+    assert last_policy.data["reason"] == "critic_rebutted"
+    assert after_v7.state is FindingState.QUEUED
 
 
 def test_critic_uphold_does_not_lift_a_finding_held_at_e1(ctx: RunContext) -> None:

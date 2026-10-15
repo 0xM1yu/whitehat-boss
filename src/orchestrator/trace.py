@@ -75,7 +75,8 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
 ⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
 `evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
-이 값을 한 열에 놓지 않는다.** |
+이 값을 한 열에 놓지 않는다.**
+v8 이상 run은 `rebut_ids_only`도 분자에 더하므로(2026-10-15) 그 앞 run과도 한 열에 잇지 않는다. |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
@@ -85,13 +86,21 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | Scout 창 폴백 | `scout_window_fallback` | FACTS.target이 ±창. **부재 = 심볼 범위** |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
+| 0단계 분류 | `preprocess_classified` | `unknown / files`. run당 1건(0단계 예외면 0) |
+| 정지 해제 | `index_stop_lifted` | `index_missing_allowed=true`. **부재 = 안 풀었다**(아래) |
+
+⏵ **2026-10-15 — `index_stop_lifted`.** `run --allow-missing-index`가 1단계 색인 실패 정지를
+**실제로** 푼 run에만 1건이다(키 `index_missing_allowed`·`exit_code`·`error`). 그 run은 GRAPH 근거가
+없어 E2 위가 불가능하다. 색인이 멀쩡하거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다.
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
-`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`reason`(`empty_axis` · `invalid_axis` · v8 이상의 `rebut_ids_only`)과 어휘 밖 축 원문
+`invalid_axes`(JSON 배열 문자열 —
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
 `count(reason=invalid_axis) / count(rebut)`.
-⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
-`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는
+⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(v6·v7. v8 이상은 ID가 있어도
+축이 없으면 `rebut_ids_only`다)(`evidence_refs`가 있으면 `ungrounded_reason`이 즉시 `None`이다
+- 이것도 v6·v7). 그래서 ID와 축을 둘 다 요구하는
 v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** —
 ADR 0015가 예측한 실패 양상 (2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가
 이 지표라서 그 한계를 같이 적는다.
@@ -254,10 +263,10 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 `wall_ms`나 사이드카로 낸다(`oracle_log`의 선례).
 
 ⚠ **예외 하나(⏵ 2026-10-14 이슈 #637):** `oracle_final`의 `designation`·`subject_id`·`poc_sha256`·
-`poc_bytes`는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로 그 코드에 일부 달렸다. 코드가
-고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은 입력의 코드가 갈리면 이 네 필드가
-갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 — 서버 경로의 비율은 미실측, `oracle_log`
-모듈 docstring).
+`poc_bytes`·`rescued`(⏵ 2026-10-15)는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로
+그 코드에 일부 달렸다. 코드가 고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은
+입력의 코드가 갈리면 이 필드들이 갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 —
+서버 경로의 비율은 미실측, `oracle_log` 모듈 docstring).
 """
 
 import json
@@ -590,7 +599,8 @@ class EventKind(StrEnum):
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
     # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
-    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis` | `rebut_ids_only` -
+    # 끝은 v8 이상, ADR 0015 ⏵ 2026-10-15) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
@@ -634,6 +644,10 @@ class EventKind(StrEnum):
     # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
     # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
     # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    # ⏵ 2026-10-15 — 위 서술은 v6·v7이다. v8 이상은 ID만 든 `rebut`이 `rebut_ids_only`로
+    # `need_evidence`가 되어 이 길이 닫혔다(`schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`).
+    # `grounded`는 verdict가 `rebut`일 때만 뜻이 있다 - v8의 `uphold`가 ID를 인용하면 축이 없어
+    # `grounded=false`로 남는다(정규화 대상이 아니다).
     CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
@@ -781,6 +795,9 @@ class EventKind(StrEnum):
     # (`designatable=True`)가 둘 다 낸다(같은 바이트면 같은 해시로 두 번 나온다). `fix` 다리는
     # 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`designatable`·`task_id`·
     # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
+    # ⚠ `wall_ms`는 재시도와 429 대기까지 품는다(`model_call.wall_ms`와 같은 축 -
+    # `config/budgets.yaml`의 `model_call.wall_ms` 서술) - 네트워크 시간은 `retry_wait_s`를 빼서
+    # 읽는다.
     #
     # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
     # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
@@ -788,6 +805,18 @@ class EventKind(StrEnum):
     # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
     # `oracle_final` 하나다.** (⏵ 2026-10-14 — 다만 어느 후보가 `oracle_final`로 지정되는지가
     # 후보 자기 응답 종료 코드의 계단에 일부 달렸다: 아래 `ORACLE_FINAL` 주석.)
+    #
+    # ⏵ 2026-10-15 — **모델이 submit한 PoC의 제출(`designatable=True`)만** 선택 필드 둘을 싣는다.
+    # 평범한 한 번 제출은 둘 다 없다(키 집합이 옛 run과 같다):
+    #  - `submit_calls` - `submit_vul` 호출 수. 2이면 일시 실패(429·5xx·연결/타임아웃) 뒤 한 번
+    #    다시 냈다(`oracle_log.vul_retry_wait_s`). `oracle_failed`에도 실린다(재시도까지 실패).
+    #    2일 때는 첫 호출의 실패도 `first_error`(예외 클래스)·`first_error_status`(HTTP 상태나
+    #    `null`)·`retry_wait_s`(재시도 전 대기 초)로 싣는다 - `error`는 마지막 호출의 것이다.
+    #  - `reused_intermediate` - 참이면 재제출이 실패해(그 실패가 같은 finding의
+    #    `oracle_failed` 행이다) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**을 이
+    #    후보의 제출로 이어받았다. 이 행의 `task_id`는 그 앞선 제출의 것이고 서버에 새 제출은
+    #    없었다. 새 승격이 아니다 - 모델이 submit한 바이트다(ADR 0013 결정 1).
+    # 이 이벤트가 몇 건인가로 제출 수를 세지 않는다 - 이어받은 행은 호출이 아니다.
     ORACLE_SUBMITTED = "oracle_submitted"
     # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 제출 하나가 실패했거나(`leg=vul`)
     # 중간 gen의 판정 조회가 실패했거나(`leg=query_vul`) 0바이트 PoC를 안 냈다
@@ -795,17 +824,26 @@ class EventKind(StrEnum):
     # run을 멈추지 않는다. `poc_sha256`·`poc_bytes`·`error`(예외 클래스 이름)를 싣는다.
     # `error_detail`(URL·OS 로케일 문구)은 사이드카에만 있다. 최종 단계의 실패는 이 이벤트가 아니라
     # `oracle_final`의 `status=failed`다.
+    # ⏵ 2026-10-15 — `leg=vul`·`designatable=True`이고 재시도까지 했으면 `submit_calls=2`를 싣는다
+    # (`error`는 마지막 호출의 것). 같은 finding의 앞선 중간 제출을 이어받았으면 바로 뒤에
+    # `reused_intermediate`인 `oracle_submitted`가 따라온다.
     ORACLE_FAILED = "oracle_failed"
     # **이 run의 채점 결과 — 채점기가 배선되고 8단계가 끝까지 돈 run에 정확히 1건이다.** 지정한
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 여덟이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
+    # **`designation`은 아홉이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
     # 코드 하나(`vul_crash`)만 읽는다**(`oracle_log`가 목록을 든다 · ⏵ 2026-10-14 이슈 #637) —
+    # ⏵ 2026-10-15 (ADR 0013 결정 1 개정) - 후보 풀에는 `submit` 없이 끝난 Finding의 중간 gen 중
+    # 자기 응답 코드가 크래시 계단인 것이 **구제**돼 든다. `rescued`는 지정된 후보가 그런 구제된
+    # gen이면 `true`, 제출된 후보면 `false`, 지정이 없으면 `null`이다(`designation`처럼 응답 코드에
+    # 달려 Fake 경로 밖에서는 결정론이 아니다). 같은 계단에서 제출된 후보가 구제된 것을 이기면
+    # `submitted_over_rescued`다.
     # 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
-    # 갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
-    # 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든 값의 전순서다).
+    # 갈랐다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·`top_confidence`·
+    # `smallest_poc`·`poc_digest` — 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든
+    # 값의 전순서다).
     # 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다
     # (`status=none` · `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고
     # 판정이 있는 것이 아니다.
@@ -816,6 +854,12 @@ class EventKind(StrEnum):
     # 같은 입력에서 vul 코드는 `run_container` 직접 호출 실측에서 갈렸고(`vm.mmap_rnd_bits` 32 ·
     # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
     # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
+    #
+    # ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·응답 없음·429) 뒤 한 번 더 불렸을 때만(그 밖의 4xx는
+    # 안 부른다) `finalize_calls`(2)와 첫 호출의 실패 `first_error`·`first_error_status`·
+    # `retry_wait_s`(5xx·응답 없음은 0, 429는 한도 창을 기다린 초)를 더 싣는다. 한 번에 된 run·지정
+    # 후보가 없는 run은 키 집합이 같다. 어댑터 docstring은 `/submit-fix`에 레이트리미트가 없다고
+    # 적어(소스 판독) 429는 안 올 수도 있다. 최상위 `wall_ms`는 재시도와 그 대기를 품는다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
@@ -834,9 +878,11 @@ class EventKind(StrEnum):
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
-    # `oracle.final`이 `not_reached`다. 단 예산·서버 쪽 게이트웨이 오류로 끊겨도 이미 낸 최종 후보가
-    # 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은 최종 지정까지 하고 끝나 `oracle_final`이
-    # 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
+    # `oracle.final`이 `not_reached`다. 단 이미 낸 후보나 구제된 중간 gen(`pool`)이 있으면
+    # 어떤 `Exception`으로
+    # 끊겨도(⏵ 2026-10-15), 예산·서버 쪽 게이트웨이 오류가 `pov_attempt_top_n`의 추가 대상에서
+    # 끊긴 run은 후보가 없어도
+    # 최종 지정까지 하고 끝나 `oracle_final`이 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
     # 남기지 않는다:
     # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
     # PoC로 컨테이너를 돌렸을 수 있다.
@@ -934,6 +980,21 @@ class EventKind(StrEnum):
     # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
+    # 0단계의 파일 분류 결과 - **0단계가 끝난 run당 정확히 1건**(0단계 구간 안, `stage=0`). 0단계가
+    # 예외로 서면(파일을 읽지 못함 - architecture.md §3 0단계 행) 분류 전이라 0건이다.
+    # 0단계에는 차단 조건이 없어서(표에 없는 확장자는 `kind=unknown`으로 남는다)
+    # 분류 실패는 이 이벤트로만 센다.
+    # 키: `files`(전체) · `source`·`config`·`binary`·`firmware`·`unknown`(`ArtifactKind` 값 전부,
+    # 0도 싣는다 - 합이 `files`다) · `unknown_suffixes`(`unknown` 파일의 확장자 -> 개수, 소문자,
+    # JSON 객체 문자열, 많은 순 최대 10개, 확장자 없음은 빈 문자열 키) · `unknown_suffixes_omitted`
+    # (상한에 잘린 확장자 **종류** 수 - 파일 수가 아니다). 대상 트리가 비면 `files`가 0이다.
+    PREPROCESS_CLASSIFIED = "preprocess_classified"
+    # `run --allow-missing-index`가 **실제로** 1단계 색인 실패 정지를 푼 사건 (2026-10-15). 내는
+    # 곳은 `runner._require_index`이고 run당 0건 또는 1건이다. 키: `index_missing_allowed`(항상
+    # `true`) · `exit_code`(색인 Evidence의 종료 코드) · `error`(자른 사유). **이벤트 부재 = 정지를
+    # 푼 적 없다**(색인이 멀쩡했거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다).
+    # `RunRecord`에는 안 남는다 - 저장 형태 판을 올리지 않으려는 것이다.
+    INDEX_STOP_LIFTED = "index_stop_lifted"
 
 
 class TraceEvent(HarnessModel):

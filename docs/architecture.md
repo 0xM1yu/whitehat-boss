@@ -54,7 +54,7 @@ graph LR
 
 | # | 단계 | 입력 | 처리 | 출력 | 다음 단계 통과 조건 |
 | --- | --- | --- | --- | --- | --- |
-| 0 | Preprocessor | repo / firmware image / crash bundle | 펌웨어 추출(binwalk), 파일 타입 분류(file), 바이너리·소스·설정 식별, artifact hash 부여 | `Artifact[]` | 파일 타입 분류 성공 |
+| 0 | Preprocessor | repo / firmware image / crash bundle | 파일 타입 분류(**확장자 표** — `file(1)`을 안 쓴다), 바이너리·소스·설정 식별, artifact hash 부여. 펌웨어 추출(binwalk)은 2차라 아직 없다 | `Artifact[]` | **차단 조건 없음** — 표에 없는 확장자는 `kind=unknown`으로 남고(버리지 않는다) 종류별 개수가 trace `preprocess_classified`에 실린다. 파일을 읽지 못하면 예외로 run이 선다 |
 | 1 | Index & Graph | `Artifact[]` | 소스: tree-sitter로 함수·symbol·AST 분해 · **Joern 슬라이서**(무모델 Case A·B — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2. 지금은 하네스 밖 오프라인 `slicer.py`) / 바이너리·펌웨어: strings, readelf, objdump, Ghidra Headless. 공통으로 symbol table, xref, function boundary, call graph 추출 | Code Index, Graph · `slices.json`(아래 ⚠ ADR 0012) | 대상 함수 심볼 해석 성공 |
 | 2 | Signal Collection | Artifact, Index | Semgrep · clang-tidy · grep/custom rule 정적분석, **build 프로브**(빌드되는가 — Auditor가 `repro_spec`을 쓸 근거, 아래 build 주), sanitizer log·stack trace 파싱, AFL++/libFuzzer coverage, diff 분석 | `Evidence[]` | 실패해도 진행(신호 부재로 기록) |
 | 3 | Retrieval | 후보 seed | symbol·graph·keyword 광역 수집 → embedding + reranker 재선별(쓰임은 아래 ⚠ ADR 0012 — 열림) | `ContextCapsule` | capsule 토큰 상한 이내 |

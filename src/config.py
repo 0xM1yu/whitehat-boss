@@ -641,8 +641,9 @@ class Thresholds(HarnessModel):
     # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 **상한**. `0`이면 종전
     # 동작이다 — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다. 이 값을 올리면 그 밖에서도
     # 상위 몇 건을 더 시도한다(이슈 #386 ①의 후속).
-    # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박으로 판정한 것과 판정 호출이
-    # 실패해 버려진 것은 뺀다(반박된 Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`).
+    # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박으로 판정한 것만 뺀다(반박된
+    # Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`). ⏵ 2026-10-15 — 판정 호출이
+    # 실패해 버려진 것은 이제 든다(ADR 0015 결정 4 ⏵).
     # ⏵ 2026-10-11 — 보류(`need_evidence`)는 들고 정렬·지정에서 뒤다(이슈 #604).
     # 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
@@ -654,10 +655,10 @@ class Thresholds(HarnessModel):
     # **켤 때의 값은 미실측이다** — ⏵ 2026-10-06 후보 **하나**는 쟀다(PoV 좌석 프로브의
     # find_0001 - 4홉 · 출력 92,543 · 입력 242,717토큰, 홉 상한에 끊겼다). 못 잰 것은 후보가
     # **스스로 서기까지의** 홉·토큰이고 그 측정의 입력이 이 배선 뒤의 실모델 run 1회다.
-    # 자르는 순서는 Critic 판정 계단(uphold 0 < 미경유 1 < 보류 2 < 반박 3) → `confidence` 내림차순
-    # → 동점은 `finding_id`다(⏵ 2026-10-12 — 계단이 맨 앞에 붙어 `critic_top_n`의 순서
-    # (`confidence` → `finding_id`)와 더는 같지 않다, PR #608) — 정렬이 흔들리면 재현 실행이
-    # 갈라진다.
+    # 자르는 순서는 Critic 판정 계단(uphold 0 < 미경유·판정 호출 실패 1 < 보류 2 < 반박 3)
+    # → `confidence` 내림차순 → 동점은 `finding_id`다(⏵ 2026-10-12 — 계단이 맨 앞에 붙어
+    # `critic_top_n`의 순서 (`confidence` → `finding_id`)와 더는 같지 않다, PR #608) —
+    # 정렬이 흔들리면 재현 실행이 갈라진다.
     pov_attempt_top_n: int = Field(ge=0)
     # 8단계 PoV 툴 루프(`runner._run_pov_hops`)의 **전용** 홉 상한 (이슈 #511) — 모델 호출은
     # finding당 최대 `1 + 이 값`회다(hop 0..값). 0이면 hop0(gen) 뒤 곧장 MAX_HOP이라 submit이 없다.
