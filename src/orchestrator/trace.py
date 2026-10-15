@@ -760,6 +760,9 @@ class EventKind(StrEnum):
     # (`designatable=True`)가 둘 다 낸다(같은 바이트면 같은 해시로 두 번 나온다). `fix` 다리는
     # 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`designatable`·`task_id`·
     # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
+    # ⚠ `wall_ms`는 재시도와 429 대기까지 품는다(`model_call.wall_ms`와 같은 축 -
+    # `config/budgets.yaml`의 `model_call.wall_ms` 서술) - 네트워크 시간은 `retry_wait_s`를 빼서
+    # 읽는다.
     #
     # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
     # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
@@ -811,10 +814,11 @@ class EventKind(StrEnum):
     # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
     # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
     #
-    # ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·응답 없음) 뒤 한 번 더 불렸을 때만(4xx는 안 부른다)
-    # `finalize_calls`(2)와 첫 호출의 실패 `first_error`·`first_error_status`·`retry_wait_s`
-    # (finalize는 기다리지 않아 0)를 더 싣는다. 한 번에 된 run·지정 후보가 없는 run은 키 집합이
-    # 같다.
+    # ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·응답 없음·429) 뒤 한 번 더 불렸을 때만(그 밖의 4xx는
+    # 안 부른다) `finalize_calls`(2)와 첫 호출의 실패 `first_error`·`first_error_status`·
+    # `retry_wait_s`(5xx·응답 없음은 0, 429는 한도 창을 기다린 초)를 더 싣는다. 한 번에 된 run·지정
+    # 후보가 없는 run은 키 집합이 같다. 어댑터 docstring은 `/submit-fix`에 레이트리미트가 없다고
+    # 적어(소스 판독) 429는 안 올 수도 있다. 최상위 `wall_ms`는 재시도와 그 대기를 품는다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
