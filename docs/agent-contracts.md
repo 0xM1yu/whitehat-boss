@@ -800,7 +800,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
   ⏵ 2026-10-14 — 서빙 pov 판이 **v7**이다(S20 Phase 14). v7 prefix도 그 재질문 턴을 서술한다(v6과 바이트 동일한 부분). v6과 다른 곳은 셋이다: body의 「JSON이 입력 사실 전부다」 문장을 "Vulnerability·Target·Source 절과 JSON이 입력에 든다(전부라고 하지 않는다 - hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) · JSON의 Finding 데이터는 `finding_id`뿐이다"로 고쳤고(Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 `{{FINDING}}` 산문에만 있다 - `nodes/pov._describe_finding` · `_render_prompt`는 `build_facts`에 `ids={"finding_id": ...}`만 넘긴다 · FACTS 바이트는 안 바꿨다), prefix의 「How to reach the vulnerable path」 머리에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트라는 한 문단을 더했고, DEF-SUBMIT의 「Why a non-crash is not submitted」 한 줄을 #637(PR #673 - 지정 키의 첫 성분이 후보 자기 `vul` 응답 코드의 계단)에 맞게 다시 썼다(v6은 "하네스는 그 자리를 채점기 코드로 가르지 않는다"고 적었다)(이슈 #649 · #669 · #637). v7로 돈 run은 0건이다.
   ⏵ 2026-10-15 — 서빙 pov 판이 **v8**이다(S20 Phase 15 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 2026-10-15 개정). v8은 v7에 prefix 「Hop budget」 한 줄만 더했다 — `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있으니 기대지 말라(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다)(body·봉투·도구·나머지 규칙·`source_options` 선언은 v7과 같다). v8로 돈 run은 0건이고 효과는 미실측이다.
-  ⏵ 2026-10-15 — 서빙 pov 판이 **v9**다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력 밖 정보였다. 그 줄만 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있다」로 줄였고 판정 규칙·body·봉투·나머지는 v8과 같다(`prompts/pov/v9/meta.yaml`). v9로 돈 run은 0건이고 효과는 미실측이다.
+  ⏵ 2026-10-15 — 서빙 pov 판이 **v9**다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력 밖 정보였다. 그 줄만 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있으며, 다른 sanitizer 빌드가 `1`로 끝날 수도 있다」로 줄였고 판정 규칙·body·봉투·나머지는 v8과 같다(`prompts/pov/v9/meta.yaml`). v9로 돈 run은 0건이고 효과는 미실측이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1312,7 +1312,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 >
 > ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 현재 판은 Critic v8 · PoV v8이다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >
-> ⏵ **2026-10-15 — PoV v8 → v9.** 현재 판은 Critic v8 · PoV v9다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력(취약 저장소 + description.txt) 밖 정보였다. 그 줄을 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있다」로 줄였고 판정 규칙은 그대로다 - body·봉투·나머지는 v8과 바이트 동일이다(`tests/test_pov_v9.py`). 규칙 1이 걸린다 - v9 뒤 run은 v8 이하 run과 직접 비교하지 않는다. v9 run 0건, 효과 미실측.
+> ⏵ **2026-10-15 — PoV v8 → v9.** 현재 판은 Critic v8 · PoV v9다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력(취약 저장소 + description.txt) 밖 정보였다. 그 줄을 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있으며, 다른 sanitizer 빌드가 `1`로 끝날 수도 있다」로 줄였고 판정 규칙은 그대로다 - body·봉투·나머지는 v8과 바이트 동일이다(`tests/test_pov_v9.py`). 규칙 1이 걸린다 - v9 뒤 run은 v8 이하 run과 직접 비교하지 않는다. v9 run 0건, 효과 미실측.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·

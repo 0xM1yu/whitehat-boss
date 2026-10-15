@@ -341,6 +341,11 @@ class AttemptRecord(HarnessModel):
     # 위 텍스트를 실어 온 키 이름. `reasoning is None`이면 `None`이다. 둘 다 있으면
     # `reasoning`이 이긴다.
     reasoning_field: ReasoningField | None = None
+    # 이 시도의 요청이 연결 단절로 다시 나간 횟수와 그동안 잔 시간(초) - 어댑터가 재시도를 안에서
+    # 삼켜 한 건으로 내지 않게 trace까지 싣는다(`model_call.attempt_reconnects`·
+    # `attempt_reconnect_wait_s`). `0`은 재시도가 없었다는 뜻이고 Fake는 늘 `0`이다.
+    reconnects: int = Field(default=0, ge=0)
+    reconnect_wait_s: float = Field(default=0.0, ge=0)
 
 
 class ModelResult(HarnessModel, Generic[SchemaT]):

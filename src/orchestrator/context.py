@@ -126,12 +126,18 @@ def _attempt_fields(
             "attempt_output_tokens": None,
             "attempt_finish_reasons": None,
             "attempt_tail_whitespace_only": None,
+            "attempt_reconnects": None,
+            "attempt_reconnect_wait_s": None,
         }
     tails = _tail_whitespace_verdicts(log, texts)
     return {
         "attempt_output_tokens": json.dumps([a.output_tokens for a in log], separators=(",", ":")),
         "attempt_finish_reasons": json.dumps([a.finish_reason for a in log], separators=(",", ":")),
         "attempt_tail_whitespace_only": json.dumps(tails, separators=(",", ":")),
+        "attempt_reconnects": json.dumps([a.reconnects for a in log], separators=(",", ":")),
+        "attempt_reconnect_wait_s": json.dumps(
+            [round(a.reconnect_wait_s, 3) for a in log], separators=(",", ":")
+        ),
     }
 
 

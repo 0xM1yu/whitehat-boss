@@ -854,6 +854,7 @@ def test_a_raw_exception_after_a_measured_attempt_loses_the_breakdown(
     assert data["ok"] is False
     assert data["attempt_output_tokens"] is None
     assert data["attempt_finish_reasons"] is None
+    assert data["attempt_reconnects"] is None and data["attempt_reconnect_wait_s"] is None
 
 
 def test_an_assertion_error_from_a_validator_is_wrapped_and_keeps_the_breakdown(
@@ -913,6 +914,7 @@ def test_a_failure_that_carries_no_breakdown_has_the_keys_with_none(exc: Excepti
     assert outcome is exc
     assert data["attempt_output_tokens"] is None
     assert data["attempt_finish_reasons"] is None
+    assert data["attempt_reconnects"] is None and data["attempt_reconnect_wait_s"] is None
 
 
 def test_a_role_without_a_model_is_a_real_failure_that_carries_no_breakdown() -> None:
@@ -927,6 +929,7 @@ def test_a_role_without_a_model_is_a_real_failure_that_carries_no_breakdown() ->
     assert data["ok"] is False
     assert data["attempt_output_tokens"] is None
     assert data["attempt_finish_reasons"] is None
+    assert data["attempt_reconnects"] is None and data["attempt_reconnect_wait_s"] is None
 
 
 def test_a_budget_stop_emits_no_model_call_event_at_all() -> None:
@@ -1253,3 +1256,53 @@ def test_two_roles_on_the_same_subject_are_counted_apart() -> None:
     events = _drive_calls((a, "f1", _bad()), (c, "f1", _bad()), (a, "f1", _bad()))
 
     assert schema_failure_max_run_by_role(events) == {"auditor": 2, "critic": 1}
+
+
+# --- 16. 연결 단절 재시도가 시도 칸에 남는다 ----------------------------------------------
+#
+# `attempt_reconnects`·`attempt_reconnect_wait_s`: 어댑터가 안에서 삼키는 재시도를 trace까지 싣는다.
+# 시도 순서와 1:1이고 성공·실패 행 모두 같은 키다. Fake·재시도 없는 호출은 `0`이다.
+
+
+def test_reconnects_are_recorded_per_attempt_on_both_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """1차 시도가 단절 둘(5+10초) 뒤 스키마 위반 응답, 2차는 한 번에 성공. 가짜 시계다."""
+    clock = [0.0]
+    monkeypatch.setattr(openai_compat.time, "monotonic", lambda: clock[0])
+
+    def sleep(seconds: float) -> None:
+        clock[0] += seconds
+
+    drop = ConnectionResetError(104, "reset")
+    _serve(monkeypatch, [drop, drop, _completion(BAD, 3), _completion(GOOD, 12)])
+    client = OpenAICompatModelClient(
+        endpoint="http://127.0.0.1:9/v1", model_name="test-model", temperature=0.0, top_p=1.0,
+        max_tokens=POV_CAP, seed=7, retries=1, sleep=sleep,
+    )
+
+    outcome, data = _run(client)
+
+    assert outcome.value == Tiny(ok=True) and outcome.attempts == 2
+    assert json.loads(data["attempt_reconnects"]) == [2, 0]
+    assert json.loads(data["attempt_reconnect_wait_s"]) == [15.0, 0.0]
+
+
+def test_a_reconnect_that_ends_in_a_gateway_error_is_still_recorded() -> None:
+    """실패 행도 같은 키를 든다 - 단절만 반복하다 끝난 호출이 가르려는 대상이다."""
+    ctx_outcome, data = _run(_ReconnectFailsEveryTime())
+    assert isinstance(ctx_outcome, ModelGatewayError)
+    assert json.loads(data["attempt_reconnects"]) == [len(openai_compat._RECONNECT_WAITS_S)]
+
+
+class _ReconnectFailsEveryTime:
+    """`OpenAICompatModelClient`가 단절만 6번 맞고 소진한 뒤 올리는 예외를 흉내 낸다."""
+
+    def complete(self, **_kwargs: object) -> object:
+        from src.interfaces.model_client import AttemptRecord
+
+        raise ModelGatewayError(
+            "연결 실패",
+            attempt_log=(AttemptRecord(reconnects=len(openai_compat._RECONNECT_WAITS_S)),),
+        )
+
