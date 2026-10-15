@@ -363,6 +363,9 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-15 — 컷의 설명 일치 예약(`runner._cut_with_reserve`)을 `candidate_desc_reserve`
     # (설정값)와 `desc_reserved`(**예약이 없었다면 잘렸을 후보** 수 — 신호 순서로도 들어올
     # 후보는 안 센다)로 남긴다. `count(target_planned.desc_reserved=true)`가 `desc_reserved`와 같다.
+    # `desc_reserve_filled`는 예약 몫으로 **고른** 수다 — 이미 키 순서로 들었을 것도 센다
+    # (`desc_reserved` ≤ 이 값 ≤ `candidate_desc_reserve`). 예약 자리는 서로 다른
+    # `(file, symbol)`에만 쓴다.
     TARGET_PLAN = "target_plan"
     # 4단계에 올리지 못한 target 하나 (W2). `reason`이 사유다.
     #
