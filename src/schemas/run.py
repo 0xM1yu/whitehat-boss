@@ -351,15 +351,20 @@ class RunRecord(UtcModel):
     # `{vul_submitted, vul_failed, final, final_reason, record}` - 여기에 **0이 아닐 때만**
     # `vul_intermediate`(중간 gen 시도 수)·`vul_candidates`(최종 후보 수 - `vul_intermediate`가
     # 있으면 0이어도 있다)·
-    # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)가
-    # 붙는다.
+    # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)·
+    # `vul_reused`(재제출이 실패해 앞선 중간 제출을 이어받은 후보 수 - `vul_submitted`에 안 든다)·
+    # `vul_rescued`(⏵ 2026-10-15 - `submit` 없이 끝난 Finding의 크래시 계단 중간 gen으로 구제된
+    # 수)가 붙는다. `vul_candidates`는 **제출된 후보만**(이어받은 후보 포함) 센다 - 채점된 최종이
+    # 구제된 gen일 수 있으므로(`vul_rescued` · 사이드카 `final.rescued`) 풀은 둘의 합이다.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
     # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급·
     # `confidence`·Critic 판정 중 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
     # `all_vul_submissions_failed`·`rate_limited`·`grade_unknown`) ·
-    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 예산·서버 쪽 게이트웨이
-    # 오류로 끊겨도 이미 낸 최종 후보가 있거나 추가 PoV 대상에서 끊긴 run은 최종 단계를 부르고
-    # 끝난다)이고 `record`는 사이드카의 run_dir 상대 경로다.
+    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 이미 낸 후보나
+    # 구제된 중간 gen(`pool`)이 있으면
+    # 어떤 `Exception`으로 끊겨도(⏵ 2026-10-15), 예산·서버 쪽 게이트웨이 오류가 추가 PoV 대상에서
+    # 끊긴 run은 후보가 없어도 최종 단계를 부르고 끝난다)이고 `record`는 사이드카의 run_dir 상대
+    # 경로다.
     # 카나리에 기댄 run은 `canary_path`(풀어 쓴 경로)·`canary_sha256`(게이트가 **검사한 바이트의**
     # 해시)가 더 붙는다 - 점수가 어느 보고서에 기댔는지 사후에 변호하는 값이다(#487).
     # **판정 값(종료 코드·`success`)은 여기에 없다** — 서버가 돌려준 값이라 사이드카에 두고, 이

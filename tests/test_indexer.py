@@ -20,7 +20,14 @@ from pathlib import Path
 import pytest
 
 from src.adapters import index_graph
-from src.adapters.container_tools import _INDEX_SUFFIXES, INDEX_FILE, Step, judge, plan
+from src.adapters.container_tools import (
+    _INDEX_SUFFIXES,
+    INDEX_FILE,
+    INDEX_LIST_FILE,
+    Step,
+    judge,
+    plan,
+)
 from src.schemas.common import Location
 
 _INDEXER_PATH = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "indexer.py"
@@ -420,14 +427,16 @@ def test_include_fragment_is_indexed_not_skipped(tmp_path: Path) -> None:
     }
 
 
-def test_every_suffix_the_harness_sends_has_a_grammar() -> None:
-    """목록이 양쪽에 따로 있다 — 이 스크립트는 `src/`를 import 하지 않는다.
+def test_the_harness_sends_exactly_the_suffixes_the_indexer_parses() -> None:
+    """목록이 양쪽에 따로 있다 — 이 스크립트는 `src/`를 import 하지 않는다. 두 방향 모두 문다(`==`).
 
-    어긋나면 예외가 아니라 `skipped`에 이름만 남아 조용히 빈 그래프가 나온다(⏵ 2026-10-13 #576 —
-    심볼이 0개면 `judge()`가 `ok=False`로 내려 E2는 안 열리지만, 그 대상의 그래프 섹션이 비는 것은
-    그대로다). 하네스가 보내기로 한 확장자는 전부 파싱될 수 있어야 한다.
+    어긋나면 예외가 아니라 조용히 빈 그래프가 나온다(⏵ 2026-10-13 #576 — 심볼이 0개면 `judge()`가
+    `ok=False`로 내려 E2는 안 열리지만, 그 대상의 그래프 섹션이 비는 것은 그대로다).
+    - 보내는 쪽이 더 많으면: 문법 없는 파일이 `skipped`에 이름만 남는다.
+    - 파싱하는 쪽이 더 많으면(문법을 늘렸는데 안 보냄): 그 파일은 인덱서에 아예 안 닿아
+      `skipped`에도 안 남고 그래프에서 그냥 없다 — 가장 눈에 안 띄는 쪽이라 역방향을 문다.
     """
-    assert set(_INDEX_SUFFIXES) <= set(indexer._GRAMMARS)
+    assert set(_INDEX_SUFFIXES) == set(indexer._GRAMMARS)
 
 
 def test_empty_source_is_not_an_error(tmp_path: Path) -> None:
@@ -482,7 +491,9 @@ def test_plan_calls_the_indexer_and_writes_into_scratch() -> None:
     assert argv[0] == "python3"
     assert argv[argv.index("--out") + 1] == f"/work/{INDEX_FILE}"
     assert argv[argv.index("--root") + 1] == "/src"
-    assert argv[-1] == "/src/parser.c"
+    # 소스 경로는 명령줄에 없고 목록 파일로 간다(`INDEX_LIST_FILE` 주석).
+    assert "/src/parser.c" not in argv
+    assert commands[0].scratch_files == ((INDEX_LIST_FILE, b"/src/parser.c"),)
 
 
 def test_index_no_longer_shells_out_to_clang() -> None:

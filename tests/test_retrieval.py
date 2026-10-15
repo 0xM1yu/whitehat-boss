@@ -725,6 +725,22 @@ def test_a_cpp_target_keeps_headers_and_drops_other_languages(tmp_path: Path) ->
     assert files == {"net/target.cpp", "inc/api.hh", "inc/old.h"}
 
 
+def test_upper_case_suffixes_still_count_as_c_family_and_enter_the_corpus(tmp_path: Path) -> None:
+    """`.CPP` 대상도 C 계열 필터를 받고(#336), `.C` 파일은 코퍼스에 든다 — 소문자로 내려 비교."""
+    root = tmp_path / "repo"
+    _write_lines(root, "net/Target.CPP", 80)
+    _write_lines(root, "net/Legacy.C", 10)
+    _write_lines(root, "inc/api.HPP", 10)
+    _write_lines(root, "zz/tool.py", 10)
+    retriever, _, _ = _retriever(root, max_chunks=100)
+    target = Location(file="net/Target.CPP", symbol="handle", line_start=1, line_end=3)
+
+    files = {c.file for c in retriever._collect(
+        Query(run_id=RUN_ID, target=target, keywords=[], budget_tokens=4096))}
+
+    assert files == {"net/Target.CPP", "net/Legacy.C", "inc/api.HPP"}
+
+
 def test_a_folder_prefix_is_not_the_same_folder(tmp_path: Path) -> None:
     """`net2/`·`net/sub/`는 `net/`과 같은 폴더가 아니다 — 경로 순서의 나머지 층이다."""
     root = _pool_repo(tmp_path / "repo")

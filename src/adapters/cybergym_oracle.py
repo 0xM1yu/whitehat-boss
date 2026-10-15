@@ -76,10 +76,15 @@ run을 반복하면 서버 캐시를 공유한다** — 재측정은 새 agent_i
 컨테이너는 한 번만 돌았으니 나머지 19번은 캐시 적중이고, 그것이 예산을 썼다).
 이 모듈은 429를 따로 다루지 않는다: `CyberGymOracleError(status=429)`로 올라올 뿐이고
 대기·재시도는 호출부 몫이다.
-⏵ 2026-10-04 — 호출부도 재시도하지 않는다. 다만 **장부가 이 `status`를 적는다** —
+⏵ 2026-10-04 — 호출부도 재시도하지 않는다. (⏵ 2026-10-15 — 이 줄은 낡았다: 러너가 모델이 `submit`한
+PoC의 제출과 `finalize`를 일시 실패 뒤에 **한 번** 다시 부른다. 429는 위 60초 창을 기다린 뒤다 -
+`oracle_log.vul_retry_wait_s`, 두 호출이 같은 규칙이다. `/submit-fix`에는 한도가 없다고 위에
+적었으니 `finalize`의 429 재시도는 429가 오면 덮는 갈래일 뿐 오는 것을 확인한 것이 아니다. 어댑터
+자신은 여전히 재시도하지 않는다.)
+다만 **장부가 이 `status`를 적는다** —
 `oracle_log.VulAttempt.error_status`와 `rate_limited` 사유다. 한도로 사라진 판정이
-「냈는데 전부 실패했다」와 **같은 글자로** 남지 않게 한 것이고, 재시도는 여전히 없다
-(이슈 #422).
+「냈는데 전부 실패했다」와 **같은 글자로** 남지 않게 한 것이다(이슈 #422). 재시도는 위 ⏵의 범위(모델
+submit의 `vul` 제출 · `finalize`)에만 있다 - 중간 gen의 제출은 여전히 한 번뿐이다.
 
 **서버 노출 — 이 모듈이 지키는 것과 못 지키는 것.** 서버를 어느 주소에 bind하는지는 서버를
 기동하는 쪽이 정한다(저자 기본값 `127.0.0.1` `__main__.py:237` · 저자는 `0.0.0.0` 같은
@@ -178,12 +183,25 @@ class CyberGymOracleError(RuntimeError):
     """오라클 호출 실패. `status`가 있으면 서버가 돌려준 HTTP 오류이고, 없으면 HTTP 응답을 못
     받았거나(연결 실패·타임아웃·연결 끊김·불완전한 본문) 받은 본문이 계약과 다른 경우다
     (`server` 주소의 스킴이 http/https가 아닌 것도 요청을 보내기 전에 여기로 온다).
+
+    `transient`는 **연결·타임아웃 계열 전송 실패**(`_send`의 `OSError`·`http.client.HTTPException`
+    갈래)에서만 참이다 - 응답 형 어긋남·`poc_id` 불일치·UTF-8/JSON 아님처럼 다시 불러도 같은 답일
+    결정적 실패는 `status`가 `None`이어도 거짓이다. 러너가 한 번 다시 부를지의 근거다
+    (`oracle_log.is_transient`: `status >= 500` 또는 `transient`).
     """
 
-    def __init__(self, message: str, *, status: int | None = None, detail: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status: int | None = None,
+        detail: str = "",
+        transient: bool = False,
+    ) -> None:
         super().__init__(message)
         self.status = status
         self.detail = detail
+        self.transient = transient
 
 
 class CyberGymAuthError(CyberGymOracleError):
@@ -369,7 +387,12 @@ def _send(
             status=exc.code,
             detail=detail,
         ) from exc
-    except (OSError, http.client.HTTPException, UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (OSError, http.client.HTTPException) as exc:
+        # 연결 실패·타임아웃·연결 끊김·불완전한 본문 - 일시 실패다(`CyberGymOracleError.transient`).
+        raise CyberGymOracleError(
+            f"{request.full_url} 호출 실패: {exc!r}", detail=str(exc), transient=True
+        ) from exc
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CyberGymOracleError(
             f"{request.full_url} 호출 실패: {exc!r}", detail=str(exc)
         ) from exc
@@ -744,7 +767,9 @@ def run_round_trip(
 
     🔴 **429를 처리하지 않는다** — `/submit-vul`의 레이트리미트(모듈 docstring)에 걸리면
     `CyberGymOracleError(status=429)`가 그대로 올라온다. 설계하지 않았다.
-    ⏵ 재시도는 여전히 없고, 러너 경로의 장부만 그 `status`를 적는다(이슈 #422 · `oracle_log`).
+    ⏵ 이 클래스는 재시도하지 않는다(⏵ 2026-10-15 러너가 모델 submit의 제출과 `finalize`를 한 번
+    다시 부른다 - `oracle_log.vul_retry_wait_s`·`is_transient`). 러너 경로의 장부가 그 `status`를
+    적는다(이슈 #422 · `oracle_log`).
     """
     vul = submit_vul(server, task_id, agent_id, poc_bytes, salt=salt, timeout=timeout)
     fix = submit_fix(
@@ -775,7 +800,8 @@ class TaskOracle:
     「최종 PoC 한 개」에만 돌리라고 적는데 `run_round_trip`은 그것을 강제하지 않는다.
     그래서 러너가 각 제출에는 `submit_vul`만 부르고, 최종으로 지정한 하나에만
     `finalize`(`submit_fix` + `query_verdict`)를
-    부른다. `success` 술어는 **다시 계산하지 않는다**(두 벌로 두면 갈린다 —
+    부른다(⏵ 2026-10-15 - 일시 실패면 한 번 더). `success` 술어는 **다시 계산하지 않는다**
+    (두 벌로 두면 갈린다 —
     `OracleVerdict.success`를 그대로 쓴다).
 
     **캐시 적중은 제출 전에 장부를 읽어 가른다**(`peek_verdict`) — 시각 비교가 아니다(모듈
@@ -917,6 +943,7 @@ class TaskOracle:
                 self._without_key(str(exc)),
                 status=exc.status,
                 detail=self._without_key(exc.detail),
+                transient=exc.transient,
             ) from None
         except Exception as exc:
             raise CyberGymOracleError(
