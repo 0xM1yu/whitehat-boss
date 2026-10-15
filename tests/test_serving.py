@@ -732,3 +732,31 @@ def test_build_deps_carries_the_intended_launch_onto_deps(
     assert intended(_swap_fake(), "rig") == {}
     assert intended(_swap_fake(), None) is None
     assert intended(load_config("dev_fake"), "rig") is None
+
+
+@pytest.mark.parametrize("device", ["vastai", "vastai-remote", "atom"])
+def test_the_scout_server_row_carries_the_yarn_override_of_its_window(device: str) -> None:
+    """`qwen3-14b`의 창 131,072는 모델 상한(40,960)을 넘어 YaRN 오버라이드 없이는 기동이 거절된다.
+
+    값은 모델 카드(`Qwen/Qwen3-14B` README)의 YaRN 권장(factor 4.0 · original 32768)이고, 키는 vLLM
+    0.27.1이 `--rope-scaling` 대신 받는 `--hf-overrides`의 `rope_parameters`다(`rope_theta`는
+    통째 대입이라 모델 config의 1000000을 같이 준다).
+    창 = `context_limit`은 `check_serving`이 강제한다."""
+    config = load_config(POOL)
+    row = load_serving(device).servers["qwen3-14b"]
+
+    assert config.models["qwen3-14b"].context_limit == row.max_model_len == 131072
+    args = list(row.extra_args)
+    assert args.count("--hf-overrides") == 1
+    override = json.loads(args[args.index("--hf-overrides") + 1])
+    assert override == {
+        "rope_parameters": {
+            "rope_type": "yarn",
+            "rope_theta": 1000000,
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768,
+        }
+    }
+    assert override["rope_parameters"]["factor"] * 32768 == row.max_model_len
+    assert "--rope-scaling" not in args  # 0.27.1에 없는 인자
+    assert "--hf-overrides" in row.intended_args()  # 기록되는 기동 인자에도 든다
