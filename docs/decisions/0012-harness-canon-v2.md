@@ -109,7 +109,7 @@
 
 | 자리 | 제안 | 상태 | 근거 |
 | --- | --- | --- | --- |
-| 4 · `scout_memory` | **교체 가능** — 기본값 `seccoderx-8b`(`config/models.yaml:653`) | ~~결정 기한 2026-09-30~~ → 2026-09-24 확정(조민규) — `seccoderx-8b` | 실험팀 실험 중 |
+| 4 · `scout_memory` | **교체 가능** — 기본값 `seccoderx-8b`(`config/models.yaml:653`) ⏵ 2026-10-15 — 그 항목은 2026-10-14에 지웠다(`scout_memory`는 2026-09-25부터 `qwen3-14b`였다) | ~~결정 기한 2026-09-30~~ → 2026-09-24 확정(조민규) — `seccoderx-8b` | 실험팀 실험 중 |
 | 4 · `scout_boundary` | **교체 가능** — 기본값 `seccoderx-8b` | ~~결정 기한 2026-09-30~~ → 2026-09-24 확정(조민규) — `seccoderx-8b` | 실험팀 실험 중 |
 | 4 · `scout_injection` | ~~**Qwen3-14B 잠정** — registry에 `qwen3-14b` 키가 아직 없어(`config/`에서 0건) 새로 연다. 지금 값은 `deepseek-r1-distill-qwen-32b`(`:677`)~~ → **`qwen3-14b`** — 2026-09-24 registry에 열었고(#266) `deepseek-r1-distill-qwen-32b`는 지웠다(#267) | ~~잠정~~ → 2026-09-24 확정(조민규) | 팀 피드백 2026-09-23 — 모델 크기를 줄인다 |
 | 5 · Auditor | `qwen3.6-35b-a3b`(`:700`) | 2026-09-21 교체로 선 자리(정본 PROJECT-CONTEXT.md §1 — 근거는 실험팀 2026-09-20 선정), 품질 미측정 | Notion 「Auditor·Critic 모델 최종 선정」(2026-09-23 판독) — 품질 근거는 5건 표본(팀 보고, run ID 없음) |

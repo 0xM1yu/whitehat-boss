@@ -180,6 +180,9 @@ profiles:
     # ⏵ 2026-10-08 — 위 두 합은 ATOM 값이다(ATOM 사용 종료 2026-09-29, #340 · docs/portability.md §6). 지금 vast 장비
     #   파일 `config/serving/vastai-remote.yaml`로 세면 0.35 + 0.55 + 0.90 + 0.90 + 0.90(pov) = 3.60(계산값)이라
     #   「1을 넘는다」는 그대로 선다.
+    # ⏵ 2026-10-15 — 위 2.60·3.60은 서버 **다섯**일 때의 합이다(`seccoderx-8b` 0.30·0.35 포함). Scout 셋이 `qwen3-14b`
+    #   한 서버가 된 지금 서버는 **넷**이고 같은 식(각 장비 파일의 util, 계산값)으로 ATOM은 0.40 + 0.80 + 0.30 + 0.80
+    #   = 2.30, vast(`vastai-remote.yaml`)는 0.55 + 0.90 + 0.90 + 0.90 = 3.25다. 「1을 넘는다」는 그대로 선다.
     #
     # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
     #
@@ -235,7 +238,10 @@ profiles:
         swappable: [scout_memory, scout_boundary, scout_injection, auditor, critic, pov]
         # 교대 한 번(내림 + 기동 + 준비 확인)의 마감 — **계산값, 미실측.** 두 장비 파일 중 가장 무거운 교대인
         # ATOM Auditor 교대로 잡았다: 앞 단계 Scout 둘 내림 2 × 50 s + 시도 2 × (준비 상한 1,720 s + 시도당
-        # 300 s) = 4,140 s → 4,200 s. 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
+        # 300 s) = 4,140 s → 4,200 s. ⏵ 2026-10-15 — Scout가 한 서버(`qwen3-14b`)가 되어 지금 식은 내림 1 × 50 s +
+        # 2 × (1,720 + 300) = 4,090 s(계산값)이고 4,200 s는 그 위의 상한으로 남는다(`tests/test_serve_scripts.py`의
+        # `test_the_swap_deadline_covers_every_swap_on_every_device`가 장비 파일마다 잠근다). 값은 안 줄였다 —
+        # 줄일 근거인 실측이 없다(CLAUDE.md §0). 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
         # 요청의 `curl -m` 상한 120 s(준비 상한을 넘겨서도 붙잡는다) + `/v1/models` 확인 60 s + 실패 기동 내림
         # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
         # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
