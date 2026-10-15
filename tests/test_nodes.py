@@ -4595,3 +4595,277 @@ def test_with_fewer_seats_than_the_cap_the_run_counter_still_stops_at_the_cap(
 
     with pytest.raises(runner._TooManyDrops, match=r"후보 3건이 연속으로 실패했다\(자리 무관"):
         _drop_one(ctx, drops, "b", role=Role.SCOUT_MEMORY)
+
+
+# --- `input: source` 안전망 — 창을 넘는 함수 본문만 줄인다 -------------------------------------
+
+_BIG_LINES = 1500
+_BIG_ENTRY = 700
+
+
+def _big_function(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, *, context_limit: int
+) -> tuple[SliceRef, list[str]]:
+    """parser.c 1~1500줄짜리 한 함수(`parse_header`)와 한가운데 entry(700)를 둔 `source` 슬라이스.
+
+    본문 줄은 서로 달라(`buf[n]`) 어느 줄이 남았는지 글자로 가려진다. 창은 `context_limit`."""
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    body = ["int parse_header(char *src, int len) {"]
+    body += [f"    buf[{n}] = src[{n}] + {'x' * 40};" for n in range(2, _BIG_LINES)]
+    body += ["}"]
+    function = Location(file="parser.c", symbol="parse_header", line_start=1, line_end=_BIG_LINES)
+    ctx.symbols_for = lambda file: [function] if file == "parser.c" else None
+    (_root_of(ctx) / "parser.c").write_text("\n".join(body) + "\n", encoding="utf-8", newline="\n")
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    models[key] = models[key].model_copy(update={"context_limit": context_limit})
+    ctx.config = ctx.config.model_copy(update={"models": models})
+    entry = Location(file="parser.c", line_start=_BIG_ENTRY, symbol="memcpy")
+    return ref.model_copy(update={"entry": entry, "lines": (("parser.c", _BIG_ENTRY),)}), body
+
+
+def _trimmed_events(ctx: RunContext) -> list:
+    return [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_SOURCE_TRIMMED]
+
+
+def _scout_prompt_size(ctx: RunContext) -> int:
+    prompt = ctx.models.last_for(Role.SCOUT)
+    return scout._fallback_tokens(prompt.prefix) + scout._fallback_tokens(prompt.body)
+
+
+def test_a_source_body_inside_the_window_is_sent_byte_for_byte(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """몫에 들면 안전망은 아무것도 안 한다 - 본문 전체, 이벤트 없음, `shown_lines`도 전 줄."""
+    ref, body = _big_function(ctx, monkeypatch, context_limit=400_000)
+
+    session = _slice_scout_session(ctx, ref)
+
+    facts = _last_scout_facts(ctx)
+    assert facts["source"] == "\n".join(body)
+    assert not _trimmed_events(ctx)
+    assert session.shown_lines == tuple(("parser.c", n) for n in range(1, _BIG_LINES + 1))
+
+
+def test_the_trim_triggers_only_when_the_prompt_is_over_the_share(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """경계: 몫이 프롬프트와 **같으면** 안 줄이고, 1토큰 모자라면 줄인다."""
+    ref, body = _big_function(ctx, monkeypatch, context_limit=400_000)
+    _slice_scout_session(ctx, ref)
+    size = _scout_prompt_size(ctx)
+    share = ctx.config.thresholds.output_max_for(Role.SCOUT.value) + scout._SLICE_TOKEN_MARGIN
+
+    for limit, trims in ((size + share, False), (size + share - 1, True)):
+        seen = len(_trimmed_events(ctx))
+        again, _ = _big_function(ctx, monkeypatch, context_limit=limit)
+        _slice_scout_session(ctx, again)
+        facts = _last_scout_facts(ctx)
+        assert (facts["source"] != "\n".join(body)) is trims, limit
+        assert len(_trimmed_events(ctx)) - seen == int(trims)
+
+
+def test_a_trimmed_body_keeps_head_entry_and_close_and_counts_every_line(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """줄인 본문: 머리 · entry 둘레 · 닫는 줄이 남고, 뺀 구간마다 표시 줄이 있고 줄 수가 맞는다.
+
+    SOURCE와 FACTS.source는 같은 문자열이고, `shown_lines`(resolver의 `visible`)는 표시 줄을 뺀
+    원본 줄 번호만 든다. 표시 줄 수 합 + 남은 줄 = 원본 줄 수."""
+    ref, body = _big_function(ctx, monkeypatch, context_limit=20_000)
+
+    session = _slice_scout_session(ctx, ref)
+
+    prompt = ctx.models.last_for(Role.SCOUT)
+    facts = _last_scout_facts(ctx)
+    shown = facts["source"].split("\n")
+    assert prompt.body.split("```json")[0].count(facts["source"]) == 1  # SOURCE도 같은 문자열
+    assert shown[0] == body[0] and shown[-1] == "}"
+    assert body[_BIG_ENTRY - 1] in shown
+    markers = [line for line in shown if scout._OMITTED.split("{")[0] in line]
+    omitted = sum(int(re.search(r"\.\.\. (\d+) lines", line)[1]) for line in markers)
+    code = [line for line in shown if line not in markers]
+    assert markers and omitted > 0
+    assert len(code) + omitted == _BIG_LINES
+    assert code == [body[n - 1] for _, n in session.shown_lines]  # 남은 줄 == shown_lines
+    assert session.shown_lines[0] == ("parser.c", 1) and session.shown_lines[-1][1] == _BIG_LINES
+    assert ("parser.c", _BIG_ENTRY) in session.shown_lines
+    assert _scout_prompt_size(ctx) <= 20_000 - ctx.config.thresholds.output_max_for(
+        Role.SCOUT.value
+    ) - scout._SLICE_TOKEN_MARGIN
+    (event,) = _trimmed_events(ctx)
+    assert event.data["lines_before"] == _BIG_LINES
+    assert event.data["lines_kept"] == len(code)
+    assert event.data["lines_omitted"] == omitted
+    assert event.data["fit"] is True and event.data["entry_kept"] is True
+    assert event.data["tokens_before"] > event.data["budget"] >= event.data["tokens_after"]
+    assert event.data["slice_id"] == "slice_0001" and event.subject_id == session.candidate_id
+
+
+def test_the_omission_marker_matches_the_runner_helper() -> None:
+    """러너 `_trim_entry`와 같은 표기다(러너를 import하지 못해 복사했다)."""
+    assert scout._OMITTED == runner._OMITTED
+
+
+def test_the_source_head_width_matches_the_runner_helper() -> None:
+    """함수 머리로 보는 앞 줄 수도 러너 `_trim_entry` 쪽과 같은 폭이다(복사했다)."""
+    assert scout._SOURCE_HEAD_LINES == runner._AUDITOR_ENTRY_HEAD_LINES
+
+
+def test_a_body_that_cannot_fit_goes_as_head_entry_and_close_with_fit_false(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """머리·entry·닫는 줄로도 몫을 넘으면 그 셋으로 보내고 `fit=false` - 거절은 서빙 몫이다."""
+    output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    ref, body = _big_function(ctx, monkeypatch, context_limit=output_max + 700)
+
+    session = _slice_scout_session(ctx, ref)
+
+    (event,) = _trimmed_events(ctx)
+    assert event.data["fit"] is False and event.data["entry_kept"] is True
+    assert [n for _, n in session.shown_lines] == [1, _BIG_ENTRY, _BIG_LINES]
+
+
+# --- 리뷰 반영: 슬라이스 없음 · 창 폴백 · 실토크나이저 · 폼피드 좌표 -----------------------
+
+
+def _no_slice_scout_session(ctx: RunContext, target: Location) -> scout.ScoutSession:
+    artifact = next(
+        a for a in preprocess.run(ctx, source_root=_root_of(ctx)) if a.path == target.file
+    )
+    capsule = retrieval.run(ctx, target=target, level=CapsuleLevel.LIGHT)
+    return scout.open_session(ctx, artifact=artifact, capsule=capsule, slice=None)
+
+
+def test_the_trim_also_runs_without_a_slice_and_keeps_the_target_head(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """슬라이스 없는 `input: source` 대상도 창을 넘으면 줄인다 - entry는 대상의 첫 줄이다.
+
+    슬라이스가 없으니 `shown_lines`(resolver의 `visible`)는 만들지 않는다(`None` = 전체)."""
+    _, body = _big_function(ctx, monkeypatch, context_limit=20_000)
+    target = Location(file="parser.c", symbol="parse_header", line_start=1, line_end=_BIG_LINES)
+
+    session = _no_slice_scout_session(ctx, target)
+
+    (event,) = _trimmed_events(ctx)
+    assert "slice_id" not in event.data
+    assert event.data["fit"] is True and event.data["entry_kept"] is True
+    shown = _last_scout_facts(ctx)["source"].split("\n")
+    assert shown[0] == body[0] and shown[-1] == "}" and len(shown) < _BIG_LINES
+    assert session.shown_lines is None
+
+
+def test_entry_kept_is_false_when_the_entry_line_was_not_located(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """줄 번호가 없는 대상은 entry를 못 찾았다 - 머리(0)가 남아도 `entry_kept`는 거짓이다."""
+    output_max = ctx.config.thresholds.output_max_for(Role.SCOUT.value)
+    _big_function(ctx, monkeypatch, context_limit=output_max + 700)  # 몫 188토큰 - 본문이 넘는다
+    source = "\n".join(["int f(void) {", *[f"    x{n} = {n};" for n in range(2, 400)], "}"])
+    target = Location(file="parser.c", symbol="f", line_start=1, line_end=400)
+
+    def render(text: str) -> object:
+        return scout.Prompt(prefix="p", body=text, prompt_version="v")
+
+    trimmed, kept = scout._fit_source(
+        ctx, Role.SCOUT, "cand-1", target, None, source, render, render(source), None
+    )
+    (event,) = _trimmed_events(ctx)
+    assert kept is not None and trimmed.body != source
+    assert event.data["entry_kept"] is False
+
+
+def test_a_window_fallback_target_is_trimmed_around_the_entry(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """심볼을 못 찾아 entry 앞뒤 창(`ENTRY_WINDOW_LINES`)이 대상이면 그 창 좌표로 줄인다.
+
+    FACTS `target.symbol`은 슬라이스가 든 심볼에서 채우고, `shown_lines`·FACTS `line_start`는 창의
+    좌표다."""
+    ref, body = _big_function(ctx, monkeypatch, context_limit=400_000)
+    ctx.symbols_for = lambda _file: None  # 인덱스에 심볼이 없다 -> 창 폴백
+    _slice_scout_session(ctx, ref)
+    size = _scout_prompt_size(ctx)
+    share = ctx.config.thresholds.output_max_for(Role.SCOUT.value) + scout._SLICE_TOKEN_MARGIN
+    ref, body = _big_function(ctx, monkeypatch, context_limit=size + share - 1)
+    ctx.symbols_for = lambda _file: None
+
+    session = _slice_scout_session(ctx, ref)
+
+    first = max(1, _BIG_ENTRY - 50)
+    facts = _last_scout_facts(ctx)
+    assert facts["target"]["line_start"] == first and facts["target"]["symbol"] == "parse_header"
+    (event,) = _trimmed_events(ctx)
+    assert event.data["entry_kept"] is True and event.data["lines_omitted"] > 0
+    numbers = [n for _, n in session.shown_lines]
+    assert _BIG_ENTRY in numbers and min(numbers) >= first and max(numbers) <= _BIG_ENTRY + 50
+    assert body[_BIG_ENTRY - 1] in facts["source"].split("\n")
+
+
+def test_the_trim_counts_with_the_model_tokenizer_when_one_exists(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`counter_for_role`가 카운터를 주면 `token_counter="model"`이고 그 값으로 센다."""
+    ref, _ = _big_function(ctx, monkeypatch, context_limit=12_000)
+    counter = lambda text: len(text) // 4  # noqa: E731 - 가짜 실토크나이저(글자 4개 = 토큰 1개)
+    ctx.counter_for_role = lambda _role: counter
+
+    _slice_scout_session(ctx, ref)
+
+    (event,) = _trimmed_events(ctx)
+    prompt = ctx.models.last_for(Role.SCOUT)
+    assert event.data["token_counter"] == "model"
+    assert event.data["tokens_after"] == counter(prompt.prefix) + counter(prompt.body)
+    assert event.data["tokens_before"] > event.data["budget"] >= event.data["tokens_after"]
+
+
+_FORM_FEED_C = (
+    "int pad;\n"
+    "int parse_header(char *s) {\n"
+    "    a = 1;\n"
+    "    b = 2;\x0c    c = 3;\n"
+    "    d = 4;\n"
+    "}\n"
+)
+
+
+def _form_feed_ref(ctx: RunContext, monkeypatch: pytest.MonkeyPatch) -> SliceRef:
+    """폼피드(`\\x0c`)가 한 줄 안에 든 함수(`parse_header` 2~6)와 entry(3)를 둔 슬라이스."""
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    (_root_of(ctx) / "parser.c").write_bytes(_FORM_FEED_C.encode("utf-8"))
+    function = Location(file="parser.c", symbol="parse_header", line_start=2, line_end=6)
+    ctx.symbols_for = lambda file: [function] if file == "parser.c" else None
+    entry = Location(file="parser.c", line_start=3, symbol="memcpy")
+    return ref.model_copy(update={"entry": entry, "lines": (("parser.c", 3),)})
+
+
+def test_shown_lines_use_the_index_coordinates_on_a_form_feed_file(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """폼피드가 든 줄도 한 줄이다 - 줄인 경로와 안 줄인 경로의 `shown_lines`가 같은 좌표다.
+
+    `str.splitlines()`는 `\\x0c`에서도 끊어 안 줄인 경로가 한 줄 더 세었다."""
+    ref = _form_feed_ref(ctx, monkeypatch)
+
+    session = _slice_scout_session(ctx, ref)
+
+    assert not _trimmed_events(ctx)
+    assert session.shown_lines == tuple(("parser.c", n) for n in range(2, 7))  # 2~6, 일곱 줄 아님
+    untrimmed_source = _last_scout_facts(ctx)["source"]
+
+    size = _scout_prompt_size(ctx)
+    share = ctx.config.thresholds.output_max_for(Role.SCOUT.value) + scout._SLICE_TOKEN_MARGIN
+    key = ctx.config.model_key_for(Role.SCOUT.value)
+    models = dict(ctx.config.models)
+    models[key] = models[key].model_copy(update={"context_limit": size + share - 1})
+    ctx.config = ctx.config.model_copy(update={"models": models})
+
+    trimmed = _slice_scout_session(ctx, ref)
+
+    (event,) = _trimmed_events(ctx)
+    assert event.data["lines_before"] == 5  # 폼피드 줄도 한 줄
+    numbers = [n for _, n in trimmed.shown_lines]
+    assert numbers[0] == 2 and numbers[-1] == 6 and 3 in numbers
+    assert set(numbers) <= set(range(2, 7))
+    assert "\x0c" in untrimmed_source  # 본문 바이트는 그대로 폼피드를 든다

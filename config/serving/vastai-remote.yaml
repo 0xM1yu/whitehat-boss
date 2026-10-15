@@ -45,17 +45,27 @@ servers:
   # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV.
   # ⏵ 2026-10-14 — `scout_boundary`가 `qwen3-14b`로 옮겨 쌍이 하나가 됐다(`seccoderx-8b`는 로스터에서
   #   내려왔다 — PROJECT-CONTEXT.md §1). 그 전에는 둘이 같이 떠서 util 합이 0.90이었다(0.35 + 0.55).
-  #   남은 0.35는 어디에도 안 줬다 — 단독 기동의 KV를 다시 재지 않았으므로 올릴 근거가 없다(CLAUDE.md §0).
+  #   ⏵ 2026-10-15 — 남은 0.35 중 0.05를 이 키에 줬다(0.60). 근거는 실측이 아니라 KV 마진이다: 0.55면 창 131,072 한 건이
+  #   겨우 들어(1.011배, 계산값) 기동 점검이 어긋날 수 있다. 0.60이면 1.25배(계산값). 기동으로 확인한 것은 아니다 — 미실측.
   #   그 키의 기동 실측(콜드 155 s · 따뜻한 31·26·25)은 2026-10-11 보고서 §2에 남아 있다.
   #   앵커 `&vllm_env`를 선언하는 자리도 그 키에서 아래 `qwen3-14b`로 옮겼다.
   qwen3-14b:
-    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창의 3.2배. memory·boundary·injection
-    # 세 역할이 이 한 서버를 쓴다(⏵ 2026-10-15 — 「두 역할이 써서 쌍 중 큰 몫」이었다. 0.55는 쌍이던 때의 몫 그대로다). 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
+    # 0.60 × 95.01 = 57.01 − 28.27 − 3.76 ≈ 25.0 GiB → 160 KiB/토큰이면 ≈163.7k 토큰 = 창 131,072의 1.25배(계산값, 미실측 — KV = 0.60 × 95.01 − 28.27 − 3.76 = 24.976 GiB, 토큰 = 24.976 × 1,048,576 ÷ 160 = 163,682.7, 비 = 163,682.7 ÷ 131,072) — 한 요청이 든다(131,072 한 건 = 20.0 GiB, 계산값). 0.55였을 때는 KV 20.2255 GiB = 132,549.8 토큰 = 1.011배라 마진이 1%뿐이었다(계산값 — vLLM은 한 요청이 안 들면 기동에서 거절한다). memory·boundary·injection
+    # 세 역할이 이 한 서버를 쓴다(⏵ 2026-10-15 — 「두 역할이 써서 쌍 중 큰 몫」이었다. 0.55는 쌍이던 때의 몫이었고 단독이 되어 0.60으로 올렸다 — 4단계에 이 서버 하나만 상주한다: `harness_pool`은 `resident: []`이고 `_swap_for`가 그 단계 키만 남기며 검색 역할은 `SwapPolicy`가 교대에서 거절한다. 서버의 util 합은 0.60뿐이다). 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
     # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 따뜻한 25·30·30·30 s(n=4). 위 「vast 미실측」은 낡았다.
-    util: 0.55
+    util: 0.60
     max_num_seqs: 8
-    max_model_len: 40960
-    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
+    max_model_len: 131072
+    # ⏵ 2026-10-15 — YaRN: 창 131,072 = registry `context_limit`. 원천(카드 README@rev · vLLM 0.27.1 소스)·한계는
+    # `config/models.yaml`의 `qwen3-14b` 「YaRN」 절이 든다. `--rope-scaling`은 0.27.1에 없어 `--hf-overrides`다.
+    # JSON은 한 인자라 swap.sh의 `shlex.quote`가 그대로 넘긴다. 이 조합으로 띄운 적은 없다 — 미실측.
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --reasoning-parser
+      - deepseek_r1
+      - --hf-overrides
+      - '{"rope_parameters":{"rope_type":"yarn","rope_theta":1000000,"factor":4.0,"original_max_position_embeddings":32768}}'
     env: &vllm_env
       VLLM_USE_DEEP_GEMM: "0"
       VLLM_USE_FLASHINFER_SAMPLER: "0"

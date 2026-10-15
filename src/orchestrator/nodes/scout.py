@@ -484,6 +484,9 @@ def _ask_model(
     (`entry_scope.enclosing_scope` — Auditor `_auditor_target`과 같은 규칙·창 폭)이고 FACTS
     `target`·`shown_lines`도 그 범위다. 슬라이스 없음은 선언과 무관하게 `capsule.target`의
     심볼 본문이다.
+
+    `source` 선언의 본문이 입력 몫을 넘으면 `_fit_source`가 entry 둘레만 남긴다(안전망 - 들면
+    바이트 그대로).
     """
     template = load_prompt(role, ctx.config.model_for(role.value).prompt_template_version)
     schema = resolve_output_schema(template.output_schema)
@@ -499,7 +502,11 @@ def _ask_model(
             target = target.model_copy(update={"symbol": capsule.target.symbol})
         source = ctx.read_source(target)
         first = target.line_start or 1
-        shown_lines = tuple((target.file, first + i) for i in range(len(source.splitlines())))
+        # `\n`에서만 센다 - 인덱스 좌표(`source_lines`)·`_fit_source`의 `split("\n")`과 같다.
+        # `splitlines()`는 폼피드(`\x0c`) 등에서도 끊어 그 글자마다 한 줄씩 밀린다.
+        # 요청 바이트는 안 건드린다.
+        count = len(source.removesuffix("\n").split("\n")) if source else 0
+        shown_lines = tuple((target.file, first + i) for i in range(count))
         if window:
             # 요청 바이트는 그대로다(서빙 v4 payload · §4 규칙 1) - FACTS.target의 `symbol`은 이
             # 창의 이름이 아니고 `line_end`는 EOF를 넘을 수 있다. 그 사실은 trace에만 남긴다.
@@ -536,10 +543,19 @@ def _ask_model(
         )
 
     prompt = render(source)
-    # `source` 선언은 트림이 안 돈다 — 큰 함수는 잘리지 않고 크기 거절된다
+    # `scout_slice_trim`은 `input: slice` 렌더만 줄인다. `source` 선언의 함수 본문은 임계값 없이
+    # **창을 넘을 때만**
+    # 안전망이 줄인다(`_fit_source`) - 들면 바이트 그대로다. 그래도 안 들면 크기 거절된다
     # (`runner._is_size_rejection` -> `_drop`, #529).
     if slice_input and ctx.config.thresholds.scout_slice_trim:
         prompt, shown_lines = _fit_slice(ctx, role, slice, candidate_id, source, render, prompt)
+    elif template.input == "source":
+        entry = slice.entry.line_start if slice is not None else target.line_start
+        prompt, kept = _fit_source(
+            ctx, role, candidate_id, target, entry, source, render, prompt, slice
+        )
+        if kept is not None and slice is not None:
+            shown_lines = kept
     try:
         hop_response = _call_hop(
             ctx,
@@ -576,6 +592,13 @@ _SLICE_TOKEN_MARGIN = 512
 # 하한을 쓴다)로 세면 실비 r≥3.28인 한 과대평가라 트림 뒤 토큰이 창을 안 넘는다. 실 토크나이저가
 # 있으면(`counter`) 이 상수는 안 쓴다 — 그 자리 모델 토크나이저가 센다.
 _SLICE_FALLBACK_CHARS_PER_TOKEN = 3.28
+# `_fit_source`가 함수 머리로 보는 앞 줄 수 - 러너 `_AUDITOR_ENTRY_HEAD_LINES`와 같은 폭(러너가 이
+# 모듈을
+# import해서 거기서 못 가져온다). **정한 값이지 잰 값이 아니다.**
+_SOURCE_HEAD_LINES = 10
+# 뺀 구간 표시 - 러너 `_OMITTED`와 같은 문자열이다(같은 이유로 복사했고 `tests/test_nodes.py`가
+# 같은지 묻는다).
+_OMITTED = "/* ... {} lines omitted ... */"
 _BANNER = re.compile(r"^/\* ===== (.+) ===== \*/$")
 _GUTTER = re.compile(r"^(\d+)\| ")
 
@@ -648,18 +671,7 @@ def _fit_slice(
     서술하는 프롬프트 판에만 이 좌석을 돌리는 가드(#351의 `source_options` + doctor 선례)가
     필요하다 — 이 PR 밖이다. 지금은 trace `scout_slice_trimmed`가 남기고 doctor가 WARN을 단다.
     """
-    counter = ctx.counter_for_role(role.value)
-    measure = counter or _fallback_tokens
-    model = ctx.config.models[ctx.config.model_key_for(role.value)]
-    budget = (
-        model.context_limit
-        - ctx.config.thresholds.output_max_for(role.value)
-        - _SLICE_TOKEN_MARGIN
-    )
-
-    def size(p: Prompt) -> int:
-        return measure(p.prefix) + measure(p.body)
-
+    budget, size, counter = _input_budget(ctx, role)
     before = size(prompt)
     if before <= budget:
         return prompt, None
@@ -704,6 +716,134 @@ def _fit_slice(
         token_counter="model" if counter else "estimate",
     )
     return trimmed, shown
+
+
+def _input_budget(ctx: RunContext, role: Role) -> tuple[int, Callable[[Prompt], int], bool]:
+    """이 자리의 입력 몫 `(budget, size, 실토크나이저 여부)` - `context_limit` − `output_max` −
+    여유.
+
+    `size(prompt)`는 prefix + body를 이 자리 모델 토크나이저로 센다. 토크나이저가 없으면 글자 하한비
+    3.28로 보수적으로 센다(`_fallback_tokens` - `len//4`는 실서빙보다 과소라 트림 뒤에도 창을
+    넘는다).
+    `_fit_slice`와 `_fit_source`가 같은 몫을 본다.
+    """
+    counter = ctx.counter_for_role(role.value)
+    measure = counter or _fallback_tokens
+    model = ctx.config.models[ctx.config.model_key_for(role.value)]
+    budget = (
+        model.context_limit
+        - ctx.config.thresholds.output_max_for(role.value)
+        - _SLICE_TOKEN_MARGIN
+    )
+
+    def size(p: Prompt) -> int:
+        return measure(p.prefix) + measure(p.body)
+
+    return budget, size, counter is not None
+
+
+def _fit_source(
+    ctx: RunContext,
+    role: Role,
+    candidate_id: str,
+    target: Location,
+    entry_line: int | None,
+    source: str,
+    render: Callable[[str], Prompt],
+    prompt: Prompt,
+    ref: SliceRef | None,
+) -> tuple[Prompt, tuple[tuple[str, int], ...] | None]:
+    """`input: source`의 함수 본문이 이 자리 입력 몫을 넘으면 entry 둘레만 남기고 줄인다 (안전망).
+
+    **들면 아무것도 안 한다** - 프롬프트도 `None`도 그대로라 요청 바이트가 같다. 넘을 때만 돈다.
+    이전에는
+    그 요청이 서버의 400 크기 거절로 끝나 대상이 빠졌다(`runner._is_size_rejection` -> `_drop`).
+    몫 = `_input_budget`(`_fit_slice`와 같다). 본문은 `SOURCE`와 `FACTS.source`로 **두 번**
+    실리는데 둘 다
+    `render(source)`가 같은 문자열로 짜므로 줄인 본문도 두 곳이 같다.
+
+    남기는 줄: 함수 머리(여는 `{`가 나오는 줄까지, 앞 `_SOURCE_HEAD_LINES`줄 안) · 닫는 줄 · entry
+    줄 앞뒤
+    `radius`줄. 몫에 드는 가장 큰 `radius`를 이분 탐색한다. 뺀 구간마다 `/* ... N lines omitted
+    ... */` 한
+    줄을 남긴다(러너 `_trim_entry`와 같은 표기). 머리·닫는 줄·entry 한 줄로도 안 들면 그 셋으로
+    보내고
+    `fit=false`로 남긴다 - 서버가 거절하면 지금처럼 그 후보만 빠진다.
+
+    돌려주는 둘: 맞춘 프롬프트와 **모델이 본 (file, 원본 줄) 집합**(안 줄였으면 `None`) - resolver의
+    `visible`이 된다(#375 M-2). 표시 줄은 안 센다. trace `scout_source_trimmed`가 남는다.
+
+    ⚠ **프롬프트 판은 안 바꿨다.** v4 prefix는 SOURCE를 *"the enclosing function body"*로 서술하고
+    표시
+    줄을 모른다 - 모델이 이 줄을 코드로 읽을 수 있고, 줄인 입력으로 판정이 어떻게 바뀌는지는
+    **미실측**이다.
+    ⚠ entry 둘레만 남기므로 슬라이스 줄이 함수의 다른 곳에 있으면 그 줄은 빠진다(슬라이스 줄을
+    따로 앵커로
+    삼지 않았다 - 이것도 미실측).
+    """
+    budget, size, real_counter = _input_budget(ctx, role)
+    before = size(prompt)
+    if before <= budget:
+        return prompt, None
+    lines = source.rstrip("\n").split("\n")
+    count = len(lines)
+    first = target.line_start or 1
+    at = entry_line - first if entry_line is not None else 0
+    # entry 줄을 못 찾았으면(줄 번호 없음·범위 밖) 0으로 대신 두되
+    # `entry_kept`는 거짓이다 - 0은 머리라 늘 남는다.
+    located = entry_line is not None and 0 <= at < count
+    at = at if located else 0
+    head = next(
+        (i for i, line in enumerate(lines[:_SOURCE_HEAD_LINES]) if "{" in line), 0
+    )
+
+    def build(radius: int) -> tuple[str, list[int]]:
+        keep = {*range(head + 1), count - 1, *range(max(0, at - radius), min(count, at + radius +
+        1))}
+        out: list[str] = []
+        gap = 0
+        for i, line in enumerate(lines):
+            if i in keep:
+                if gap:
+                    out.append(_OMITTED.format(gap))
+                    gap = 0
+                out.append(line)
+            else:
+                gap += 1
+        return "\n".join(out), sorted(keep)
+
+    low, high, best = 0, count, None
+    while low <= high:
+        radius = (low + high) // 2
+        text, kept = build(radius)
+        candidate = render(text)
+        if size(candidate) <= budget:
+            low, best = radius + 1, (candidate, kept)
+        else:
+            high = radius - 1
+    fit = best is not None
+    if best is None:
+        text, kept = build(0)
+        best = (render(text), kept)
+    trimmed, kept = best
+    ctx.trace.emit(
+        EventKind.SCOUT_SOURCE_TRIMMED,
+        stage=Stage.SCOUT,
+        subject_kind="candidate",
+        subject_id=candidate_id,
+        role=role.value,
+        budget=budget,
+        tokens_before=before,
+        tokens_after=size(trimmed),
+        lines_before=count,
+        lines_kept=len(kept),
+        lines_omitted=count - len(kept),
+        fit=fit,
+        entry_kept=located and at in kept,
+        token_counter="model" if real_counter else "estimate",
+        **({"slice_id": ref.slice_id} if ref is not None else {}),
+    )
+    return trimmed, tuple((target.file, first + i) for i in kept)
 
 
 def _parse_render(source: str) -> list[tuple[str, int, str]]:
