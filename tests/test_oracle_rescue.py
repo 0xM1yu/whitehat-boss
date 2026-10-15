@@ -1,7 +1,7 @@
 """ADR 0013 결정 1 개정(2026-10-15) - `submit` 없이 끝난 Finding의 크래시 계단 중간 gen을 구제한다.
 
-규칙: `submit` 없이 끝난 Finding(채점기 판정을 받은 `designatable` 시도가 없다 - ⏵ 2026-10-15
-사용자 승인: 실패했거나 건너뛴 `submit`은 판정이 없어 안 센다)의 중간 gen 중 **자기 `vul` 제출 응답
+규칙: `submit` 없이 끝난 Finding(채점기 응답을 받은 `designatable` 시도가 없다 - ⏵ 2026-10-15
+사용자 승인: 실패했거나 건너뛴 `submit`은 응답이 없어 안 센다)의 중간 gen 중 **자기 `vul` 제출 응답
 코드가 크래시 계단**(`oracle_log.vul_code_tier`)인 것이 지정 풀에 든다
 (`OracleLedger.rescued`·`pool`).
 새 제출은 없다. 같은 계단에서는 제출된 후보가 늘 앞선다(`submitted_over_rescued`), `fix` 다리는
@@ -168,7 +168,7 @@ def test_a_submit_whose_vul_submission_failed_does_not_block_the_rescue(
     ctx,  # noqa: ANN001, F811
 ) -> None:
     """⏵ 2026-10-15 (사용자 승인) - 앞 판은 「실패한 `designatable` 시도도 센다」였다. 채점기가
-    판정하지 않은 `submit`은 지정될 수도 없다 - A(139)는 구제되고 지정된다. 호출 0=A 중간,
+    응답하지 않은 `submit`은 지정될 수도 없다 - A(139)는 구제되고 지정된다. 호출 0=A 중간,
     1=AA 중간(실패), 2·3=AA의 지정 가능 제출과 그 재시도(실패) - AA의 성공한 중간 제출이 없어
     이어받을 것도 없다."""
     http = _http(500)
@@ -191,7 +191,7 @@ def test_a_submit_whose_vul_submission_failed_does_not_block_the_rescue(
 
 
 def test_a_skipped_empty_submit_does_not_block_the_rescue() -> None:
-    """0바이트라 건너뛴 `designatable` 시도도 판정이 없다 - 같은 Finding의 크래시 gen이 구제된다."""
+    """0바이트라 건너뛴 `designatable` 시도도 응답이 없다 - 같은 Finding의 크래시 gen이 구제된다."""
     ledger = OracleLedger(wired=True)
     sub = VulSubmission(TASK_ID, "a" * 32, 139)
     ledger.add_attempt(oracle_log.vul_ok("f", A, sub, 1, designatable=False))
@@ -203,7 +203,7 @@ def test_a_skipped_empty_submit_does_not_block_the_rescue() -> None:
 
 
 def test_a_failed_submit_with_a_rescued_crash_loses_to_another_findings_submitted_crash() -> None:
-    """같은 크래시 계단이다 - Finding f_r은 `submit`이 실패해 A(139)가 구제되지만, f_s가 판정받은
+    """같은 크래시 계단이다 - Finding f_r은 `submit`이 실패해 A(139)가 구제되지만, f_s가 응답받은
     AA(139)를 제출했으면 제출된 쪽이 이긴다(구제된 쪽이 바이트가 작아 사슬만 보면 이겼을 자리)."""
     sub = VulSubmission(TASK_ID, "a" * 32, 139)
     rescued = oracle_log.vul_ok("f_r", A, sub, 1, designatable=False)
@@ -219,6 +219,28 @@ def test_a_failed_submit_with_a_rescued_crash_loses_to_another_findings_submitte
         {"f_r": 0, "f_s": 3},
     )
     assert got == (submitted, "submitted_over_rescued", None)
+
+
+def test_was_rescued_counts_a_failed_submit_of_the_same_bytes_as_the_models_choice() -> None:
+    """문서화된 비대칭(ADR 0013) - Finding a는 X를 `submit`했다가 끝내 실패했다(`ok` 아님).
+    Finding b는 `submit` 없이 끝났고 중간 gen이 같은 X(139)다. 행 수준으로는 b의 X가 구제되지만,
+    바이트 수준 표지 `was_rescued`는 `ok`를 안 봐서 모델이 그 바이트를 골랐다고 읽는다 -
+    경고가 거짓이 안 된다."""
+    sub = VulSubmission(TASK_ID, "a" * 32, 139)
+    failed = oracle_log.vul_failed("f_a", A, RuntimeError("down"), 1, designatable=True)
+    intermediate = oracle_log.vul_ok("f_b", A, sub, 1, designatable=False)
+    ledger = _ledger_of(failed, intermediate)
+
+    assert ledger.candidates == [] and ledger.rescued == [intermediate]  # 행 수준: b의 X는 구제
+    picked, _, _ = runner._designate_final(
+        ledger,
+        dict.fromkeys(("f_a", "f_b"), EvidenceGrade.E0),
+        _flat("f_a", "f_b"),
+        _uncritiqued("f_a", "f_b"),
+    )
+    assert picked is intermediate
+    assert oracle_log.was_rescued(picked, ledger.attempts) is False  # 바이트 수준: 모델이 골랐다
+    assert [row.get("rescued") for row in ledger.record()["candidates"]] == [None, True]
 
 
 # --- (d)(e) 순위 ----
