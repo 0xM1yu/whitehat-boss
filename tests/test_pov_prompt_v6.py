@@ -70,10 +70,13 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
     ⏵ 2026-10-14 — 서빙 판 v7은 예외로 받는다: v7 = v6 + 고정된 편집 셋이라(`tests/test_pov_v7.py`가
     바이트 등식으로 묶는다) 편집 밖 덩어리는 v6의 핀이 그대로 덮는다. 편집 안(SOURCE 서술 ·
     `why-non-crash-not-submitted`의 최종 지정 문장 · body Facts 문장)은 v6 핀이 v7을 덮지
-    않는다 - 그 셋은 `test_pov_v7.py`가 문다. v8 이상이 배선되면 이 경보기가 다시 운다."""
+    않는다 - 그 셋은 `test_pov_v7.py`가 문다.
+    ⏵ 2026-10-15 — 서빙 판 v8도 예외로 받는다: v8 = v7 + 「Hop budget」 한 줄이라
+    (`tests/test_pov_v8.py`가 v7과의 바이트 등식으로 묶는다) 그 한 줄 밖은 v7의 핀이, 그 위로 v6의
+    핀이 덮는다. v9 이상이 배선되면 이 경보기가 다시 운다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
-    assert selected in (PINNED_VERSION, "v7"), (
+    assert selected in (PINNED_VERSION, "v7", "v8"), (
         f"서빙 판이 {selected}로 올라갔다 - 이 파일의 핀은 {PINNED_VERSION}의 문장이다. "
         f"{selected}/prefix.md를 읽고 `PINNED_VERSION`·`_PINNED_BLOCKS`·`_PINNED_HEADINGS`·"
         "`_DEFECT_EDITS`를 의도적으로 다시 만든다"

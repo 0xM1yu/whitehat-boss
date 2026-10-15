@@ -56,6 +56,9 @@ exec: "/work/poc": stat /work/poc: no such file or directory   (exit=127)
    (`adapters/cybergym_oracle.py`의 측정). 홉 16 × Finding 5 ⇒ 최대 ~75회. 그 run이 7회였던 것은
    루프가 일찍 죽어서다(`repeat_spec` 3 · `parse_failed` 2). **#561이 루프를 돌리면 거기서 박는다** —
    그리고 `rate_limited`는 이미 지정을 죽이는 사유다(`orchestrator/oracle_log.py`).
+   ⏵ 2026-10-15 — 모델이 `submit`한 PoC의 최종 지정용 제출은 이제 일시 실패에 **최대 한 번** 다시
+   낸다(429는 60초를 기다린 뒤) — 그 재시도도 같은 20회/60초 예산을 쓴다. 중간 gen의 제출은 여전히
+   재시도가 없다.
 3. **컨테이너 경로의 E4가 영구히 안 선다.** `POC_RUN` Evidence가 그 조건이고 그것을 만드는
    유일한 도구가 `poc`다.
 

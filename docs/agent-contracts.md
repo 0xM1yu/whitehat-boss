@@ -734,19 +734,20 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
-  run은, 오라클에 이미 낸 최종 후보가 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
+  run은, 오라클에 이미 낸 후보나 구제된 중간 gen(`OracleLedger.pool`)이 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
   ⏵ 2026-10-15(조민규 승인) — **낸 PoC가 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
   `Exception`이든(위 두 예외 밖의 예상 밖 예외 포함) 최종 지정을 하고 **원 예외를 그대로** 올린다 — 최종 지정이
   던지면 그 사유는 원 예외의 노트로 붙고 원 예외가 이긴다. 최종 지정은 run당 한 번이다(`_Accumulator.oracle_finalized`가
   채점기 호출 전에 선다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다.
-  ⚠ **낸 PoC가 없는데 그 두 예외 밖의 예외로 끊긴 run은 안 덮는다**(후보 유무) — 최종 지정이 안 돌고 `oracle.final`이
+  ⚠ **낸 PoC도 구제된 중간 gen(⏵ 2026-10-15, `OracleLedger.pool`)도 없는데 그 두 예외 밖의 예외로 끊긴 run은 안 덮는다**(후보 유무) — 최종 지정이 안 돌고 `oracle.final`이
   `not_reached`다.
-  ⚠ **그 두 예외라도 낸 PoC 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무).
+  ⚠ **그 두 예외라도 낸 PoC도 구제된 중간 gen도 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무). 구제된 행만 있어도 끊긴 run은 최종 지정을 하고 끝난다.
   추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
   「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다.
   ⏵ 2026-10-12 — 정정: `no_poc`는 「PoC 0건」이 아니라 「후보(모델 `submit`) 0건」이다 — 중간 gen은
-  `vul`에 나가도 후보가 아니며 `vul_intermediate`가 센다(#620). 도구는
+  `vul`에 나가도 후보가 아니며 `vul_intermediate`가 센다(#620). ⏵ 2026-10-15 — 다시 정정: 이제
+  `no_poc`는 「풀 0건」이다 — `submit`도 구제된 중간 gen(크래시 계단, `vul_rescued`가 센다)도 없다. 도구는
   `asan`·`build`·`poc`·`gdb`
   (`inspect`/`gen`을 통해 `pov.run_tool`; ⏵ 2026-10-12 — 이 루프에서 이미 돌린 도구를 `inspect`가 또
   요청하면 도구를 안 돌리고(`tool_call` 없음) 옛 결과를 `inspect_repeat` 줄과 함께 되먹인다, #619 · 인프라
@@ -794,6 +795,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
   서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
   ⏵ 2026-10-14 — 서빙 pov 판이 **v7**이다(S20 Phase 14). v7 prefix도 그 재질문 턴을 서술한다(v6과 바이트 동일한 부분). v6과 다른 곳은 셋이다: body의 「JSON이 입력 사실 전부다」 문장을 "Vulnerability·Target·Source 절과 JSON이 입력에 든다(전부라고 하지 않는다 - hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) · JSON의 Finding 데이터는 `finding_id`뿐이다"로 고쳤고(Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 `{{FINDING}}` 산문에만 있다 - `nodes/pov._describe_finding` · `_render_prompt`는 `build_facts`에 `ids={"finding_id": ...}`만 넘긴다 · FACTS 바이트는 안 바꿨다), prefix의 「How to reach the vulnerable path」 머리에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트라는 한 문단을 더했고, DEF-SUBMIT의 「Why a non-crash is not submitted」 한 줄을 #637(PR #673 - 지정 키의 첫 성분이 후보 자기 `vul` 응답 코드의 계단)에 맞게 다시 썼다(v6은 "하네스는 그 자리를 채점기 코드로 가르지 않는다"고 적었다)(이슈 #649 · #669 · #637). v7로 돈 run은 0건이다.
+  ⏵ 2026-10-15 — 서빙 pov 판이 **v8**이다(S20 Phase 15 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 2026-10-15 개정). v8은 v7에 prefix 「Hop budget」 한 줄만 더했다 — `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있으니 기대지 말라(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다)(body·봉투·도구·나머지 규칙·`source_options` 선언은 v7과 같다). v8로 돈 run은 0건이고 효과는 미실측이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -803,14 +805,14 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내고 다시 던진다(#394, `tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
 - 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
   다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
-  이 값(중간 gen의 `query_vul` 관측)은 Evidence·내부 등급·지정 사슬에 닿지 않는다(⏵ 2026-10-14 — 지정 사슬이 읽는 채점기 값은 **후보 자기 `vul` 제출의 응답 코드 하나**뿐이다, 아래). 모델의 `submit`만 `designatable` 후보가 되고,
+  이 값(중간 gen의 `query_vul` 관측)은 Evidence·내부 등급·지정 사슬에 닿지 않는다(⏵ 2026-10-14 — 지정 사슬이 읽는 채점기 값은 **후보 자기 `vul` 제출의 응답 코드 하나**뿐이다, 아래). 모델의 `submit`만 `designatable` 후보가 되고(⏵ 2026-10-15 — `submit` 없이 끝난 Finding의 중간 gen 중 자기 `vul` 응답 코드가 크래시 계단인 것은 **구제**돼 대체 후보가 된다, 아래),
   `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
   (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여덟이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 아홉이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다 · ⏵ 2026-10-15 — `submitted_over_rescued`가 그 바로 뒤에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 전순서가
-  갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓪Critic 판정
-  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  갈랐다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓿′제출된 후보 → 구제된 중간 gen(⏵ 2026-10-15) ⓪Critic 판정
+  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
@@ -827,8 +829,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (`runner._designate_final`). 🔴 **지정 로직이 읽는 채점기 값은 후보 자기 `vul` 제출의 `response_exit_code` 하나뿐이다**
   (⏵ 2026-10-14 이슈 #637 — 앞 판은 그것도 안 읽었다). 환경 값으로 보는 코드(124~127·137·255·음수·255 초과 — 로컬 `poc` 도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다)와 없는 코드(`None`)는
   크래시로 세지 않고(300도 모름이지만 서버가 300을 응답에서 0으로 덮어 응답 경로로는 닿지 않는다 — #384) 「모름」으로 크래시와 크래시 아님 사이에 둔다. 후보의 `poc_id`·`cached`와 중간 gen의
-  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
-  반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `candidates`만 읽고, 정렬 키에
+  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). ⏵ **2026-10-15 — 구제(rescued)**([ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 1 개정, council → 조민규 승인). `submit` 없이 끝난 Finding(루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊었다 — `designatable` 시도가 하나도 없다)의 중간 gen 중 **자기 `vul` 제출 응답 코드가 크래시 계단**인 것이 지정 풀(`OracleLedger.pool` = 제출된 후보 + `rescued`)에 든다. 새 제출·새 조회는 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번 돈다. 같은 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`). `submit`한 Finding은 구제가 없다(틀린 `submit`·실패한 제출도 마찬가지). trace `oracle_final.rescued`·사이드카 `candidates[*].rescued`·`final.rescued`가 표시하고 파생 플래그는 후보에 안 찍는다(결정 5). 한계: 구제된 크래시가 다른 버그·호스트 잡음이면 `fix` 다리도 크래시라 0점(모든 Finding이 후보 0건인 `no_poc` run보다 나쁘진 않지만, 다른 Finding의 제출된 후보를 모름·크래시 아님 계단에서 **밀어낼 수는 있다**) · v8 문장의 행동 효과·구제 비율은 미실측.
+  🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `pool`(제출된 후보 + 구제된 중간 gen — ⏵ 2026-10-15)만 읽고, 정렬 키에
   든 오라클 값은 후보가 이미 낸 자기 제출 응답의 코드 하나다 — 새 제출·`fix` 호출·승격이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
   최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — 옛 `_designate_final`이 「오라클에 물어 고르면
   best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다(⏵ 2026-10-14 — 지정 쪽의 그 거부는 #637 개정으로 물러났다: 지정이 후보 자기 응답 코드를 읽는다. 모델 쪽 구조는 그대로 남는다). 이것이 저자 FAQ Q3(제출은 여러 장 ·
@@ -859,6 +862,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   아니라 **제출 전 `/query-poc` 읽기에서 유도된 값**이다(`src/adapters/cybergym_oracle.py:739`·`:747` — 그 run의
   접근 로그에도 제출마다 앞선 읽기 8건이 있다).
   ⏵ 2026-10-11 — 모델이 앞선 gen을 `poc_sha256`으로 지명할 수 있어 선택이 「마지막에서 멈추는 순차」에서 「낸 gen 중 사후 선택」으로 바뀌었다(시도 수 상한 `pov_tool_hops`는 그대로) — FAQ Q3 범위 확인은 여전히 미해결(위 「읽기(사용자 확인 필요)」).
+  ⏵ **2026-10-15 — 모델이 `submit`한 PoC를 전송 실패로 잃을 가능성을 줄인다**(전송 복구이고 ADR 0013 결정 1·2는 그대로다 - 새 승격·새 읽기가 없다). 틈: 중간 gen A가 `vul` 139를 받아 서버에 행이 있는데 모델이 A를 `submit`한 뒤 그 재제출이 429·5xx·타임아웃으로 실패하면 후보가 0이 되어 `oracle_final`이 `none`/`all_vul_submissions_failed`가 된다 - 대역으로 이 순서를 재현하는 `tests/test_oracle_final_retry.py`의 P1 테스트(`test_p1_resubmit_fails_twice_and_the_earlier_ok_submission_of_the_same_bytes_is_the_candidate`)가 이어받기를, 같은 파일의 `test_without_an_earlier_submission_a_4xx_ends_in_no_candidate_and_no_retry`가 이어받을 것이 없을 때의 `none`/`all_vul_submissions_failed`를 문다(둘 다 대역 서버 테스트이고 실서버 측정이 아니다). 이제 ① 모델 `submit`의 `vul` 제출이 일시 실패(429·5xx·연결/타임아웃)면 **한 번** 다시 낸다 - 429는 서버 기본 한도 창 60초(`oracle_log.RATE_LIMIT_WINDOW_S`, 20회/60초 · 띄운 서버의 한도는 읽을 길이 없다)를 기다린 뒤, 5xx·연결/타임아웃은 바로이고, 그 밖의 4xx는 다시 안 낸다. ② 재제출이 실패하고(재시도할 일시 실패는 한 번 다시 낸 뒤, 그 밖의 4xx는 재시도 없이 바로) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**이 있으면 그 제출을 이 후보의 제출로 이어받는다(서버가 그 바이트의 `vul` 행을 이미 든다 - 이어받은 후보의 응답 종료 코드는 그 앞선 제출의 것이다). 중간 gen의 제출은 재시도도 이어받기도 없다. ③ `finalize`(`fix` 다리 + 판정 조회)도 일시 실패(5xx·연결/타임아웃)면 한 번 다시 부르고 4xx(429 포함)는 바로 `failed`다. 기록: trace `oracle_submitted`·`oracle_failed`가 `submit_calls`(2일 때만)·`reused_intermediate`(참일 때만)를, `oracle_final`이 `finalize_calls`(2일 때만)를 싣고, 사이드카 후보 행·`final`이 같은 값을 싣는다(`submit_calls`·`finalize_calls`는 2일 때만). 호출 수가 2인 행은 첫 호출의 실패도 `first_error`·`first_error_status`·`retry_wait_s`로 싣는다(`error`는 마지막 호출의 것이다). 이어받은 후보는 서버 호출이 아니라 매니페스트 `vul_submitted`에 안 들고(`vul_reused`가 센다), 이어받은 run은 경고가 말한다. 재시도한 호출의 `cached`·`fix_cached`는 `null`이다 - 재시도 직전에 읽은 서버 장부에 이 run의 첫 호출이 쓴 행이 보일 수 있어 옛 판정 캐시(#385)라고 적을 수 없다. ⚠ 일시 실패는 HTTP 5xx 또는 어댑터가 `CyberGymOracleError.transient`로 표시한 연결·타임아웃 실패뿐이다 - 응답 형 어긋남·`poc_id` 불일치는 `status=None`이어도 재시도하지 않고, `status` 속성이 없는 예외도 재시도하지 않는다. ⚠ **덮지 못하는 경우:** 모델이 `poc_sha256` 없이 마지막 홉의 gen을 `submit`하면 그 바이트의 중간 제출이 없어 이어받을 것이 없다(후보 0). ⚠ **한계(소스 판독 추론, 미실측):** 타임아웃 직후 바로 다시 내면 서버가 첫 요청의 같은 바이트를 아직 돌리는 중일 수 있다. 어댑터 모듈 docstring이 적는 서버 판정 행의 UniqueConstraint `(agent_id, task_id, poc_hash)`(`pocdb.py:28`)와 같은 키에 행이 둘이면 500이라는 서술(`server_utils.py:227-228`)에서, 동시 실행이 중복 키로 서버 오류가 될 수 있다고 추론한다 - 그 경우 `submit`은 재시도도 실패하고 이어받을 앞선 제출이 있으면 이어받기로 간다. `finalize`에는 이어받기가 없어 이 경합이 나면 최종이 `failed`다(대기를 더하지 않았다). 이 추론을 재현한 run은 없다. 이 경로를 실서버로 잰 run은 0건이다(대역 테스트 `tests/test_oracle_final_retry.py`뿐).
 - 출력 상한: `output_max_by_role.pov` = 32,768(`config/budgets.yaml`) — 사고가 켜져 있어(Auditor와 같은
   베이스) `thinking_token_budget`(28,672)이 사고를 묶고 남은 자리에 `PovAction`(gen이면 그 안의
   `PovSpec`)이 든다. 전역 4,096이면
@@ -1270,7 +1274,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v8도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
 > ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)
@@ -1300,6 +1304,8 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 바뀌었다. 규칙 1이 걸린다 — v7 뒤 run은 v6 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v7 run 0건, 미실측).
 >
 > ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 현재 판은 Critic v8 · PoV v7이다. 입력 데이터는 그대로이고 **서술만** 더하거나 고쳤다 - Critic v8은 v7 prefix에 편집 넷을 했다: SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고, 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절(Evidence도 SOURCE도 아닌 맥락)과 FACTS `auditor_hops`의 서술을 더했고(편집 둘), 「별도 호출」 문장이 그 절과 어긋나 고쳤다(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
+>
+> ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 현재 판은 Critic v8 · PoV v8이다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·

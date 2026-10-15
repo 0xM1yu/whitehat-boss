@@ -3,6 +3,7 @@
 Fixtures use the existing real PoV loop; HTTP calls are replaced at the adapter boundary.
 """
 
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -24,11 +25,22 @@ from tests.test_pov_loop import _gen, _scripted, _served_pov_version, _with_pov_
 
 
 class ReadingOracle(FakeOracle):
-    def __init__(self, codes=(300, 71), *, query_error=None, **kwargs):
+    def __init__(self, codes=(300, 71), *, query_error=None, response_codes=None, **kwargs):
         super().__init__(**kwargs)
         self.codes = iter(codes)
         self.query_calls = []
         self.query_error = query_error
+        # 제출 응답의 종료 코드를 호출 순서대로 덮는다(없으면 `FakeOracle`의 고정 값).
+        # 관측(`codes`)과 응답은 다른 값이다(서버가 타임아웃 300을 응답에서만 0으로 덮는다, #384).
+        # ⏵ 2026-10-15 - 응답 코드가 구제 계단을 정하게 돼 그것을 고르는 검사가 생겼다.
+        self.response_codes = None if response_codes is None else iter(response_codes)
+
+    def submit_vul(self, poc):
+        result = super().submit_vul(poc)
+        if self.response_codes is not None:
+            result = dataclasses.replace(result, response_exit_code=next(self.response_codes))
+            self.vul_results[-1] = result
+        return result
 
     def query_vul(self, poc):
         self.query_calls.append(poc)
@@ -187,6 +199,7 @@ def test_wired_prefix_explains_raw_observation_and_model_designation():
         "v5": ("## 채점기 vul 관측", "중간"),
         "v6": ("## Scorer vul observation", "intermediate"),
         "v7": ("## Scorer vul observation", "intermediate"),  # 2026-10-14 - v6과 같은 절
+        "v8": ("## Scorer vul observation", "intermediate"),  # 2026-10-15 - v7과 같은 절
     }[version]
     assert heading in prefix
     for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", intermediate):
@@ -302,16 +315,17 @@ def test_summary_says_when_intermediate_feedback_was_used(ctx):  # noqa: ANN001,
 
 def test_warning_counts_candidates_not_submissions():
     sub = VulSubmission(TASK_ID, "id", 77)
+    no_crash = VulSubmission(TASK_ID, "id", 0)  # 크래시 아님 - 구제 풀에 안 든다
     ledger = oracle_log.OracleLedger(wired=True)
     for name in ("a", "b"):
-        ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), sub, 1, designatable=False))
+        ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), no_crash, 1, designatable=False))
     for name in ("c", "d"):
         ledger.add_attempt(oracle_log.vul_ok(name, name.encode(), sub, 1, designatable=True))
     ledger.set_final(oracle_log.FinalAttempt(
         status=oracle_log.STATUS_NONE, reason=oracle_log.REASON_GRADE_UNKNOWN,
     ))
     text = next(w for w in ledger.warnings() if "후보" in w)
-    assert "후보가 2건" in text and "4건" not in text
+    assert "풀(제출 성공 + 구제)이 2건" in text and "4건" not in text
 
 
 def test_empty_poc_is_not_a_failed_vul_submission(ctx):  # noqa: ANN001, F811
