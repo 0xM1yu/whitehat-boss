@@ -134,6 +134,7 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_runs_once_on_the
         "poc_bytes": len(_POCS[0]),
         "task_id": TASK_ID,
         "error": None,
+        "finalize_calls": 1,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
     }
     summary = state.oracle_ledger.summary()
@@ -166,6 +167,7 @@ def test_exactly_one_candidate_is_the_final_and_the_fix_leg_runs_exactly_once(
         "poc_bytes": len(_POCS[0]),
         "task_id": TASK_ID,
         "error": None,
+        "finalize_calls": 1,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
     }
 

@@ -17,7 +17,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from time import perf_counter
+from time import perf_counter, sleep
 
 from src.config import HarnessConfig
 from src.ids import IdFactory
@@ -314,6 +314,9 @@ class RunContext:
     swap_unreported: set[str] = field(default_factory=set)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
+    # 채점기 제출의 429 재시도가 한도 창을 기다리는 데만 쓴다(`runner._submit_vul_to_oracle`).
+    # 테스트가 실제로 자지 않게 주입한다.
+    sleep: Callable[[float], None] = field(default=sleep)
     # CyberGym 과제 설명(description.txt). `None`이면 이 run에 과제 설명이 없다(대부분의 run).
     # 있으면 `retrieval.run`이 캡슐에 `vuln_description` 섹션으로 싣는다(PoV 배선 — Scout
     # 설명기반 트리아지 입력). run 단위 사실이라 여기서 온다 — `read_payload`와 같은 자리다.
