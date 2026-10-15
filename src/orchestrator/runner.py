@@ -4020,13 +4020,15 @@ def _plan_targets(
     *,
     slice_refs: tuple[SliceRef, ...] | None = None,
 ) -> _TargetPlan:
-    """2단계를 artifact마다 돌리고 4단계에 올릴 target 목록을 확정한다 (W2).
+    """2단계를 타깃을 낼 artifact마다 돌리고 4단계에 올릴 target 목록을 확정한다 (W2).
 
     **모델을 한 번 부르기 전에 끝난다.** 그래서 `target_plan`이 실린 뒤에 죽어도 분모가
     남고, 정적 신호로 **전역** 정렬을 할 수 있다 — artifact 하나를 끝까지 태우는
     구조에서는 뒤쪽 artifact의 신호를 아직 모르므로 앞쪽의 신호 없는 심볼이 먼저 돈다.
 
-    도구 호출 횟수는 예전과 같다. 그때도 2단계가 artifact 전부에 대해 돌았다.
+    ⏵ 2026-10-15 — 심볼이 없어 타깃을 안 내는 artifact(`.o`·함수 정의 없는 `.h`)에는 2단계도 안
+    돈다(#690). 그 전에는 artifact 전부에 돌았고 그 근거는 쓰일 곳이 없었다. 인덱스가 없어 파일
+    단위로 되돌아가는 경로(`fallback_artifacts`)는 그대로 전부에 돈다.
 
     **`slice_refs`가 있으면 슬라이스 1개가 타깃 1개다**(ADR 0012 결정 1) — 심볼 인덱스로
     타깃을 만들지 않고, 2단계는 슬라이스가 가리키는 artifact에만 돈다.
@@ -4040,9 +4042,6 @@ def _plan_targets(
         return plan
     tokens = description_tokens(ctx.vuln_description)
     for artifact in artifacts:
-        evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
-        if has_static:
-            plan.signal_artifacts += 1
         locations = ctx.symbols_for(artifact.path)
         if locations is None:
             # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
@@ -4055,10 +4054,15 @@ def _plan_targets(
             # 인덱스는 있는데 이 파일에 심볼이 없다(`.py`·바이너리는 인덱서에 넘어가지
             # 않고, 함수 정의가 없는 `.h`도 여기로 온다). 후보를 만들지 않는다 — 대상 선정이
             # 새던 자리가 여기서 닫힌다(zlib run의 후보 32건 중 C 소스는 12건이었다).
+            # 2단계 도구도 안 돌린다 — 타깃이 없으면 그 근거를 쓸 곳이 없다(`.o` 163개에 도구 셋이
+            # 돌아 리허설 2단계의 26%를 썼다 · #690).
             plan.no_symbol_artifacts += 1
             continue
         else:
             plan.symbol_targets += len(locations)
+        evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
+        if has_static:
+            plan.signal_artifacts += 1
         plan.collected += [
             _Target(
                 artifact=artifact,
