@@ -33,6 +33,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 루프의 hop 0 크기 거절만 `context_overflow` 1건을 낸다) — 꺼짐은 `model_call.schema`가
 `Finding`인지로 가른다 |
 | Scout 슬라이스 절단 | `scout_slice_trimmed` | 뺀 줄·전후 토큰. **이벤트 부재 = 안 잘림** |
+| Scout 본문 절단 | `scout_source_trimmed` | 몫을 넘어 줄인 건. **부재 = 안 줄임** |
 | cache — prefix | `model_call` | `Σ cached_tokens / Σ input_tokens` |
 | cache — capsule | `cache`(cache="capsule") | `count(hit=true) / count(*)` |
 | 호출 그래프 커버리지 | `graph_index` | `unresolved_*`·`skipped`. run당 **0건 또는 1건** |
@@ -547,6 +548,25 @@ class EventKind(StrEnum):
     # 뺐다」고 서술하는데 하네스가 뺀 줄은 슬라이서가 **남긴** 줄이다. 이 이벤트가 사후에 그 사실을
     # 남기는 유일한 자리다 — 프롬프트엔 트림 표식이 없다(가드는 #351 선례, 이 PR 밖).
     SCOUT_SLICE_TRIMMED = "scout_slice_trimmed"
+    # `input: source` Scout의 함수 본문이 그 자리 입력 몫(`context_limit` − `output_max` − 여유)을
+    # 넘어 하네스가
+    # entry 둘레만 남기고 줄였다 (안전망 - `scout._fit_source`). 임계값이 없다 - **넘을 때만**
+    # 돌고, 들면
+    # 요청 바이트가 그대로다. 줄인 Scout 호출 1건당 1행이고 **이벤트 부재 = 안 줄였다**(몫에
+    # 들었다).
+    # 이전에는 이 입력이 서버의 400 크기 거절로 끝나 대상이 빠졌다(`target_skipped`).
+    # `role`·`budget`·`tokens_before`·`tokens_after`(프롬프트 전체 - `token_counter`가 `model`이면
+    # 그 자리
+    # 토크나이저, `estimate`면 글자 하한비 3.28)·`lines_before`(원본 줄
+    # 수)·`lines_kept`·`lines_omitted`
+    # (= before − kept, 표시 줄은 안 센다)·`fit`(머리·닫는 줄·entry 한 줄로도 안 들면
+    # false)·`entry_kept`(entry 줄이 남았나 - entry 줄을 못 찾았으면(줄 번호 없음·본문 범위 밖)
+    # 늘 false다, 머리가 남는 것은 entry가 남은 것이 아니다)·
+    # `slice_id`(슬라이스 타깃일 때만)를 싣는다. `subject_id`는 후보다.
+    # ⚠ 모델은 줄였다는 것을 `/* ... N lines omitted ... */` 줄로만 안다 - v4 프롬프트가 그 줄을
+    # 서술하지
+    # 않는다. 줄인 입력이 판정을 어떻게 바꾸는지는 **미실측**이다.
+    SCOUT_SOURCE_TRIMMED = "scout_source_trimmed"
     # 이 run이 **어느 토큰 카운터로 셌는가** (#96 (b)). 역할별로 `real`(그 모델의 실
     # 토크나이저) 또는 `approx`(글자수 근사 `len//4`)와, `approx`면 그 **사유**를 싣는다.
     #

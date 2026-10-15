@@ -336,12 +336,12 @@ def test_the_swap_script_launches_reports_and_tears_down_only_its_own_run(rig: R
         assert up.report["models"] == ["qwen3-14b"]
         server = up.report["server"]["qwen3-14b"]
         assert (server["action"], server["attempts"], server["max_model_len"]) == (
-            "launch", 1, 40960
+            "launch", 1, 131072
         )
         log = Path(server["log"])
         assert re.fullmatch(r"qwen3-14b\.run_x\.\d{8}T\d{6}Z\.log", log.name)
         argv = log.read_text(encoding="utf-8")
-        assert "--max-model-len 40960" in argv
+        assert "--max-model-len 131072" in argv
         assert "--revision 40c069824f4251a91eefaf281ebe4c544efd3e18" in argv
         ours = [line.split() for line in rig.servers.read_text().splitlines() if RUN_ID in line]
         assert [(key, run) for key, _, run, *_ in ours] == [("qwen3-14b", RUN_ID)]

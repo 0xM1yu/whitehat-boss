@@ -4242,6 +4242,12 @@ def test_the_estimate_counter_role_is_the_one_the_runner_actually_uses(
     여기서는 풀 run을 실제로 돌려 `counter_for_role`이 **요청된 인자**를 집계하고, 그중
     Scout 자리의 것이 `_capsule_counter_role`과 같은지 본다.
 
+    ⚠ **집계는 캡슐 조립 단계(`_step_retrieval`) 안에서 요청된 것만 센다.** 4단계 `Scout`는
+    자기 프롬프트를 자기 입력 몫에 맞추려 **멤버마다** 자기 토크나이저를 요청한다
+    (`nodes.scout._input_budget`) - 정당한 호출이고 캡슐과 무관하다. 그것까지 세면 #84가 멀쩡한데
+    집계가 셋이 되어 빨개진다. 조립을 가르는 것은 `_TRIAGE_STEPS`의 3단계 항목을 감싸는 것으로
+    잡는다(이름이 아니라 표 칸이라 줄이 움직여도 안 샌다).
+
     ⚠ **집계 결과가 「멤버 셋」이 아니라 하나인 것이 정상이다** — 캡슐이 target당 하나라
     나머지 멤버는 `using_counter`에 도달하기 전에 캐시로 반환한다(`_step_retrieval`).
     """
@@ -4249,6 +4255,7 @@ def test_the_estimate_counter_role_is_the_one_the_runner_actually_uses(
     from src.cli import _capsule_counter_role
 
     asked: list[str] = []
+    assembling = [False]
     original = factory_mod.build_deps
 
     def spy_build_deps(*args: object, **kwargs: object) -> object:
@@ -4256,12 +4263,30 @@ def test_the_estimate_counter_role_is_the_one_the_runner_actually_uses(
         inner = deps.counter_for_role
 
         def wrapped(role: str) -> object:
-            asked.append(role)
+            if assembling[0]:
+                asked.append(role)
             return inner(role)
 
         return dataclasses.replace(deps, counter_for_role=wrapped)
 
+    real_retrieval = runner._step_retrieval
+
+    def retrieval_marking_assembly(ctx, item, state):  # noqa: ANN001, ANN202
+        assembling[0] = True
+        try:
+            return real_retrieval(ctx, item, state)
+        finally:
+            assembling[0] = False
+
+    def swap(steps):  # noqa: ANN001, ANN202
+        return tuple(
+            (st, retrieval_marking_assembly if step is real_retrieval else step)
+            for st, step in steps
+        )
+
     monkeypatch.setattr("src.cli.build_deps", spy_build_deps)
+    monkeypatch.setattr(runner, "_TRIAGE_STEPS", swap(runner._TRIAGE_STEPS))
+    monkeypatch.setattr(runner, "_PHASE_A_STEPS", swap(runner._PHASE_A_STEPS))
     result, _ = _run(tmp_path, configure=_poolify(mode))
 
     scout_asked = {r for r in asked if r.startswith("scout")}
