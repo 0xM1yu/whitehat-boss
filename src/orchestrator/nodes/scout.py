@@ -501,7 +501,11 @@ def _ask_model(
             target = target.model_copy(update={"symbol": capsule.target.symbol})
         source = ctx.read_source(target)
         first = target.line_start or 1
-        shown_lines = tuple((target.file, first + i) for i in range(len(source.splitlines())))
+        # `\n`에서만 센다 - 인덱스 좌표(`source_lines`)·`_fit_source`의 `split("\n")`과 같다.
+        # `splitlines()`는 폼피드(`\x0c`) 등에서도 끊어 그 글자마다 한 줄씩 밀린다.
+        # 요청 바이트는 안 건드린다.
+        count = len(source.removesuffix("\n").split("\n")) if source else 0
+        shown_lines = tuple((target.file, first + i) for i in range(count))
     else:
         source = ctx.read_slice(slice.slice_id)
     slice_input = slice is not None and template.input == "slice"
@@ -770,7 +774,10 @@ def _fit_source(
     count = len(lines)
     first = target.line_start or 1
     at = entry_line - first if entry_line is not None else 0
-    at = at if 0 <= at < count else 0
+    # entry 줄을 못 찾았으면(줄 번호 없음·범위 밖) 0으로 대신 두되
+    # `entry_kept`는 거짓이다 - 0은 머리라 늘 남는다.
+    located = entry_line is not None and 0 <= at < count
+    at = at if located else 0
     head = next(
         (i for i, line in enumerate(lines[:_SOURCE_HEAD_LINES]) if "{" in line), 0
     )
@@ -817,7 +824,7 @@ def _fit_source(
         lines_kept=len(kept),
         lines_omitted=count - len(kept),
         fit=fit,
-        entry_kept=at in kept,
+        entry_kept=located and at in kept,
         token_counter="model" if real_counter else "estimate",
         **({"slice_id": ref.slice_id} if ref is not None else {}),
     )

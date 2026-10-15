@@ -550,7 +550,8 @@ class EventKind(StrEnum):
     # 토크나이저, `estimate`면 글자 하한비 3.28)·`lines_before`(원본 줄
     # 수)·`lines_kept`·`lines_omitted`
     # (= before − kept, 표시 줄은 안 센다)·`fit`(머리·닫는 줄·entry 한 줄로도 안 들면
-    # false)·`entry_kept`·
+    # false)·`entry_kept`(entry 줄이 남았나 - entry 줄을 못 찾았으면(줄 번호 없음·본문 범위 밖)
+    # 늘 false다, 머리가 남는 것은 entry가 남은 것이 아니다)·
     # `slice_id`(슬라이스 타깃일 때만)를 싣는다. `subject_id`는 후보다.
     # ⚠ 모델은 줄였다는 것을 `/* ... N lines omitted ... */` 줄로만 안다 - v4 프롬프트가 그 줄을
     # 서술하지
