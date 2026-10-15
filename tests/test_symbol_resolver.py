@@ -38,7 +38,13 @@ from pathlib import Path
 import pytest
 
 from src.adapters.factory import build_deps
-from src.adapters.index_graph import STATUS_MALFORMED, V3_TABLES, V4_TABLES, GraphIndex
+from src.adapters.index_graph import (
+    STATUS_LOADED,
+    STATUS_MALFORMED,
+    V3_TABLES,
+    V4_TABLES,
+    GraphIndex,
+)
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import (
     _CALLER_SITE_RADIUS,
@@ -156,8 +162,11 @@ def test_a_record_without_line_start_makes_the_index_unavailable_instead_of_cras
     `(OSError, ValueError)`만 잡는다(`KeyError`·`TypeError`는 resolver 버그라 삼키지 않는다)."""
     index = _indexer.build_index(sorted(_HOP1_ROOT.rglob("*.c")), _HOP1_ROOT)
     name, records = next(iter(index["functions"].items()))
-    records[0].pop("line_start")
     path = tmp_path / "index.json"
+    # 양성 대조: 손대지 않은 색인은 읽힌다 - 아래 `malformed`가 픽스처 탓이 아님을 보인다.
+    path.write_text(json.dumps(index), encoding="utf-8")
+    assert GraphIndex(path).summary.status == STATUS_LOADED
+    records[0].pop("line_start")
     path.write_text(json.dumps(index), encoding="utf-8")
     graph = GraphIndex(path)
 
