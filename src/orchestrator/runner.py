@@ -64,6 +64,11 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 심볼이 모두 동급이었으므로 그때와 다른 순서이고, `candidate_max`가 물면 그 artifact의
 심볼이 다른 파일의 히트보다 먼저 잘린다.
 이 동작을 받아들였다(#257 2).
+**신호가 같으면 과제 설명이 다음 열쇠다(#377 (b)).** 신호가 없는 CyberGym Level 1에서는 정렬이
+곧 파일 경로 사전순이라 `candidate_max`(256이던 때 256개, 2026-10-15에 8)에 어느 후보가 사는지가
+설명과 무관했다. 설명이 부른
+심볼(`desc_rank` 3 전체 이름 · 2 조각·확장 일치)·파일(1)을 신호 뒤, 경로 앞에 둔다 — 후보는 줄이지
+않고 순서만 바꾼다(`description_match.py`). 효과는 미실측.
 `--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
 `line_end`가 없다(`src/adapters/slices.py`). `_symbol_signal_rank`가 `end = line_end or start`로
 보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
@@ -135,6 +140,7 @@ from src.orchestrator import gate, oracle_log, source_gate, state_machine
 from src.orchestrator import slice_state as slice_state_module
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import TAIL_WHITESPACE_CHARS, RunContext
+from src.orchestrator.description_match import description_rank, description_tokens
 from src.orchestrator.entry_scope import (
     ENTRY_WINDOW_LINES,
     enclosing_scope,
@@ -744,6 +750,9 @@ class _Target:
     # 미확정(results[0] 한 줄·위치 없는 신호·폴백), 0=신호 없음(#70). 큐 순서에만 쓴다
     # (등급 아님). `_symbol_signal_rank`가 매긴다.
     signal_rank: int
+    # 과제 설명과의 일치: 3=심볼 전체 이름 · 2=심볼 조각·확장 일치 · 1=파일 이름 · 0=없음/설명 없음
+    # (#377 (b)). `signal_rank` 다음 정렬 항이다. 기본 0이라 설명이 없으면 종전 순서 그대로다.
+    desc_rank: int = 0
     # 슬라이스 타깃이면 그 슬라이스(ADR 0012 결정 1). id만이 아니라 통째로 드는 것은 4·5단계가
     # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`, ⏵ 2026-10-13
     # #529 `input: slice` 판만 — `source` 판은 entry를 품는 함수 본문을 받는다)를, Auditor는
@@ -4024,6 +4033,7 @@ def _plan_targets(
         _plan_slice_targets(ctx, plan, artifacts, graph, slice_refs)
         _order_and_cut(ctx, plan, state)
         return plan
+    tokens = description_tokens(ctx.vuln_description)
     for artifact in artifacts:
         evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
         if has_static:
@@ -4050,6 +4060,7 @@ def _plan_targets(
                 location=location,
                 evidences=evidences,
                 signal_rank=_symbol_signal_rank(location, signal_lines, has_static),
+                desc_rank=description_rank(tokens, location.file, location.symbol),
             )
             for location in locations
         ]
@@ -4097,9 +4108,11 @@ def _plan_slice_targets(
     순위는 entry 줄로 매긴다(`_symbol_signal_rank`) — 히트가 entry 줄에 걸리면 2, 같은
     artifact의 다른 줄이면 1이다.
     ponytail: entry 한 줄만 본다 — 슬라이스 줄(`SliceRef.lines`)에 든 히트로 매기지 않는다.
-    `candidate_max`가 슬라이스를 실제로 자르는 run이 오면 그 줄로 매긴다.
+    `candidate_max`가 슬라이스를 실제로 자르는 run이 왔다(2026-10-15 256 → 8) — 아직 그 줄로 안
+    매겼고, 첫 run의 `target_plan`(신호 수·`desc_*`)을 본 뒤 정한다.
     """
     by_path = {artifact.path: artifact for artifact in artifacts}
+    tokens = description_tokens(ctx.vuln_description)
     seen: dict[str, tuple[tuple[Evidence, ...], list[int], bool]] = {}
     for ref in refs:
         artifact = by_path.get(ref.location.file)
@@ -4117,6 +4130,7 @@ def _plan_slice_targets(
                 location=ref.location,
                 evidences=evidences,
                 signal_rank=_symbol_signal_rank(ref.location, signal_lines, has_static),
+                desc_rank=description_rank(tokens, ref.location.file, ref.location.symbol),
                 slice=ref,
             )
         )
@@ -4126,8 +4140,11 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     """(a′) — 정적 신호를 게이트가 아니라 순서로 쓰고, 상한 초과분을 기록에 남긴다.
 
     정렬 키의 첫 항이 `-signal_rank`라 순위가 높은(히트 위치가 든) 심볼이 앞에 온다.
-    나머지 세 항은 index.json의 순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면
-    두 run의 trace를 대조할 수 없다(engineering-guide.md §5).
+    둘째 항 `-desc_rank`(#377 (b))는 과제 설명이 부른 심볼 전체 이름(3)·심볼 조각·확장 일치(2)·
+    파일(1)을 신호가 같은 것들 사이에서 앞세운다 — **순서만 바꾸고 후보를 줄이지 않는다.**
+    설명이 없거나 아무것도 안 맞으면 전부 0이라 종전 순서 그대로다. 나머지 네 항은 index.json의
+    순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면 두 run의 trace를 대조할 수 없다
+    (engineering-guide.md §5).
 
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
@@ -4138,6 +4155,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     plan.collected.sort(
         key=lambda item: (
             -item.signal_rank,
+            -item.desc_rank,
             item.location.file,
             item.location.line_start or 0,
             item.location.symbol or "",
@@ -4148,6 +4166,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     limit = ctx.config.thresholds.candidate_max
     plan.targets = plan.collected[:limit]
     deferred = plan.collected[limit:]
+    # 설명 일치 수(#377 (b)): 컷 전 전체의 정확·조각·파일 일치와, 그중 컷에 잘린 수.
     ctx.trace.emit(
         EventKind.TARGET_PLAN,
         stage=Stage.SIGNALS,
@@ -4161,6 +4180,10 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         planned=len(plan.targets),
         deferred=len(deferred),
         candidate_max=limit,
+        desc_exact_matches=sum(item.desc_rank == 3 for item in plan.collected),
+        desc_part_matches=sum(item.desc_rank == 2 for item in plan.collected),
+        desc_file_matches=sum(item.desc_rank == 1 for item in plan.collected),
+        desc_matches_deferred=sum(item.desc_rank > 0 for item in deferred),
     )
     # **실행할 대상의 이름을 남긴다 (해소).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
     # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**

@@ -121,8 +121,9 @@ class SlicingStages:
             unmatched = len(unmatched_names)
             if not matched:
                 print(
-                    f"--priority-files: the list ({len(self.priority_files)} files) matched no "
-                    "candidate's entry or anchor file; candidates keep the default order",
+                    f"{self.priority_source}: the list ({len(self.priority_files)} files) "
+                    "matched no candidate's entry or anchor file; candidates keep the default "
+                    "order",
                     file=sys.stderr,
                 )
                 self.result["measurement_notes"]["priority_files"] = (
