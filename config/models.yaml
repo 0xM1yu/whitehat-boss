@@ -471,6 +471,8 @@ models:
     #     --served-model-name qwen3.8-27b --host 127.0.0.1 --port 8002 --max-model-len 53248 \
     #     --gpu-memory-utilization 0.80 --enforce-eager --reasoning-parser qwen3 \
     #     --structured-outputs-config.backend xgrammar
+    #   ⚠ 지금 포트는 8001이다(`endpoint` — ⏵ 2026-10-14 Scout가 한 서버가 되며 8002에서 한 칸
+    #   내려왔다). 위 `--port 8002`는 그때의 기록으로 둔다.
     #
     # - **`--reasoning-parser qwen3`가 없으면 사고가 죽는다.** vLLM 0.27.1은 parser가 없으면 구조화 출력
     #   문법을 첫 토큰부터 건다(`entrypoints/openai/chat_completion/serving.py`의
