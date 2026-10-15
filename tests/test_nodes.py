@@ -2439,12 +2439,12 @@ def test_critic_wiring_includes_evidence_body(ctx: RunContext, version: str) -> 
     assert "heap-buffer-overflow" in prompt.body
 
 
-def test_critic_content_aware_versions_pin_v3_v4_v5_v6_and_v7() -> None:
+def test_critic_content_aware_versions_pin_v3_v4_v5_v6_v7_and_v8() -> None:
     """#247 리뷰 HIGH-1: 위 테스트는 게이트를 monkeypatch로 켜므로 **실제 값**을 안 문다.
     `_CONTENT_AWARE_VERSIONS`에서 버전을 빼면 그 버전이 조용히 metadata만 받는데
     (#237 HIGH-1과 같은 상태) 그걸 잡는 것은 이 단언뿐이다.
     """
-    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6", "v7"})
+    assert critic._CONTENT_AWARE_VERSIONS == frozenset({"v3", "v4", "v5", "v6", "v7", "v8"})
 
 
 def test_critic_v3_prompt_is_content_conditional() -> None:
@@ -2557,7 +2557,7 @@ def test_auditor_content_aware_versions_pin_the_exact_set() -> None:
     """
     assert auditor._CONTENT_AWARE_VERSIONS == frozenset(
         {"v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12"}
-        | {"v13", "v14", "v15"}
+        | {"v13", "v14", "v15", "v16", "v17"}
     )
     assert auditor._CONTENT_AWARE_VERSIONS is not critic._CONTENT_AWARE_VERSIONS
 
@@ -2619,7 +2619,7 @@ def test_v5_evidence_completeness_wording(role: str) -> None:
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
-    is_v7 = role == "critic" and version == "v7"
+    is_v7 = role == "critic" and version in ("v7", "v8")
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     assert "factual summary" not in normalized
@@ -2685,7 +2685,7 @@ def test_v5_partial_body_rules_keep_their_direction_wording(role: str) -> None:
     version = load_config("harness_pool").model_for("critic").prompt_template_version \
         if role == "wired_critic" else "v5"
     role = "critic" if role == "wired_critic" else role
-    is_v7 = role == "critic" and version == "v7"
+    is_v7 = role == "critic" and version in ("v7", "v8")
     prefix = (PROMPTS_DIR / role / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
     common = (  # 규칙 2 전체 — auditor/v5/prefix.md:114-115 · critic/v5/prefix.md:70-71
@@ -2733,7 +2733,7 @@ def test_critic_v5_need_evidence_conditions_are_decisive_fact_conditional(versio
     """
     prefix = (PROMPTS_DIR / "critic" / version / "prefix.md").read_text(encoding="utf-8")
     normalized = " ".join(prefix.split())
-    if version == "v7":  # v7(2026-10-14 서빙)은 이 조건을 SOURCE 검증 문장으로 다시 썼다
+    if version in ("v7", "v8"):  # v7(2026-10-14 서빙)은 이 조건을 SOURCE 검증 문장으로 다시 썼다
         assert "need_evidence is required when the path is not reviewable (step 3)" in normalized
         assert "a hypothetical unseen guard, or a hypothetical unseen caller is not enough" in (
             normalized
@@ -3186,10 +3186,11 @@ def test_a_timeout_holds_the_finding_like_a_compile_failure(ctx: RunContext) -> 
     )
 
 
-def test_a_judge_with_no_commands_is_a_spec_failure_not_an_unmeasured_one(ctx: RunContext) -> None:
-    """`judge()`가 명령이 하나도 안 돈 건에 종료 코드를 지어내면(127) `_not_measured`가 그것을
-    「대상이 안 떴다」로 읽어 보류한다. 돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 종전대로
-    F-11이다. 127로 되돌리면 두 단언이 같이 빨개진다."""
+def test_a_judge_with_no_commands_invents_no_exit_code_so_it_is_not_held(ctx: RunContext) -> None:
+    """`judge()`의 빈 명령 갈래는 도달 불가 방어 갈래다(`plan()`은 명령을 늘 하나 이상 낸다) -
+    그래도 종료 코드를 지어내면(127) `_not_measured`가 그것을 「대상이 안 떴다」로 읽어 보류한다.
+    돌려줄 코드가 없으므로 `None`이어야 하고, 그 건은 F-11이다. 127로 되돌리면 두 단언이 같이
+    빨개진다."""
     from src.adapters.container_tools import judge
 
     ok, exit_code, error = judge("asan", [], 2)
@@ -3210,7 +3211,8 @@ def test_the_adapter_still_reports_a_failed_build_as_not_ok_with_an_exit_code() 
     """`_not_measured`는 어댑터 문구가 아니라 **`ok=False` + 종료 코드 있음**을 본다. 어댑터가
     컴파일·링크 실패·대상 미기동에 그 모양을 계속 내는지 실제 `judge()`로 문다 -
     문구가 바뀌어도 안 깨지고,
-    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다."""
+    `ok=True`로 바뀌면(실패를 신호로 읽으면) 빨개진다. 시간 초과(`_execute`)와 실행 전 거절
+    (`_fail`)도 같은 모양이지만 `judge()`를 안 거치므로 여기서는 묻지 않는다."""
     from src.adapters.container_tools import Step, judge
 
     for tool, steps, total in (
@@ -3641,12 +3643,14 @@ def test_facts_block_is_the_last_json_fence(ctx: RunContext) -> None:
     # `slice_criterion`은 슬라이스 타깃에만 붙는다(opt-in) — 슬라이스 없는 프롬프트는 그 키가
     # 생기기 전과 글자가 같아야 한다. 이 호출은 슬라이스 타깃이 아니다.
     # `fuzz_entrypoint`도 opt-in이고 **PoV만** 준다(2026-10-02) — Scout은 슬라이스 타깃이어도
-    # 안 받는다. `auditor_hops`(2026-10-13)도 opt-in이고 **Critic만** 준다. 등식을 유지하는 것이
-    # 핵심이다: 무조건 싣는 변이가 여기서 죽는다.
+    # 안 받는다. `auditor_hops`(2026-10-13)도 opt-in이고 **Critic만** 준다. `slice_state`
+    # (2026-10-14)도 opt-in이고 **Auditor만** 준다. 등식을 유지하는 것이 핵심이다: 무조건 싣는
+    # 변이가 여기서 죽는다.
     assert set(facts) == set(prompt_loader.FACT_KEYS) - {
         "slice_criterion",
         "fuzz_entrypoint",
         "auditor_hops",
+        "slice_state",
     }
 
 
@@ -3677,7 +3681,9 @@ def test_a_slice_target_sends_its_render_and_slice_criterion(
     facts = json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
     # 슬라이스 타깃이라 `slice_criterion`은 붙지만 `fuzz_entrypoint`는 **PoV 전용**이라 안 붙는다
     # (2026-10-02). 등식이라 어느 쪽으로 새도 죽는다.
-    assert set(facts) == set(prompt_loader.FACT_KEYS) - {"fuzz_entrypoint", "auditor_hops"}
+    assert set(facts) == set(prompt_loader.FACT_KEYS) - {
+        "fuzz_entrypoint", "auditor_hops", "slice_state",
+    }
     assert facts["source"] == render
     assert facts["slice_criterion"] == {
         "given_end": "sink",

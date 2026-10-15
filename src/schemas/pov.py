@@ -1,5 +1,5 @@
-"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5와 서빙 판 v6은 형제 `PovActionNamed`), 그 `gen`이
-싣는 PoC 바이트 구성 스펙 `PovSpec`.
+"""PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5와 서빙 판 v6·v7은 형제
+`PovActionNamed`), 그 `gen`이 싣는 PoC 바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가

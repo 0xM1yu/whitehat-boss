@@ -32,7 +32,7 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 실린 토큰을 먼저 재야 하고, 그 측정은 아직 없다. 근본 해법은 위 문단이 이미 가리킨 #67이다 (⏵
 2026-10-12 — #67은 닫혔고 v13·v14는
 Auditor FACTS의 `source` 사본만 걷었다. `related`의 2N은 hybrid에서 그대로다 · ⏵ 2026-10-13 —
-서빙 판 v15도 같은 선언(`facts_source: false`)이라 걷는 것이 그 사본 하나뿐인 것도 같다).
+서빙 판 v15·v16·v17도 같은 선언(`facts_source: false`)이라 걷는 것이 그 사본 하나뿐인 것도 같다).
 
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에는 타입
 데이터가 없었고, index-v2의 `types` 표는 캡슐로 싣지 않는다 — NE resolver 몫이다
@@ -66,7 +66,7 @@ from src.interfaces.retrieval import (
 )
 from src.interfaces.retriever import Query
 from src.paths import safe_join
-from src.schemas.capsule import CapsuleSection, ContextCapsule
+from src.schemas.capsule import CapsuleCuts, CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
@@ -230,21 +230,23 @@ class HybridRetriever:
             selected = self._retrieve(query)
         self._pool[cache_key] = selected
 
+        sections, cuts = _sections_for(
+            kinds,
+            source,
+            selected,
+            query.budget_tokens,
+            self.graph,
+            query.target,
+            self._slice_body(query),
+        )
         capsule = ContextCapsule(
             capsule_id=self.ids.next("capsule"),
             run_id=self.run_id,
             target=query.target,
             level=level,
             budget_tokens=query.budget_tokens,
-            sections=_sections_for(
-                kinds,
-                source,
-                selected,
-                query.budget_tokens,
-                self.graph,
-                query.target,
-                self._slice_body(query),
-            ),
+            sections=sections,
+            cuts=cuts,
             cache_key=cache_key,
         )
         self._cache[cache_key] = capsule
@@ -296,7 +298,7 @@ class HybridRetriever:
                 # 그래프 분기는 `FakeRetriever.expand()`와 **같은 함수**를 부른다.
                 # ponytail: 캡슐이 slice id를 안 들어 슬라이스 캡슐도 entry 한 줄로 센다(#220 ①의
                 # 줄 집합이 아니다). 호출 지점이 0이라 둔다 — 배선할 때 캡슐에 slice id를 싣는다.
-                section, stop = graph_section(kind, self.graph, capsule.target, remaining)
+                section, stop, _ = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
                         break
@@ -536,8 +538,12 @@ def _sections_for(
     graph: GraphIndex,
     target: Location,
     slice_body: SliceBody | None = None,
-) -> list[CapsuleSection]:
-    """예산을 넘기지 않는 선에서 섹션을 채운다.
+) -> tuple[list[CapsuleSection], CapsuleCuts]:
+    """예산을 넘기지 않는 선에서 섹션을 채운다. `(섹션, 절단 표지)`.
+
+    **표지는 내용이 갈린 자리에서만 남긴다**(#663) — 두 `break`(그래프 `stop`·보조 섹션 예산 0),
+    그래프 섹션의 못 담은 항목, `_fit_related`가 못 담은 조각. `min(cost, remaining)`는 내용을 안
+    바꿔 세지 않는다. 그래프 분기는 `FakeRetriever._sections_for()`와 같은 표지를 남긴다.
 
     `related`의 토큰은 실제로 선별된 조각의 길이 합이다 — 고정값을 쓰면 캡슐 예산
     초과 경로가 영원히 안 타고, 그러면 그 경로가 검증되지 않는다.
@@ -547,15 +553,22 @@ def _sections_for(
     """
     sections: list[CapsuleSection] = []
     used = 0
-    for kind in kinds:
+    dropped: list[str] = []
+    graph_stopped = False
+    graph_skipped = 0
+    related_skipped = 0
+    for index, kind in enumerate(kinds):
         remaining = budget - used
         items: int | None = None
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `FakeRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target, remaining, slice_body)
+            section, stop, skipped = graph_section(kind, graph, target, remaining, slice_body)
+            graph_skipped += skipped
             if section is None:
                 if stop:
+                    graph_stopped = True
+                    dropped = list(kinds[index:])
                     break
                 # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
                 # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
@@ -569,6 +582,7 @@ def _sections_for(
             if not selected:
                 continue
             cost, count, body = _fit_related(selected, remaining)
+            related_skipped += len(selected) - count
             if count == 0:
                 continue
             # 그래프 섹션과 같은 이유로 **여기서 섹션을 완성해 `continue`한다** —
@@ -588,11 +602,18 @@ def _sections_for(
         # 그래프 섹션이 위에서 먼저 빠지므로 **아래 `min()`은 본문 있는 섹션에 닿지
         # 않는다.** 닿으면 줄은 두고 토큰만 깎는 것이 되어 검증기에서 죽는다.
         if cost > 0 and remaining <= 0:
+            dropped = list(kinds[index:])
             break
         tokens = min(cost, remaining)
         sections.append(CapsuleSection(kind=kind, tokens=tokens, items=items))
         used += tokens
-    return sections
+    cuts = CapsuleCuts(
+        dropped_sections=dropped,
+        graph_stopped=graph_stopped,
+        graph_skipped=graph_skipped,
+        related_skipped=related_skipped,
+    )
+    return sections, cuts
 
 
 def _chunk_body(chunk: Chunk) -> str:

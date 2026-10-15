@@ -1,0 +1,33 @@
+# 2026-10-14 - v7을 잇는 새 판(S20 Phase 14 · 이슈 #669). Auditor `SOURCE` 문자열에 새로 생긴 블록 둘을 SOURCE 계약 절이
+# 서술한다: ① 슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문(`auditor_input_context`가 켜져
+# 있을 때 쓰기 지점 창 뒤에 붙는다 - PR #668) ② 쓰기 지점 창이 보인 것보다 많았을 때 `SOURCE` 맨 끝에 붙는 표지 줄
+# `/* ... +N more write windows not shown ... */`(이슈 #650 · PR #667). 같은 SOURCE 문자열이 Critic에도 간다(`runner.finding_sources`).
+# - body는 v7과 바이트 동일이다. prefix는 네 자리만 v7과 다르다(편집 넷: ①·②-EVIDENCE·②-FACTS·③). (1) 「SOURCE contract and focused verification」의 첫 문단 -
+#   블록 목록에 `input-context functions`를 더하고, 쓰기 창이 조각이라는 것 · 입력 맥락 함수가 맨 뒤 코드 블록이고 없을 수
+#   있다는 것(없음은 증거가 아니다) · 붙었다고 경로의 데이터가 그 함수를 지난다는 뜻이 아니라는 것 · 표지 줄이 하네스 생성
+#   텍스트라는 것을 적는다(Auditor v16 prefix와 같은 말이다). (2) 「Trust boundary and actual input」의 EVIDENCE·FACTS 두 항목(편집 둘) -
+#   EVIDENCE 끝에 붙을 수 있는 `## Auditor tool observations (N observations)` 절(고정 NOTE · 사본마다 자기 `(hop n)` 머리줄 ·
+#   식별자 가림 `<non-vocabulary>`/`<non-identifier>`)과 FACTS 최상위 정수 `auditor_hops`를 적는다. N은 **사본 수**이지 홉 수가
+#   아니고(가리지 못한 홉은 빠진다), 사본이 없으면 절도 키도 없다(0이 아니다). 이 절은 Evidence 항목이 아니라 맥락이고 인용은
+#   FACTS.evidence의 ID로만 한다. 서술 근거: `nodes/critic._describe_hop_observations`·`_HOP_OBSERVATIONS_NOTE`·`_ask_model`,
+#   `prompt_loader.build_facts`(v7 prefix는 이 절을 서술하지 않는다 - `docs/agent-contracts.md` §2.3 ⏵ 2026-10-15).
+#   (3) 같은 절의 「별도 호출」 문장 - 「FACTS.source 밖의 맥락을 가정하지 마라」가 위 관측 절과 어긋났다(⏵ 2026-10-15 라운드 2):
+#   이제 FACTS.source와 EVIDENCE에 보인 관측 절만 있다고 적고, 그 절은 맥락일 뿐 Evidence도 SOURCE도 아니라서 거기에만 나온
+#   코드를 SOURCE로 인용·탐색하지 않는다고 적는다(Check A·B는 SOURCE만 인용한다 - 문장은 그 지시를 안 넘는다).
+#   판정 절차(step 1~5 · Check A~E)·출력 규칙은 한 글자도 안 바꿨다.
+# - 이 판의 서술은 `auditor_input_context`가 꺼져 있어도 거짓이 아니다(블록이 없을 수 있다고 적는다).
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `e7cef14b7dca3072206c8853ccf09cbafbc6fe8d0bc8bb69c657d4558ab4c55f`
+#   body.md   sha256 `44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2` (v7 body와 같다)
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 디코더 블록을 슬라이스 코드로 오인하는지 · 표지 줄을 코드로 읽는지 · 관측 절을 Evidence로 오인하는지는 미실측이다.
+# v7 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: critic
+version: v8
+output_schema: DecisionDraft
+description: Critic v7에 SOURCE의 새 블록 둘(입력 디코더 함수 블록 · 쓰기 지점 창 표지 줄)과 Auditor 도구 관측 절·FACTS.auditor_hops의 서술을 더하고 그 절과 어긋나는 한 문장을 고친 판입니다. 판정 절차와 출력 규칙은 v7과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
+# 2026-10-15 - 이 판이 서술하는 Auditor `SOURCE` 옵션 둘의 선언(PR #676 가드). 같은 SOURCE 문자열이 이 판에도 가므로
+# (`runner.finding_sources`) 두 옵션을 켠 run은 이 판이 그 블록을 서술해야 한다 - `cli._undescribed_relayed_options`가 run·doctor에서
+# 이 선언을 읽는다(v7 이하는 선언이 없어 서술하지 않는 판으로 본다). 이 목록은 `config.RELAYED_SOURCE_OPTIONS`의 부분집합만 든다:
+# Critic·PoV에는 그 둘만 판 번호로 갈린다(v6·v7 prefix는 정의·피호출 본문·호출자 창·가드·쓰기 창을 이미 한 문장으로 서술한다).
+# prefix·body는 안 바꿨다 - 이 선언은 meta 한 줄이라 위 sha 핀에 안 든다.
+source_options: [auditor_write_window_marker, auditor_input_context]

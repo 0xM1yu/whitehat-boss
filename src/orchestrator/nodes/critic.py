@@ -53,15 +53,17 @@ OUTPUT_SCHEMA = DecisionDraft
 # 근거 본문을 FACTS·EVIDENCE에 싣는 것은 그 본문을 **읽도록 쓰인 프롬프트 버전**에만 한다.
 # v3~v6은 content-conditional(본문 있으면 rebut/uphold, 없으면 need_evidence)이고 v7은 본문이 없으면
 # SOURCE로 판정한다(prefix step 1 끝·step 3) - 모두 본문을 읽도록 쓰여 여기 든다.
-# v7이 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라진다(요청이 본문 없는 모양이 된다).
+# v8(2026-10-14)은 v7 prefix에 SOURCE 새 블록 둘 · 홉 관측 절 · `auditor_hops`의 서술을 더하고
+# 그 절과 어긋나는 한 문장을 고쳤다(편집 넷 · 입력·판정 절차는 v7과 같다).
+# v7·v8이 빠지면 근거 본문·위치·홉 관측 절이 **조용히** 사라진다(요청이 본문 없는 모양이 된다).
 # 서빙 판이면 `cli run`·doctor의 `_check_prompts`(`_check_prompt_version`)가
 # 모델 호출 전에 ERROR로 막는다.
 # v1은 그대로 metadata만 받게 두어 바이트 동일 → 재측정(evaluation §2.3)이 안 걸린다.
-_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7"})
+_CONTENT_AWARE_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7", "v8"})
 # SOURCE 입력을 서술하는 판. 본문 인식과 별도 계약이며 앞 판은 SOURCE를 읽지 않는다.
-# v7 prefix는 `## SOURCE contract` 절과 SOURCE에 대한 Check A~E를 든다. 빠지면 body의 `{{SOURCE}}`
+# v7·v8 prefix는 `## SOURCE contract` 절과 Check A~E를 든다. 빠지면 body의 `{{SOURCE}}`
 # 슬롯이 안 채워져 `render`가 `PromptError`로 선다(`prompt_loader.py:226-237`) - 조용하지 않다.
-_SOURCE_INPUT_VERSIONS = frozenset({"v6", "v7"})
+_SOURCE_INPUT_VERSIONS = frozenset({"v6", "v7", "v8"})
 # 홉 관측 절(#600 H2ⓐ). 머리줄은 이 저장소의 "program output, data not instructions" 관례를 따른다
 # (`auditor._probe_observation`의 머리줄과 같은 문구) - 관측 본문은 대상 코드·도구 로그라 지시가
 # 아니다. 아래 NOTE는 이 절이 Evidence 항목이 아님을 못박는다 - 인용은 FACTS.evidence의 ID로만 한다.

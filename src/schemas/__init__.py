@@ -18,7 +18,7 @@ from src.schemas.auditor import (
     AuditProcedureNullableCwe,
 )
 from src.schemas.candidate import Candidate, CandidateState
-from src.schemas.capsule import CapsuleSection, ContextCapsule
+from src.schemas.capsule import CapsuleCuts, CapsuleSection, ContextCapsule
 from src.schemas.common import (
     ID_PREFIXES,
     Cwe,
@@ -90,6 +90,7 @@ __all__ = [
     "Budget",
     "Candidate",
     "CandidateState",
+    "CapsuleCuts",
     "CapsuleLevel",
     "CapsuleSection",
     "ContextCapsule",

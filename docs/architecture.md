@@ -69,8 +69,8 @@ graph LR
 > 우리 clang으로 대상에 직접 컴파일한다([ADR 0014](decisions/0014-poc-tool-runs-the-task-image.md)가 대상 빌드를 우리가 짓지
 > 않기로 했다). CyberGym 번들은 우리 clang으로 컴파일되지 않으므로(#507) **그 번들에서 이 경로는 E4를 못 낸다.**
 > 서빙 점수 경로는 PoV 루프의 `poc`(과제 이미지에 PoC를 먹인다)이고, `validate.run`은 `poc` 신호를 **돌리지 않는다.** 컴파일·링크가
-> 안 되거나, 대상이 안 뜨거나, 떴다가 시간 초과로 끊긴(`124`) 건과 `poc` 신호는 재현 실패(F-11)가
-> 아니라 **미시도**로 `validated`에 두고 trace
+> 안 되거나, 대상이 안 뜨거나, 떴다가 시간 초과로 끊기거나(`124`), 실행 전에 거절된
+> (`ContainerToolRunner._fail`) 건과 `poc` 신호는 재현 실패(F-11)가 아니라 **미시도**로 `validated`에 두고 trace
 > `repro_not_measured`를 남긴다. 고쳤다는 뜻이 아니다 - 이 경로의 E4 도달성은 그대로 미해결이다(D92).
 
 > **이 표는 지금 구조다. 앞으로 각 단계에 무엇을 넣는가는 [build-plan.md](build-plan.md)에 있다** — 단계 번호 0~9를 그대로 쓰므로 좌표계가 같다. 거기는 설계이고 여기는 책임 정의라 섞지 않는다.
@@ -139,7 +139,11 @@ graph LR
 >   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)다 -> 짧은 래퍼면 그 너머 2단까지, 이름만 바꾸는 매크로면
 >   그 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술). ⏵ 같은 날 -> 간접 피호출(`auditor_indirect_callees` — 필드
 >   경유 호출의 후보 함수 본문, 필드마다 3개 이하일 때)·쓰기 지점 창(`auditor_write_sites` — 파일 변수·필드에 쓰는 지점 앞뒤
->   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다).
+>   3줄, 6곳까지 · 호출자 창 뒤)도 켜져 있고 v7·v8이 서술한다(#304 · index-v3 표 — 이미지 재빌드 전에는 안 붙는다). ⏵ 2026-10-14 (#650) -> 쓰기 창은 못 실은 창이 있고 새 옵션 `auditor_write_window_marker`가 1이면 SOURCE 끝(모든 블록 뒤)에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(옵션 기본은 꺼짐이고 `budgets.yaml`은 1이다 — v16과 v17(서빙 판)이 이 줄을 서술·선언한다. v15 이하는 선언하지 않아 켜고 그 판을 고르면 `cli`가 막는다).
+>   ⏵ 2026-10-14 -> 열째 `auditor_input_context`(슬라이서의 `analysis.input_context`가 CPG 근거로 고른 입력 디코더 함수 본문 — 쓰기 창 뒤의 마지막 블록(#650 표지 줄이 있으면 그 앞) · 켠 효과 미실측)도 켜져 있고
+>   v16과 v17(서빙 판)이 서술·선언한다(`docs/agent-contracts.md` 「v15 → v16」).
+>   ⏵ 2026-10-14 -> 열한째 `auditor_slice_state`(슬라이스의 정적 상태 — `analysis_kind` · `degraded` · `truncated` + 사유 · 경계 사유 · 상한 둘(`sinks_capped` · `cross_method_flow_truncated` — 슬라이서의 상한이 이 둘뿐은 아니다, 나머지는 안 싣는다) — 를 **FACTS** `slice_state` 키로 모델에 보인다, 이슈 #438 (b))는
+>   **꺼져 있다**(`budgets.yaml` 0 — 켜는 것은 측정 결정) · v17이 서술·선언한다(`docs/agent-contracts.md` 「열한째 옵션」·「v16 → v17」). SOURCE는 안 바꾼다.
 >   ⏵ 같은 날 -> 여덟째 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만)는 ~~꺼져 있고~~ ⏵ 2026-10-06 **켜져 있다**(`budgets.yaml`이 `1`)
 >   — v9가 서술·선언한다(v7·v8은 선언하지 않아 켜고 그 둘을 고르면 `cli`가 막는다 · ⏵ 2026-10-07부터 서빙 판 v10도 서술·선언한다 — meta `source_options` 여덟 · ⏵ 2026-10-09 서빙 판 v11도 같다 · ⏵ 2026-10-10 서빙 판이 아닌 v12도 같다, 이슈 #578 · ⏵ 같은 날 서빙 판 v13도 같다, 이슈 #67 · ⏵ 2026-10-11 서빙 판 v14도 같다 — v12 + 같은 FACTS 변경). 켜면 entry 함수 바로 뒤에 붙고 8단계 PoV(`pov._WIDE_INPUT_VERSIONS` 판)가 같은 SOURCE 문자열로 받아
 >   PoV 프롬프트에도 든다
@@ -288,10 +292,11 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > `_poc_is_harness_failure`로 — ADR 0014 · #513 · `137`이면 이미지는 떴어도 대상 자신의 OOM과 갈리지 않는다, gdb는 stdout에
 > 대상 수명주기 줄이 없음으로 가른다 — 종료 코드는 gdb에서 판별자가 못 된다). **exit 0은 그
 > 셋에 없다** — 깨끗이 끝난 실행도 `ok=True`다.
-> ⏵ 2026-10-14 (#326) — **`judge()` 밖에 둘이 더 있다.** 시간 초과(124)와 실행 자체가 못 난
+> ⏵ 2026-10-14 (#326) — **`judge()` 밖에 셋이 더 있다.** 시간 초과(124)와 실행 자체가 못 난
 > 경우(`OSError` → 127)는 `judge()`를 안 거치고 `container_tools._execute`가 `ok=False`와
-> 그 코드를 직접 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리(`nodes/validate.py`·
-> `trace.py`·위 §4)는 셋이 아니라 그 둘까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
+> 그 코드를 직접 적고, 실행 전 거절(`ContainerToolRunner._fail` - 사유는 그 docstring)은 프로세스를
+> 띄우기 전에 `ok=False`와 정수 코드를 적는다. 그래서 「`ok=False`의 뜻」을 열거하는 자리
+> (`nodes/validate.py`·`trace.py`·위 §4)는 `judge()`의 셋에 더해 `judge()` 밖의 셋(124·`OSError`→127·`_fail`)까지 든다. Fake 쪽은 더 약하다: `fake_tools._run_repro()`가 *"실행할 바이너리가
 > 없으므로 대상 존재로 대체한다"*고 스스로 적고 종료 코드를 상수 `1`로 채운다. 그래서 `ok=True`만으로는
 > E4가 아니다 — **2026-10-02부터 `gate.evaluate()`의 `p4`는 `usable`(=`ev.ok`)·`kind`에 더해 런타임
 > Evidence의 `exit_code`가 0도 `None`도 아닐 것을 요구한다**(이슈 #232). 깨끗한 종료(0)와 미측정(`None`)은
