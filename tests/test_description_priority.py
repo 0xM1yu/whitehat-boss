@@ -95,7 +95,7 @@ def _ctx(description: str | None, candidate_max: int, reserve: int = 0) -> Simpl
 
 
 def _plan_slices(monkeypatch: pytest.MonkeyPatch, ctx: SimpleNamespace, entries: list[Location]):
-    """신호가 없는(Level 1) 슬라이스 타깃을 세우고 자른다."""
+    """정적 신호를 비운(`_artifact_signals` 없음) 슬라이스 타깃을 세우고 자른다."""
     monkeypatch.setattr(runner, "_artifact_signals", lambda *_a: ((), [], False))
     artifacts = [SimpleNamespace(path=e.file) for e in entries]
     refs = tuple(
