@@ -1,6 +1,7 @@
 """ADR 0013 결정 1 개정(2026-10-15) - `submit` 없이 끝난 Finding의 크래시 계단 중간 gen을 구제한다.
 
-규칙: `submit` 없이 끝난 Finding(`designatable` 시도가 없다)의 중간 gen 중 **자기 `vul` 제출 응답
+규칙: `submit` 없이 끝난 Finding(채점기 판정을 받은 `designatable` 시도가 없다 - ⏵ 2026-10-15
+사용자 승인: 실패했거나 건너뛴 `submit`은 판정이 없어 안 센다)의 중간 gen 중 **자기 `vul` 제출 응답
 코드가 크래시 계단**(`oracle_log.vul_code_tier`)인 것이 지정 풀에 든다
 (`OracleLedger.rescued`·`pool`).
 새 제출은 없다. 같은 계단에서는 제출된 후보가 늘 앞선다(`submitted_over_rescued`), `fix` 다리는
@@ -45,8 +46,8 @@ _SUBMIT = PovAction(action="submit", rationale="the last gen")
 class _CodedOracle(FakeOracle):
     """제출한 **바이트**가 응답 코드를 정하는 대역 - 나머지는 `FakeOracle`(호출 기록)이다."""
 
-    def __init__(self, codes: dict[bytes, int]) -> None:
-        super().__init__(vul_exit_code=0)
+    def __init__(self, codes: dict[bytes, int], **kwargs) -> None:  # noqa: ANN003
+        super().__init__(vul_exit_code=0, **kwargs)
         self._codes = codes
 
     def _code(self, poc: bytes) -> int:
@@ -62,12 +63,12 @@ class _CodedOracle(FakeOracle):
         return self._code(poc)
 
 
-def _run(ctx, actions, codes, *, findings=1):  # noqa: ANN001, ANN202, F811
+def _run(ctx, actions, codes, *, findings=1, vul_errors=None):  # noqa: ANN001, ANN202, F811
     """finding마다 진짜 PoV 루프를 돌리고 끝에서 최종 지정 한 번(`_analyze`의 8단계 꼬리)."""
     state, targets = _findings(ctx, findings)
     state.oracle_ledger = OracleLedger(wired=True)
     scripted = _scripted(_with_pov_version(ctx, "v3"), actions)
-    scripted.oracle = oracle = _CodedOracle(codes)
+    scripted.oracle = oracle = _CodedOracle(codes, vul_errors=vul_errors)
     for finding in targets:
         runner._run_pov(scripted, state, finding)
     runner._finalize_oracle(scripted, state)
@@ -163,14 +164,61 @@ def test_a_finding_that_submitted_never_has_its_intermediates_rescued(ctx) -> No
     assert not any("submit하지 않은 중간 gen" in w for w in ledger.warnings())
 
 
-def test_a_submit_whose_vul_submission_failed_still_counts_as_having_submitted() -> None:
-    """모델이 `submit`했는데 그 제출이 실패했다 - 그 Finding의 크래시 중간 gen은 구제가 없다."""
+def test_a_submit_whose_vul_submission_failed_does_not_block_the_rescue(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """⏵ 2026-10-15 (사용자 승인) - 앞 판은 「실패한 `designatable` 시도도 센다」였다. 채점기가
+    판정하지 않은 `submit`은 지정될 수도 없다 - A(139)는 구제되고 지정된다. 호출 0=A 중간,
+    1=AA 중간(실패), 2·3=AA의 지정 가능 제출과 그 재시도(실패) - AA의 성공한 중간 제출이 없어
+    이어받을 것도 없다."""
+    http = _http(500)
+    scripted, state, oracle = _run(
+        ctx,
+        [_gen(count=1), _gen(count=2), _SUBMIT],
+        {A: 139},
+        vul_errors={1: http, 2: http, 3: http},
+    )
+
+    ledger = state.oracle_ledger
+    assert [(a.designatable, a.ok) for a in ledger.attempts] == [
+        (False, True), (False, False), (True, False),
+    ]
+    assert ledger.candidates == [] and [a.poc for a in ledger.rescued] == [A]
+    assert [poc for poc, _ in oracle.final_calls] == [A]
+    assert _final(scripted)["rescued"] is True
+    assert ledger.record()["final"]["rescued"] is True
+    assert any("submit하지 않은 중간 gen" in w for w in ledger.warnings())
+
+
+def test_a_skipped_empty_submit_does_not_block_the_rescue() -> None:
+    """0바이트라 건너뛴 `designatable` 시도도 판정이 없다 - 같은 Finding의 크래시 gen이 구제된다."""
     ledger = OracleLedger(wired=True)
     sub = VulSubmission(TASK_ID, "a" * 32, 139)
     ledger.add_attempt(oracle_log.vul_ok("f", A, sub, 1, designatable=False))
-    ledger.add_attempt(oracle_log.vul_failed("f", AA, RuntimeError("down"), 1, designatable=True))
+    empty = oracle_log.vul_empty("f", b"", designatable=True)
+    ledger.add_attempt(empty)
 
-    assert ledger.rescued == [] and ledger.pool == []
+    assert empty.skipped and not empty.ok
+    assert [a.poc for a in ledger.rescued] == [A] and ledger.pool == ledger.rescued
+
+
+def test_a_failed_submit_with_a_rescued_crash_loses_to_another_findings_submitted_crash() -> None:
+    """같은 크래시 계단이다 - Finding f_r은 `submit`이 실패해 A(139)가 구제되지만, f_s가 판정받은
+    AA(139)를 제출했으면 제출된 쪽이 이긴다(구제된 쪽이 바이트가 작아 사슬만 보면 이겼을 자리)."""
+    sub = VulSubmission(TASK_ID, "a" * 32, 139)
+    rescued = oracle_log.vul_ok("f_r", A, sub, 1, designatable=False)
+    failed = oracle_log.vul_failed("f_r", AAA, RuntimeError("down"), 1, designatable=True)
+    submitted = oracle_log.vul_ok("f_s", AA, sub, 1, designatable=True)
+    ledger = _ledger_of(rescued, failed, submitted)
+
+    assert ledger.rescued == [rescued] and ledger.candidates == [submitted]
+    got = runner._designate_final(
+        ledger,
+        {"f_r": EvidenceGrade.E4, "f_s": EvidenceGrade.E0},
+        _flat("f_r", "f_s"),
+        {"f_r": 0, "f_s": 3},
+    )
+    assert got == (submitted, "submitted_over_rescued", None)
 
 
 # --- (d)(e) 순위 ----
