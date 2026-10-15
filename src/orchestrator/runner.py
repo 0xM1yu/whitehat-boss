@@ -1734,8 +1734,9 @@ def _pov_targets(
     과제 이미지에 먹이게 됐지만 **게이트 전이는 별건이다**(`p4`가 종료 코드까지 본다 — #232).
     이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
 
-    자르는 순서는 Critic 판정(uphold → 미경유 → 보류) 다음 `critic.select`와 **같은 키**다 —
-    `confidence` 내림차순, 동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
+    자르는 순서는 Critic 판정(uphold → 미경유·판정 호출 실패 → 보류) 다음
+    `critic.select`와 **같은 키**다 — `confidence` 내림차순,
+    동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
     ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한 값이 아니다** — 그래서 이것은
     등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
     건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
@@ -2787,11 +2788,11 @@ def _confidences_by_finding(state: _Accumulator) -> dict[str, float]:
 
 
 def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
-    """Finding별 Critic 판정 계단 - **0 = uphold · 1 = 판정 없음(미경유) ·
+    """Finding별 Critic 판정 계단 - **0 = uphold · 1 = 판정 없음(미경유·판정 호출 실패) ·
     2 = 보류(`need_evidence`) · 3 = 반박(`rebut`)**이다. 이슈 #604 (b)가 제안한 순서
-    (`uphold > 미경유 > need_evidence`) 그대로고 반박이 맨 뒤다. 추가 풀 정렬(`_pov_targets`)과
-    최종 지정(`_designation_key`)이 **같은 값**을 읽는다. 판정은 `gate.normalize` 뒤 값이고, 키
-    집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
+    (`uphold > 미경유·판정 호출 실패 > need_evidence`) 그대로고 반박이 맨 뒤다.
+    추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다.
+    판정은 `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
 
     ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(@sumin0218 리뷰): 미경유는 6단계 E0
     `QUEUED`와 `critic_top_n` 절단분이라 Critic이 **보증한** 것이 아닌데 uphold와 동점이 돼
@@ -2846,12 +2847,13 @@ def _designation_key(
 
     ⓿자기 `vul` 응답 코드의 계단(크래시 0 < 모름 1 < 크래시 아님 2 — `oracle_log.vul_code_tier`)
     ⓿′제출 여부(모델이 `submit`한 후보 0 < 구제된 중간 gen 1 — ⏵ 2026-10-15)
-    ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
-    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
+    ⓪Critic 판정(uphold 0 < 미경유·판정 호출 실패 1 < 보류 2 < 반박 3)
+    ①등급 내림차순 ②`confidence` 내림차순 ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
 
     ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서 「모르겠다」고 한 PoC가
     등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604). 판정 계단이 등급보다 앞서므로
-    **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 > E4 보류, E2 uphold > E3 미경유) —
+    **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유·판정 호출 실패 > E4 보류,
+    E2 uphold > E3 미경유·판정 호출 실패) —
     의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은 계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰,
     `_verdict_ranks_by_finding`).
 
