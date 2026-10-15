@@ -32,6 +32,21 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 
 ## 사이드카의 모양
 
+⏵ 2026-10-15 — **모델이 `submit`한 PoC의 `vul` 제출을 전송 실패로 잃을 가능성을 줄인다.** 429(한도
+창 `RATE_LIMIT_WINDOW_S`를 기다린 뒤)·5xx·연결/타임아웃 실패면 한 번 다시 내고(그 밖의 4xx는 재시도
+없이 바로), 재제출이 실패하면 — 재시도한 뒤든 안 한 4xx든 — 같은 finding이 앞서 성공시킨 같은
+바이트의 중간 제출을 그 후보의 제출로 이어받는다(`vul_reused`). 후보 행은 `submit_calls`(2일
+때만)와 `reused_intermediate`(참일 때만)를 싣고 이어받은 행은 앞선 제출의 `poc_id`·
+`response_exit_code`·`cached`를 그대로 든다. 재시도한 호출의 `cached`·`fix_cached`는 `null`이다 -
+재시도 직전에 읽은 서버 장부에 이 run의 첫 호출이 쓴 행이 보일 수 있어 옛 판정인지 가를 수 없다.
+`final`은 `finalize_calls`(2일 때만)를 싣는다(trace `oracle_final`도 같다). 호출 수가 2인 행은
+첫 호출의 실패도 `first_error`
+(예외 클래스 이름)·`first_error_status`(HTTP 상태, 아니면 `null`)·`retry_wait_s`(재시도 전에 기다린
+초 - 429만 0보다 크다)로 싣는다 - `error`는 마지막 호출의 것이라 처음 원인이 안 남는다.
+⚠ **덮지 못하는 경우:** 모델이 `poc_sha256` 없이
+마지막 홉의 gen을 `submit`하면 그 바이트의 중간 제출이 없어 이어받을 것이 없다(후보 0). 재시도·
+이어받기를 실서버로 잰 run은 0건이다.
+
 `candidates`(vul 제출 한 건 — 중간 gen은 `designatable: false`와 원시 종료 코드 조회를
 `observation`에 싣고, 모델 submit은 그 필드가 없어 최종 지정 후보임을 뜻한다. 성공이면
 `poc_id`·`response_exit_code`·`cached`, 실패면 `error`·`error_status`(HTTP 상태. HTTP 오류가
@@ -153,7 +168,8 @@ REASON_GRADE_UNKNOWN = "grade_unknown"
 
 # 제출 실패가 **전부** 채점기 레이트리미트여서 후보가 안 남은 경우(이슈 #422). 그렇게 생긴
 # 「점수 없음」은 「냈는데 거부당했다」와 다른 사건이다 — 한도는 60초 슬라이딩 윈도라
-# **사라진 판정은 원래 나왔을 수 있는 것**이고, 재시도가 없어 복구되지 않는다.
+# **사라진 판정은 원래 나왔을 수 있는 것**이다. 재시도는 모델이 `submit`한 PoC의 제출에 한 번뿐이다
+# (⏵ 2026-10-15 `vul_retry_wait_s`) - 이 사유는 그 재시도 뒤에도 전부 429였다는 뜻이다.
 # 한도 밖 실패가 한 건이라도 섞이면 더 넓은 `all_vul_submissions_failed`로 남긴다 —
 # 「한도 때문」을 단언할 수 없다.
 REASON_RATE_LIMITED = "rate_limited"
@@ -163,6 +179,43 @@ REASON_RATE_LIMITED = "rate_limited"
 # 오케스트레이터는 어댑터 리터럴을 소스에 두지 않는다
 # (`test_orchestrator_source_has_no_adapter_import`).
 _HTTP_TOO_MANY_REQUESTS = 429
+
+# 한도 창(초). 어댑터 모듈 docstring의 「레이트리미트」 절이 적는 서버 기본값 - 20회/60초
+# (`server/types.py:20-21`, 소스 판독이고 2026-10-02 실측에서 21번째가 429였다). 429 뒤 재시도가
+# 기다리는 시간이다 - 창이 슬라이딩이라 그만큼 지나면 앞선 요청이 창에서 빠진다. ⚠ **띄운 서버의
+# 한도가 기본값이 아닐 수 있다**(서버 설정) - 그 값을 읽는 길은 없다. 어댑터는 이 값을 상수로
+# 내보내지 않는다(문서에만 있다) - 오케스트레이터는 어댑터를 못 읽어 여기 사본을 둔다.
+RATE_LIMIT_WINDOW_S = 60
+
+
+def is_transient(exc: BaseException) -> bool:
+    """채점기 호출 실패가 **일시 실패**인가 - HTTP 5xx, 또는 어댑터가 `transient`로 표시한 전송 실패
+    (연결·타임아웃·끊김).
+
+    **`status` 속성이 있는 예외만 본다** - 어댑터는 모든 예외를 그 계약의 `CyberGymOracleError`로
+    바꾼다(`TaskOracle._redacting`). 그 계약이 없는 예외는 일시 실패인지 알 수 없어 `False`다.
+    `status=None`만으로는 일시 실패가 아니다 - 어댑터는 응답 형 어긋남·`poc_id` 불일치 같은 결정적
+    실패도 `status=None`으로 올리므로 `transient`가 참인 것만 센다. 4xx(429 포함)는 일시 실패가
+    아니다 - 429는 아래 `vul_retry_wait_s`가 따로 다룬다.
+    """
+    if not hasattr(exc, "status"):
+        return False
+    status = exc.status
+    if isinstance(status, int) and status >= 500:
+        return True
+    return getattr(exc, "transient", False) is True
+
+
+def vul_retry_wait_s(exc: BaseException) -> float | None:
+    """`vul` 제출 실패 뒤 **한 번** 다시 낼지 - 안 하면 `None`, 하면 그 전에 기다릴 초.
+
+    429는 한도 창(`RATE_LIMIT_WINDOW_S`)을 기다린 뒤, 그 밖의 일시 실패(`is_transient`)는 바로.
+    그 밖의 4xx는 다시 내도 같은 답이라 안 한다. 대상은 모델이 `submit`한 PoC의 제출뿐이다
+    (`runner._submit_vul_to_oracle`).
+    """
+    if getattr(exc, "status", None) == _HTTP_TOO_MANY_REQUESTS:
+        return float(RATE_LIMIT_WINDOW_S)
+    return 0.0 if is_transient(exc) else None
 
 # 「크래시가 안 났다」로 세는 `vul` 코드 — 어댑터 `_NO_CRASH_EXIT_CODES`
 # (`src/adapters/cybergym_oracle.py`)의 사본이다(오케스트레이터는 어댑터를 못 읽는다).
@@ -241,6 +294,29 @@ def clip_error(exc: BaseException) -> str:
 
 
 @dataclass(frozen=True)
+class FirstFailure:
+    """재시도한 호출의 **첫 실패** - 기록이 마지막 호출의 `error`만 들면 처음 원인이 사라진다.
+    재시도한 기록(호출 수 2)에만 있다."""
+
+    error: str  # 예외 클래스 이름
+    status: int | None  # HTTP 상태 - HTTP 오류가 아니면 `None`
+    wait_s: float  # 재시도 전에 기다린 초 - 429만 0보다 크다
+
+    def fields(self) -> dict[str, str | int | float | None]:
+        """사이드카·trace가 싣는 키 셋."""
+        return {
+            "first_error": self.error,
+            "first_error_status": self.status,
+            "retry_wait_s": self.wait_s,
+        }
+
+
+def first_failure(exc: BaseException, wait_s: float) -> FirstFailure:
+    # `CyberGymOracleError.status`를 덕 타이핑으로 읽는다 - 어댑터 import 금지(`vul_failed`).
+    return FirstFailure(type(exc).__name__, getattr(exc, "status", None), wait_s)
+
+
+@dataclass(frozen=True)
 class VulAttempt:
     """PoC 하나의 `vul` 제출 시도. `submission`이 없으면 실패다(`error`가 예외 클래스 이름)."""
 
@@ -266,6 +342,14 @@ class VulAttempt:
     observation_exit_code: int | None = None
     observation_error: str | None = None
     observation_error_detail: str = ""
+    # 이 기록을 만든 `submit_vul` 호출 수(지정 가능 제출만 한 번 재시도한다 - 1 또는 2).
+    submit_calls: int = 1
+    # 호출 수가 2일 때 첫 호출의 실패 - `error`는 마지막 호출의 것이라 처음 원인을 따로 든다.
+    first_failure: FirstFailure | None = None
+    # 재제출이 실패해 **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**을 이 후보의
+    # 제출로 이어받았다 - `submission`은 그 앞선 제출의 것이다. 모델이 `submit`한 바이트 그대로이고
+    # 새 승격이 아니다(ADR 0013 결정 1).
+    reused_intermediate: bool = False
 
     @property
     def ok(self) -> bool:
@@ -287,6 +371,8 @@ def vul_ok(
     observation_exit_code: int | None = None,
     observation_error: str | None = None,
     observation_error_detail: str = "",
+    submit_calls: int = 1,
+    first_failure: FirstFailure | None = None,
 ) -> VulAttempt:
     return VulAttempt(
         finding_id=finding_id,
@@ -299,6 +385,8 @@ def vul_ok(
         observation_exit_code=observation_exit_code,
         observation_error=observation_error,
         observation_error_detail=observation_error_detail,
+        submit_calls=submit_calls,
+        first_failure=first_failure,
     )
 
 
@@ -309,6 +397,8 @@ def vul_failed(
     wall_ms: int,
     *,
     designatable: bool,
+    submit_calls: int = 1,
+    first_failure: FirstFailure | None = None,
 ) -> VulAttempt:
     return VulAttempt(
         finding_id=finding_id,
@@ -320,6 +410,33 @@ def vul_failed(
         # `CyberGymOracleError.status`를 덕 타이핑으로 읽는다 — 어댑터 import 금지(아래 상수 주석).
         error_status=getattr(exc, "status", None),
         designatable=designatable,
+        submit_calls=submit_calls,
+        first_failure=first_failure,
+    )
+
+
+def vul_reused(
+    finding_id: str,
+    earlier: VulAttempt,
+    wall_ms: int,
+    *,
+    submit_calls: int,
+    first_failure: FirstFailure | None = None,
+) -> VulAttempt:
+    """지정 가능 재제출이 실패해 **앞선 중간 제출**(`earlier` - 같은 finding·같은 바이트, 성공)을
+    이 후보의 제출로 이어받는다. 서버는 그 바이트의 `vul` 행을 이미 들고 있다."""
+    assert earlier.ok and earlier.poc is not None
+    return VulAttempt(
+        finding_id=finding_id,
+        poc_sha256=earlier.poc_sha256,
+        poc_bytes=earlier.poc_bytes,
+        wall_ms=wall_ms,
+        poc=earlier.poc,
+        submission=earlier.submission,
+        designatable=True,
+        submit_calls=submit_calls,
+        first_failure=first_failure,
+        reused_intermediate=True,
     )
 
 
@@ -356,6 +473,11 @@ class FinalAttempt:
     outcome: OracleOutcome | None = None
     error: str | None = None
     error_detail: str = ""
+    # `finalize` 호출 수 - 일시 실패면 한 번 더 부른다(1 또는 2). 지정한 후보가 없으면 부르지
+    # 않았으므로 `None`이다.
+    calls: int | None = None
+    # `calls`가 2일 때 첫 호출의 실패(`wait_s`는 0 - 대기가 없다).
+    first_failure: FirstFailure | None = None
 
 
 class OracleLog:
@@ -413,8 +535,29 @@ class OracleLedger:
 
     @property
     def candidates(self) -> list[VulAttempt]:
-        """모델이 submit했고 `vul` 제출도 성공한 최종 후보(`runner._designate_final`)."""
+        """모델이 submit했고 `vul` 제출도 성공한 최종 후보(`runner._designate_final`).
+
+        재제출이 실패해 앞선 중간 제출을 이어받은 행(`reused_intermediate`)도 든다."""
         return [attempt for attempt in self.attempts if attempt.ok and attempt.designatable]
+
+    def intermediate_twin(self, finding_id: str, poc_sha256: str) -> VulAttempt | None:
+        """같은 finding이 앞서 **성공**시킨 같은 바이트의 중간 제출 - 없으면 `None`."""
+        return next(
+            (
+                a
+                for a in self.attempts
+                if a.ok
+                and not a.designatable
+                and a.finding_id == finding_id
+                and a.poc_sha256 == poc_sha256
+            ),
+            None,
+        )
+
+    @property
+    def reused(self) -> int:
+        """재제출이 실패해 앞선 중간 제출을 이어받은 후보 수."""
+        return sum(1 for a in self.attempts if a.reused_intermediate)
 
     @property
     def rescued(self) -> list[VulAttempt]:
@@ -422,7 +565,8 @@ class OracleLedger:
         `vul` 제출 응답 코드가 크래시 계단인 것.** 새 제출 없이 이미 쌓인 행을 그대로 쓴다.
 
         - 「`submit`했다」는 그 Finding에 `designatable` 시도가 하나라도 있다는 뜻이다 - 제출이
-          실패했거나 0바이트라 건너뛴 것도 센다(모델은 `submit`했다 · 틀린 `submit`도 구제가 없다).
+          실패했거나 0바이트라 건너뛴 것도, 재제출이 실패해 중간 제출을 이어받은 행
+          (`reused_intermediate`)도 센다(모델은 `submit`했다 · 틀린 `submit`도 구제가 없다).
         - 크래시 계단만이다(`vul_code_tier` - 환경 값·`None`·크래시 아님은 안 든다).
         - 후보에 플래그를 찍지 않는다(ADR 0013 결정 5): 장부에서 **지정 시점에** 계산한다.
         """
@@ -443,8 +587,10 @@ class OracleLedger:
 
     @property
     def submitted(self) -> int:
-        """성공한 vul 제출 **전부** — 중간 gen 포함이다. 최종 후보 수는 `candidates`다."""
-        return sum(1 for attempt in self.attempts if attempt.ok)
+        """서버가 받아 성공시킨 vul 제출 **전부** — 중간 gen 포함이다. 이어받은 행
+        (`reused_intermediate`)은 서버 호출이 아니라 앞선 제출의 사본이라 세지 않는다(`reused`).
+        최종 후보 수는 `candidates`다."""
+        return sum(1 for a in self.attempts if a.ok and not a.reused_intermediate)
 
     @property
     def failed(self) -> int:
@@ -504,10 +650,12 @@ class OracleLedger:
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
-            # 아래 다섯은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 한다.
+            # 아래 여섯은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 한다.
             # `vul_submitted`는 중간 gen 제출을 **포함**하고(`submitted`) `vul_intermediate`는 중간
             # gen **시도** 전부(성공·실패·건너뜀)라 둘의 차이는 후보 수가 아니다 - 후보 수는
-            # `vul_candidates`다. `vul_intermediate`가 있는 run에는 **0이어도** 늘 있다 - 중간
+            # `vul_candidates`다. `vul_reused`는 재제출이 실패해 앞선 중간 제출을 이어받은 후보 수다
+            # - 그 후보는 서버 호출이 아니라 `vul_submitted`에 들지 않는다(`vul_candidates`에는
+            # 든다). `vul_intermediate`가 있는 run에는 **0이어도** 늘 있다 - 중간
             # gen이 없던 run(키 없음)에서만 `vul_submitted`가 곧 후보 수다.
             **{
                 key: count
@@ -515,6 +663,7 @@ class OracleLedger:
                     ("vul_intermediate", self.intermediate),
                     ("vul_observation_failed", self.observation_failed),
                     ("vul_empty_poc", self.skipped_empty),
+                    ("vul_reused", self.reused),
                 )
                 if count
             },
@@ -553,8 +702,15 @@ class OracleLedger:
         # 가리키는 줄(vul 제출 실패)의 **바로 뒤**에 둔다.
         if self.rate_limited:
             out.append(
-                f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 재시도가 없어 "
-                "그 판정은 복구되지 않는다"
+                f"그중 {self.rate_limited}건은 채점기 레이트리미트(HTTP 429)다 - 중간 gen의 429는 "
+                "재시도하지 않아 복구되지 않고, 모델이 submit한 PoC의 제출은 한 번 기다려 다시 "
+                "낸 뒤에도 429면 여기 센다"
+            )
+        if self.reused:
+            out.append(
+                f"최종 후보 {self.reused}건은 지정 가능 재제출이 실패해(일시 실패는 한 번 "
+                "다시 낸 뒤) 같은 finding의 앞선 중간 제출(같은 바이트)을 이어받았다 - 사유는 "
+                f"{where}에 있다"
             )
         if self.observation_failed:
             out.append(
@@ -592,6 +748,13 @@ class OracleLedger:
                     f"채점기 판정의 {joined} 다리는 이전 판정의 캐시다(이슈 #385) - 이번 환경에서 "
                     "이 바이트를 다시 돌린 값이 아니다. 같은 과제 번들로 run을 반복하면 서버 "
                     "캐시를 공유한다"
+                )
+            unknown = _unknown_cache_legs(final, self.attempts)
+            if unknown:
+                out.append(
+                    f"채점기 판정의 {' 와 '.join(unknown)} 다리는 재시도한 호출이라 이전 판정의 "
+                    "캐시인지 가리지 못했다(cached=null) - 캐시라고도 새로 돌렸다고도 "
+                    "단언하지 않는다"
                 )
         if self.write_error is not None:
             out.append(f"채점기 사이드카({REF})를 쓰지 못했다({self.write_error})")
@@ -670,6 +833,24 @@ def was_rescued(attempt: VulAttempt, attempts: Sequence[VulAttempt]) -> bool:
     )
 
 
+def _unknown_cache_legs(final: FinalAttempt, attempts: Sequence[VulAttempt]) -> list[str]:
+    """재시도한 호출이라 `cached`를 못 가린 다리. 재시도 직전의 장부 읽기는 이 run의 첫 호출이 쓴
+    행을 볼 수 있어 러너가 그 호출의 `cached`·`fix_cached`를 `None`으로 둔다."""
+    legs = []
+    attempt = final.attempt
+    if (
+        attempt is not None
+        and attempt.submit_calls > 1
+        and not attempt.reused_intermediate
+        and vul_preexisted(attempts, attempt) is None
+    ):
+        legs.append("vul")
+    if final.calls is not None and final.calls > 1:
+        if final.outcome is not None and final.outcome.fix_cached is None:
+            legs.append("fix")
+    return legs
+
+
 def _attempt_record(attempt: VulAttempt, *, rescued: bool = False) -> dict[str, object]:
     row: dict[str, object] = {
         "finding_id": attempt.finding_id,
@@ -682,6 +863,13 @@ def _attempt_record(attempt: VulAttempt, *, rescued: bool = False) -> dict[str, 
         row["designatable"] = False
     if rescued:  # 0이 아닐 때만 - 구제가 없던 run의 행은 옛 모양 그대로다
         row["rescued"] = True
+    # 재시도·이어받기는 있을 때만 싣는다 - 없던 run의 사이드카와 키 집합이 같아야 해서다.
+    if attempt.submit_calls > 1:
+        row["submit_calls"] = attempt.submit_calls
+    if attempt.first_failure is not None:
+        row |= attempt.first_failure.fields()
+    if attempt.reused_intermediate:
+        row["reused_intermediate"] = True
     if attempt.skipped:
         return {**row, "status": "skipped", "error": attempt.error,
                 "error_detail": attempt.error_detail}
@@ -719,6 +907,10 @@ def _final_record(
     }
     if grades is not None:
         row["candidate_grades"] = dict(grades)
+    if final.calls is not None and final.calls > 1:
+        row["finalize_calls"] = final.calls
+    if final.first_failure is not None:
+        row |= final.first_failure.fields()
     if final.status == STATUS_NONE:
         return {**row, "reason": final.reason}
     attempt = final.attempt
