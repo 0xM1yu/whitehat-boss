@@ -1076,6 +1076,23 @@ def test_a_leading_zero_max_hours_is_read_as_decimal(rig: Rig) -> None:
 
 
 @needs_linux
+def test_the_largest_nine_digit_max_hours_still_starts_with_a_deadline(rig: Rig) -> None:
+    """경계: 9자리 최대(`999999999`)는 거부되지 않는다 - 10자리부터가 거부다(위 parametrize)."""
+    rig.env.pop("GUARD_MAX_S", None)
+    guard = None
+    try:
+        guard = rig.guard(MAX_HOURS="999999999")
+        assert not _wait_exit(guard, 3), "9자리 MAX_HOURS인데 감시자가 바로 끝났다"
+        log = _guard_log(rig)
+        assert "시작 거부" not in log, log
+        assert "deadline=" in log and "deadline=none" not in log, log
+    finally:
+        (rig.dir / "STOP_GUARD").touch()
+        if guard is not None:
+            _wait_exit(guard, 5) or guard.kill()
+
+
+@needs_linux
 def test_a_second_guard_refuses_while_the_first_is_alive(rig: Rig) -> None:
     """살아 있는 감시자(pid 파일의 번호·시작 시각이 맞다) 앞에서 둘째 감시자는 exit 2로
     물러난다 — 감시자는 run당 하나다. 둘째가 넘겨받으면 첫째는 다음 폴링에 「다른 감시자가
