@@ -79,7 +79,12 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     if "budget" in overrides:
         config = config.transition(budget=overrides.pop("budget"))
     if "candidate_max" in overrides:
-        thresholds = config.thresholds.transition(candidate_max=overrides.pop("candidate_max"))
+        cut = overrides.pop("candidate_max")
+        # 예약은 컷 안의 자리다(`Thresholds` 검증) - 컷을 예약보다 작게 줄이면 예약도 따라 줄인다.
+        thresholds = config.thresholds.transition(
+            candidate_max=cut,
+            candidate_desc_reserve=min(config.thresholds.candidate_desc_reserve, cut),
+        )
         config = config.transition(thresholds=thresholds)
     if "critic_top_n" in overrides:
         thresholds = config.thresholds.transition(critic_top_n=overrides.pop("critic_top_n"))
