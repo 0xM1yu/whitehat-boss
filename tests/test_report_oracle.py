@@ -1,6 +1,7 @@
 """report.md의 최종 PoC 줄 - `oracle_final` 이벤트에서 뽑아 리포트에 싣는다 (모델 호출 없음)."""
 
 from src.orchestrator.nodes.report import Report
+from src.orchestrator.oracle_log import STATUS_FAILED, STATUS_NONE, STATUS_SCORED
 from src.orchestrator.runner import _oracle_final_summary
 from src.orchestrator.trace import EventKind, TraceWriter
 
@@ -11,7 +12,7 @@ def _final_trace(**data: object) -> TraceWriter:
     trace = TraceWriter("run_20261015_0001")
     # 키 집합은 `_finalize_oracle`이 내는 것과 같다(`status`와 무관하게 같은 키).
     row = {
-        "status": "scored", "designation": "smallest_poc", "reason": None, "poc_sha256": _SHA,
+        "status": STATUS_SCORED, "designation": "smallest_poc", "reason": None, "poc_sha256": _SHA,
         "record_ref": "oracle/verdict.json",
     }
     trace.emit(
@@ -23,7 +24,7 @@ def _final_trace(**data: object) -> TraceWriter:
 
 def test_summary_reads_the_single_oracle_final_event() -> None:
     assert _oracle_final_summary(_final_trace(), wired=True) == {
-        "status": "scored",
+        "status": STATUS_SCORED,
         "designation": "smallest_poc",
         "reason": None,
         "error": None,
@@ -66,7 +67,7 @@ def test_report_renders_the_final_poc_and_names_the_dedupe_representative() -> N
 
 def test_none_status_shows_the_reason_and_no_oracle_means_no_section() -> None:
     summary = _oracle_final_summary(
-        _final_trace(status="none", designation=None, reason="no_poc", poc_sha256=None),
+        _final_trace(status=STATUS_NONE, designation=None, reason="no_poc", poc_sha256=None),
         wired=True,
     )
     text = Report(run_id="r", findings=(), duplicates=0, oracle_final=summary).render()
@@ -78,7 +79,7 @@ def test_none_status_shows_the_reason_and_no_oracle_means_no_section() -> None:
 def test_failed_status_shows_the_error_class_as_the_reason() -> None:
     # 실형태: `failed`는 reason=None이고 예외 클래스 이름이 `error`에 든다.
     summary = _oracle_final_summary(
-        _final_trace(status="failed", designation=None, reason=None, error="ConnectError"),
+        _final_trace(status=STATUS_FAILED, designation=None, reason=None, error="ConnectError"),
         wired=True,
     )
     text = Report(run_id="r", findings=(), duplicates=0, oracle_final=summary).render()
