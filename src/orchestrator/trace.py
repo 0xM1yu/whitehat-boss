@@ -772,6 +772,8 @@ class EventKind(StrEnum):
     # 평범한 한 번 제출은 둘 다 없다(키 집합이 옛 run과 같다):
     #  - `submit_calls` - `submit_vul` 호출 수. 2이면 일시 실패(429·5xx·연결/타임아웃) 뒤 한 번
     #    다시 냈다(`oracle_log.vul_retry_wait_s`). `oracle_failed`에도 실린다(재시도까지 실패).
+    #    2일 때는 첫 호출의 실패도 `first_error`(예외 클래스)·`first_error_status`(HTTP 상태나
+    #    `null`)·`retry_wait_s`(재시도 전 대기 초)로 싣는다 - `error`는 마지막 호출의 것이다.
     #  - `reused_intermediate` - 참이면 재제출이 실패해(그 실패가 같은 finding의
     #    `oracle_failed` 행이다) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**을 이
     #    후보의 제출로 이어받았다. 이 행의 `task_id`는 그 앞선 제출의 것이고 서버에 새 제출은
@@ -811,7 +813,8 @@ class EventKind(StrEnum):
     #
     # ⏵ 2026-10-15 — `finalize_calls`는 `finalize` 호출 수다: 1이면 한 번, 2이면 일시 실패(5xx·응답
     # 없음) 뒤 한 번 더 불렀다(4xx는 안 부른다). 지정한 후보가 없으면(`status=none`) `null`이다 -
-    # 키 집합은 `status`와 무관하게 같다.
+    # 키 집합은 `status`와 무관하게 같다. 2일 때만 첫 호출의 실패를 `first_error`·
+    # `first_error_status`·`retry_wait_s`(finalize는 기다리지 않아 0)로 더 싣는다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
