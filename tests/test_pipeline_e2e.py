@@ -4709,6 +4709,14 @@ def test_artifacts_without_symbols_make_no_candidates(tmp_path: Path) -> None:
     plan = _plan(trace_path)
     assert plan["no_symbol_artifacts"] == 1  # util.c
     assert plan["symbol_targets"] == 2
+    # 타깃이 없는 artifact에는 2단계 도구도 안 돈다(#690 — `.o` 163개에 도구 셋이 돌았다).
+    stage2 = [
+        e["data"]["argv"]
+        for e in _of(_events(trace_path), "tool_call")
+        if e["stage"] == int(Stage.SIGNALS)
+    ]
+    assert any("parser.c" in argv for argv in stage2), "전제 — parser.c에는 2단계가 돌았다"
+    assert not any("util.c" in argv for argv in stage2)
 
 
 def test_a_header_function_definition_becomes_a_non_slice_target(tmp_path: Path) -> None:
