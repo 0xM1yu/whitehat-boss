@@ -1266,7 +1266,7 @@ def test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate(
     하네스가 그 루프의 **크래시 응답을 받은 중간 gen**을 구제해 지정할 수 있다는 것이다: 이긴
     바이트(응답 77)가 지정되고 진 바이트(응답 0)는 아니다. 그래도 프롬프트는 재`gen`이 아니라
     지명 `submit`을 쓰라고 적어야 한다 — 구제는 모델의 선택이 아니라 하네스의 대체 경로이고
-    제출된 후보보다 늘 아래다."""
+    같은 응답 코드 계단 안에서 제출된 후보보다 아래다."""
     oracle = ReadingOracle(codes=(77, 0), response_codes=(77, 0))
     winner, loser = _gen(count=3), _gen(count=1)
 

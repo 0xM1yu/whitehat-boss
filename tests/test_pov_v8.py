@@ -1,7 +1,8 @@
 """PoV v8 - v7에 prefix 한 줄을 더한 판 (S20 Phase 15 · ADR 0013 2026-10-15 개정).
 
 v7은 「submit 없이 끝나면 최종 후보가 없다」고만 적었다. 개정 뒤에는 하네스가 그런 Finding의 크래시
-계단 중간 gen을 제출된 후보보다 아래 순위로 구제할 수 있다(`oracle_log.OracleLedger.rescued`) - v8은
+계단 중간 gen을 (같은 응답 코드 계단 안의) 제출된 후보보다 아래 순위로 구제할 수 있다
+(`oracle_log.OracleLedger.rescued`) - v8은
 「Hop budget」의 그 한 줄에 그 사실과 「기대지 말라」를 더했다. 묶는 것은 다섯이다.
 
 1. **v7은 한 글자도 안 바뀌었다** - prefix·body sha256(`tests/test_pov_v7.py`의 값과 같다).
@@ -53,15 +54,16 @@ def test_v7_is_byte_identical_to_the_recorded_values(name: str) -> None:
 # === 2. v8 = v7 + 이 편집 하나 ====================================================================
 
 _V8_SHA = {
-    "prefix.md": "34e8be7172d00b3b68e980c5815f66c05ef96f6d68f09936812538a9342dd911",
+    "prefix.md": "192dc978fa02097a5e5d76854e6dae267f11f7ff42db2c629b465f2faa145395",
     "body.md": "962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443",
 }
 _HOP_OLD = "- A loop that exhausts all hops without a `submit` produces no final candidate.\n"
 _HOP_NEW = (
     "- A loop that exhausts all hops without a `submit` produces no final candidate. "
     "Submit is how you choose. If a Finding ends with no `submit`, the harness may fall back to "
-    "an intermediate `gen` whose own vul response was a crash, ranked below any submitted "
-    "candidate — do not rely on it.\n"
+    "an intermediate `gen` whose own vul response was a crash (not `0`, `71`, `300`, a timeout, "
+    "or an environment-failure code); within the same scorer-code group it ranks below "
+    "submitted candidates — do not rely on it.\n"
 )
 
 
@@ -114,7 +116,9 @@ def test_the_v8_sentence_matches_the_rescue_rule_in_the_runner() -> None:
 
     flat = " ".join(_text(_V8 / "prefix.md").split())
     assert "Submit is how you choose." in flat
-    assert "whose own vul response was a crash, ranked below any submitted candidate" in flat
+    assert "whose own vul response was a crash (not `0`, `71`, `300`, a timeout" in flat
+    assert "within the same scorer-code group it ranks below submitted candidates" in flat
+    assert "ranked below any submitted" not in flat  # 계단이 먼저라 그 서술은 거짓이다
     assert "do not rely on it" in flat
     assert "may fall back" not in " ".join(_text(_V7 / "prefix.md").split())
 

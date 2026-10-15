@@ -1509,7 +1509,8 @@ def _analyze(
                 # 🔴 **오라클에 이미 낸 PoC가 있으면 최종 지정은 하고 올린다**(#532) — 그냥 올리면
                 # `_finalize_oracle`을 건너뛰어 그 PoC의 `fix` 다리·판정 조회를 잃고
                 # `oracle.final`이 `not_reached`가 된다. 「낸 PoC」는 `_designate_final`이 읽는
-                # `candidates`(submit했고 vul 제출이 성공한 시도)다. **추가 대상**
+                # `pool`(submit했고 vul 제출이 성공한 시도 + 구제된 중간 gen — ⏵ 2026-10-15)이다.
+                # **추가 대상**
                 # (`pov_attempt_top_n`)에서 끊긴 run은 후보가 0건이어도 이 단계를 돈다
                 # (`none`/`no_poc`) — 예산은 종전대로, 게이트웨이는 #532에서 새로다. 둘 다 아니면
                 # `not_reached`다.
@@ -1529,7 +1530,7 @@ def _analyze(
                 # 버려진다 — 매니페스트 실패의 `add_note`는 `raise`로 올라가 트레이스백에 찍히는
                 # 것과 다르다. `ModelSwapError` 갈래는 안 읽는다 — 위 이유로 여기서 안 온다).
                 # 그 실경로는 못 찾았다(미확인).
-                if state.oracle_ledger.candidates or finding.finding_id not in validated_ids:
+                if state.oracle_ledger.pool or finding.finding_id not in validated_ids:
                     try:
                         _finalize_oracle(ctx, state)
                     except Exception as exc:
@@ -2355,6 +2356,8 @@ def _submit_vul_to_oracle(
 
     채점기가 없으면 부수효과 없이 `oracle_vul=unavailable`을 돌려준다. `designatable=False`인 중간
     gen은 원시 종료 코드를 조회하고, `True`인 모델 submit만 최종 지정 후보가 된다.
+    ⏵ 2026-10-15 - 예외: `submit` 없이 끝난 Finding의 크래시 계단 중간 gen은 구제 후보로 풀에 든다
+    (`OracleLedger.rescued`).
 
     **`fix` 다리는 여기서 돌지 않는다.** 저자 FAQ는 fix 다리를 「최종 PoC 한 개」에만 돌리라고
     적는데 클라이언트는 그것을 강제하지 않는다. 각 vul 제출마다 `vul`·`fix`를 다 내면
@@ -2716,8 +2719,9 @@ def _designate_final(
     **안 바뀌는 것:** 새 제출·새 조회가 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번
     돈다, 읽는 채점기 값은 여전히 후보 자기 응답 코드 하나다(구제 여부는 `designatable`·`submit`
     유무라는 하네스 값에서 나온다), 후보에 파생 플래그를 찍지 않는다(결정 5). 한계: 구제된 크래시가
-    다른 버그나 호스트 잡음이면 `fix` 다리도 크래시라 0점이다 - 구제가 없던 때(`no_poc`)보다
-    나빠지지는 않는다.
+    다른 버그나 호스트 잡음이면 `fix` 다리도 크래시라 0점이다 - 모든 Finding이 후보 0건인
+    `no_poc` run보다 나쁘지 않다. 그러나 다른 Finding의 제출된 후보(모름·크래시 아님 계단)를
+    **밀어낼 수는 있다**.
 
     🔴 **이 함수가 읽는 채점기 값은 후보 자기 `vul` 제출의 종료 코드 하나다**
     (`submission.response_exit_code` → `oracle_log.vul_code_tier` — 크래시 < 모름 < 크래시 아님,
@@ -2860,7 +2864,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
 
     ⚠ **그 밖의 중단은 둘이고 축이 다르다.** ① 그 두 예외 **밖의** 예외로 끊긴 run(예외 종류) ②
-    그 두 예외라도 낸 후보 없이 `validated` 대상에서 끊긴 run(위치·후보 유무). 핀은
+    그 두 예외라도 낸 후보도 구제된 중간 gen(⏵ 2026-10-15, `pool`)도 없이 `validated` 대상에서
+    끊긴 run(위치·후보 유무). 핀은
     `tests/test_oracle_wiring.py`다.
     ⚠ **흡수하는 것은 둘이다:** `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
     `OSError`(`oracle_log` 장부). 지정(`_designate_final`)·`trace.emit`은 안 감쌌고 던질 실경로를
@@ -2909,7 +2914,7 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
             # 지정된 후보가 `submit` 없이 구제된 중간 gen인가(⏵ 2026-10-15 · ADR 0013) - 지정이
             # 없으면 `None`. 응답 코드에 달린 값이라 `designation`처럼 Fake 경로 밖에서는 결정론이
             # 아니다.
-            rescued=None if picked is None else not picked.designatable,
+            rescued=None if picked is None else oracle_log.was_rescued(picked, ledger.attempts),
             task_id=None if final.outcome is None else final.outcome.task_id,
             error=final.error,
             record_ref=ledger.record_ref,
@@ -2919,8 +2924,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6·v7은 형제
-    `PovActionNamed`)을 내고 도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v8은 형제
+    `PovActionNamed`이고 서빙 판은 v8)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
