@@ -434,7 +434,7 @@ def test_every_suffix_the_harness_sends_has_a_grammar() -> None:
     심볼이 0개면 `judge()`가 `ok=False`로 내려 E2는 안 열리지만, 그 대상의 그래프 섹션이 비는 것은
     그대로다). 하네스가 보내기로 한 확장자는 전부 파싱될 수 있어야 한다.
     """
-    assert set(_INDEX_SUFFIXES) <= set(indexer._GRAMMARS)
+    assert set(_INDEX_SUFFIXES) == set(indexer._GRAMMARS)
 
 
 def test_empty_source_is_not_an_error(tmp_path: Path) -> None:
