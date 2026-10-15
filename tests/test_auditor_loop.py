@@ -49,7 +49,7 @@ from src.orchestrator.prompt_loader import (
     PromptTemplate,
     load_prompt,
 )
-from src.orchestrator.runner import RunSpec, _new_record
+from src.orchestrator.runner import RunSpec, _auditor_no_finding_warning, _new_record
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import CapsuleLevel, FindingState, Location, ProducedBy, Role
 from src.schemas import auditor as auditor_schemas
@@ -1661,6 +1661,10 @@ def test_any_other_model_call_failure_keeps_the_old_label_and_gets_no_overflow_e
     assert _queue_transitions(ctx, candidate) == [("C-6", "schema_parse_failed")]
 
 
+def _no_finding_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "Finding 없이 선 후보" in w]
+
+
 def _overflow_warnings(result) -> list[str]:  # noqa: ANN001
     return [w for w in result.warnings if "크기 거절 — 후보를 버렸다(#514)" in w]
 
@@ -1795,6 +1799,34 @@ def test_the_runner_survives_a_candidate_the_loop_stopped_without_a_finding(
     ]
     # 다른 후보가 앞 단계에서 문턱 아래로 `queued`된 것은 이 검사의 대상이 아니다.
     assert queued.count("capsule_expansion_exhausted") == 1
+    # Finding 없는 정지는 run 경고에도 오른다(사유별 건수) - 「찾은 게 없다」와 구별된다.
+    (warning,) = _no_finding_warnings(result)
+    assert "max_hop 1건" in warning and "repeat_request" not in warning
+
+
+def _warning_for_stops(*stops: str) -> str | None:
+    """`auditor_hop`에 `stop_reason`이 든 trace로 `_auditor_no_finding_warning`을 직접 부른다."""
+    trace = TraceWriter("run_20261015_0001")
+    for i, stop in enumerate(stops):
+        trace.emit(
+            EventKind.AUDITOR_HOP, stage=5, subject_kind="candidate", subject_id=f"cand_{i:04d}",
+            hop=1, action="lookup", stop_reason=stop,
+        )  # fmt: skip
+    return _auditor_no_finding_warning(trace)
+
+
+def test_the_no_finding_warning_names_each_stop_reason_it_counted() -> None:
+    """정지 사유별 건수를 센다 - `repeat_request` 하나, 둘 다일 때의 문구를 못 박는다.
+    `answered`·`context_overflow` 홉은 세지 않는다(크기 거절은 `_auditor_overflow_warnings`)."""
+    repeat = _warning_for_stops("repeat_request", "answered", "context_overflow")
+    assert repeat is not None
+    assert "후보 1건(repeat_request 1건) - " in repeat and "max_hop" not in repeat
+
+    both = _warning_for_stops("max_hop", "repeat_request", "max_hop")
+    assert both is not None
+    assert "후보 3건(repeat_request 1건 · max_hop 2건) - " in both
+
+    assert _warning_for_stops("answered", "context_overflow") is None
 
 
 # --- 러너 — 루프가 돌았는데 probe가 0이면 run 경고 (#617) -----------------------------
@@ -1868,6 +1900,9 @@ def test_a_loop_run_that_probes_or_never_looped_says_nothing_about_probes(
     off, off_trace = _run(tmp_path, "off")  # dev_fake 한 방 판 - 홉 이벤트가 없다
     assert "auditor_hop" not in off_trace.read_text(encoding="utf-8"), "전제 - 루프 꺼짐"
     assert _zero_probe_warnings(off) == []
+    # 같은 음성 쌍 - Finding까지 간 run과 루프가 꺼진 run엔 정지 경고가 없다.
+    assert _no_finding_warnings(probed) == []
+    assert _no_finding_warnings(off) == []
 
 
 # --- B7: 켜졌는데 프롬프트가 도구 루프를 못 받친다 ---------------------------------
