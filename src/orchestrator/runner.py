@@ -2933,7 +2933,9 @@ def _score(
     ctx: RunContext, oracle: Oracle, picked: oracle_log.VulAttempt, designation: str
 ) -> oracle_log.FinalAttempt:
     """지정한 하나에 `fix` 다리와 판정 조회를 돌린다. 저장소 밖 서비스라 예외는 흡수하고 남긴다.
-    일시 실패(`oracle_log.is_transient`)면 한 번 더 부른다 - 호출 수는 `FinalAttempt.calls`다."""
+    일시 실패면 한 번 더 부른다(`oracle_log.vul_retry_wait_s` - `_call_submit_vul`과 같은 규칙:
+    429는 한도 창을 `ctx.sleep`으로 기다린 뒤, 5xx·연결/타임아웃은 바로, 그 밖의 4xx는 안 한다).
+    호출 수는 `FinalAttempt.calls`다. `wall_ms`는 재시도와 그 대기를 품는다."""
     # 지정되는 것은 vul 제출이 성공한 시도뿐이라 바이트와 제출 결과가 있다.
     assert picked.poc is not None and picked.submission is not None
     started = ctx.monotonic_ms()
@@ -2946,12 +2948,19 @@ def _score(
             if calls > 1:  # 첫 호출이 쓴 행을 `fix_cached`가 옛 판정으로 읽는다 - 모른다고 적는다.
                 outcome = replace(outcome, fix_cached=None)
         except Exception as exc:  # 사유를 남기고 run은 계속한다.
-            # 일시 실패(5xx·연결/타임아웃)면 **한 번** 다시 부른다. `finalize`는 다시 불러도
-            # 안전하다 -
-            # 서버가 같은 `(agent_id, task_id, sha256)`의 제출을 캐시하고 판정 행은 신원으로 고른다
-            # (어댑터 모듈 docstring). 4xx(429 포함)는 다시 내도 같은 답이라 바로 실패다.
-            if calls == 1 and oracle_log.is_transient(exc):
-                first = oracle_log.first_failure(exc, 0.0)  # 기다리지 않고 바로 다시 부른다
+            # 일시 실패면 **한 번** 다시 부른다. `finalize`는 다시 불러도 안전하다 - 서버가 같은
+            # `(agent_id, task_id, sha256)`의 제출을 캐시하고 판정 행은 신원으로 고른다(어댑터 모듈
+            # docstring). 이 호출이 run의 한 장을 점수로 바꾸는 마지막 호출이라 `vul` 제출과 **같은
+            # 규칙**(`vul_retry_wait_s`)으로 덮는다: 5xx·연결/타임아웃은 바로, 429는 한도 창을
+            # 기다린 뒤. 다만 어댑터 docstring은 `/submit-fix`에 레이트리미트가 없다고 적는다
+            # (`__main__.py:169-195`, 소스 판독) - 그래서 429는 오지 않을 수도 있고, 이 갈래는
+            # 그것이 오면 덮는다는 뜻이다(안 오면 해가 없다). 그 밖의 4xx는 다시 내도 같은 답이라
+            # 바로 실패다.
+            wait = oracle_log.vul_retry_wait_s(exc) if calls == 1 else None
+            if wait is not None:
+                first = oracle_log.first_failure(exc, wait)
+                if wait:
+                    ctx.sleep(wait)
                 continue
             return oracle_log.FinalAttempt(
                 status=oracle_log.STATUS_FAILED,
@@ -2987,10 +2996,13 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유
     (`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
 
-    ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·연결/타임아웃)로 끝나면 **한 번** 다시 부른다
-    (`_score`).
-    4xx(429 포함)는 다시 안 부른다. 호출 수는 trace `oracle_final`·사이드카 `final`의
-    `finalize_calls`(2일 때만)가 싣는다. 재시도가 안전한 근거는 서버가
+    ⏵ 2026-10-15 — `finalize`가 일시 실패로 끝나면 **한 번** 다시 부른다(`_score` - `vul` 제출과
+    같은 규칙 `oracle_log.vul_retry_wait_s`): 5xx·연결/타임아웃은 바로, 429는 한도 창
+    (`RATE_LIMIT_WINDOW_S`)을 기다린 뒤, 그 밖의 4xx는 안 부른다. 어댑터 docstring은
+    `/submit-fix`에 레이트리미트가 없다고 적으므로(소스 판독) 429는 오지 않을 수도 있다 - 그
+    갈래는 오면 덮는다.
+    호출 수는 trace `oracle_final`·사이드카 `final`의 `finalize_calls`(2일 때만)가 싣고, 첫 실패와
+    기다린 초는 `first_error`·`first_error_status`·`retry_wait_s`다. 재시도가 안전한 근거는 서버가
     제출을 캐시하고 판정 행을 신원으로 고르는 것이다(어댑터 모듈 docstring - 소스 판독이다).
     ⚠ 이 경로를 실서버로 잰 run은 0건이다.
 
