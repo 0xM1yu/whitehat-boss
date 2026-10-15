@@ -4040,9 +4040,6 @@ def _plan_targets(
         return plan
     tokens = description_tokens(ctx.vuln_description)
     for artifact in artifacts:
-        evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
-        if has_static:
-            plan.signal_artifacts += 1
         locations = ctx.symbols_for(artifact.path)
         if locations is None:
             # 인덱스가 없다(`dev_fake`·버전 모름·깨짐). 파일 단위로 되돌아간다 — 후보를
@@ -4055,10 +4052,15 @@ def _plan_targets(
             # 인덱스는 있는데 이 파일에 심볼이 없다(`.py`·바이너리는 인덱서에 넘어가지
             # 않고, 함수 정의가 없는 `.h`도 여기로 온다). 후보를 만들지 않는다 — 대상 선정이
             # 새던 자리가 여기서 닫힌다(zlib run의 후보 32건 중 C 소스는 12건이었다).
+            # 2단계 도구도 안 돌린다 — 타깃이 없으면 그 근거를 쓸 곳이 없다(`.o` 163개에 도구 셋이
+            # 돌아 리허설 2단계의 26%를 썼다 · #690).
             plan.no_symbol_artifacts += 1
             continue
         else:
             plan.symbol_targets += len(locations)
+        evidences, signal_lines, has_static = _artifact_signals(ctx, artifact, graph)
+        if has_static:
+            plan.signal_artifacts += 1
         plan.collected += [
             _Target(
                 artifact=artifact,
