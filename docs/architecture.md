@@ -158,8 +158,8 @@ graph LR
 
 > **build는 두 번 돈다 — 2단계 프로브와 8단계 재현 빌드**(2026-09-24, 위 2단계 칸을 코드에 맞췄다 —
 > [D12](open-questions/D/D12.md) 선택지 (a)). 2단계가 오늘 돌리는 도구는 `SIGNAL_TOOLS` = semgrep ·
-> clang-tidy · build 셋이다(`src/orchestrator/nodes/signals.py` — 러너 `_plan_targets`가 artifact마다
-> 부른다). build 신호는 Auditor가 `repro_spec`을 쓸 수 있는지를 가른다 — 빌드되는지 모르는 채 지어낸
+> clang-tidy · build 셋이다(`src/orchestrator/nodes/signals.py` — 러너 `_plan_targets`가 타깃을 내는
+> artifact마다 부른다 · #690). build 신호는 Auditor가 `repro_spec`을 쓸 수 있는지를 가른다 — 빌드되는지 모르는 채 지어낸
 > 재현 절차는 8단계가 실행할 수 없다(같은 파일 주석). ⏵ **2026-10-13 정정 — 8단계는 `steps`로
 > 빌드하지 않는다.** `container_tools.plan`이 노드 argv(`[tool, *spec.steps]`)를 로그 헤더로만
 > 남기고 `build`는 `clang -c`, `asan`은 `clang -o`로 소스를 직접 컴파일·링크한다(`plan` docstring
