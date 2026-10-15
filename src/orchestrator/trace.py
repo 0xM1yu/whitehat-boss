@@ -94,8 +94,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 `invalid_axes`(JSON 배열 문자열 —
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
 `count(reason=invalid_axis) / count(rebut)`.
-⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
-`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는
+⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(v6·v7. v8 이상은 ID가 있어도
+축이 없으면 `rebut_ids_only`다)(`evidence_refs`가 있으면 `ungrounded_reason`이 즉시 `None`이다
+- 이것도 v6·v7). 그래서 ID와 축을 둘 다 요구하는
 v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** —
 ADR 0015가 예측한 실패 양상 (2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가
 이 지표라서 그 한계를 같이 적는다.
@@ -612,6 +613,10 @@ class EventKind(StrEnum):
     # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
     # `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
     # ID 갈래만으로도 참이라 이 경로는 그대로다.
+    # ⏵ 2026-10-15 — 위 서술은 v6·v7이다. v8 이상은 ID만 든 `rebut`이 `rebut_ids_only`로
+    # `need_evidence`가 되어 이 길이 닫혔다(`schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`).
+    # `grounded`는 verdict가 `rebut`일 때만 뜻이 있다 - v8의 `uphold`가 ID를 인용하면 축이 없어
+    # `grounded=false`로 남는다(정규화 대상이 아니다).
     # 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
     # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
     # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).

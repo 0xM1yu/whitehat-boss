@@ -90,13 +90,14 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 않으므로** 체계적 실패와 번갈아 나와도 상한에 닿는다. 그리고 **끝까지 시도한 뒤** 한 자리가
 한 번도 성공하지 못했으면 원인이 크기여도 멈춘다 — 그 자리는 아무것도 못 봤다.
 
-**멈추는 것과 산출물을 잃는 것은 다르다.** 장애 갈래 넷(교대 실패·게이트웨이 장애·연속 폐기·
-스키마 파싱 실패)은 예산 소진과 같은 자리에서 같은 방식으로 끝난다 — 리포트와 매니페스트까지
-가고 `RunRecord`에는 `stopped_after`가 남는다(전이 표 R-2). **사유는 `RunRecord`에 없다** — trace의
+**멈추는 것과 산출물을 잃는 것은 다르다.** 장애 갈래 다섯(교대 실패·게이트웨이 장애·연속 폐기·
+스키마 파싱 실패·색인 실패)은 예산 소진과 같은 자리에서 같은 방식으로 끝난다 — 리포트와
+매니페스트까지 가고 `RunRecord`에는 `stopped_after`가 남는다(전이 표 R-2). **사유는 `RunRecord`에
+없다** — trace의
 R-2 `transition` 이벤트(`subject_kind: run`)의 `reason`이 든다. 같은 자리에서 끝나도 **밖에서 보이는
-것은 갈린다**: 예산 소진은 종료 코드 0이고 이 넷은 `cli`가 stderr `[ERROR]` 줄과 3으로 돌려준다
+것은 갈린다**: 예산 소진은 종료 코드 0이고 이 다섯은 `cli`가 stderr `[ERROR]` 줄과 3으로 돌려준다
 (`RunResult.stop_reason` — `src/cli.py` 모듈 docstring). 예상 밖 예외(`UNFORESEEN_FAILURE`)는 이
-넷과 또 다르다 — 매니페스트·trace는 남지만 `RunResult`가 안 나오고(리포트 파일 없음) 예외를 다시
+다섯과 또 다르다 — 매니페스트·trace는 남지만 `RunResult`가 안 나오고(리포트 파일 없음) 예외를 다시
 던져 `run`은 트레이스백(1)으로 끝난다. 예외가 `write_manifest` 앞을 뚫고 나가면 그때까지의
 GPU 시간이 통째로 사라지고, 그것이 이 절이 없애려는 결함이다.
 """
@@ -852,7 +853,8 @@ class _Accumulator:
     critic_failed: int = 0
     # 그 Finding들의 id. **수가 아니라 누구인가**를 8단계가 읽는다 — 판정을 못 받고 버려진 Finding은
     # 상태가 안 바뀌어(`HYPOTHESIZED` 그대로) 상태로는 못 가르고, `_pov_targets`가 추가 대상 풀에서
-    # 뺀다. `critic_failed`와 **한 자리에서만** 갱신된다(`_drop_finding`).
+    # 뺀다(⏵ 2026-10-15 - 이제 안 뺀다: 판정이 없어 풀에 들고 정렬 계단 1이다, ADR 0015 결정 4 ⏵).
+    # `critic_failed`와 **한 자리에서만** 갱신된다(`_drop_finding`).
     critic_failed_ids: set[str] = field(default_factory=set)
     # 8단계 PoV가 어느 사유로 섰나 — finding_id → 사유 문자열 (이슈 #357·#358).
     # 어휘는 **10사유 완전분할**이다: `PovStopReason` 여섯 값 + enum 밖 **넷**.
@@ -1095,6 +1097,7 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.CONSECUTIVE_TARGET_FAILURES
         warnings.append(f"{exc}")
+        warnings.extend(getattr(exc, "__notes__", ()))  # 예산·게이트웨이 갈래와 같은 이유(#532)
     except SchemaParseError as exc:
         # **후위 방어선이다 (해소).** 후보 단위는 `_triage_all`이, Finding 단위는 `_analyze`의
         # critic 루프가 이미 잡으므로 여기까지 오는 것은 **아직 가드가 없는 경로**뿐이다.
@@ -1105,8 +1108,9 @@ def run_pipeline(
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.SCHEMA_PARSE_FAILED
         warnings.append(f"스키마 파싱 실패로 중단했다: {error_detail(exc)}")
+        warnings.extend(getattr(exc, "__notes__", ()))  # 예산·게이트웨이 갈래와 같은 이유(#532)
     except Exception as exc:
-        # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 다섯은 **예상한** 형이고, 이 갈래는
+        # 🔴 **최후 방어선 (S0) — 범위는 `_analyze`다.** 위 여섯은 **예상한** 형이고, 이 갈래는
         # **`_analyze`에서 난 예상 밖 형 전부**다. 그런 예외가 하나라도 나면 `write_manifest`(아래)
         # 앞을 뚫고 나가 **산출물이 통째로 사라졌다** — 위 `ModelGatewayError` 갈래의 주석이 적어 둔
         # zlib 사고가 정확히 그것이고, 그 갈래는 **그 형에만** 방어선을 세웠다.
@@ -1623,14 +1627,18 @@ def _analyze(
                     stop, (BudgetExhausted, ModelGatewayError)
                 ) and finding.finding_id not in validated_ids
                 if state.oracle_ledger.candidates or extra_target_cut:
+                    # 채점기가 없거나 이미 지정한 run에선 `_finalize_oracle`이 조용히 돌아온다 -
+                    # 그때는 「돌렸다」 노트를 달지 않는다(안 돌았다).
+                    will_run = ctx.oracle is not None and not state.oracle_finalized
                     try:
                         _finalize_oracle(ctx, state)
                     except Exception as exc:
                         stop.add_note(f"최종 지정을 돌리지 못했다: {type(exc).__name__}: {exc}")
                     else:
-                        stop.add_note(
-                            f"{type(stop).__name__}가 PoV 루프를 끊은 뒤 최종 지정을 돌렸다"
-                        )
+                        if will_run:
+                            stop.add_note(
+                                f"{type(stop).__name__}가 PoV 루프를 끊은 뒤 최종 지정을 돌렸다"
+                            )
                 raise
     # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
     # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
