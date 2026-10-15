@@ -885,6 +885,23 @@ def test_a_non_target_exception_without_a_submitted_poc_leaves_the_final_not_rea
     assert summary is not None and summary["final"] == "not_reached"
 
 
+def test_no_oracle_wired_means_no_final_designation_note_on_a_cut_extra_target(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """채점기가 없으면 `_finalize_oracle`은 조용히 돌아온다 - 그런데도 「최종 지정을 돌렸다」 노트가
+    붙으면 안 돈 지정이 돈 것으로 읽힌다(2026-10-15 리뷰). 추가 대상에서 예산이 끊긴다 - 조건은
+    참이지만 지정은 안 돈다."""
+    state, _validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1)
+    assert ctx.oracle is None, "전제 - 채점기가 없다"
+
+    with pytest.raises(BudgetExhausted) as raised:
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached[-1] == extra.finding_id, "추가 대상에 못 닿았다 - 공허하다"
+    assert not getattr(raised.value, "__notes__", [])
+
+
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit], ids=lambda e: e.__name__)
 def test_an_interrupt_in_the_pov_loop_never_runs_the_final_designation(
     ctx, monkeypatch, interrupt  # noqa: ANN001, F811
