@@ -25,6 +25,8 @@ from src.schemas.enums import EvidenceGrade
 from src.schemas.pov import PovAction
 from tests.oracle_fakes import TASK_ID, FakeOracle
 from tests.test_nodes import ctx  # noqa: F401
+from tests.test_oracle_final_retry import _http
+from tests.test_oracle_final_retry import _run as _run_retry
 from tests.test_oracle_wiring import (
     _events,
     _findings,
@@ -34,6 +36,7 @@ from tests.test_oracle_wiring import (
     _validated_and_one_extra,
 )
 from tests.test_pov_loop import _gen, _scripted, _with_pov_version
+from tests.test_pov_oracle_feedback import ReadingOracle
 
 A, AA, AAA = b"A", b"AA", b"AAA"  # `_gen(count=n)`이 만드는 바이트
 _SUBMIT = PovAction(action="submit", rationale="the last gen")
@@ -349,3 +352,31 @@ def test_the_summary_counts_rescued_rows_only_when_there_are_some() -> None:
 
     assert "vul_rescued" not in none.summary()
     assert some.summary()["vul_rescued"] == 1
+
+
+# --- 재제출 이어받기(p15b)와의 상호작용 ----
+
+
+def test_a_reused_intermediate_submission_makes_its_finding_a_submitter_not_a_rescue(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """Finding가 A를 `submit`했는데 지정 가능 재제출이 두 번 실패하고 앞선 중간 A(139)를 이어받았다.
+    이어받은 행이 후보이고, 그 Finding은 제출자라 같은 A의 중간 행이 구제로 또 세어지지 않는다."""
+
+    oracle = ReadingOracle(
+        codes=(139, 0), vul_exit_code=139, vul_errors={2: _http(500), 3: _http(500)}
+    )
+    scripted, state = _run_retry(ctx, oracle)
+
+    ledger = state.oracle_ledger
+    (reused,) = ledger.candidates
+    assert reused.reused_intermediate and reused.designatable
+    assert ledger.rescued == [] and ledger.pool == [reused]  # 이중 계수 없음
+    summary = ledger.summary()
+    assert summary["vul_reused"] == 1 and "vul_rescued" not in summary
+    assert summary["vul_candidates"] == 1
+    assert not oracle_log.was_rescued(reused, ledger.attempts)
+    data = _final(scripted)
+    assert (data["status"], data["rescued"]) == ("scored", False)
+    assert ledger.record()["final"]["rescued"] is False
+    assert all("rescued" not in row for row in ledger.record()["candidates"])
