@@ -64,14 +64,13 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 심볼이 모두 동급이었으므로 그때와 다른 순서이고, `candidate_max`가 물면 그 artifact의
 심볼이 다른 파일의 히트보다 먼저 잘린다.
 이 동작을 받아들였다(#257 2).
-**신호가 같으면 과제 설명이 다음 열쇠다(#377 (b)).** 신호가 없는 CyberGym Level 1에서는 정렬이
-곧 파일 경로 사전순이라 `candidate_max`(256이던 때 256개, 2026-10-15에 8)에 어느 후보가 사는지가
-설명과 무관했다. 설명이 부른
-심볼(`desc_rank` 3 전체 이름 · 2 조각·확장 일치)·파일(1)을 신호 뒤, 경로 앞에 둔다 — 후보는 줄이지
-않고 순서만 바꾼다(`description_match.py`). 효과는 미실측.
-**그 키만으로는 컷이 설명 일치를 못 지킨다 — 예약이 있다(2026-10-15).** 리허설(arvo:1065
-번들)에서 semgrep 신호 후보 8개가 컷을 다 채워 설명과 맞는 유일한 후보(`funcs.c:file_regexec`,
-`desc_rank` 2)가 잘렸다(`signal_artifacts 8`/47 — 「Level 1은 신호가 없다」는 전제가 틀렸다).
+**신호가 같으면 과제 설명이 다음 열쇠다(#377 (b)).** 정렬은 신호 → 과제 설명 일치 → 파일 경로
+순이다. 설명이 부른 심볼(`desc_rank` 3 전체 이름 · 2 조각·확장 일치)·파일(1)을 신호 뒤, 경로 앞에
+둔다 — 후보는 줄이지 않고 순서만 바꾼다(`description_match.py`). 효과는 미실측.
+**그 키만으로는 컷이 설명 일치를 못 지킨다 — 예약이 있다(2026-10-15).** 신호 후보가 컷을 다
+채우면 둘째 항이 일할 자리가 없다. 리허설에서 semgrep 신호 후보 8개가 컷을 채워 설명과 맞는
+후보(`funcs.c:file_regexec`, `desc_rank` 2)가 잘렸다 — 수치의 원천은
+`docs/experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md`다.
 그래서 `desc_rank` ≥ 2인 후보 앞 `thresholds.candidate_desc_reserve`개(2)는 신호와 무관하게
 컷에 든다(`_cut_with_reserve` — 순서만 바꾸고 후보를 지어내지 않는다 · 효과 미실측). 남긴
 목록은 다시 키 순서라 ID 발급 순서는 그대로다.
@@ -4163,25 +4162,39 @@ _DESC_RESERVE_MIN_RANK = 2
 
 def _cut_with_reserve(
     ordered: list[_Target], limit: int, reserve: int
-) -> tuple[list[_Target], list[_Target], frozenset[int]]:
+) -> tuple[list[_Target], list[_Target], frozenset[int], int]:
     """키로 정렬된 `ordered`에서 앞 `limit`개를 남기되, 설명이 심볼 이름을 부른 것
     (`desc_rank` ≥ 2) 앞 `reserve`개는 신호 순위와 무관하게 자리를 보장한다 (#377 (b) 후속 —
     리허설에서 신호 후보 8개가 컷을 다 채워 설명과 맞는 유일한 후보가 잘렸다).
 
-    `(남긴 것, 잘린 것, 예약이 아니었으면 잘렸을 것의 id)` — 앞 둘은 `ordered`의 상대 순서를
-    그대로 둔다(`ordered`를 다시 걸러 낼 뿐이라 정렬 키가 같은 것끼리의 순서까지 같다). 후보
-    집합을 지어내지 않고 순서만 바꾼다. 예약이 0이거나 해당 후보가 없으면 `ordered[:limit]` ·
-    `ordered[limit:]`와 같다. 예약은 `limit`을 못 넘는다(`min`) — 설정 검증이 이미 막지만 이
-    함수가 단독으로도 안전하다.
+    `(남긴 것, 잘린 것, 예약이 아니었으면 잘렸을 것의 id, 예약 몫으로 고른 수)` — 앞 둘은
+    `ordered`의 상대 순서를 그대로 둔다(`ordered`를 다시 걸러 낼 뿐이라 정렬 키가 같은 것끼리의
+    순서까지 같다). 후보 집합을 지어내지 않고 순서만 바꾼다. 예약이 0이거나 해당 후보가 없으면
+    `ordered[:limit]` · `ordered[limit:]`와 같다. 예약은 `limit`을 못 넘는다(`min`) — 설정 검증이
+    이미 막지만 이 함수가 단독으로도 안전하다.
+
+    **예약 자리는 서로 다른 `(file, symbol)`에만 쓴다** — 슬라이스 경로에서 entry 함수가 같은
+    슬라이스 둘이 두 자리를 다 먹지 않게 한다. 같은 함수의 다른 슬라이스는 예약이 아니라 나머지
+    경로(`rest`)로는 여전히 들어갈 수 있다. 넷째 값은 **이미 앞 순위라 예약이 없어도 들었을 것을
+    포함한** 고른 수다 — 셋째(예약이 없었다면 잘렸을 것)와 다르다.
     """
-    reserved = [t for t in ordered if t.desc_rank >= _DESC_RESERVE_MIN_RANK][: min(reserve, limit)]
+    slots = min(reserve, limit)
+    reserved: list[_Target] = []
+    functions: set[tuple[str, str | None]] = set()
+    for item in ordered:
+        if len(reserved) >= slots:
+            break
+        function = (item.location.file, item.location.symbol)
+        if item.desc_rank >= _DESC_RESERVE_MIN_RANK and function not in functions:
+            functions.add(function)
+            reserved.append(item)
     reserved_ids = {id(t) for t in reserved}
     rest = [t for t in ordered if id(t) not in reserved_ids]
     kept = reserved_ids | {id(t) for t in rest[: limit - len(reserved)]}
     targets = [t for t in ordered if id(t) in kept]
     deferred = [t for t in ordered if id(t) not in kept]
     natural = {id(t) for t in ordered[:limit]}
-    return targets, deferred, frozenset(reserved_ids - natural)
+    return targets, deferred, frozenset(reserved_ids - natural), len(reserved)
 
 
 def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> None:
@@ -4201,6 +4214,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
 
     `target_plan.desc_reserved`·`target_planned.desc_reserved`는 **예약이 없었다면 잘렸을 후보**만
     센다(예약 몫 전체가 아니다) — 신호 순서로도 이미 들어올 후보는 예약의 효과가 아니다.
+    `target_plan.desc_reserve_filled`는 예약 몫으로 **고른** 수다(이미 앞 순위였던 것 포함).
 
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
@@ -4211,7 +4225,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     plan.collected.sort(key=_cut_key)
     limit = ctx.config.thresholds.candidate_max
     reserve = ctx.config.thresholds.candidate_desc_reserve
-    plan.targets, deferred, promoted = _cut_with_reserve(plan.collected, limit, reserve)
+    plan.targets, deferred, promoted, filled = _cut_with_reserve(plan.collected, limit, reserve)
     # 설명 일치 수(#377 (b)): 컷 전 전체의 정확·조각·파일 일치와, 그중 컷에 잘린 수.
     ctx.trace.emit(
         EventKind.TARGET_PLAN,
@@ -4232,6 +4246,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         desc_file_matches=sum(item.desc_rank == 1 for item in plan.collected),
         desc_matches_deferred=sum(item.desc_rank > 0 for item in deferred),
         desc_reserved=len(promoted),
+        desc_reserve_filled=filled,
     )
     # **실행할 대상의 이름을 남긴다 (해소).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
     # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**

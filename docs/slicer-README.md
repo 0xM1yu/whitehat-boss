@@ -537,9 +537,10 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 - 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서
   심볼 전체 이름이 토큰(3) > 심볼의 `_`·`::` 조각이 원 토큰이거나 심볼 전체 이름이 토큰의 `_` 조각(2) > 파일 이름이 토큰 또는 그 조각(1) > 없음(0) 순으로 `candidate_max`(8 — ⏵ 2026-10-15 256 → 8) 컷에 먼저 든다. **후보는 줄이지 않는다.**
   `target_plan` 이벤트의 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches`·`desc_matches_deferred`(컷에 잘린 일치)가 그 수를 남긴다.
-  ⏵ 2026-10-15 **예약** -> 신호 후보가 컷을 다 채우면 위 순서만으로는 심볼 일치(2·3) 후보가 잘린다(리허설: 신호 후보 8개가 설명과 맞는 `file_regexec`를 밀어냈다).
+  ⏵ 2026-10-15 **예약** -> 신호 후보가 컷을 다 채우면 위 순서만으로는 심볼 일치(2·3) 후보가 잘린다(리허설: 신호 후보 8개가 설명과 맞는 `file_regexec`를 밀어냈다 — [기록](experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md)).
   그래서 심볼 일치 후보 앞 `thresholds.candidate_desc_reserve`개(2)는 신호 순위와 무관하게 컷에 들고(파일 이름만 맞은 1은 예약이 아니다), 남은 자리는 위 순서로 채운다. 남긴 목록은 다시 키 순서다.
-  `target_plan.candidate_desc_reserve`·`desc_reserved`(**예약이 없었다면 잘렸을 후보** 수)와 `target_planned`·`target_skipped`의 `signal_rank`·`desc_rank`(·`target_planned.desc_reserved`)가 남는다. 효과는 미실측이다. 토큰 규칙은 `src/orchestrator/description_match.py`와
+  예약 자리는 서로 다른 `(file, symbol)`에만 쓴다(같은 함수의 슬라이스 둘이 두 자리를 다 먹지 않게 — 둘째는 나머지 경로로 들 수 있다).
+  `target_plan.candidate_desc_reserve`·`desc_reserved`(**예약이 없었다면 잘렸을 후보** 수)·`desc_reserve_filled`(예약 몫으로 **고른** 수 — 이미 앞 순위였던 것 포함)와 `target_planned`·`target_skipped`의 `signal_rank`·`desc_rank`(·`target_planned.desc_reserved`)가 남는다. 효과는 미실측이다. 토큰 규칙은 `src/orchestrator/description_match.py`와
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
 - ⚠ **흔한 영어 명사가 일치를 일으킬 수 있다** -> `buffer`·`read`·`parse`·`data` 같은 낱말이 설명에 있고 저장소에 그 이름의 파일(`buffer.c`)이 있으면

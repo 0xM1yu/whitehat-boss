@@ -383,17 +383,20 @@ thresholds:
   # Auditor 약 12건 ≈ 12시간이다(PoV 제외). **이제 컷이 실제로 문다** — 8은 target(조각) 수이고
   # (`runner._plan_targets`가 팬아웃 전에 자른다), target이 8을 넘는 run(arvo:1065는 220조각)에서 어느 8개가
   # 사는지가 곧 정렬 키다: 신호 → 과제 설명 일치(`-desc_rank`, #377 (b)) → 파일 경로 순. 설명과 맞는
-  # 조각이 없으면 경로 사전순 앞 8개다(아래 `candidate_desc_reserve` 참고).
+  # 조각이 없으면 신호 → 경로 순 앞 8개다(아래 `candidate_desc_reserve` 참고).
   candidate_max: 8
   # ⏵ 2026-10-15 — 8개 중 **N개는 신호와 무관하게 과제 설명이 심볼 이름을 부른 후보(`desc_rank` ≥ 2) 몫이다**
   # (`runner._cut_with_reserve` — 순서만 바꾸고 후보를 지어내지 않는다 · 파일 이름만 맞은 것(1)은 예약이 아니다).
-  # 사용자 결정 · council 4목소리(예약 2 · 순위 승격 1 · 통째 교체 1에서 예약으로 모였다). 계기는 GPU 없는
-  # 리허설(arvo:1065 번들, `dev_docker`)이다 — semgrep 신호 후보 8개가 컷을 다 채워 설명과 맞는 유일한 후보
-  # `funcs.c:file_regexec`(desc_rank 2)가 잘렸다(`target_plan.desc_matches_deferred 1`). #377 (b)의 전제
-  # 「Level 1은 정적 신호가 없다」가 틀렸다(그 run `signal_artifacts 8`/47).
-  # **2는 고른 값이지 측정이 아니다.** 근거는 arvo:1065 한 건이 아니라 이슈 #377 본문이 든 CyberGym 1,503과제 분포다(설명이 고친
-  # 함수 이름을 부르는 비율 16.4%, 고친 파일·hunk 식별자 ≥ 61.3%). 상한이 있는 것은 흔한 낱말이 우연히 맞은 후보가
-  # 컷을 다 채우지 않게 하려는 것이다. **효과는 미실측이다.** 0이면 예약이 없다(종전 컷). `candidate_max` 이하.
+  # 사용자 결정(예약 2 승인). council 원 발언: Skeptic 예약 2자리 · Critic 예약 2~3자리(어렵다면 rank ≥ 2 승격) ·
+  # Pragmatist rank ≥ 2 승격(예약 안 함) · Architect(진행자) 통째 교체 → 셋의 반대로 예약으로 바꿨다.
+  # 계기는 GPU 없는 리허설(arvo:1065 실번들, `dev_docker`)이다 — 신호 후보 8개가 컷을 다 채워 설명과 맞는 후보가
+  # 잘렸다. 「Level 1은 정적 신호가 없다」는 #377 (b)의 전제가 거짓이다. 수치의 원천은
+  # `docs/experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md`다.
+  # **2는 고른 값이지 측정이 아니다.** 참고한 분포는 이슈 #377 본문 관측 2의 CyberGym 1,503과제다(설명이 고친
+  # 함수 이름을 부르는 비율 16.4%, 고친 파일·hunk 식별자 ≥ 61.3% — `docs/open-questions/` 아래 #377 본문). 근거가
+  # 아니라 참고다: 파일 이름만 맞은 것(rank 1)을 뺀 심볼 일치율은 미측정이다. 상한이 있는 것은 흔한 낱말이
+  # 우연히 맞은 후보가 컷을 다 채우지 않게 하려는 것이다. **효과는 미실측이다.** 0이면 예약이 없다(종전 컷).
+  # `candidate_max` 이하. 예약 자리는 서로 다른 (file, symbol)에만 쓴다.
   candidate_desc_reserve: 2
 
   # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
