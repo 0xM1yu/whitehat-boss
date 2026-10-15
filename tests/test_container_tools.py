@@ -2347,3 +2347,72 @@ def test_an_unwritable_index_listing_is_failed_evidence_and_starts_no_process(
     assert "입력 파일" in evidence.error
     assert "/host/secret" not in evidence.error
     assert spy.calls == []
+
+
+def test_every_harness_semgrep_rule_also_covers_cpp() -> None:
+    """하네스 룰이 C++ 파일에도 걸린다(#689).
+
+    `languages: [c]`만이면 semgrep이 `.cc`·`.cpp`·`.hpp`를 **아예 안 연다** — oss-fuzz:368076871
+    리허설에서 C++ 셋이 「스캔한 파일 없음」이었다. 공개 룰셋 쪽은 Dockerfile의 빌드 가드가 막는다.
+    """
+    import yaml
+
+    rules_dir = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "rules"
+    rules = [
+        rule
+        for path in sorted(rules_dir.glob("*.yaml"))
+        for rule in yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]
+    ]
+    assert rules, "전제 — 하네스 룰이 있다"
+    missing = [rule["id"] for rule in rules if not {"c", "cpp"} <= set(rule["languages"])]
+    assert missing == []
+
+
+def _widen_module():
+    path = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "widen_rules_to_cpp.py"
+    spec = importlib.util.spec_from_file_location("widen_rules_to_cpp", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+# 핀 커밋 a84ff9cc의 실제 철자 셋(harness-tools:v3-pre689 이미지의 /opt/semgrep-rules/c에서 옮김).
+_RULE_INLINE = "rules:\n- id: inline\n  pattern: gets(...)\n  languages: [c]\n  severity: WARNING\n"
+# lang/security/insecure-use-memset.yaml:17-18
+_RULE_BLOCK = (
+    "rules:\n- id: block\n  pattern: memset(...)\n  languages:\n  - c\n  severity: WARNING\n"
+)
+# lang/security/use-after-free.yaml:37-38 (들여쓴 블록)
+_RULE_BLOCK_INDENTED = (
+    "rules:\n  - id: indented\n    pattern: free($X)\n"
+    "    languages:\n      - c\n    severity: WARNING\n"
+)
+
+
+@pytest.mark.parametrize("text", [_RULE_INLINE, _RULE_BLOCK, _RULE_BLOCK_INDENTED])
+def test_rule_widening_reaches_cpp_in_every_spelling_the_pinned_ruleset_uses(
+    tmp_path: Path, text: str
+) -> None:
+    """#689 리뷰: 인라인만 바꾸는 sed는 블록 리스트 셋을 C 전용으로 남겼고 가드도 통과했다."""
+    widen = _widen_module()
+    rule_file = tmp_path / "r.yaml"
+    rule_file.write_text(text, encoding="utf-8")
+    assert widen.c_only_rules(tmp_path)[1] != [], "전제 — 넓히기 전에는 C 전용이다"
+
+    assert widen.main(tmp_path) == 0
+    assert widen.c_only_rules(tmp_path) == (1, [])
+
+
+def test_rule_widening_fails_the_build_when_a_rule_stays_c_only(tmp_path: Path) -> None:
+    """모르는 철자(`[ c ]`)면 못 넓히고 exit 1 — 빌드가 C 전용 룰을 조용히 싣지 않는다."""
+    widen = _widen_module()
+    (tmp_path / "r.yaml").write_text(_RULE_INLINE.replace("[c]", "[ c ]"), encoding="utf-8")
+    assert widen.main(tmp_path) == 1
+    assert widen.main(tmp_path / "empty-does-not-exist") == 1  # 룰 0개도 실패다
+
+
+def test_rule_widening_leaves_other_language_lists_alone() -> None:
+    widen = _widen_module()
+    text = "rules:\n- id: x\n  languages: [c, cpp]\n- id: y\n  languages:\n  - python\n"
+    assert widen.widen(text) == text
