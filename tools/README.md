@@ -49,7 +49,7 @@ python tools/cybergym_task.py arvo:1065 --out eval/datasets/arvo-1065 [--server 
 - `submit.sh`(채점기 신원)도 만든다. **agent_id는 run마다 새로 쓰는 것이 권장**이다(채점기가 같은 신원의
   PoC를 캐시하지 않게) — 이미 있으면 그대로 두고 `--force-submit`일 때만 새 agent_id로 다시 만든다.
   기존 `submit.sh`가 다른 과제의 것이거나 서버가 `--server`와 다르면 거절한다(조용히 무시하지 않는다).
-- 종료 코드: 0 성공 · 1 다운로드·검증 실패 · 2 인자·입력 거절. 표준 라이브러리만 쓴다.
+- 종료 코드: 0 성공 · 1 다운로드·검증 실패 · 2 인자·입력 거절. HTTP는 표준 라이브러리로 하지만 하네스 모듈(`src.*`)을 import하므로 **`pip install -r requirements.txt`가 먼저다**(없으면 `--help`부터 `pydantic` 없음으로 죽는다).
 
 ## harness-tools 이미지
 
