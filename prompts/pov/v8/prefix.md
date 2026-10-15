@@ -89,7 +89,7 @@ with `hop=<k> last_hop=<N> remaining=<N-k>`.
      If an earlier `gen` received a code outside the three, name it with `poc_sha256` (DEF-SUBMIT) instead of using this list.
 
   If any requirement is unmet, do not `submit`.
-- A loop that exhausts all hops without a `submit` produces no final candidate. Submit is how you choose. If a Finding ends with no `submit`, the harness may fall back to an intermediate `gen` whose own vul response was a crash, ranked below any submitted candidate — do not rely on it.
+- A loop that exhausts all hops without a `submit` produces no final candidate. Submit is how you choose. If a Finding ends with no `submit`, the harness may fall back to an intermediate `gen` whose own vul response was a crash (not `0`, `71`, `300`, a timeout, or an environment-failure code); within the same scorer-code group it ranks below submitted candidates — do not rely on it.
 
 ## Scorer vul observation
 An `oracle_vul` line is always appended to the observation after a `gen` (not after an

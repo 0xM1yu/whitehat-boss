@@ -47,7 +47,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 시도가 하나도 없다)의 중간 gen 중 자기 `vul` 제출 응답 코드가 크래시 계단(`vul_code_tier`)인 것은
 지정 풀에 든다(`OracleLedger.rescued`·`pool`). 새 제출은 없다 - 이미 쌓인 행이다. 그런 행은
 `candidates`에 `rescued: true`가 붙고(구제가 없던 run의 행은 옛 모양 그대로다), `final`은 지정된
-후보가 구제된 것인지를 `rescued`(true/false)로 싣는다. 이 둘은 응답 코드에 달린 값이라 trace의
+후보가 구제된 것인지를 `rescued`(true/false)로 싣는다(`was_rescued` - 같은 바이트를 모델이
+submit한 행이 있으면 false). 이 둘은 응답 코드에 달린 값이라 trace의
 `oracle_final.rescued`와 함께 Fake 경로 밖에서는 결정론이 아니다.
 
 ⚠ **`null`은 「안 돌았다」·「못 가렸다」다 — 0도 거짓도 아니다**(CLAUDE.md §0). `fix_exit_code`가
@@ -253,6 +254,8 @@ class VulAttempt:
     error_status: int | None = None
     # 모델의 `submit`만 최종 지정 후보가 된다. 중간 gen 판정은 모델 입력으로만 쓰며 정렬 키에는
     # 닿지 않는다. `candidates`가 이 필드로 먼저 거른다.
+    # ⏵ 2026-10-15 - 예외: `submit` 없이 끝난 Finding의 크래시 계단 중간 gen은 `rescued`로
+    # 풀(`pool`)에 든다. 정렬 키(`runner._designation_key`)가 이 필드로 제출된 쪽을 앞세운다.
     designatable: bool = field(kw_only=True)
     observation_exit_code: int | None = None
     observation_error: str | None = None
@@ -493,7 +496,7 @@ class OracleLedger:
             # (`grade_unknown`)과 후보가 없던 run을 매니페스트에서도 가른다.
             "final_reason": None if self.final is None else self.final.reason,
             "record": self.record_ref,
-            # 아래 넷은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 해서다.
+            # 아래 다섯은 **0이 아닐 때만** 있다 - 이 필드 이전의 manifest와 키 집합이 같아야 한다.
             # `vul_submitted`는 중간 gen 제출을 **포함**하고(`submitted`) `vul_intermediate`는 중간
             # gen **시도** 전부(성공·실패·건너뜀)라 둘의 차이는 후보 수가 아니다 - 후보 수는
             # `vul_candidates`다. `vul_intermediate`가 있는 run에는 **0이어도** 늘 있다 - 중간
@@ -508,6 +511,7 @@ class OracleLedger:
                 if count
             },
             **({"vul_candidates": len(self.candidates)} if self.intermediate else {}),
+            **({"vul_rescued": len(self.rescued)} if self.rescued else {}),
         }
 
     def record(self) -> dict[str, object]:
@@ -567,7 +571,7 @@ class OracleLedger:
         elif final.status == STATUS_NONE:
             out.append(_none_warning(final, len(self.candidates)))
         else:
-            if final.attempt is not None and not final.attempt.designatable:
+            if final.attempt is not None and was_rescued(final.attempt, self.attempts):
                 out.append(
                     "최종 PoC는 모델이 submit하지 않은 중간 gen이다 - 자기 vul 응답 코드가 "
                     "크래시 계단이라 구제됐다(ADR 0013 2026-10-15). "
@@ -650,6 +654,14 @@ def _cached_legs(final: FinalAttempt, attempts: Sequence[VulAttempt]) -> list[st
     return legs
 
 
+def was_rescued(attempt: VulAttempt, attempts: Sequence[VulAttempt]) -> bool:
+    """지정된 후보가 `submit` 없이 구제된 중간 gen인가. 같은 바이트를 모델이 `submit`한 행이
+    장부에 하나라도 있으면(다른 Finding 것이어도) 아니다 - 그 바이트는 모델이 골랐다."""
+    return not attempt.designatable and not any(
+        a.designatable and a.poc_sha256 == attempt.poc_sha256 for a in attempts
+    )
+
+
 def _attempt_record(attempt: VulAttempt, *, rescued: bool = False) -> dict[str, object]:
     row: dict[str, object] = {
         "finding_id": attempt.finding_id,
@@ -707,7 +719,7 @@ def _final_record(
         "finding_id": attempt.finding_id,
         "poc_sha256": attempt.poc_sha256,
         "poc_bytes": attempt.poc_bytes,
-        "rescued": not attempt.designatable,
+        "rescued": was_rescued(attempt, attempts),
     }
     if final.status == STATUS_FAILED:
         return {**row, "error": final.error, "error_detail": final.error_detail}

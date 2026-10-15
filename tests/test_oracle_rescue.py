@@ -14,16 +14,25 @@ import dataclasses
 
 import pytest
 
-from src.interfaces.model_client import SchemaParseError
+from src.interfaces.model_client import ModelGatewayError, SchemaParseError
 from src.interfaces.oracle import VulSubmission
 from src.orchestrator import oracle_log, runner
+from src.orchestrator.budget import BudgetExhausted
 from src.orchestrator.oracle_log import OracleLedger
+from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import EvidenceGrade
 from src.schemas.pov import PovAction
 from tests.oracle_fakes import TASK_ID, FakeOracle
 from tests.test_nodes import ctx  # noqa: F401
-from tests.test_oracle_wiring import _events, _findings, _flat, _ledger_of, _uncritiqued
+from tests.test_oracle_wiring import (
+    _events,
+    _findings,
+    _flat,
+    _ledger_of,
+    _uncritiqued,
+    _validated_and_one_extra,
+)
 from tests.test_pov_loop import _gen, _scripted, _with_pov_version
 
 A, AA, AAA = b"A", b"AA", b"AAA"  # `_gen(count=n)`이 만드는 바이트
@@ -261,3 +270,82 @@ def test_the_new_chain_name_sits_right_after_the_vul_tier() -> None:
     attempt = oracle_log.vul_ok("f", A, sub, 1, designatable=False)
     key = runner._designation_key(attempt, {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 1})
     assert len(key) == len(names) and key[:2] == (0, 1)  # (크래시 계단, 구제됨)
+
+
+# --- 중단된 run: 풀에 구제된 행만 있어도 최종 지정은 간다 ----
+
+
+@pytest.mark.parametrize("stop", ["budget", "gateway"])
+def test_a_stop_after_a_crashing_intermediate_gen_still_designates_the_rescued_one(
+    ctx, monkeypatch, stop  # noqa: ANN001, F811
+) -> None:
+    """`validated` 대상이 크래시 중간 gen(139)을 장부에 남기고 다음 홉에서 예산·게이트웨이로 끊겨도
+    구제된 그 행으로 최종 지정이 한 번 돌고(`fix` 다리 한 번), 원 예외는 그대로 올라온다. 후보
+    (`candidates`)만 보던 조건에서는 `not_reached`로 남았다."""
+    original = (
+        BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
+        if stop == "budget"
+        else ModelGatewayError("down", status=None)
+    )
+    state, validated, _extra = _validated_and_one_extra(ctx)
+    ctx.oracle = oracle = FakeOracle()
+    sub = VulSubmission(TASK_ID, "a" * 32, 139)
+
+    def loop(ctx_, state_, finding, capsule):  # noqa: ANN001, ANN202
+        state_.oracle_ledger.add_attempt(
+            oracle_log.vul_ok(finding.finding_id, A, sub, 1, designatable=False)
+        )
+        raise original
+
+    monkeypatch.setattr(runner, "_run_pov_hops", loop)
+
+    with pytest.raises(type(original)) as caught:
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert caught.value is original
+    ledger = state.oracle_ledger
+    assert ledger.candidates == [] and [a.poc for a in ledger.rescued] == [A]
+    assert oracle.final_calls == [(A, sub)], "구제된 행으로 fix 다리가 정확히 한 번"
+    (final,) = _events(ctx, EventKind.ORACLE_FINAL)
+    assert (final.subject_id, final.data["status"], final.data["rescued"]) == (
+        validated.finding_id, "scored", True,
+    )
+
+
+# --- 같은 바이트가 두 계단에 있을 때의 표지 ----
+
+
+def test_a_rescued_row_that_shares_bytes_with_a_submitted_row_is_not_labelled_rescued(
+    ctx,  # noqa: ANN001, F811
+) -> None:
+    """제출된 행(255 - 모름 계단)과 같은 바이트의 구제된 행(139 - 크래시 계단)이 이긴다. 바이트는
+    모델이 다른 Finding에서 `submit`한 것이라 `rescued`는 거짓이고 구제 경고도 없다."""
+    state, (rescued_finding, submitted_finding) = _findings(ctx, 2)
+    ctx.oracle = oracle = FakeOracle()
+    state.oracle_ledger = ledger = OracleLedger(wired=True)
+    ledger.add_attempt(oracle_log.vul_ok(
+        rescued_finding.finding_id, A, VulSubmission(TASK_ID, "a" * 32, 139), 1, designatable=False
+    ))
+    ledger.add_attempt(oracle_log.vul_ok(
+        submitted_finding.finding_id, A, VulSubmission(TASK_ID, "b" * 32, 255), 1, designatable=True
+    ))
+
+    runner._finalize_oracle(ctx, state)
+
+    assert [poc for poc, _ in oracle.final_calls] == [A]
+    assert ledger.final.attempt.designatable is False, "구제된 행이 이긴 자리다 - 공허하지 않다"
+    assert _final(ctx)["rescued"] is False
+    assert ledger.record()["final"]["rescued"] is False
+    assert not any("submit하지 않은" in w for w in ledger.warnings())
+
+
+# --- 요약 ----
+
+
+def test_the_summary_counts_rescued_rows_only_when_there_are_some() -> None:
+    sub = VulSubmission(TASK_ID, "a" * 32, 139)
+    none = _ledger_of(oracle_log.vul_ok("f", A, sub, 1, designatable=True))
+    some = _ledger_of(oracle_log.vul_ok("f", A, sub, 1, designatable=False))
+
+    assert "vul_rescued" not in none.summary()
+    assert some.summary()["vul_rescued"] == 1
