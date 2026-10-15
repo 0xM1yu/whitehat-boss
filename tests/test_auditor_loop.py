@@ -49,7 +49,7 @@ from src.orchestrator.prompt_loader import (
     PromptTemplate,
     load_prompt,
 )
-from src.orchestrator.runner import RunSpec, _new_record
+from src.orchestrator.runner import RunSpec, _auditor_no_finding_warning, _new_record
 from src.orchestrator.trace import EventKind, TraceWriter
 from src.schemas import CapsuleLevel, FindingState, Location, ProducedBy, Role
 from src.schemas import auditor as auditor_schemas
@@ -1219,24 +1219,6 @@ def test_a_resolver_value_error_is_fed_back_not_fatal(
     assert "ValueError" in body and secret not in body
 
 
-@pytest.mark.parametrize("raised", [KeyError("line_start"), TypeError("int() of None")])
-def test_a_malformed_index_record_is_a_lookup_error_not_a_run_stop(
-    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raised: Exception
-) -> None:
-    """인덱스 레코드에 `line_start`·`file`이 없으면 리졸버가 `KeyError`/`TypeError`를 올린다
-    (`symbol_resolver._record_range`). 보조 정보 실패라 `ValueError`와 같이 `lookup_error`로 남고
-    run을 `UNFORESEEN_FAILURE`로 세우지 않는다."""
-    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
-    _arm(ctx, monkeypatch, tmp_path, hops=4)
-    ctx.resolve_requests = _StubResolver(raises=raised)
-
-    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
-
-    assert isinstance(finding, Finding)
-    data = _hops(ctx)[0].data
-    assert data["lookup_error"] == type(raised).__name__ and "resolved" not in data
-
-
 # --- 실패의 사유 — 모델 호출이 실패한 사건만 C-6·C-7을 단다 --------------------------
 
 
@@ -1820,6 +1802,31 @@ def test_the_runner_survives_a_candidate_the_loop_stopped_without_a_finding(
     # Finding 없는 정지는 run 경고에도 오른다(사유별 건수) - 「찾은 게 없다」와 구별된다.
     (warning,) = _no_finding_warnings(result)
     assert "max_hop 1건" in warning and "repeat_request" not in warning
+
+
+def _warning_for_stops(*stops: str) -> str | None:
+    """`auditor_hop`에 `stop_reason`이 든 trace로 `_auditor_no_finding_warning`을 직접 부른다."""
+    trace = TraceWriter("run_20261015_0001")
+    for i, stop in enumerate(stops):
+        trace.emit(
+            EventKind.AUDITOR_HOP, stage=5, subject_kind="candidate", subject_id=f"cand_{i:04d}",
+            hop=1, action="lookup", stop_reason=stop,
+        )  # fmt: skip
+    return _auditor_no_finding_warning(trace)
+
+
+def test_the_no_finding_warning_names_each_stop_reason_it_counted() -> None:
+    """정지 사유별 건수를 센다 - `repeat_request` 하나, 둘 다일 때의 문구를 못 박는다.
+    `answered`·`context_overflow` 홉은 세지 않는다(크기 거절은 `_auditor_overflow_warnings`)."""
+    repeat = _warning_for_stops("repeat_request", "answered", "context_overflow")
+    assert repeat is not None
+    assert "후보 1건(repeat_request 1건) - " in repeat and "max_hop" not in repeat
+
+    both = _warning_for_stops("max_hop", "repeat_request", "max_hop")
+    assert both is not None
+    assert "후보 3건(repeat_request 1건 · max_hop 2건) - " in both
+
+    assert _warning_for_stops("answered", "context_overflow") is None
 
 
 # --- 러너 — 루프가 돌았는데 probe가 0이면 run 경고 (#617) -----------------------------

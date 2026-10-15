@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
+from src.orchestrator.oracle_log import STATUS_NOT_REACHED
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import FindingState, PathStepKind
@@ -132,8 +133,9 @@ class Report:
     trace_aggregate_failures: dict[str, str] | None = None
     # 채점기를 붙인 run의 최종 PoC 한 줄(`oracle_final` 이벤트의 요약) - 러너가 trace에서 뽑아
     # 넘긴다. 키: `status`·`designation`·`reason`·`error`·`subject`(finding_id)·`poc_sha256`.
-    # `None`이면 채점기가 안 돌았거나 8단계의 최종 단계에 못 닿았다 - 줄을 안 낸다
-    # (`none`/`failed`는 줄을 내고 사유를 적는다).
+    # `None`이면 채점기를 안 붙인 run이라 줄을 안 낸다. 붙였는데 최종 단계에 못 닿았으면 러너가
+    # `{"status": "not_reached"}`를 넘긴다(사이드카의 `final`과 같은 판정). `none`/`failed`는 줄을
+    # 내고 사유를 적는다.
     oracle_final: dict[str, str | None] | None = None
 
     def _oracle_lines(self) -> list[str]:
@@ -141,6 +143,8 @@ class Report:
         final = self.oracle_final
         if final is None:
             return []
+        if final.get("status") == STATUS_NOT_REACHED:
+            return ["### 최종 PoC (채점기)", "", "채점기: 최종 단계 미도달", ""]
         parts = [f"상태 {final.get('status')}"]
         if final.get("designation"):
             parts.append(f"지정 근거 {final['designation']}")
