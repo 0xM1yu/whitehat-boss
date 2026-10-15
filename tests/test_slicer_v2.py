@@ -1688,10 +1688,23 @@ def test_a_description_that_names_no_file_leaves_the_order_alone(
     assert code == 0, result.get("error")
     assert result["priority"]["matched_files"] == [] and result["priority"]["files"] == 0
     assert "matched no candidate" in result["measurement_notes"]["priority_files"]
-    assert "matched no candidate" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "--description: the list" in err and "matched no candidate" in err
     with Checkpoint(database, resume=True) as store:
         files = [c["entry"]["file"] for c in store.get("candidates")]
     assert files == ["a.c", "main.c"]
+
+
+def test_a_description_with_a_latin1_byte_is_read_not_refused(monkeypatch, two_file_repo, tmp_path):
+    path = tmp_path / "description.txt"
+    raw = b"Caf" + bytes([0xE9]) + b" crash in main when parsing."  # 0xe9 alone is not UTF-8
+    path.write_bytes(raw)
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--description", str(path)
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["matched_files"] == ["main.c"]
+    assert result["settings"]["description_sha256"] == hashlib.sha256(raw).hexdigest()
 
 
 def test_without_a_description_the_settings_have_no_description_key(

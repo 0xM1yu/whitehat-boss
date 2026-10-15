@@ -1,11 +1,13 @@
 """과제 설명(description.txt)과 후보 위치의 일치 — `candidate_max` 컷의 우선순위 (#377 (b)).
 
-순서에만 쓴다. 설명이 틀리거나 비면 모든 후보가 0이라 종전 순서 그대로다. 토큰 규칙은
+순서에만 쓴다. 설명이 비었거나 아무것도 안 맞으면 모든 후보가 0이라 종전 순서 그대로다(틀린 설명도
+무언가 맞으면 그 후보가 앞선다). 토큰 규칙은
 `tools/slicer/slicer_description.py`와 같다(`src`는 슬라이서를 import하지 않으므로 두 번 적는다 —
 `tests/test_description_priority.py`가 둘이 같은 토큰을 내는지 묻는다).
 """
 
 import re
+from functools import cache
 from pathlib import PurePosixPath
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -25,13 +27,25 @@ def description_tokens(text: str | None) -> frozenset[str]:
     return frozenset(t for t in found if len(t) >= MIN_TOKEN and t not in STOPWORDS)
 
 
+@cache
+def _expand(tokens: frozenset[str]) -> frozenset[str]:
+    """토큰에 그 `_` 조각(4자 이상·불용어 아님)을 더한다 — 설명이 `file_regexec`를 통째로 써도
+    `regexec`가 닿는다. 슬라이서의 `expand`와 같다."""
+    parts = (p for t in tokens for p in t.split("_") if len(p) >= MIN_TOKEN and p not in STOPWORDS)
+    return tokens | frozenset(parts)
+
+
 def description_rank(tokens: frozenset[str], file: str, symbol: str | None) -> int:
-    """2 = 심볼 이름(또는 `_`·`::` 조각)이 토큰 · 1 = 파일 이름(확장자 뺀)이 토큰 · 0 = 없음."""
+    """3 = 심볼 이름 전체가 설명의 토큰 · 2 = 심볼의 `_`·`::` 조각이 토큰(또는 그 조각) ·
+    1 = 파일 이름(확장자 뺀)이 토큰(또는 그 조각) · 0 = 없음. 클수록 앞선다."""
     if not tokens:
         return 0
+    wide = _expand(tokens)
     if symbol:
         name = symbol.lower()
+        if name in tokens:
+            return 3
         # 토큰은 이미 4자 이상이라 조각 길이를 따로 보지 않는다. `::`는 C++ 한정 이름(`Foo::bar`).
-        if name in tokens or any(piece in tokens for piece in re.split(r"_|::", name)):
+        if any(piece in wide for piece in re.split(r"_|::", name)):
             return 2
-    return 1 if PurePosixPath(file.replace("\\", "/")).stem.lower() in tokens else 0
+    return 1 if PurePosixPath(file.replace("\\", "/")).stem.lower() in wide else 0
