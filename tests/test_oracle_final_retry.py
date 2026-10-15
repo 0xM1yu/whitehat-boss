@@ -288,7 +288,7 @@ class _FlakyFinal(FakeOracle):
         return super().finalize(poc, vul)
 
 
-def _finalize_only(ctx, oracle):  # noqa: ANN001, ANN202, F811
+def _finalize_only(ctx, oracle, sleeps=None):  # noqa: ANN001, ANN202, F811
     state, finding = _pov_state(ctx)
     state.oracle_ledger = oracle_log.OracleLedger(wired=True)
     state.oracle_ledger.add_attempt(
@@ -298,6 +298,8 @@ def _finalize_only(ctx, oracle):  # noqa: ANN001, ANN202, F811
     )
     scripted = _scripted(ctx, [])
     scripted.oracle = oracle
+    if sleeps is not None:
+        scripted.sleep = sleeps.append
     runner._finalize_oracle(scripted, state)
     return scripted, state
 
@@ -313,7 +315,7 @@ def test_finalize_retries_a_transient_failure_once_and_records_both_calls(ctx) -
     assert _final_data(scripted)["finalize_calls"] == 2
     record = state.oracle_ledger.record()["final"]
     assert record["finalize_calls"] == 2
-    # 재시도 전 첫 실패의 원인 - finalize는 기다리지 않는다.
+    # 재시도 전 첫 실패의 원인 - 5xx는 기다리지 않는다.
     assert record["first_error"] == "CyberGymOracleError" and record["first_error_status"] == 503
     assert record["retry_wait_s"] == 0.0 and _final_data(scripted)["first_error_status"] == 503
 
@@ -332,14 +334,51 @@ def test_finalize_gives_up_after_the_one_retry(ctx) -> None:  # noqa: F811
     assert state.oracle_ledger.record()["final"]["first_error_status"] is None
 
 
-@pytest.mark.parametrize("status", [400, 403, 404, 429])
-def test_finalize_does_not_retry_a_4xx(ctx, status) -> None:  # noqa: ANN001, F811
-    oracle = _FlakyFinal([_http(status)])
+def test_finalize_waits_out_the_window_on_a_429_and_retries_once(ctx) -> None:  # noqa: F811
+    # 어댑터 docstring은 `/submit-fix`에 한도가 없다고 적는다(소스 판독) - 429가 오면 덮는 갈래다.
+    oracle = _FlakyFinal([_http(429)])
+    sleeps: list[float] = []
 
-    scripted, state = _finalize_only(ctx, oracle)
+    scripted, state = _finalize_only(ctx, oracle, sleeps)
+
+    final = state.oracle_ledger.final
+    assert final.status == oracle_log.STATUS_SCORED and final.calls == 2
+    assert len(oracle.final_calls) == 2
+    assert sleeps == [oracle_log.RATE_LIMIT_WINDOW_S]
+    record = state.oracle_ledger.record()["final"]
+    assert record["first_error_status"] == 429 and record["retry_wait_s"] == 60.0
+    assert _final_data(scripted)["retry_wait_s"] == 60.0 and record["finalize_calls"] == 2
+
+
+def test_finalize_429_twice_waits_once_and_fails(ctx) -> None:  # noqa: F811
+    oracle = _FlakyFinal([_http(429), _http(429)])
+    sleeps: list[float] = []
+
+    _, state = _finalize_only(ctx, oracle, sleeps)
+
+    final = state.oracle_ledger.final
+    assert final.status == oracle_log.STATUS_FAILED and final.calls == 2
+    assert len(oracle.final_calls) == 2 and sleeps == [60]  # 두 번째 429는 기다리지 않는다
+
+
+def test_finalize_5xx_retries_without_sleeping(ctx) -> None:  # noqa: F811
+    sleeps: list[float] = []
+
+    _finalize_only(ctx, _FlakyFinal([_http(503)]), sleeps)
+
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("status", [400, 403, 404])
+def test_finalize_does_not_retry_another_4xx(ctx, status) -> None:  # noqa: ANN001, F811
+    oracle = _FlakyFinal([_http(status)])
+    sleeps: list[float] = []
+
+    scripted, state = _finalize_only(ctx, oracle, sleeps)
 
     final = state.oracle_ledger.final
     assert final.status == oracle_log.STATUS_FAILED and final.calls == 1
+    assert sleeps == []
     assert len(oracle.final_calls) == 1
     assert "finalize_calls" not in _final_data(scripted)
     assert "finalize_calls" not in state.oracle_ledger.record()["final"]

@@ -39,7 +39,9 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 때만)와 `reused_intermediate`(참일 때만)를 싣고 이어받은 행은 앞선 제출의 `poc_id`·
 `response_exit_code`·`cached`를 그대로 든다. 재시도한 호출의 `cached`·`fix_cached`는 `null`이다 -
 재시도 직전에 읽은 서버 장부에 이 run의 첫 호출이 쓴 행이 보일 수 있어 옛 판정인지 가를 수 없다.
-`final`은 `finalize_calls`(2일 때만)를 싣는다(trace `oracle_final`도 같다). 호출 수가 2인 행은
+`final`은 `finalize_calls`(2일 때만)를 싣는다(trace `oracle_final`도 같다) - `finalize`도 같은 규칙
+(`vul_retry_wait_s`)으로 429를 한도 창 뒤에 한 번 다시 부른다(어댑터 docstring은 `/submit-fix`에
+레이트리미트가 없다고 적어 429가 안 올 수도 있다). 호출 수가 2인 행은
 첫 호출의 실패도 `first_error`
 (예외 클래스 이름)·`first_error_status`(HTTP 상태, 아니면 `null`)·`retry_wait_s`(재시도 전에 기다린
 초 - 429만 0보다 크다)로 싣는다 - `error`는 마지막 호출의 것이라 처음 원인이 안 남는다.
@@ -209,11 +211,12 @@ def is_transient(exc: BaseException) -> bool:
 
 
 def vul_retry_wait_s(exc: BaseException) -> float | None:
-    """`vul` 제출 실패 뒤 **한 번** 다시 낼지 - 안 하면 `None`, 하면 그 전에 기다릴 초.
+    """채점기 호출 실패 뒤 **한 번** 다시 부를지 - 안 하면 `None`, 하면 그 전에 기다릴 초.
 
     429는 한도 창(`RATE_LIMIT_WINDOW_S`)을 기다린 뒤, 그 밖의 일시 실패(`is_transient`)는 바로.
-    그 밖의 4xx는 다시 내도 같은 답이라 안 한다. 대상은 모델이 `submit`한 PoC의 제출뿐이다
-    (`runner._submit_vul_to_oracle`).
+    그 밖의 4xx는 다시 내도 같은 답이라 안 한다. 대상은 모델이 `submit`한 PoC의 `vul` 제출
+    (`runner._submit_vul_to_oracle`)과 최종 `finalize`(`runner._score`)다 - 이름은 앞엣것에서
+    왔고 규칙은 하나다. 중간 gen의 제출은 대상이 아니다.
     """
     if getattr(exc, "status", None) == _HTTP_TOO_MANY_REQUESTS:
         return float(RATE_LIMIT_WINDOW_S)
@@ -478,7 +481,7 @@ class FinalAttempt:
     # `finalize` 호출 수 - 일시 실패면 한 번 더 부른다(1 또는 2). 지정한 후보가 없으면 부르지
     # 않았으므로 `None`이다.
     calls: int | None = None
-    # `calls`가 2일 때 첫 호출의 실패(`wait_s`는 0 - 대기가 없다).
+    # `calls`가 2일 때 첫 호출의 실패(`wait_s`는 429만 0보다 크다 - `vul_retry_wait_s`).
     first_failure: FirstFailure | None = None
 
 
