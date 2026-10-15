@@ -89,7 +89,10 @@ from src.tokens import estimate_tokens
 # **hybrid-v6 → hybrid-v7 (2026-09-30, #336)**: 후보 풀을 대상 근처부터 채운다(같은 파일 →
 #   그래프 이웃 → 같은 폴더 → 나머지, C/C++ 대상은 C/C++ 조각만) — 같은 키에서 `related`에
 #   드는 조각이 바뀐다.
-CAPSULE_POLICY_VERSION = "hybrid-v7"
+# **hybrid-v7 → hybrid-v8 (2026-10-15)**: 코퍼스·계열 판정의 확장자 집합이 넓어졌다(`.c++` `.cp`
+#   `.tcc` 추가 · 대문자 철자 `.CPP`·`.C`는 소문자로 내려 비교) — 같은 키에서 `related`에 드는
+#   조각이 바뀐다.
+CAPSULE_POLICY_VERSION = "hybrid-v8"
 
 # 본문이 없는 보조 섹션의 고정 비용. `static_signal`·`known_facts`에만 남아 있다 —
 # 그래프 파생 섹션은 `index_graph`가 실측으로 채운다(fake_retriever와 같은 상태).
@@ -111,14 +114,21 @@ DEFAULT_TOP_K = 32
 DEFAULT_TOP_N = 5
 
 SOURCE_SUFFIXES = frozenset(
-    {".py", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".java", ".js", ".ts", ".go",
-     ".rs", ".php", ".rb"}
+    {".py", ".c", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".h", ".hh", ".hpp", ".hxx", ".tcc",
+     ".java", ".js", ".ts", ".go", ".rs", ".php", ".rb"}
 )
 SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".venv", "venv"})
 
 # 대상이 이 계열이면 후보도 이 계열 조각만 쓴다(#336). C 대상에 `.py`·`.rs` 조각이 섞이던
 # 자리다. 다른 언어 대상은 예전처럼 `SOURCE_SUFFIXES` 전체를 본다.
-C_FAMILY_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
+# ⏵ 2026-10-15 — `preprocess`가 SOURCE로 읽는 C++ 철자(`.c++`·`.cp`·`.tcc`)를 두 집합 모두에
+# 더했다. 빠지면 그 파일은 코퍼스에 없거나 대상 계열 판정에서 빠진다.
+# 두 집합은 소문자 철자만 든다 — 비교하는 쪽이 `suffix.lower()`로 내린다(`preprocess.classify`·
+# `fake_tools.sources`·`container_tools._wanted`와 같은 축). 원문으로 비교하면 `.CPP`·`.C` 대상이
+# 계열 판정에서 빠져 C 대상에 `.py`·`.rs` 조각이 다시 섞이고(#336), 그 파일은 코퍼스에도 안 든다.
+C_FAMILY_SUFFIXES = frozenset(
+    {".c", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".h", ".hh", ".hpp", ".hxx", ".tcc"}
+)
 
 # 레벨별 섹션 구성. LIGHT는 검색하지 않는다 — Scout는 후보 전량에 대해 도는 단계라
 # 여기서 임베딩을 부르면 model-serving.md §2의 "Scout는 크게 배칭" 전제가 무너진다.
@@ -418,14 +428,15 @@ class HybridRetriever:
         corpus = self._load_corpus()
         target = query.target
         keywords = [k.lower() for k in query.keywords]
-        family = C_FAMILY_SUFFIXES if Path(target.file).suffix in C_FAMILY_SUFFIXES else None
+        is_c_family = Path(target.file).suffix.lower() in C_FAMILY_SUFFIXES
+        family = C_FAMILY_SUFFIXES if is_c_family else None
         picked = [
             chunk
             for chunk in corpus
             # 대상 자신은 target_function 섹션이 이미 담고 있다. 두 번 세면 토큰이 부풀고
             # reranker 상위가 자기 자신으로 채워진다.
             if not _overlaps_body(chunk, target)
-            and (family is None or Path(chunk.file).suffix in family)
+            and (family is None or Path(chunk.file).suffix.lower() in family)
             and (not keywords or any(k in chunk.text.lower() for k in keywords))
         ]
         near = set(self.graph.neighbor_files(target) or ())
@@ -491,7 +502,7 @@ def _overlaps_body(chunk: Chunk, target: Location) -> bool:
 def _chunk_tree(root: Path) -> Iterable[Chunk]:
     """소스 파일을 고정 줄 수로 자른다. 순회는 정렬해 결정론을 지킨다."""
     for path in sorted(root.rglob("*")):
-        if not path.is_file() or path.suffix not in SOURCE_SUFFIXES:
+        if not path.is_file() or path.suffix.lower() not in SOURCE_SUFFIXES:
             continue
         if any(part in SKIP_DIRS for part in path.relative_to(root).parts):
             continue
