@@ -25,7 +25,8 @@ content-aware 판만 EVIDENCE 끝에 절 하나로 받고(`_describe_hop_observa
 
 **정규화는 여기 한 곳에서만 한다.** 근거 없는 `rebut`을 `need_evidence`로 바꾸는 판단이 두 곳에
 있으면 "근거 없는 반박 비율"의 분자가 갈라진다. 노드가 `gate.normalize()`를 부르고,
-`gate.was_normalized()`면 사유(`empty_axis` · `invalid_axis`)와 함께 `critic_normalized`를 남긴 뒤
+`gate.was_normalized()`면 사유(`empty_axis` · `invalid_axis` · `rebut_ids_only`)와 함께
+`critic_normalized`를 남긴 뒤
 **정규화된 값**을 정책에 넘긴다. ⏵ 2026-10-13 (ADR 0015) — 목적지가 `uphold`였다.
 """
 
@@ -210,7 +211,10 @@ def _record_unknown_refs(
     `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
     ID 갈래만으로도 참이라 이 경로는 그대로다. 그래서 게이트가 못 보는 ID 하나로도
     `rebut`이 「근거 있는 반박」이
-    되어 `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 홉 관측이 `probe` Evidence의
+    되어 `gate.normalize`를 비껴가고 F-6 `queued`로 간다.
+    ⏵ 2026-10-15 (ADR 0015 개정) - **v8 이상은 아니다.** 그 판(`AXIS_ONLY_GROUNDING_VERSIONS`)은
+    ID 갈래가 없어 ID-only `rebut`이 `rebut_ids_only`로 정규화된다. 위 문단은 v6·v7의 서술이다.
+    홉 관측이 `probe` Evidence의
     `evidence_id`를 Critic에 보이게 한 뒤로 그런 ID를 인용할 길이 생겼다(#600 H2ⓐ · 이슈 #419의
     「E4 경계」). 거르기는 설계 판단이라 여기서 하지 않고 **사후에 셀 수 있게** 수만 남긴다.
     `evidences`는 러너가 이 Finding에 넘긴 게이트 입력(`state.evidences[finding_id]`)이다.

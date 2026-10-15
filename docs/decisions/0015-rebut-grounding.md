@@ -93,6 +93,7 @@ is_grounded = bool(evidence_refs) or (
 - `DecisionDraft.rebuttal_axis`는 **`list[NonEmptyStr]` 그대로**다. 스키마에서 enum을 강제하면 grammar 마스크가
   모델의 맞는 답을 덮는다 - gpt-oss-20b 실측 2026-09-12 enum 강제 2/5, 제거 5/5(**원천: PR #182 본문,
   원문 미커밋** - `src/schemas/decision.py`의 `DecisionDraft` 주석이 그 사실을 적는다). 검증은 **파싱 뒤**에 한다.
+- ⏵ 2026-10-15 - **이 항은 v6·v7에만 선다**(v8 이상은 `or evidence_refs`가 없다 - 맨 아래 ⏵ 첫째).
 - **`or evidence_refs`를 유지한다.** v6이 (이 결정 시점에) 서빙 중이고 그 `rebut`은 ID를 인용한다. v7은 rebut에 ID를
   **싣지 않는다**(`:241` - `evidence_refs`는 *only for an uphold confirmed by Evidence*) - 두 판의 규약이 반대이므로 술어가 둘 다 받아야 한다. 이 차이를 여기 적는다.
   ⚠ 부작용은 아래 「서빙 v6의 라우팅이 뒤집힌다」 표가 든다 - v6 규약을 어기고 **축만** 든 `rebut`
@@ -102,6 +103,7 @@ is_grounded = bool(evidence_refs) or (
 
 `critic_normalized` 이벤트의 키: `original_verdict`(`rebut`) · `reason` · `invalid_axes`.
 `reason`은 `empty_axis`(ID도 축도 없다) 또는 `invalid_axis`(축이 어휘 밖이다).
+⏵ 2026-10-15 - 셋째 `rebut_ids_only`(v8 이상에서 ID만 든 `rebut` - 맨 아래 ⏵).
 ⚠ 사유는 **ID가 없을 때만** 선다 — `evidence_refs`가 비어 있지 않으면 `ungrounded_reason`이 즉시 `None`이라 **어휘 밖 축이 있어도** `invalid_axis`가 안 서고 `critic_normalized`도 `invalid_axes`도 안 남는다. 그래서 **ID와 축을 둘 다 요구하는 서빙 v6에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 0으로 보인다.** `invalid_axes`는 어휘 밖
 원문의 JSON 배열 문자열이다(최대 5개, 값마다 40자 - `TraceValue`가 스칼라라서 문자열이다).
 `gate.was_normalized`의 뜻은 그대로다 - "반박이 반박으로 세어지지 않았다".
@@ -109,7 +111,8 @@ is_grounded = bool(evidence_refs) or (
 ### 4. PoV 풀 - 정규화된 `need_evidence`는 다른 `need_evidence`와 같은 길을 간다
 
 `runner._pov_targets`가 풀에서 빼는 것은 판정 호출이 실패한 Finding(`critic_failed_ids`)과
-`gate.normalize` 뒤 판정이 `rebut`인 Finding뿐이다(`_critic_set_aside`). 이슈 #604(보류 5/5가 풀을 비움)는
+`gate.normalize` 뒤 판정이 `rebut`인 Finding뿐이다(`_critic_set_aside`).
+⏵ 2026-10-15 - **앞 절반은 낡았다**: 판정 호출 실패 Finding은 이제 풀에 든다(맨 아래 ⏵ 둘째). 이슈 #604(보류 5/5가 풀을 비움)는
 보류를 "아니다"가 아니라 "모르겠다"로 읽어 **풀에 들이고 정렬을 uphold < 미경유 < 보류 < 반박으로 낮추는**
 방식으로 닫혔다(`_verdict_ranks_by_finding` - 러너 docstring의 출처 표기는 PR #608). 두 함수 모두
 `gate.normalize` **뒤** 값을 읽으므로 이 경로가 그 수정을 **그대로 물려받는다**:
@@ -189,7 +192,7 @@ ADR은 (a) 축 분포를 첫 v7 run의 지표로 올려(아래) 보이게 하고
 | --- | --- |
 | rebut 총수 | `decision.verdict = rebut` |
 | 근거 있는 rebut 수 | rebut 총수 - `critic_normalized` 수 |
-| 정규화 사유 분포 | `critic_normalized.reason` = `empty_axis` / `invalid_axis` |
+| 정규화 사유 분포 | `critic_normalized.reason` = `empty_axis` / `invalid_axis` (⏵ 2026-10-15 - v8 이상은 `rebut_ids_only`도) |
 | **`critic_upheld`로 `validated`가 된 근거 없는 rebut** | **0이어야 한다** - 구조상 0이고 0이 아니면 이 ADR이 깨진 것이다 |
 | 축 분포 | 근거 있는 rebut의 `rebuttal_axis` 값별 수 - 한 값(`guard`)이 압도하면 Skeptic의 우려가 현실이다 |
 | **무효 축 비율** | `reason = invalid_axis` / rebut 총수. 높으면 어휘 변형(`guard-check`)이 엄격 `from_text`에 걸려 대량 `need_evidence`가 난 것이다 - `invalid_axes`가 그 변형의 모양을 싣는다 |
@@ -239,3 +242,7 @@ P0b(보류) 그대로다. **추가 지표(첫 v7 run이 셀 것):** `uphold`이�
 Finding이 `validated`가 된 수 - `objects` 표의 `kind='decision'` 행과 `policy_decision`으로 센다. step 1이 서빙 경로에서 발동하지 않으므로(`docs/agent-contracts.md` §2.3 ⏵ 2026-10-14) 규약을 지킨 v7 `uphold`는 전부 `evidence_refs=[]`다 - 이 지표는 사실상 `critic_upheld`로 `validated`가 된 수 전수와 같아진다. 그래서 첫 run에서 **사람이** `uphold`의 `rationale`이 인용한 코드가 SOURCE에 실재하는지 표본으로 확인해야 한다(기계 확인은 P0b - 보류). ⚠ Finding의 `evidence_refs`는 6단계 부착 뒤 값이라 모델 인용 수가 아니다
 (`gate_node.py:32-41`) - 모델이 인용한 수는 `gate_eval.cited_by_model`(6단계 행)에 따로 남는다. 값은 미측정이다(v7 run 0건).
 v7이 서빙 중이므로 `normalize`를 `UPHOLD`로 되돌리는 것은 서빙을 v6으로 되돌린 뒤에만 안전하다 - 지금 되돌리면 v7 `rebut` 전부가 `validated` 사슬을 연다. ⏵ 2026-10-15 - 서빙 Critic은 v8이다(`config/models.yaml` · v8은 v7과 body가 바이트 동일이고 판정 절차·출력 규칙이 같다 - 같은 `rebut` 규약을 든다). 그래서 이 문장의 안전 조건은 「서빙을 **v8과 v7**에서 v6으로 되돌린 뒤」다.
+
+⏵ 2026-10-15 (조민규 승인) - **v8 이상: `rebut`의 근거는 `rebuttal_axis`뿐이다. ID만 든 `rebut`은 `need_evidence`로 정규화된다.** 결정 2의 「`or evidence_refs`를 유지한다」는 **v6·v7에만 선다.** 서빙 Critic v8은 `rebut`에 Evidence ID를 금지하는데(prefix의 `rebut` 규약은 v7과 같다), 술어는 판 구분이 없어 규약을 어기고 ID만 든 v8 `rebut`이 `bool(evidence_refs)`로 근거 있는 반박이 되었다 - 게이트가 못 보는 ID 하나로 `gate.normalize`를 비껴가 F-6 `queued`로 가는 길이다(`nodes/critic._record_unknown_refs`가 사후에 수만 센다). 이제 `Decision.ungrounded_reason`이 `produced_by.prompt_version`(하네스가 넣는 값)이 `schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`(지금 `{"v8"}`)에 들면 ID 갈래를 건너뛴다. ID만 든 `rebut`의 사유는 **`rebut_ids_only`**(`critic_normalized.reason`의 셋째 값)이고, 축이 있는데 어휘 밖이면 ID가 있어도 `invalid_axis`다. 정규화는 종전과 같은 한 자리(`gate.normalize`)에서 일어나 F-7 `queued`로 가고 PoV 풀·정렬은 결정 4의 표(후)를 그대로 따른다. **v6·v7 판정은 한 글자도 안 바뀐다**(위 「서빙 v6의 라우팅이 뒤집힌다」 표도 그대로다). 판 구분은 노드의 `_CONTENT_AWARE_VERSIONS`와 같은 **이름 집합**이다 - meta 선언(`prompt_loader` 머리의 「버전 이름으로 분기하지 않는 이유」)이 정석이나 `prompts/`를 건드려야 해서 안 썼다. 판이 늘 때 집합을 잊으면 새 판에서 ID-only `rebut`이 조용히 근거가 되므로 `tests/test_critic_v8.py`가 디스크의 v8 이상 디렉터리가 집합에 드는지 문다. **지표가 바뀐다:** 사유 분포에 `rebut_ids_only`가 는다 - 2026-10-15 앞뒤 run의 「근거 없는 반박 비율」(`critic_normalized` / Critic `model_call`)은 **한 열에 놓지 않는다**(v8 run의 분자에 규약 위반 `rebut`이 든다). **첫 v8 run이 셀 것:** `reason = rebut_ids_only` 건수 = v8이 `rebut`에 ID를 안 싣는다는 규약을 어긴 수 - 값은 미측정이다(v8 run 0건). 되돌리기는 집합에서 `"v8"`을 빼면 된다.
+
+⏵ 2026-10-15 (조민규 승인) - **결정 4 개정: 판정 호출이 실패한 Finding도 추가 PoV 풀에 든다.** 스키마 파싱 실패·크기 거절로 판정을 못 받은 Finding(`runner._drop_finding` → `critic_failed_ids`)은 「Critic이 아니라고 했다」가 아니라 「Critic이 못 봤다」이므로 보류와 같은 근거로 뺄 이유가 없다. `_critic_set_aside`는 이제 `gate.normalize` 뒤 판정이 `rebut`인 Finding만 밀어 낸다. 판정이 없어 정렬 계단은 **Critic을 안 거친 Finding과 같은 1**이다(uphold 0 < 미경유·판정 실패 1 < 보류 2 < 반박 3). `critic_failed` trace·경고(`Finding N건이 7단계 critic 호출 실패로 판정을 못 받았다`)는 그대로다. `_pov_pool_empty_reason`의 「판정 실패」 칸은 K>0에서 항상 0이고 K=0(`pov_attempt_top_n=0`)에서만 정보 칸이다. 이 개정이 PoV 시도·최종 후보에 주는 영향은 미측정이다(실서빙에서 판정 호출이 실패한 Finding의 PoC가 채점기에 닿은 run 0건).

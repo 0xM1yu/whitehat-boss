@@ -453,6 +453,14 @@ def _stop_if_a_caller_saw_nothing(starved: set[tuple[Stage, Role | None]]) -> No
     raise _TooManyDrops(f"{names}: 시도한 대상에서 한 번도 성공하지 못했다 — 아무것도 못 봤다")
 
 
+class _IndexUnavailable(RuntimeError):
+    """1단계 색인이 실패했는데 실서빙 모델 단계로 가려 했다 - 모델을 부르기 전에 멈춘다.
+
+    서버가 죽은 것도 후보가 죽는 것도 아니라 **인덱서 도구**가 못 돈 것이라 다른 타입·사유다
+    (`ReasonCode.INDEX_UNAVAILABLE`). `_require_index`가 올린다.
+    """
+
+
 class _TooManyDrops(RuntimeError):
     """연속 폐기 상한. **서버가 죽은 것과 다른 사건이라 다른 타입이다.**
 
@@ -574,6 +582,9 @@ class RunSpec:
     vuln_description: str | None = None
     # 성공한 호출의 최종 응답 원문도 남길 역할(#612) — `RunContext.keep_responses`. 기본은 꺼짐.
     keep_responses: tuple[str, ...] = ()
+    # 1단계 색인이 실패해도 실서빙 모델 단계로 간다(`run --allow-missing-index`, 2026-10-15). 기본은
+    # 거짓이라 그런 run은 모델을 부르기 전에 `INDEX_UNAVAILABLE`로 멈춘다(`_require_index`).
+    allow_missing_index: bool = False
     # 재현 실행에서 같은 run_id·타임스탬프가 나오도록 주입한다.
     started_at: datetime | None = None
 
@@ -875,6 +886,14 @@ class _Accumulator:
     # `wired`가 거짓이라 요약·경고·파일이 없다. 예산 소진으로 중간에 끊겨도 호출자가 읽어 경고와
     # 매니페스트에 올려야 하므로 지역 변수가 아니라 여기 둔다(이 클래스의 존재 이유).
     oracle_ledger: oracle_log.OracleLedger = field(default_factory=oracle_log.OracleLedger)
+    # 최종 지정(`_finalize_oracle`)을 이미 시작했나 (2026-10-15). 그 함수는 **run당 한 번**이고
+    # 채점기 네트워크 호출을 한다 - 8단계 끝의 정상 호출과 PoV 루프 `except`의 호출이 겹쳐도 둘째는
+    # 안 돈다. 호출 **전에** 세운다: 도중에 던져도(`add_note` 경로) 다시 부르지 못한다.
+    oracle_finalized: bool = False
+    # `--allow-missing-index`가 실제로 정지를 푼 run의 경고 한 문장(`_require_index`), 아니면
+    # `None`. `run_pipeline`이 경고로 올린다(trace 이벤트는 `_require_index`가 낸다) - 노드가 아니라
+    # 러너가 읽는다.
+    index_missing_note: str | None = None
 
     def update(self, finding: Finding) -> None:
         self.findings[finding.finding_id] = finding
@@ -1029,7 +1048,14 @@ def run_pipeline(
             clock=now,
         ).start()
     try:
-        _analyze(ctx, artifacts, state, last, slice_refs=deps.slice_refs)
+        _analyze(
+            ctx,
+            artifacts,
+            state,
+            last,
+            slice_refs=deps.slice_refs,
+            allow_missing_index=spec.allow_missing_index,
+        )
     except BudgetExhausted as exc:
         # 예산 소진이 사용자 지정 상한보다 먼저 왔다. 사유를 덮어쓴다 — 실제로 실행을
         # 끊은 것이 이쪽이다.
@@ -1058,6 +1084,12 @@ def run_pipeline(
         # detail이다.
         warnings.append(f"게이트웨이 실패로 중단했다: {error_detail(exc)}")
         warnings.extend(getattr(exc, "__notes__", ()))  # 위 예산 갈래와 같은 이유(#532)
+    except _IndexUnavailable as exc:
+        # 1단계 색인이 실패했고 이 run은 실서빙 모델에 닿는다 - 모델을 한 번도 안 부르고 선 것이다.
+        # 대응이 다르다: 서버가 아니라 인덱서 도구(이미지·마운트·시간 상한)를 본다.
+        stopped_after = int(Stage.INDEX)
+        stop_reason = ReasonCode.INDEX_UNAVAILABLE
+        warnings.append(f"{exc}")
     except _TooManyDrops as exc:
         # 서버는 응답하는데 후보가 계속 죽는다. 위와 사유를 나눈다 — 대응이 다르다.
         stopped_after = int(ctx.current_stage)
@@ -1252,6 +1284,8 @@ def run_pipeline(
     # 그대로인데 여기서는 한 겹 더 나쁘다 — pov는 추가형이라 상태를 안 바꾸므로 Finding이
     # 멀쩡히 찍힌 채 **최종 PoC만 0이 되고**, 그 사유가 trace에만 있으면 run 결과를 읽는 쪽에서
     # "PoV를 돌렸다"와 "PoV가 전부 섰다"가 같은 얼굴을 한다.
+    if state.index_missing_note is not None:
+        warnings.append(state.index_missing_note)
     pov_shortfall = _pov_shortfall_warning(state.pov_results)
     if pov_shortfall is not None:
         warnings.append(pov_shortfall)
@@ -1372,6 +1406,56 @@ def run_pipeline(
     )
 
 
+# 색인 실패 사유를 경고에 싣는 글자 상한 - **설계 상수이고 잰 값이 아니다**. 컨테이너 stderr 꼬리가
+# 길 수 있어 경고 한 줄이 터지지 않게 자른다(전문은 `tool_call` trace와 Evidence 본문).
+_INDEX_ERROR_CHARS = 200
+
+
+def _require_index(
+    ctx: RunContext, graph: Evidence, state: _Accumulator, last: int, *, allow_missing: bool
+) -> None:
+    """1단계 색인이 실패했고 이 run이 실서빙 모델 단계에 닿으면 **모델을 부르기 전에** 멈춘다.
+
+    색인 실패(`graph` Evidence `ok=False` - 시간 초과 124 · OOM 137 · 컨테이너 기동 125 · 실행 불가
+    127)를 안 보고 4단계로 가면 심볼 인덱스 없이 파일 단위 폴백으로 돌고 전 타깃이 GRAPH 근거를
+    잃는다(`gate.py` 「E2의 GRAPH」) - GPU 시간은 그대로 쓰고 결과는 등급 상한이 낮은 run이다.
+    ⏵ 2026-10-15 (조민규 승인) - 전에는 `graph`를 `ok`와 무관하게 `_plan_targets`에 넘겼다.
+
+    **닿는다**의 기준은 `cli.run`의 실서빙 게이트와 같다: `last >= Stage.SCOUT`이고
+    `served_models()`가 비지 않았다. Fake뿐인 프로필(`dev_*`)과 Scout 전에 서는 run(`--dry-run` -
+    3단계 · 낮은 `--stop-after`)은 안 건드린다 - 모델을 안 부르므로 지킬 것이 없다.
+    `allow_missing=True`(`--allow-missing-index`)면 멈추지 않고 `state.index_missing_note`에
+    경고 문장을 두고 trace `index_stop_lifted`(`index_missing_allowed=true`)를 낸다. 저장 형태
+    (`RunRecord`·`state.db` 판)는 건드리지 않는다 - 실측 run 직전에 판을 올리면 기존 `state.db`가
+    안 열릴 수 있어 매니페스트 필드 대신 trace에 남긴다.
+
+    ⚠ **색인이 `ok=True`인데 인덱스 파일이 없거나 깨진 경우는 여기 안 든다** - `graph_index` 상태
+    (`missing`/`malformed`)는 3단계 캡슐 조립에서 처음 드러나고 보고만 된다(승인: 지금은 보고만).
+    """
+    if graph.ok or last < Stage.SCOUT or not ctx.config.served_models():
+        return
+    cause = " ".join(str(graph.error).split())[:_INDEX_ERROR_CHARS]
+    detail = f"1단계 색인이 실패했다(exit_code={graph.exit_code} · error={cause!r})"
+    if not allow_missing:
+        raise _IndexUnavailable(
+            f"{detail} - 실서빙 모델을 부르기 전에 멈췄다. "
+            "인덱서(이미지·마운트·시간 상한)를 고치거나, 심볼 인덱스 없이 돌려도 되면 "
+            "--allow-missing-index를 준다(그 run은 GRAPH 근거가 없어 E2 위로 못 오른다)"
+        )
+    ctx.trace.emit(
+        EventKind.INDEX_STOP_LIFTED,
+        stage=int(Stage.INDEX),
+        index_missing_allowed=True,
+        exit_code=graph.exit_code,
+        error=cause,
+    )
+    state.index_missing_note = (
+        f"{detail} - --allow-missing-index라 심볼 인덱스 없이 모델 단계로 갔다. "
+        "전 타깃이 파일 단위 폴백으로 돌고 GRAPH 근거가 없어 E2 위로 못 오른다 - "
+        "비교표에 넣기 전에 본다"
+    )
+
+
 def _analyze(
     ctx: RunContext,
     artifacts: list[Artifact],
@@ -1379,11 +1463,13 @@ def _analyze(
     last: int,
     *,
     slice_refs: tuple[SliceRef, ...] | None = None,
+    allow_missing_index: bool = False,
 ) -> None:
     """1~8단계. 9단계 리포트는 예산이 끊겨도 돌아야 하므로 호출자가 따로 부른다."""
     if last < Stage.INDEX:
         return
     graph = index.run(ctx, workdir=".")
+    _require_index(ctx, graph, state, last, allow_missing=allow_missing_index)
     plan = _plan_targets(
         ctx,
         [a for a in artifacts if a.kind in _ANALYZABLE],
@@ -1505,40 +1591,52 @@ def _analyze(
         for finding in pov_targets:
             try:
                 _run_pov(ctx, state, state.findings.get(finding.finding_id, finding))
-            except (BudgetExhausted, ModelGatewayError) as stop:
+            except Exception as stop:
                 # 🔴 **오라클에 이미 낸 PoC가 있으면 최종 지정은 하고 올린다**(#532) — 그냥 올리면
                 # `_finalize_oracle`을 건너뛰어 그 PoC의 `fix` 다리·판정 조회를 잃고
                 # `oracle.final`이 `not_reached`가 된다. 「낸 PoC」는 `_designate_final`이 읽는
-                # `candidates`(submit했고 vul 제출이 성공한 시도)다. **추가 대상**
-                # (`pov_attempt_top_n`)에서 끊긴 run은 후보가 0건이어도 이 단계를 돈다
-                # (`none`/`no_poc`) — 예산은 종전대로, 게이트웨이는 #532에서 새로다. 둘 다 아니면
-                # `not_reached`다.
-                # 사유는 새로 안 적는다 — 같은 예외를 올리면 `run_pipeline`의 갈래가 적는다.
-                # `except Exception`으로 안 넓힌 것은 일부러다 — 핸들러가 `raise`로 다시 올리므로
-                # 어느 예외가 run을 멈추느냐는 안 바뀐다. 바뀌는 것은 **임의 예외에서도 오라클
-                # 네트워크 호출(`fix` 다리·판정 조회)이 돈다**는 것이다(핀:
-                # `test_a_non_target_exception_…`).
-                # 버릴 수 있는 게이트웨이 오류는 루프가 흡수해 여기 안 온다
-                # (`_pov_classify_exception`). `ModelSwapError`(하위형)도 이 `except`에 들지만 이
-                # 루프 안에는 교대를 부르는 경로가 없다(`_swap_for`·`_swap`을 전수로 열어 확인했다 —
-                # 루프 앞·단계 진입·Critic 앞·run 끝뿐) — 그래서 전용 핀이 없다.
-                # ⚠ `_finalize_oracle`이 흡수하는 것은 `oracle.finalize`의 `Exception`과 장부
-                # 쓰기의 `OSError`뿐이다 — 그 밖에서 던지면 원 예외가 가려지므로 `add_note`로
-                # 붙이고 원 예외를 올린다. 그 예외를 `run_pipeline`의 예산·게이트웨이 갈래가
-                # **삼키므로** 그 갈래가 `__notes__`를 읽어 `warnings`에 싣는다(안 읽으면 사유가
-                # 버려진다 — 매니페스트 실패의 `add_note`는 `raise`로 올라가 트레이스백에 찍히는
-                # 것과 다르다. `ModelSwapError` 갈래는 안 읽는다 — 위 이유로 여기서 안 온다).
-                # 그 실경로는 못 찾았다(미확인).
-                if state.oracle_ledger.candidates or finding.finding_id not in validated_ids:
+                # `candidates`(submit했고 vul 제출이 성공한 시도)다.
+                # ⏵ 2026-10-15 (조민규 승인) — **예외 종류를 가리지 않는다.** 전엔
+                # `BudgetExhausted`·`ModelGatewayError`만 받아서, 앞 대상이 이미 낸 PoC가 있어도
+                # k번째 Finding의 예상 밖 예외(버그 한 줄)가 최종 지정을 통째로 버렸다.
+                # `Exception`까지고 `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 아니다 —
+                # 중단 신호에 채점기 네트워크 호출이 돌면 안 된다. 핸들러가 `raise`로 **원 예외를
+                # 그대로** 다시 올리므로 어느 예외가 run을 멈추느냐는 안 바뀌고, 바뀌는 것은 **임의
+                # 예외에서도 오라클 네트워크 호출(`fix` 다리·판정 조회)이 돈다**는 것이다(핀:
+                # `test_a_non_target_exception_…`). 낸 후보가 0건이면 종전 그대로다:
+                # 예산·게이트웨이가 **추가 대상**(`validated` 밖, `pov_attempt_top_n`)에서 끊겼을
+                # 때만 `none`/`no_poc`로 최종 단계를 돈다(#532) - 그 밖의 예외는 후보가 없으면 안
+                # 돈다(`oracle.final`은 `not_reached`). 최종 지정은 run당 한 번이다 -
+                # `_finalize_oracle`이 네트워크 호출 **전에** 표지를 세워 뒤따르는 경로가 다시
+                # 부르지 못한다(`_Accumulator.oracle_finalized`). 사유는 새로 안 적는다 — 같은
+                # 예외를 올리면 `run_pipeline`의 갈래가 적는다. 그 갈래가 예산·게이트웨이 예외를
+                # **삼키므로** `__notes__`를 `warnings`에 싣는다(안 읽으면 사유가 버려진다 -
+                # 매니페스트 실패의 `add_note`는 `raise`로 올라가 트레이스백에 찍히는 것과 다르다).
+                # 그 밖의 예외는 최후 방어선(S0)이 다시 던지므로 노트는 트레이스백에 찍힌다.
+                # `ModelSwapError`(하위형)도 이 `except`에 들지만 이 루프 안에는 교대를 부르는
+                # 경로가 없다(`_swap_for`·`_swap`을 전수로 열어 확인했다 — 루프 앞·단계 진입·Critic
+                # 앞·run 끝뿐) — 그래서 전용 핀이 없다.
+                # ⚠ `_finalize_oracle`이 흡수하는 것은 `oracle.finalize`의 `Exception`과 장부 쓰기의
+                # `OSError`뿐이다 — 그 밖에서 던지면 **원 예외가 가려지므로** 여기서 받아
+                # `add_note`로 붙이고 원 예외를 올린다. 그 실경로는 못 찾았다(미확인).
+                extra_target_cut = isinstance(
+                    stop, (BudgetExhausted, ModelGatewayError)
+                ) and finding.finding_id not in validated_ids
+                if state.oracle_ledger.candidates or extra_target_cut:
                     try:
                         _finalize_oracle(ctx, state)
                     except Exception as exc:
                         stop.add_note(f"최종 지정을 돌리지 못했다: {type(exc).__name__}: {exc}")
+                    else:
+                        stop.add_note(
+                            f"{type(stop).__name__}가 PoV 루프를 끊은 뒤 최종 지정을 돌렸다"
+                        )
                 raise
     # 채점기의 최종 단계는 **pov가 돌았든 안 돌았든** 8단계 끝에서 한 번이다(#386) — 낼 PoC가
     # 없었다는 사실도 기록이다(`status=none`). 예외로 위 루프가 끊기면 여기 못 오고 `oracle.final`이
-    # `not_reached`로 남는다 — **위 `except`가 받는 예외로 끊긴 run은 예외다**(낸 PoC가 있거나 추가
-    # 대상에서 끊겼으면 최종 지정을 하고 올린다. 그 밖의 예외는 이 예외에 안 든다).
+    # `not_reached`로 남는다 — **위 `except`가 받는 예외로 끊긴 run은 예외다**(낸 PoC가 있으면
+    # 예외 종류와 무관하게, 예산·게이트웨이가 추가 대상에서 끊겼으면 후보가 없어도 최종 지정을 하고
+    # 올린다 - ⏵ 2026-10-15. `BaseException`은 아니다).
     _finalize_oracle(ctx, state)
 
 
@@ -1553,24 +1651,28 @@ def _pov_targets(
     `target_skipped`로 남겨야 했던 이유가 여기엔 없다 — 그쪽은 파이프라인에서 빼는 상한이다).
     ⚠ 다만 **추가 대상은 예산을 더 쓴다** — 거기서 `BudgetExhausted`나 서버 쪽 `ModelGatewayError`가
     나면 run은 그 자리에서 끝나지만, 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정)은 하고
-    끝난다(`_analyze` · #532). 그 밖의 예외는 최종 지정을 안 돈다.
+    끝난다(`_analyze` · #532). ⏵ 2026-10-15 - 낸 PoC가 있으면 **예외 종류와 무관하게** 최종 지정을
+    하고 원 예외를 올린다(`KeyboardInterrupt`·`SystemExit` 제외). 후보가 0건인 그 밖의 예외는 안
+    돈다.
 
-    **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 둘을 **뺀다.**
-    ① **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
+    **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 하나를 **뺀다.**
+    **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
     반박은 `need_evidence`로 정규화돼 보류(F-7)와 같은 길을 가므로 **든다** - ⏵ 2026-10-13, ADR
-    0015:
-    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는
+    0015: 전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는
     **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
     5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
-    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
-    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
-    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
-    입력 구조 탓인지는 미실측).
-    ② **판정 호출이 실패해 버려진 것**(`_drop_finding`) — 상태가 안 바뀌어
-    (`HYPOTHESIZED` 그대로) 상태로는 못 가르고 `state.critic_failed_ids`로 안다. **든다:**
-    Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2), 재현
-    명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의 `critic_upheld`).
-    판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
+    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 2026-10-11
+    `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라 파서 폴백 0건 —
+    파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지 입력 구조 탓인지는
+    미실측).
+    **든다:** **판정 호출이 실패해 버려진 것**(`_drop_finding` - 스키마 파싱 실패 · 크기 거절,
+    `state.critic_failed_ids`) — 판정이 없으니 Critic을 안 거친 것과
+    같다(`_verdict_ranks_by_finding`의 계단 1). 「Critic이 아니라고 했다」가 아니라 「Critic이 못
+    봤다」라서다.
+    ⏵ 2026-10-15 - 전엔 이것도 반박처럼 뺐다(조민규 승인). 풀 필터는 반박에만 선다. 그 밖에
+    **든다:** Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2),
+    재현 명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의
+    `critic_upheld`). 판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
 
     **왜 빼나.** 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출이 될
     수 있다** — 다른 후보가 없으면(`sole_candidate`) 그것이 최종이고, 상한이 남으면 반박도 풀에
@@ -1644,20 +1746,26 @@ def _pov_targets(
 
 
 def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
-    """7단계가 이 Finding을 **밀어 냈나** — 판정 호출이 실패해 버려졌거나(`_drop_finding`), Critic이
-    반박(F-6)으로 판정했다. 보류(`need_evidence`, F-7)는 안 밀어 낸 것이다 — 풀에 들고 정렬·지정에서
-    뒤로 간다(`_verdict_ranks_by_finding`). ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). 판정은
-    `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야 `QUEUED`(F-6)와
-    이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
-    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 —
+    """7단계가 이 Finding을 **밀어 냈나** — Critic이 반박(F-6)으로 판정했다. 그것뿐이다.
+    보류(`need_evidence`, F-7)와 판정 호출 실패(`critic_failed_ids`)는 안 밀어 낸 것이다 — 풀에 들고
+    정렬·지정에서 뒤로 간다(`_verdict_ranks_by_finding`). 판정 실패는 판정이 없어 **Critic을 안 거친
+    Finding과 같은 계단(1)** 이다 — 「Critic이 아니라고 했다」가 아니라 「Critic이 못 봤다」.
+
+    ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). ⏵ 2026-10-15 — 전엔 판정 호출 실패도 뺐다(조민규
+    승인 - 스키마 파싱 실패·크기 거절로 판정을 못 받았다고 PoV 기회까지 잃을 이유가 없다).
+    `critic_failed` trace·경고는 그대로다.
+
+    판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야
+    `QUEUED`(F-6)와 이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이
+    `need_evidence`로 보내므로(`critic_verdict_unmapped` trace) 그 Finding은 보류로 풀에 든다.
     2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
-    파서 폴백 0건 — 파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지
-    입력 구조 탓인지는 미실측).
+    파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지 입력 구조 탓인지는
+    미실측).
 
     ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
     **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
     `any(normalize == UPHOLD)`)과 이 `any(normalize == REBUT)`가 갈릴 수 있다 — 그때 맞출 것."""
-    return finding_id in state.critic_failed_ids or any(
+    return any(
         gate.normalize(decision) is Verdict.REBUT
         for decision in state.decisions.get(finding_id, ())
     )
@@ -1850,12 +1958,13 @@ def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
-    왜 대상이 못 됐는지 다섯 칸으로 센다. 판정 실패·반박 둘은 `_critic_set_aside`가 밀어 내는
-    쪽, 판정 없음·업홀드 미승격 둘은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
+    왜 대상이 못 됐는지 다섯 칸으로 센다. 반박 하나는 `_critic_set_aside`가 밀어 내는 쪽,
+    판정 실패·판정 없음·업홀드 미승격은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
     모델이 낸 `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된
     반박**(ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. 보류는 K>0에서 풀에 들므로
-    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만
-    정보 칸이다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
+    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만 정보 칸이다.
+    ⏵ 2026-10-15 - 판정 실패 칸도 같다: 전엔 `_critic_set_aside`가 밀어 냈지만 이제 K>0에서
+    풀에 든다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
 
     ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
     채점기를 붙인 run은 대상이 0건이어도 `_finalize_oracle`이 8단계 span 안에서 `oracle_final`을
@@ -2833,10 +2942,13 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     최종 지정을 잃지 않으려는 것이다(#532). `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가
     대상이 도는 것은 설정상 평상시다 — 이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
     중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
+    ⏵ 2026-10-15 - 낸 후보가 있으면 **어떤 `Exception`**이 루프를 끊어도 부른다(전엔 그 두
+    예외만이었다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다. **run당 한
+    번이다** - `_Accumulator.oracle_finalized`가 첫 호출 때 서고, 둘째 호출은 아무것도 안 한다.
 
-    ⚠ **그 밖의 중단은 둘이고 축이 다르다.** ① 그 두 예외 **밖의** 예외로 끊긴 run(예외 종류) ②
-    그 두 예외라도 낸 후보 없이 `validated` 대상에서 끊긴 run(위치·후보 유무). 핀은
-    `tests/test_oracle_wiring.py`다.
+    ⚠ **불리지 않는 중단은 둘이고 축이 다르다.** ① `BaseException`으로 끊긴 run(예외 종류) ② 낸
+    후보가 없는데 그 두 예외 밖의 예외, 또는 그 두 예외라도 `validated` 대상에서 끊긴 run(위치·후보
+    유무). 핀은 `tests/test_oracle_wiring.py`다.
     ⚠ **흡수하는 것은 둘이다:** `oracle.finalize`의 `Exception`(`_score`)과 사이드카 쓰기의
     `OSError`(`oracle_log` 장부). 지정(`_designate_final`)·`trace.emit`은 안 감쌌고 던질 실경로를
     못 찾았다(미확인) — 그래서 `_analyze`가 이 함수의 예외를 원 예외의 `add_note`로 붙여 원 예외를
@@ -2849,8 +2961,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이
     없던 run은 `vul_submitted` - 와 `stopped_after`로 재구성한다).
     """
-    if ctx.oracle is None:
+    if ctx.oracle is None or state.oracle_finalized:
         return
+    state.oracle_finalized = True  # 네트워크 호출 전에 - 도중에 던져도 둘째가 못 돈다
     ledger = state.oracle_ledger
     with ctx.stage(Stage.VALIDATE):
         grades = _grades_by_finding(state)

@@ -646,15 +646,21 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
   반박을 못 해서 승격되는 길이다(PR #588 적대적 리뷰 2026-10-10 - `evidence_refs=[]`인 rebut이 사유
   `critic_upheld`로 `validated`가 됐다).
   - **근거 = 둘 중 하나다.** ① `evidence_refs`가 비어 있지 않다 ② `rebuttal_axis`가 비어 있지 않고 **전부**
-    위 열 값이다. ⚠ **둘 다 모든 프롬프트 판에 걸린다** - `Decision.is_grounded`에는 판 구분이 없다.
-    그래서 ID 없이 유효 축만 든 **v6** `rebut`도 ②로 근거 있는 반박이 된다
+    위 열 값이다. ⚠ **v7 이하에서는 둘 다 모든 프롬프트 판에 걸린다** - 축 갈래(②)에는 판 구분이 없다(ID 갈래 ①만
+    v8 이상에서 빠진다 — 아래 ⏵ 2026-10-15). 그래서 ID 없이 유효 축만 든 **v6** `rebut`도 ②로 근거 있는 반박이 된다
     ([ADR 0015](decisions/0015-rebut-grounding.md) 「서빙 v6의 라우팅이 뒤집힌다」 ·
     [D108](open-questions/D/D108.md)). 판 이름이 붙는 자리는 **그 규약을 요구하는 프롬프트**다 - v6은
     등록된 ID를 인용하라고 적고, v7은 rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
     「코드 위치」는 ②에서 rationale 속 인용이고, **하네스는 축 어휘만 본다** - 인용한 코드가 SOURCE에 실재하는지는
     안 본다(ADR 0015의 P0b, 보류). 어휘 안인 축은 근거의 **자격**이고 근거의 참이 아니다.
-  - ⚠ 사유는 **ID가 없을 때만** 선다 — `evidence_refs`가 비어 있지 않으면 `ungrounded_reason`이 즉시 `None`이라 **어휘 밖 축이 있어도** `invalid_axis`가 안 서고 `critic_normalized`도 `invalid_axes`도 안 남는다. 그래서 **ID와 축을 둘 다 요구하는 v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 0으로 보인다.**
-  - **사유 둘.** `empty_axis`(ID도 축도 없다) · `invalid_axis`(축이 어휘 밖이다 - `GUARD`·`guard-check`·`무근거`).
+  - ⏵ 2026-10-15([ADR 0015](decisions/0015-rebut-grounding.md) 개정, 조민규 승인) — **v8 이상에서는 근거가
+    ②뿐이다.** v8(서빙 판)은 `rebut`에 Evidence ID를 금지하므로 ID만 든 v8 `rebut`은 근거가 아니라 규약 위반이고
+    `need_evidence`로 정규화된다(사유 `rebut_ids_only`). 판은 `Decision.produced_by.prompt_version`이 정하고
+    이름 집합은 `schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`다. v6·v7은 위 그대로다.
+  - ⚠ 사유는 **ID가 없을 때만** 선다(v6·v7. v8 이상은 위 ⏵ — ID가 있어도 축이 없으면 `rebut_ids_only`, 축이 어휘 밖이면
+    `invalid_axis`다) — `evidence_refs`가 비어 있지 않으면 `ungrounded_reason`이 즉시 `None`이라 **어휘 밖 축이 있어도** `invalid_axis`가 안 서고 `critic_normalized`도 `invalid_axes`도 안 남는다. 그래서 **ID와 축을 둘 다 요구하는 v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 0으로 보인다.**
+  - **사유 셋.** `empty_axis`(ID도 축도 없다) · `invalid_axis`(축이 어휘 밖이다 - `GUARD`·`guard-check`·`무근거`) ·
+    `rebut_ids_only`(v8 이상에서 ID만 들었다 — ⏵ 2026-10-15).
     `critic_normalized` trace의 `reason`과 `invalid_axes`(어휘 밖 원문)가 싣는다.
 
 **본문 누락에 대한 보류는 자동 재요청이 아니다.** Auditor의 비어 있지 않은 `missing_evidence`는
@@ -730,8 +736,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
   run은, 오라클에 이미 낸 최종 후보가 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
-  ⚠ **그 두 예외 밖의 예외는 안 덮는다**(예외 종류) — 낸 PoC가 있든 추가 대상이든 최종 지정이 안
-  돌고 `oracle.final`이 `not_reached`다.
+  ⏵ 2026-10-15(조민규 승인) — **낸 PoC가 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
+  `Exception`이든(위 두 예외 밖의 예상 밖 예외 포함) 최종 지정을 하고 **원 예외를 그대로** 올린다 — 최종 지정이
+  던지면 그 사유는 원 예외의 노트로 붙고 원 예외가 이긴다. 최종 지정은 run당 한 번이다(`_Accumulator.oracle_finalized`가
+  채점기 호출 전에 선다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다.
+  ⚠ **낸 PoC가 없는데 그 두 예외 밖의 예외로 끊긴 run은 안 덮는다**(후보 유무) — 최종 지정이 안 돌고 `oracle.final`이
+  `not_reached`다.
   ⚠ **그 두 예외라도 낸 PoC 없이 `validated` 대상에서 끊긴 run은 `not_reached`다**(위치·후보 유무).
   추가 대상에서 후보 0건으로 끊긴 run은 `not_reached`가 아니라 `none`/`no_poc`다 — 「PoC를 못 냈다」와
   「끊겼다」는 오라클 요약이 못 가르고 run 수준의 `stopped_after`·경고가 가른다.
