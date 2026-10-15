@@ -1661,7 +1661,8 @@ def _pov_targets(
     `target_skipped`로 남겨야 했던 이유가 여기엔 없다 — 그쪽은 파이프라인에서 빼는 상한이다).
     ⚠ 다만 **추가 대상은 예산을 더 쓴다** — 거기서 `BudgetExhausted`나 서버 쪽 `ModelGatewayError`가
     나면 run은 그 자리에서 끝나지만, 앞 대상이 이미 낸 PoC의 최종 지정(`fix` 다리·판정)은 하고
-    끝난다(`_analyze` · #532). ⏵ 2026-10-15 - 낸 PoC가 있으면 **예외 종류와 무관하게** 최종 지정을
+    끝난다(`_analyze` · #532). ⏵ 2026-10-15 - 낸 PoC나 구제된 중간 gen(`pool`)이 있으면
+    **예외 종류와 무관하게** 최종 지정을
     하고 원 예외를 올린다(`KeyboardInterrupt`·`SystemExit` 제외). 후보가 0건인 그 밖의 예외는 안
     돈다.
 
@@ -3116,7 +3117,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가 대상이 도는 것은 설정상 평상시다 —
     이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
     중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
-    ⏵ 2026-10-15 - 낸 후보가 있으면 **어떤 `Exception`**이 루프를 끊어도 부른다(전엔 그 두
+    ⏵ 2026-10-15 - 낸 후보나 구제된 중간 gen(`pool`)이 있으면 **어떤 `Exception`**이 루프를
+    끊어도 부른다(전엔 그 두
     예외만이었다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다. **run당 한
     번이다** - `_Accumulator.oracle_finalized`가 첫 호출 때 서고, 둘째 호출은 아무것도 안 한다.
 
