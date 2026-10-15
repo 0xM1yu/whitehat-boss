@@ -2767,6 +2767,22 @@ def test_several_candidates_with_the_same_bytes_are_folded_and_the_fix_leg_runs_
     sidecar = json.loads((trace_path.parent / "oracle" / "verdict.json").read_text("utf-8"))
     assert sidecar["final"]["candidate_grades"] == {"find_0001": "E4", "find_0002": "E4"}
     assert result.record.is_complete  # 추가형 - run의 완주를 건드리지 않는다
+    # 리포트 배선(`report.run(oracle_final=...)`)도 문다 - 인자를 빼면 이 줄이 사라진다.
+    rendered = result.report.render()
+    assert "### 최종 PoC (채점기)" in rendered
+    assert "상태 scored" in rendered and "지정 근거 sole_poc" in rendered
+
+
+def test_a_failed_final_reaches_the_report_with_its_error_class(tmp_path: Path) -> None:
+    """최종 판정이 예외로 실패한 run(`failed`)은 리포트가 사유로 예외 클래스 이름을 적는다."""
+    oracle = FakeOracle(final_error=TimeoutError("slow"))
+
+    result, _ = _run(tmp_path, before=_with_index(), oracle=oracle)
+
+    rendered = result.report.render()
+    assert "### 최종 PoC (채점기)" in rendered
+    assert "상태 failed" in rendered and "사유 TimeoutError" in rendered
+    assert "verdict.json" not in rendered
 
 
 class _OracleThatCrashesOnlyTheSecond(FakeOracle):
@@ -3023,6 +3039,7 @@ def test_an_oracle_that_is_not_wired_leaves_no_trace_of_it(tmp_path: Path) -> No
     manifest = json.loads((trace_path.parent / "run_manifest.json").read_text(encoding="utf-8"))
     assert manifest["oracle"] is None
     assert not any("채점기" in warning for warning in result.warnings)
+    assert "최종 PoC" not in result.report.render()  # 안 붙인 run은 절이 없다
 
 
 def test_two_runs_stay_byte_identical_when_the_oracle_returns_fresh_values(
@@ -3142,6 +3159,8 @@ def test_a_run_cut_short_before_stage_8_ends_says_the_final_was_not_reached(
     }  # fmt: skip
     assert _oracle_events(_events(trace_path)) == []
     assert any("8단계가 끝까지 돌지 않아" in warning for warning in result.warnings)
+    # 리포트도 절을 비우지 않고 「미도달」을 적는다(매니페스트 `not_reached`와 같은 판정).
+    assert "채점기: 최종 단계 미도달" in result.report.render()
 
 
 def _http_server(monkeypatch: pytest.MonkeyPatch) -> _FakeOracle:

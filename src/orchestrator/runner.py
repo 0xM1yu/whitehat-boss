@@ -1288,6 +1288,11 @@ def run_pipeline(
     # **그리고 크기 거절로 버린 후보도 (#514).** 러너가 그 후보를 `_drop`으로 받아 run은 가므로
     # 조용히 넘어가기 쉽다.
     warnings.extend(_auditor_overflow_warnings(trace))
+    # **Finding 없이 선 후보(`repeat_request`·`max_hop`)도 같은 자리에 올린다.** 러너가 그 후보를
+    # `False`로 받아 run은 가므로 경고가 없으면 「찾은 게 없다」와 같은 얼굴이다.
+    no_finding_warning = _auditor_no_finding_warning(trace)
+    if no_finding_warning is not None:
+        warnings.append(no_finding_warning)
     # **채점기의 실패와 「점수가 없다」도 같은 자리에 올린다 (#386).** 추가형이라 run은 완주로
     # 끝나므로 이 경고가 없으면 제출이 전부 실패한 run이 `trace.jsonl`을 열기 전에는 성공한 run과
     # 같은 얼굴이다. 채점기를 안 켠 run은 빈 목록이라 경고가 없다.
@@ -1351,6 +1356,7 @@ def run_pipeline(
         schema_recovered_calls=schema_recovered,
         pov_inspect_max_run=pov_inspect_runs,
         trace_aggregate_failures=record.trace_aggregate_failures,
+        oracle_final=_oracle_final_summary(trace, wired=state.oracle_ledger.wired),
     )
     finished = state_machine.finish_run(
         record,
@@ -1830,6 +1836,54 @@ def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
             "(실측한 거절이다)"
         )
     return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
+
+
+def _oracle_final_summary(
+    trace: TraceWriter, *, wired: bool
+) -> dict[str, str | None] | None:
+    """`oracle_final` 이벤트(run당 0~1건)를 리포트의 최종 PoC 줄 재료로 줄인다.
+
+    이벤트가 없으면 채점기를 붙인 run(`wired`, 필수)은 `not_reached`(사이드카 `final`과 같은 판정),
+    안 붙인 run은 `None`이다."""
+    for event in trace.events:
+        if event.kind is EventKind.ORACLE_FINAL:
+            data = event.data
+            return {
+                "status": str(data.get("status")),
+                "designation": _opt_str(data.get("designation")),
+                "reason": _opt_str(data.get("reason")),
+                # `failed`는 `reason`이 비고 예외 클래스 이름이 `error`에 있다.
+                "error": _opt_str(data.get("error")),
+                "subject": event.subject_id,
+                "poc_sha256": _opt_str(data.get("poc_sha256")),
+                # 사이드카를 못 썼으면 `None`이다 - 리포트가 있는 척 가리키지 않는다.
+                "record_ref": _opt_str(data.get("record_ref")),
+            }
+    return {"status": oracle_log.STATUS_NOT_REACHED} if wired else None
+
+
+def _opt_str(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
+def _auditor_no_finding_warning(trace: TraceWriter) -> str | None:
+    """Auditor 도구 루프가 Finding 없이 선 후보(`repeat_request`·`max_hop`)가 있으면 run 경고,
+    없으면 `None`. 크기 거절(`context_overflow`)은 `_auditor_overflow_warnings`가 후보별로 센다.
+    사유별 건수만 싣는다 — 후보 목록은 trace `auditor_hop.stop_reason`이다."""
+    stops = (AuditorStopReason.REPEAT_REQUEST, AuditorStopReason.MAX_HOP)
+    counts = Counter(
+        e.data["stop_reason"]
+        for e in trace.events
+        if e.kind is EventKind.AUDITOR_HOP and e.data.get("stop_reason") in {s.value for s in stops}
+    )
+    if not counts:
+        return None
+    detail = " · ".join(f"{s.value} {counts[s.value]}건" for s in stops if counts[s.value])
+    return (
+        f"Auditor 도구 루프가 Finding 없이 선 후보 {sum(counts.values())}건({detail}) - "
+        "후보는 queued에 남고 Finding이 없어 6단계로 가지 않았다. "
+        "trace의 auditor_hop.stop_reason이 목록이다"
+    )
 
 
 def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
