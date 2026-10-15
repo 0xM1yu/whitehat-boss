@@ -128,7 +128,9 @@ def test_every_served_port_of_an_unswapped_profile_is_probed(hybrid: World) -> N
     hybrid.check()
 
     probed = {port for host, port in hybrid.tcp_calls if host == "127.0.0.1" and port != 8666}
-    assert probed == _served_ports() and len(probed) >= 7
+    # ⏵ 2026-10-14 하한을 7에서 6으로 내렸다 — `seccoderx-8b`가 로스터에서 내려와 실서빙 키가
+    # 일곱에서 여섯이다(PROJECT-CONTEXT.md §1). 이 수는 상한이 아니라 허공 방지 하한이다.
+    assert probed == _served_ports() and len(probed) >= 6
 
 
 @pytest.mark.parametrize("port", sorted(_served_ports()))

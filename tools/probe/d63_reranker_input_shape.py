@@ -27,7 +27,9 @@ import statistics
 import sys
 import urllib.request
 
-ENDPOINT = "http://127.0.0.1:8005/v1/rerank"
+# `qwen3-reranker-4b`의 포트(`config/models.yaml`의 endpoint).
+# ⏵ 2026-10-15 — 8005에서 8004로 내려왔다.
+ENDPOINT = "http://127.0.0.1:8004/v1/rerank"
 MODEL = "qwen3-reranker-4b"
 REPS = 3
 

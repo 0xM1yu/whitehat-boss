@@ -35,36 +35,27 @@
 # 0.14~0.28 GiB/s — 2026-09-24 스모크 표의 가중치 ÷ 로드 · vast Auditor 51.75 GiB / 9.13 s ≈ 5.7 GiB/s, 계산값).
 # 창(`max_model_len`)은 registry `context_limit` 그대로다(`check_serving`이 강제 — #331).
 #
-# ⏵ 2026-10-12 — 위 「실측은 qwen3.8-27b 행의 기동 하나」는 낡았다. 2026-10-10~11 run 다섯이 vast에서 기동을 더 쟀다(콜드 ↔ 따뜻한 쌍 — docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §2). 아래 gpt-oss-20b·qwen3-14b·seccoderx-8b 주석의 ⏵가 그 값이다.
+# ⏵ 2026-10-12 — 위 「실측은 qwen3.8-27b 행의 기동 하나」는 낡았다. 2026-10-10~11 run 다섯이 vast에서 기동을 더 쟀다(콜드 ↔ 따뜻한 쌍 — docs/experiments/harness/2026-10-11-serving-run-arvo1065-vastai-remote.md §2). 아래 gpt-oss-20b·qwen3-14b 주석의 ⏵가 그 값이다.
+# ⏵ 2026-10-14 — 그 run이 쟀던 `seccoderx-8b` 기동(콜드 155 s · 따뜻한 31·26·25)은 이 파일에서 행이
+#   없어졌다(로스터에서 내려왔다 — PROJECT-CONTEXT.md §1). 값은 위 보고서 §2에 그대로 있다.
+#   앵커 `&vllm_env`를 선언하는 자리도 그 키에서 `qwen3-14b`로 옮겼다.
 #
 # 공통 환경(`&vllm_env`)은 vast에서 Auditor를 띄운 그 다섯이다.
 
 command: [bash, tools/serve/swap.sh]
 
 servers:
-  # --- 4단계 Scout 쌍 — 같이 뜬다(한 번에 하나씩 기동). util 합 0.90 = Auditor가 뜬 값 ---
+  # --- 4단계 Scout — 서버 하나다(⏵ 2026-10-14 — 셋 다 `qwen3-14b`) ---
   # KV는 계산값이다: util × 95.01 − 가중치+non-torch(2026-09-24 ATOM 실측) − 활성 3.76 GiB(vast Auditor 실측 —
-  # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV. 두 번째 기동은 첫 서버가 잡고 남은 자리에서 자기 몫을 잡는다.
-  seccoderx-8b:
-    # 0.35 × 95.01 = 33.25 − 16.05 − 3.76 ≈ 13.4 GiB → 144 KiB/토큰이면 ≈98k 토큰 = 창의 2.4배.
-    # 준비 상한 400 s = ATOM 132 s × 3(참고 — vast 미실측, 첫 기동은 16.4 GB 다운로드가 더 붙는다).
-    # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 콜드 155 s(상한 400 안) · 따뜻한 31·26·25(n=3). 위 「vast 미실측」은 낡았다.
-    util: 0.35
-    max_num_seqs: 8
-    max_model_len: 40960
-    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
-    env: &vllm_env
-      VLLM_USE_DEEP_GEMM: "0"
-      VLLM_USE_FLASHINFER_SAMPLER: "0"
-      VLLM_HOST_IP: "127.0.0.1"
-      NCCL_SOCKET_IFNAME: lo
-      GLOO_SOCKET_IFNAME: lo
-    probe: chat
-    ready_timeout_s: 400
-
+  # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV.
+  # ⏵ 2026-10-14 — `scout_boundary`가 `qwen3-14b`로 옮겨 **쌍이 하나가 됐다**(`seccoderx-8b`는 로스터에서
+  #   내려왔다 — PROJECT-CONTEXT.md §1). 그 전에는 둘이 같이 떠서 util 합이 0.90이었다(0.35 + 0.55 =
+  #   Auditor가 뜬 값). **남은 0.35는 어디에도 안 줬다** — 단독 기동의 KV를 다시 재지 않았으므로
+  #   util을 올릴 근거가 없다(CLAUDE.md §0). 아래 0.55는 쌍이던 때의 몫 그대로다.
   qwen3-14b:
-    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창 131,072의 1.02배(계산값, 미실측) — 한 요청이 겨우 든다(131,072 한 건 = 20.0 GiB, 계산값). memory·injection
-    # 두 역할이 이 한 서버를 써서 쌍 중 큰 몫을 준다. 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
+    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창 131,072의 1.02배(계산값, 미실측) — 한 요청이 겨우 든다(131,072 한 건 = 20.0 GiB, 계산값).
+    # ⏵ 2026-10-14 — 「memory·injection 두 역할이 이 한 서버를 써서 쌍 중 큰 몫을 준다」였다. 지금은
+    #   세 역할이 이 한 서버를 쓰고 쌍이 없다. 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
     # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 따뜻한 25·30·30·30 s(n=4). 위 「vast 미실측」은 낡았다.
     util: 0.55
     max_num_seqs: 8
@@ -79,7 +70,12 @@ servers:
       - deepseek_r1
       - --hf-overrides
       - '{"rope_parameters":{"rope_type":"yarn","rope_theta":1000000,"factor":4.0,"original_max_position_embeddings":32768}}'
-    env: *vllm_env
+    env: &vllm_env
+      VLLM_USE_DEEP_GEMM: "0"
+      VLLM_USE_FLASHINFER_SAMPLER: "0"
+      VLLM_HOST_IP: "127.0.0.1"
+      NCCL_SOCKET_IFNAME: lo
+      GLOO_SOCKET_IFNAME: lo
     probe: chat
     ready_timeout_s: 550
 
