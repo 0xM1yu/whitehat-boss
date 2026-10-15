@@ -17,7 +17,7 @@ import hashlib
 import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from time import perf_counter
+from time import perf_counter, sleep
 
 from src.config import HarnessConfig
 from src.ids import IdFactory
@@ -300,7 +300,8 @@ class RunContext:
     resolve_requests: Callable[[ResolveQuery], Resolution] | None = None
     # 채점기(oracle) — 8단계가 낸 PoC를 저장소 밖 채점 서버에 내보내는 자리 (#386). 중간 gen은
     # `vul` 다리와 원시 종료 코드 조회를 다음 홉 관측에 쓰고, 모델이 submit한 하나만 지정 후보가
-    # 된다. 최종으로 지정한 하나에만 `fix` 다리를 낸다(`runner._finalize_oracle`).
+    # 된다(⏵ 2026-10-15: submit 없이 끝난 Finding의 크래시 중간 gen은 대체 후보로 구제된다).
+    # 최종으로 지정한 하나에만 `fix` 다리를 낸다(`runner._finalize_oracle`).
     # `None`이면 이 run은 제출하지 않는다(기본) — `resolve_requests`·`swap_to`와 같은 자리다.
     # 구현은 어댑터에 있고 이 경계는 `src/interfaces/oracle.py`의 Protocol이 넘는다.
     oracle: Oracle | None = None
@@ -314,6 +315,9 @@ class RunContext:
     swap_unreported: set[str] = field(default_factory=set)
     # 테스트가 고정할 수 있도록 주입한다. `wall_ms`는 재현성 비교에서 제거되는 값이다.
     monotonic_ms: Callable[[], int] = field(default=_default_monotonic_ms)
+    # 채점기 제출의 429 재시도가 한도 창을 기다리는 데만 쓴다(`runner._submit_vul_to_oracle`).
+    # 테스트가 실제로 자지 않게 주입한다.
+    sleep: Callable[[float], None] = field(default=sleep)
     # CyberGym 과제 설명(description.txt). `None`이면 이 run에 과제 설명이 없다(대부분의 run).
     # 있으면 `retrieval.run`이 캡슐에 `vuln_description` 섹션으로 싣는다(PoV 배선 — Scout
     # 설명기반 트리아지 입력). run 단위 사실이라 여기서 온다 — `read_payload`와 같은 자리다.
