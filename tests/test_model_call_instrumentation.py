@@ -1101,7 +1101,7 @@ def test_the_run_warning_fires_once_per_run_and_only_for_whitespace_tails(
 
 
 def test_a_call_without_a_breakdown_has_a_null_tail_key() -> None:
-    """어댑터가 시도별 내역을 안 실은 호출(Fake)은 세 키가 모두 `None`이다 - 키 집합이 균질하다."""
+    """시도별 내역을 안 실은 호출(Fake)은 다섯 키가 모두 `None`이다 - 키 집합이 균질하다."""
     result = FakeModelClient().complete(role=Role.SCOUT, prompt=_fake_prompt(), schema=Candidate)
     assert result.attempt_log == ()
 
@@ -1109,6 +1109,17 @@ def test_a_call_without_a_breakdown_has_a_null_tail_key() -> None:
     _, data = _run(routed, schema=Candidate, prompt=_fake_prompt())
 
     assert data["attempt_tail_whitespace_only"] is None
+    assert data["attempt_reconnects"] is None and data["attempt_reconnect_wait_s"] is None
+
+
+def test_a_scripted_fake_reports_zero_reconnects_not_null() -> None:
+    """대본(`scripted_attempts`)을 준 Fake는 내역을 싣는다 - 재시도 칸은 `0`이다(`null` 아님)."""
+    routed = RoutingModelClient({"scout": FakeModelClient(scripted_attempts=[AttemptRecord()])})
+
+    _, data = _run(routed, schema=Candidate, prompt=_fake_prompt())
+
+    assert json.loads(data["attempt_reconnects"]) == [0]
+    assert json.loads(data["attempt_reconnect_wait_s"]) == [0.0]
 
 
 def test_texts_that_do_not_line_up_with_the_attempts_are_null_not_misattributed() -> None:
@@ -1261,7 +1272,8 @@ def test_two_roles_on_the_same_subject_are_counted_apart() -> None:
 # --- 16. 연결 단절 재시도가 시도 칸에 남는다 ----------------------------------------------
 #
 # `attempt_reconnects`·`attempt_reconnect_wait_s`: 어댑터가 안에서 삼키는 재시도를 trace까지 싣는다.
-# 시도 순서와 1:1이고 성공·실패 행 모두 같은 키다. Fake·재시도 없는 호출은 `0`이다.
+# 시도 순서와 1:1이고 성공·실패 행 모두 같은 키다. 재시도 없는 호출은 `0`, 기본 Fake는 `null`
+# (대본 `scripted_attempts`를 줄 때만 `0`)이다.
 
 
 def test_reconnects_are_recorded_per_attempt_on_both_paths(
