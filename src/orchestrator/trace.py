@@ -83,6 +83,7 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
+| 0단계 분류 | `preprocess_classified` | `unknown / files`. run당 1건. 분포: `unknown_suffixes` |
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
 `reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
@@ -902,6 +903,13 @@ class EventKind(StrEnum):
     # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
+    # 0단계의 파일 분류 결과 - **run당 정확히 1건**(0단계 구간 안, `stage=0`). 0단계에는 차단 조건이
+    # 없어서(표에 없는 확장자는 `kind=unknown`으로 남는다) 분류 실패는 이 이벤트로만 센다.
+    # 키: `files`(전체) · `source`·`config`·`binary`·`firmware`·`unknown`(`ArtifactKind` 값 전부,
+    # 0도 싣는다 - 합이 `files`다) · `unknown_suffixes`(`unknown` 파일의 확장자 -> 개수, 소문자,
+    # JSON 객체 문자열, 많은 순 최대 10개, 확장자 없음은 빈 문자열 키) · `unknown_suffixes_omitted`
+    # (상한에 잘린 확장자 **종류** 수 - 파일 수가 아니다). 대상 트리가 비면 `files`가 0이다.
+    PREPROCESS_CLASSIFIED = "preprocess_classified"
 
 
 class TraceEvent(HarnessModel):

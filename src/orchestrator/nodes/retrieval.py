@@ -8,8 +8,13 @@ architecture.md §3의 통과 조건은 "capsule 토큰 상한 이내"이고 그
 온다(`thresholds.capsule_budget_tokens`). 노드가 숫자를 박지 않는다.
 
 Progressive Context Expansion(knowledge-base.md §5)의 **횟수 상한 판정은 정책이 한다.**
-노드는 `DecisionPoint.CAPSULE_EXPANSION`에 현재 확장 횟수를 넘기고 돌아온 `Action`을
+`expand()`는 `DecisionPoint.CAPSULE_EXPANSION`에 현재 확장 횟수를 넘기고 돌아온 `Action`을
 그대로 적용한다 — 상한을 넘기면 후보를 폐기하지 않고 `queued`로 둔다(전이 표 C-5).
+
+⚠ **`expand()`는 프로덕션 호출 지점이 0개다.** `runner.py`는 이 모듈의 `run`만 부르고
+`expand`를 부르지 않는다 — 테스트(`tests/test_nodes.py` 등)만 돈다. 그래서 확장 경로·정책의
+`CAPSULE_EXPANSION` 결정점·`capsule_expansion_max`는 어느 run에서도 실행되지 않는다(#95 관측 ③,
+`knowledge-base.md` §5). 코드는 배선되는 날을 위해 남겨 둔 것이지 돌고 있는 경로가 아니다.
 """
 
 from src.config import SCOUT_POOL_ROLES
