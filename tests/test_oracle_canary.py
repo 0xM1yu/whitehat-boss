@@ -232,9 +232,10 @@ class _FakeDocker:
             which = "ref" if payload == MARKER else "benign"
             return self._done(kwargs, self.table[f"{which}/{leg}"].pop(0))
         image, *command = rest
-        if command == ["cat", oracle_canary.POC_IN_IMAGE]:
+        mark = oracle_canary._POC_MARK
+        if command == ["/bin/sh", "-c", f"printf {mark} && cat {oracle_canary.POC_IN_IMAGE}"]:
             self.kinds.append("poc")
-            return self._done(kwargs, 0, MARKER)
+            return self._done(kwargs, 0, mark.encode() + MARKER)
         if command[:1] == ["cat"] and "/proc/sys/vm/mmap_rnd_bits" in command:
             self.kinds.append("host")
             self.host_commands.append(command)
@@ -1575,16 +1576,22 @@ def test_the_reference_poc_reader_returns_exactly_the_bytes_and_guards_failures(
     """🔴 이 함수는 기본값으로 꽂혀 있는데 어느 테스트도 **실행하지 않았다** — 가드를 지워도, 항상
     `b"x"`를 돌려줘도 초록이었다. 바이트가 그대로 나오는지·실패가 실패로 나오는지를 둘 다 본다.
     """
+    mark = oracle_canary._POC_MARK.encode()
     payload = b"\x00\x01POC\xff"
-    stub = _RunStub(returncode=0, stdout=payload)
+    stub = _RunStub(returncode=0, stdout=mark + payload)
     monkeypatch.setattr(oracle_canary.subprocess, "run", stub)
     assert oracle_canary._read_reference_poc(VUL) == payload
     ((argv, kwargs),) = stub.calls
     _assert_docker_run_head(argv)
-    assert argv[-3:] == [VUL, "cat", "/tmp/poc"]
+    assert argv[-4:] == [VUL, "/bin/sh", "-c", f"printf {oracle_canary._POC_MARK} && cat /tmp/poc"]
     assert kwargs["timeout"] == oracle_canary._HOST_TIMEOUT_S and not kwargs.get("check")
 
-    for returncode, stdout in [(1, b"SECRET-BYTES"), (0, b""), (125, b"")]:
+    # 0바이트 참조 PoC는 읽힌 것이다(`arvo:3938` — 그 빈 입력이 -vul exit 1 · -fix exit 0).
+    monkeypatch.setattr(oracle_canary.subprocess, "run", _RunStub(returncode=0, stdout=mark))
+    assert oracle_canary._read_reference_poc(VUL) == b""
+
+    # 표지 없는 exit 0(ENTRYPOINT가 명령을 삼킴)은 바이트가 있어도 못 읽은 것이다.
+    for returncode, stdout in [(1, b"SECRET-BYTES"), (0, b""), (0, b"SECRET-BYTES"), (125, b"")]:
         monkeypatch.setattr(
             oracle_canary.subprocess, "run", _RunStub(returncode=returncode, stdout=stdout)
         )
