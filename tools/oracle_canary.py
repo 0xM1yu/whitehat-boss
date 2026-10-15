@@ -471,7 +471,7 @@ def _read_reference_poc(vul_image: str) -> bytes:
     🔴 **0바이트 참조 PoC는 정상이다** — `arvo:3938-vul`의 `/tmp/poc`가 0바이트이고 그 빈 입력이
     `-vul`에서 exit 1 · `-fix`에서 exit 0이다(2026-10-15 실측). 「빈 출력 = 못 읽음」으로 보면 이런
     과제를 `poc_unreadable`로 잘못 진단한다. 명령이 삼켜진 경우(빈 출력 · exit 0)와 가르려고 앞에
-    표지를 찍는다 — 표지가 없으면 명령이 안 돈 것이다.
+    표지를 찍는다 — 표지가 없으면 읽기가 돌았다고 보지 않는다(어느 경우든 거절이라 안전한 쪽).
     """
     done = subprocess.run(
         [*_DOCKER_RUN, vul_image, "/bin/sh", "-c", f"printf {_POC_MARK} && cat {POC_IN_IMAGE}"],
@@ -483,7 +483,8 @@ def _read_reference_poc(vul_image: str) -> bytes:
         raise CanaryError(
             "poc_unreadable",
             f"{vul_image}의 {POC_IN_IMAGE}를 읽지 못했다 "
-            f"(exit {done.returncode}, {len(done.stdout)}바이트). 이미지가 있는지 본다",
+            f"(exit {done.returncode}, {len(done.stdout)}바이트). "
+            "이미지가 있는지 · ENTRYPOINT가 명령을 삼키지 않는지 본다",
         )
     return done.stdout[len(_POC_MARK) :]
 

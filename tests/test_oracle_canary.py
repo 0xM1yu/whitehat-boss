@@ -1591,7 +1591,14 @@ def test_the_reference_poc_reader_returns_exactly_the_bytes_and_guards_failures(
     assert oracle_canary._read_reference_poc(VUL) == b""
 
     # 표지 없는 exit 0(ENTRYPOINT가 명령을 삼킴)은 바이트가 있어도 못 읽은 것이다.
-    for returncode, stdout in [(1, b"SECRET-BYTES"), (0, b""), (0, b"SECRET-BYTES"), (125, b"")]:
+    # 표지가 찍혀도 exit ≠ 0(`/tmp/poc` 없음 — 표지 뒤 `cat`이 실패)은 못 읽은 것이다.
+    for returncode, stdout in [
+        (1, b"SECRET-BYTES"),
+        (0, b""),
+        (0, b"SECRET-BYTES"),
+        (125, b""),
+        (1, mark),
+    ]:
         monkeypatch.setattr(
             oracle_canary.subprocess, "run", _RunStub(returncode=returncode, stdout=stdout)
         )
