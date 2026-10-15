@@ -16,12 +16,12 @@
 
 | 항목 | 값 | 비고 |
 | --- | --- | --- |
-| 실험 종료 시각 | `2026-10-15 18:35 KST` (`09:35 UTC`) | 세 run 중 마지막(C)의 trace 끝 시각 |
+| 실험 종료 시각 | `2026-10-15 18:47 KST` (`09:47 UTC`) | 세 run 중 마지막(C)의 trace 끝 시각 |
 | 실제 서빙 모델 | **없음** — 전 역할 Fake | 프로필 `dev_docker`(모델 전부 Fake · 도구는 실제 Docker 이미지) |
-| `repo_commit` | A·B `e4e5269`(약식 — 전체 40자 `미기재`), dirty false · C `b322dc6`(약식 — 전체 40자 `미기재`, dirty `미기재`) | C가 이 PR의 첫 커밋이다. A·B는 그 부모(PR #685 머지) |
-| `run_id` | A `run_20261015_0001` · B `미기재` · C `미기재` | |
+| `repo_commit` | A·B `e4e5269f83d278935a405b27e2d0ef2048bf6182` · C `58bf0fd6ceac2581378bb4c8d541902c8f66f370` · 셋 다 `repo_dirty` false | A·B는 PR #685 머지(main). C는 이 PR의 예약 구현 최종 코드(이 보고서를 넣은 커밋보다 앞) |
+| `run_id` | A·B·C 모두 `run_20261015_0001` — 각각 다른 `--artifacts-root`(서로 다른 run이다) | 번호가 같은 것은 artifacts-root마다 번호를 새로 세기 때문이다 |
 | run 산출물 경로·보존 | 세션 scratchpad · **보존하지 않는다** | 세션 임시 폴더. `gc`와 무관하게 세션과 함께 사라진다 |
-| `trace.jsonl` sha256 | `미기재` | |
+| `trace.jsonl` sha256 | A `558f783d32bcfab7b16eb6a6e5cbff639edf00de41d863ab4bcc5635262c2b10` · B `7e20374cdc40aec1452c4568b3f60ffbc90cc0ada69c0d2541b60a28453bc6f6` · C `327ddf7677d338d6fe24be5d76c49e3230f0435d03104bb8113e707670a15701` | 파일은 보존하지 않으므로 해시는 「그 run이 있었다」의 기록일 뿐 대조할 원본은 없다 |
 | `tool_runner` | 프로필 선언값 `docker` / 실제 `docker` | 오버라이드 없음 |
 | `--device` | **미지정** | 이 PC에서 직접 돈 run이라 장비 파일(`config/serving/<device>.yaml`)을 안 쓴다. 비교표에 넣지 않는다 |
 | `tool_images` digest | `harness-tools:v3` · 종류 docker 이미지 config sha256 `sha256:fbd453eddf5dc30726e8df17171158cc935c65380f10d9a6dc6ba98d9098888d` | 이미지 안 semgrep-rules 커밋 `a84ff9cc2453ca91d581380de4b8b3f272f6f4be` |
@@ -41,7 +41,7 @@
 | A — 0~9단계 완주 | ✅ exit 0 · `stopped_after` null · `stage_start`/`stage_end` 짝이 맞고 `stage_end ok=false` 0건 · 약 3분 |
 | A — 컷이 설명 일치를 잘랐다 | 🔴 **`funcs.c:file_regexec`(`desc_rank` 2)가 컷 밖이다.** 신호 후보 8개(semgrep)가 컷을 다 채웠다(`signal_artifacts 8` / 47) |
 | B — 채점기 제출·최종 지정 | ✅ 제출 8 · 실패 0 · `oracle_final` 1건(`designation sole_poc`). Fake PoC라 `success false`가 정상이다 |
-| C — 예약 | ✅ 남은 8 = A의 앞 7(신호 rank 2) + `funcs.c:file_regexec`(신호 0 · `desc_rank` 2 · `desc_reserved` true). `target_plan.desc_reserved` 1 |
+| C — 예약 | ✅ 남은 8 = A의 앞 7(신호 rank 2) + `funcs.c:file_regexec`(신호 0 · `desc_rank` 2 · `desc_reserved` true). `target_plan.desc_reserved` 1 · `desc_reserve_filled` 1 |
 | 점수·역량 | **없다 / 미측정** — 전 역할 Fake |
 
 ## 2. 실험 환경
@@ -75,15 +75,17 @@ build·clang-tidy의 실패는 이슈 #507(이 번들이 우리 clang으로 컴�
 
 ⚠ `vul`이 크래시가 아닌데도 `fix_exit_code`가 0으로 찍혔다 — **fix 다리가 돌았다**는 뜻이다. Fake PoC라 `success false`는 정상이다.
 
-### C — 이 PR(`b322dc6`), 채점기 없음
+### C — 이 PR의 예약 구현(`58bf0fd`), 채점기 없음
 
 | 항목 | 결과 |
 | --- | --- |
-| 입력 | commit `b322dc6` · 번들은 B와 같다. ⚠ 이 뒤에 예약 자리를 서로 다른 `(file, symbol)`로 한정하고 `target_plan.desc_reserve_filled`를 더한 변경이 들어갔다 — C는 그 전 코드다 |
-| run | trace `09:31:55Z` → `09:35:12Z` · exit 0 · `stopped_after` null · `stage_end ok=false` 0건 |
-| `target_plan` | `candidate_desc_reserve` 2 · `desc_reserved` 1 · `desc_matches_deferred` 0 |
+| 입력 | commit `58bf0fd` · 번들은 B와 같다 |
+| run | trace `09:42:56Z` → `09:47:11Z` · exit 0 · `stopped_after` null · `stage_end ok=false` 0건 |
+| `target_plan` | signal_artifacts 8 · planned 8 · deferred 313 · `candidate_desc_reserve` 2 · desc_part_matches 1 · `desc_reserved` 1 · `desc_reserve_filled` 1 · `desc_matches_deferred` 0 |
 | 남은 8 | A의 앞 7(`signal_rank` 2) + `funcs.c:file_regexec`(`signal_rank` 0 · `desc_rank` 2 · `desc_reserved` true) |
 | 잘린 313 | `desc_rank` > 0인 후보 없음 |
+
+같은 날 그 앞 커밋 `b322dc6`(예약 자리를 서로 다른 함수로 한정하기 전)으로도 한 번 돌렸고 남은 8이 같았다(trace `09:31:55Z` → `09:35:12Z` · sha256 `a2bbfd3cbcac77ba6f93ebbc864ef607f82eb5ea68ee2363e9afecf89c87eac4`). 이 번들에는 설명 일치 후보가 하나뿐이라 두 판이 갈리지 않는다.
 
 ### 해석
 
@@ -107,5 +109,4 @@ build·clang-tidy의 실패는 이슈 #507(이 번들이 우리 clang으로 컴�
 | 모델 품질·점수 | 전 역할 Fake | 실서빙 run(vast) |
 | 슬라이스 경로(`--slices`)의 컷 | 이 리허설은 심볼 색인 경로다 | 실 슬라이스 산출물로 `target_plan`의 `desc_reserved`·`desc_reserve_filled`·`signal_artifacts`를 본다 |
 | 예약 효과가 점수로 이어지는지 | 점수가 없다 | 같은 과제에서 예약 0 ↔ 2 짝 run |
-| 전체 40자 commit · B·C의 `run_id` · `trace.jsonl` 해시 | 세션 중 기록하지 않았고 산출물을 보존하지 않았다 | 같은 명령으로 다시 돌려 메타를 먼저 적는다 |
 | 이 기록의 재현 | 산출물이 없다 | `dev_docker` 프로필 · 번들 arvo:1065 · 이미지 `harness-tools:v3`로 A·C를 다시 돌려 `target_plan`을 비교한다 |
