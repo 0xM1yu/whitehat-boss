@@ -54,13 +54,22 @@ servers:
 
   qwen3-14b:
     # 0.40 × 119.7 = 47.9 GiB − 28.27(가중치+non-torch, 09-24) − 0.80(활성 — 09-21 dense 24B의 값을 상한으로)
-    # ≈ 18.8 GiB → 160 KiB/토큰(09-24 실측 7.37 GiB ÷ 48,256 토큰)이면 ≈123k 토큰 = 창의 3.0배.
+    # ≈ 18.8 GiB → 160 KiB/토큰(09-24 실측 7.37 GiB ÷ 48,256 토큰)이면 ≈123k 토큰 = 창 131,072의 0.94배(계산값, 미실측) — ⚠ 한 요청이 못 들어가는 크기다. ATOM은 사용 종료라 띄워 보지 않는다.
     # memory·injection 두 역할이 이 한 서버를 쓴다. 가장 가까운 실측: 2026-09-28 util 0.30 · 창 40,960.
     # 준비 상한 550 s ≈ 181 s(09-24 스모크) × 3.
     util: 0.40
     max_num_seqs: 8
-    max_model_len: 40960
-    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
+    max_model_len: 131072
+    # ⏵ 2026-10-15 — YaRN: 창 131,072 = registry `context_limit`. 원천(카드 README@rev · vLLM 0.27.1 소스)·한계는
+    # `config/models.yaml`의 `qwen3-14b` 「YaRN」 절이 든다. `--rope-scaling`은 0.27.1에 없어 `--hf-overrides`다.
+    # JSON은 한 인자라 swap.sh의 `shlex.quote`가 그대로 넘긴다. 이 조합으로 띄운 적은 없다 — 미실측.
+    extra_args:
+      - --enforce-eager
+      - --enable-prompt-tokens-details
+      - --reasoning-parser
+      - deepseek_r1
+      - --hf-overrides
+      - '{"rope_parameters":{"rope_type":"yarn","rope_theta":1000000,"factor":4.0,"original_max_position_embeddings":32768}}'
     env: *vllm_env
     probe: chat
     ready_timeout_s: 550

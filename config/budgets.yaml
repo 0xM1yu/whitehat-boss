@@ -774,6 +774,9 @@ thresholds:
   # run에서도 함수 본문을 받는다. 이 스위치는 `input: slice` 판에서만 일하고 서빙 v4에서는 안 돈다.
   # `source` 선언의 큰 함수는 잘리지 않고 서버가 크기 거절해 그 후보만 빠진다(`runner._is_size_rejection`).
   # 서빙에서 그런 거절이 몇 건인지는 미실측이다.
+  # ⏵ 2026-10-15 — 그 거절은 이제 두 겹으로 막는다: Scout 모델 `qwen3-14b`의 창을 YaRN으로 131,072까지 늘렸고(`models.yaml`
+  # `qwen3-14b` 「YaRN」 절) 그래도 입력 몫을 넘는 본문은 `scout._fit_source`가 entry 둘레만 남긴다(trace
+  # `scout_source_trimmed`) - 이 스위치와 무관하게 **넘을 때만** 돈다. 줄인 건이 몇인지·판정이 어떻게 바뀌는지는 미실측이다.
   # 대가: 같은 슬라이스 집합의 Scout 입력이 달라져 이전 run과 직접 비교할 수 없다. 켠 효과는 미실측.
   scout_slice_trim: 1
   # `auditor_source` 이벤트에 `gate_reasons`를 남긴다. **관측 전용** — Auditor 입력도 프롬프트 판도
