@@ -1,15 +1,20 @@
 """0단계 Preprocessor — 대상 파일을 식별하고 artifact hash를 부여한다.
 
 architecture.md §3: "파일 타입 분류, 바이너리·소스·설정 식별, artifact hash 부여".
-통과 조건은 "파일 타입 분류 성공"이고, 분류하지 못한 파일은 버리지 않고
-`kind=unknown`으로 남긴다 — 분류 실패 자체가 0단계의 관측치다.
+이 단계에는 **차단 조건이 없다** — 분류하지 못한 파일은 버리지 않고 `kind=unknown`으로
+남긴다. 분류 실패 자체가 0단계의 관측치이고, 그 관측은 trace `preprocess_classified`에
+싣는다(종류별 개수 + `unknown`의 확장자 분포). 이벤트가 없으면 「분류 실패가 몇 건인지」는
+`state.db`의 artifact 행을 세어야만 알 수 있었다.
 """
 
+import json
+from collections import Counter
 from pathlib import Path
 
 from src.ids import sha256_digest
 from src.orchestrator.context import RunContext
 from src.orchestrator.stages import Stage
+from src.orchestrator.trace import EventKind
 from src.schemas.artifact import Artifact
 from src.schemas.enums import ArtifactKind
 
@@ -39,6 +44,17 @@ _KIND_BY_SUFFIX: dict[str, ArtifactKind] = {
     ".h": ArtifactKind.SOURCE,
     ".cc": ArtifactKind.SOURCE,
     ".cpp": ArtifactKind.SOURCE,
+    # C++의 다른 철자. 빠지면 `unknown`이 되고 그 파일을 가리키는 슬라이스 타깃이 조용히
+    # 버려진다(`runner`의 `unmatched_slices`). `.h`와 같은 분류다 — 헤더도 SOURCE.
+    # 어느 도구에 넘어가는지는 이 표가 아니라 `container_tools`의 목록 셋이 정한다(헤더·`.tcc`는
+    # clang에 안 가고, 인덱서는 자기 `_GRAMMARS`에 있는 확장자만 받는다).
+    ".cxx": ArtifactKind.SOURCE,
+    ".c++": ArtifactKind.SOURCE,
+    ".cp": ArtifactKind.SOURCE,
+    ".hpp": ArtifactKind.SOURCE,
+    ".hh": ArtifactKind.SOURCE,
+    ".hxx": ArtifactKind.SOURCE,
+    ".tcc": ArtifactKind.SOURCE,
     # `.inc`는 `#include`로 펼쳐지는 본문 조각이라 확장자만 보면 부수적이지만,
     # 실측 샘플에서는 `target.c`가 28바이트짜리 `#include` 한 줄이고 실제 코드
     # 17KB가 전부 `.inc`에 있었다. UNKNOWN으로 두면 `runner._ANALYZABLE`이 걸러
@@ -78,7 +94,37 @@ def run(ctx: RunContext, *, source_root: Path) -> list[Artifact]:
         artifacts = [_artifact(ctx, path, root) for path in files]
         for artifact in artifacts:
             ctx.store.put(artifact)
+        _record_classification(ctx, artifacts)
     return artifacts
+
+
+# `unknown_suffixes`에 싣는 확장자 수의 상한. 이벤트 한 줄이 저장소 크기에 비례해 커지지 않게 한다.
+_UNKNOWN_SUFFIXES_CAP = 10
+
+
+def _record_classification(ctx: RunContext, artifacts: list[Artifact]) -> None:
+    """종류별 개수 + `unknown`의 확장자 분포를 남긴다. 키는 `ArtifactKind` 값 전부(0 포함)다.
+
+    `unknown_suffixes`는 JSON 객체 문자열(`TraceValue`가 스칼라라서다)이고 많은 순·이름 순으로
+    `_UNKNOWN_SUFFIXES_CAP`개까지다. 확장자 없는 파일은 `""` 키로 센다. 상한에 잘렸으면
+    `unknown_suffixes_omitted`가 잘린 **확장자 종류** 수를 싣는다(파일 수가 아니다).
+    """
+    counts = Counter(artifact.kind for artifact in artifacts)
+    suffixes = Counter(
+        Path(artifact.path).suffix.lower()
+        for artifact in artifacts
+        if artifact.kind is ArtifactKind.UNKNOWN
+    )
+    ranked = sorted(suffixes.items(), key=lambda item: (-item[1], item[0]))
+    kept = dict(ranked[:_UNKNOWN_SUFFIXES_CAP])
+    ctx.trace.emit(
+        EventKind.PREPROCESS_CLASSIFIED,
+        stage=Stage.PREPROCESS,
+        files=len(artifacts),
+        **{kind.value: counts[kind] for kind in ArtifactKind},
+        unknown_suffixes=json.dumps(kept, ensure_ascii=True, sort_keys=False),
+        unknown_suffixes_omitted=len(ranked) - len(kept),
+    )
 
 
 def _artifact(ctx: RunContext, path: Path, root: Path) -> Artifact:
