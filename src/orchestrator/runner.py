@@ -1356,7 +1356,7 @@ def run_pipeline(
         schema_recovered_calls=schema_recovered,
         pov_inspect_max_run=pov_inspect_runs,
         trace_aggregate_failures=record.trace_aggregate_failures,
-        oracle_final=_oracle_final_summary(trace),
+        oracle_final=_oracle_final_summary(trace, wired=state.oracle_ledger.wired),
     )
     finished = state_machine.finish_run(
         record,
@@ -1838,8 +1838,13 @@ def _critic_hop_observations_warning(trace: TraceWriter) -> str | None:
     return " · ".join(parts) + ". trace의 critic_hop_observations가 목록이다 (#600)"
 
 
-def _oracle_final_summary(trace: TraceWriter) -> dict[str, str | None] | None:
-    """`oracle_final` 이벤트(run당 0~1건)를 리포트의 최종 PoC 줄 재료로 줄인다. 없으면 `None`."""
+def _oracle_final_summary(
+    trace: TraceWriter, *, wired: bool = False
+) -> dict[str, str | None] | None:
+    """`oracle_final` 이벤트(run당 0~1건)를 리포트의 최종 PoC 줄 재료로 줄인다.
+
+    이벤트가 없으면 채점기를 붙인 run(`wired`)은 `not_reached`(사이드카 `final`과 같은 판정),
+    안 붙인 run은 `None`이다."""
     for event in trace.events:
         if event.kind is EventKind.ORACLE_FINAL:
             data = event.data
@@ -1852,7 +1857,7 @@ def _oracle_final_summary(trace: TraceWriter) -> dict[str, str | None] | None:
                 "subject": event.subject_id,
                 "poc_sha256": _opt_str(data.get("poc_sha256")),
             }
-    return None
+    return {"status": oracle_log.STATUS_NOT_REACHED} if wired else None
 
 
 def _opt_str(value: object) -> str | None:

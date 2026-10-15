@@ -17,6 +17,8 @@ def test_absent_tokenizer_file_warns_per_served_role(monkeypatch, tmp_path):
     assert check.severity == cli.Severity.WARN
     assert "(file_absent)" in check.message and "auditor" in check.message
     assert "embedding" not in check.message  # 검색 역할은 프롬프트를 안 만든다
+    # 1.8배는 실측 한 점이다(범위는 1.22~3.32) - 상한처럼 쓰지 않는다.
+    assert "한 점" in check.message and "최대" not in check.message
 
 
 def test_only_roles_that_count_tokens_are_checked(monkeypatch, tmp_path):

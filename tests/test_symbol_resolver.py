@@ -38,7 +38,7 @@ from pathlib import Path
 import pytest
 
 from src.adapters.factory import build_deps
-from src.adapters.index_graph import V3_TABLES, V4_TABLES, GraphIndex
+from src.adapters.index_graph import STATUS_MALFORMED, V3_TABLES, V4_TABLES, GraphIndex
 from src.adapters.slices import split_source
 from src.adapters.symbol_resolver import (
     _CALLER_SITE_RADIUS,
@@ -146,6 +146,29 @@ def test_an_empty_v2_function_table_is_an_index_that_finds_nothing_not_a_missing
 
     assert resolution.index_available is True
     assert [item.reason.value for item in resolution.unfilled] == ["not_found"]
+
+
+def test_a_record_without_line_start_makes_the_index_unavailable_instead_of_crashing(
+    tmp_path: Path,
+) -> None:
+    """깨진 레코드는 resolver에 닿기 전에 `GraphIndex`가 거절한다 — 색인 통째로 `malformed`가 되고
+    resolver는 예외 없이 `index_available=False`를 낸다. 그래서 Auditor `_lookup`은
+    `(OSError, ValueError)`만 잡는다(`KeyError`·`TypeError`는 resolver 버그라 삼키지 않는다)."""
+    index = _indexer.build_index(sorted(_HOP1_ROOT.rglob("*.c")), _HOP1_ROOT)
+    name, records = next(iter(index["functions"].items()))
+    records[0].pop("line_start")
+    path = tmp_path / "index.json"
+    path.write_text(json.dumps(index), encoding="utf-8")
+    graph = GraphIndex(path)
+
+    resolution = resolve(
+        _query(requests=(_request("function", name),), target_file="a.c"),
+        table=graph.table,
+        read_lines=lambda _file: [],
+    )
+
+    assert graph.summary.status == STATUS_MALFORMED
+    assert resolution.index_available is False
 
 
 # --- hop 1 예 — 실 인덱서 픽스처 (⏵ 2026-10-10 #304 — 원소 대입도 된다) ------------

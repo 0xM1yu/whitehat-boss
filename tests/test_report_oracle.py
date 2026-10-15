@@ -33,6 +33,16 @@ def test_no_oracle_final_event_means_no_summary() -> None:
     assert _oracle_final_summary(TraceWriter("run_20261015_0001")) is None
 
 
+def test_a_wired_oracle_without_the_final_event_reads_as_not_reached() -> None:
+    """채점기를 붙인 run이 최종 단계 전에 끊기면 이벤트가 없다 - 절을 비우지 않고 미도달을 적는다"""
+    empty = TraceWriter("run_20261015_0001")
+    summary = _oracle_final_summary(empty, wired=True)
+    assert summary == {"status": "not_reached"}
+    text = Report(run_id="r", findings=(), duplicates=0, oracle_final=summary).render()
+    assert "### 최종 PoC (채점기)" in text and "채점기: 최종 단계 미도달" in text
+    assert "상태" not in text and "verdict.json" not in text
+
+
 def test_report_renders_the_final_poc_and_names_the_dedupe_representative() -> None:
     summary = _oracle_final_summary(_final_trace())
     plain = Report(run_id="r", findings=(), duplicates=0, oracle_final=summary).render()
