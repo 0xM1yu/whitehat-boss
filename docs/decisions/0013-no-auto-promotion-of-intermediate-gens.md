@@ -1,8 +1,9 @@
-# 0013. 중간 `gen`을 자동 승격하지 않는다 — 지정이 채점기 값을 안 읽는 결정을 유지한다 (⏵ 2026-10-14 결정 2 개정됨 — 아래 「개정 2026-10-14」)
+# 0013. 중간 `gen`을 자동 승격하지 않는다 — 지정이 채점기 값을 안 읽는 결정을 유지한다 (⏵ 2026-10-14 결정 2 개정됨 — 아래 「개정 2026-10-14」 · ⏵ 2026-10-15 결정 1 개정됨 — 아래 「개정 2026-10-15」)
 
 - 상태: **제안** (2026-10-08, `/ecc:council` 4인 판정. 승인은 @danielcho02)
 - 일자: 2026-10-08
 - ⏵ **2026-10-14 — 결정 2가 개정됐다**(이슈 [#637](https://github.com/0xM1yu/whitehat-boss/issues/637)) — 아래 「개정 2026-10-14」. 제목의 「유지한다」와 본문의 「읽지 않는다」는 **그 날짜 전의 서술**이다.
+- ⏵ **2026-10-15 — 결정 1이 개정됐다**(S20 Phase 15, council 4인 → @danielcho02 승인) — 아래 「개정 2026-10-15」. `submit` 없이 끝난 Finding의 크래시 응답 중간 `gen`은 **대체 후보로 구제**된다(제출된 후보보다 늘 아래). 본문의 「ⓒ를 넣지 않는다」·「승격 안 한다」는 **그 날짜 전의 서술**이다.
 - 관련: 이슈 [#549](https://github.com/0xM1yu/whitehat-boss/issues/549) 선택지 ⓒ, [#550](https://github.com/0xM1yu/whitehat-boss/issues/550), [#385](https://github.com/0xM1yu/whitehat-boss/issues/385), [#422](https://github.com/0xM1yu/whitehat-boss/issues/422), [#430](https://github.com/0xM1yu/whitehat-boss/issues/430), `src/orchestrator/runner.py`의 `_designate_final`·`_designation_key`, `tests/test_oracle_wiring.py`의 `test_designation_does_not_read_oracle_fields`, `src/adapters/cybergym_oracle.py`의 `_NO_CRASH_EXIT_CODES`·`OracleVerdict.success`, `prompts/pov/v4/`([PR #561](https://github.com/0xM1yu/whitehat-boss/pull/561) — 열림), [보고서](../experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)
 
 ## 왜 이 기록이 필요한가
@@ -28,7 +29,7 @@
 
 ## 결정
 
-1. **ⓒ를 지금 넣지 않는다.**
+1. **ⓒ를 지금 넣지 않는다.** ⏵ 2026-10-15 — 개정됐다: PoV 시점의 자동 승격(ⓒ)은 여전히 안 넣지만, `submit` 없이 끝난 Finding의 중간 `gen` 중 **자기 `vul` 응답 코드가 크래시 계단인 것**은 최종 지정의 **대체 후보**로 구제된다(아래 「개정 2026-10-15」).
 2. **「지정은 채점기 값을 읽지 않는다」 결정을 유지한다.** `_designate_final`과 `test_designation_does_not_read_oracle_fields`를 그대로 둔다. ⏵ 2026-10-14 — 개정됐다: 후보 **자기 `vul` 제출의 응답 종료 코드 하나**는 읽는다(아래 「개정 2026-10-14」).
 3. **ⓑ만 낸다** — PoV 프롬프트 v4. 제외 코드 `{0, 71, 300}`을 모델에게 적어 주고, 밖이면 다음 턴에 `submit`, 안이면 안 냄, `unavailable`이면 정보 없음으로 가른다. ⏵ 2026-10-11 — v5(이슈 #549 ②)가 「안이면 안 냄」을 고쳤다: 안이어도 앞선 `gen`이 밖을 받은 적이 있으면 그 `gen`을 `poc_sha256`으로 지명해 `submit`한다(어느 `gen`도 못 이겼을 때만 안 냄).
 4. **ⓒ를 다시 보는 조건은 둘이고, 둘 다 서야 한다.**
@@ -59,6 +60,22 @@
 | **(b) 좌석·홉 설계로 가른다** — PoV가 Finding마다 크래시를 낼 때까지 더 돌게 한다 | 기각(첫 council). 좌석·홉 배치는 실험 설계라 이 저장소의 몫이 아니다(ADR 0012 결정 5) |
 | **(d) 모델 자기 보고 필드** — `submit`에 모델이 크래시 여부를 적게 하고 그 필드로 가른다 | 기각(Architect의 최초 입장이었다). 사유는 재소집 council의 발언이다 — PoV v6가 이미 크래시가 아닌 PoC의 제출을 금지하므로 (d)도 **같은 준수**에 기댄다(Skeptic), 모델이 채점기의 값을 옮겨 적을 뿐이다(Pragmatist) |
 | **(c) 첫 키를 후보 자기 `vul` 응답 코드로 둔다** | **채택.** 위 개정 |
+
+## 개정 2026-10-15 — 결정 1 (council 4인 → @danielcho02 승인)
+
+⏵ **2026-10-15 — 결정 1 개정 (S20 Phase 15, council 4인 → @danielcho02 승인).** `submit` 없이 끝난 Finding의 중간 `gen` 중 **자기 `vul` 제출 응답 코드가 크래시 계단**(`oracle_log.vul_code_tier == VUL_TIER_CRASH`)인 것이 최종 지정의 후보가 된다 — 이 개정은 그것을 **구제(rescued)**라 부른다. 새 제출은 없다: 중간 `gen` 때 이미 장부(`OracleLedger.attempts`)에 쌓인 행을 그대로 쓴다.
+
+- **규칙.** 후보 풀 = 모델이 `submit`한 후보(`ledger.candidates`) + 구제된 중간 `gen`(`ledger.rescued`) = `ledger.pool`. 「`submit` 없이 끝난 Finding」은 그 Finding에 `designatable` 시도가 하나도 없다는 뜻이다 — 루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊은 경우 전부다. **`submit`한 Finding은 구제가 없다** — 그 `submit`이 틀렸어도, 제출이 실패했어도(실패한 `designatable` 시도도 센다) 마찬가지다. 환경·모름 코드(124~127·137·255·255 초과·`None`)와 크래시 아님(0·71)은 구제 대상이 아니다.
+- **순위.** 지정 키(`runner._designation_key`)의 **둘째 성분**으로 제출 여부가 붙었다: ⓿응답 코드 계단 → **⓿′제출된 후보 < 구제된 중간 `gen`** → ⓪Critic 판정 → ①등급 → ②`confidence` → ③작은 바이트 → ④해시. 같은 계단에서는 제출된 후보가 구제된 것보다 **늘 앞서고**(근거 이름 `submitted_over_rescued`, `_DESIGNATION_CHAIN`의 둘째 자리) 계단이 다르면 ⓿이 먼저라 구제된 크래시가 다른 Finding이 제출한 비-크래시(코드 0)를 이긴다(근거 `vul_crash`). 같은 바이트가 제출과 구제 양쪽에 있으면 제출된 행이 지정돼 구제로 안 센다(`sole_poc`).
+- **기록.** trace `oracle_final.rescued`(지정된 후보가 구제된 것이면 `true`, 제출된 것이면 `false`, 지정이 없으면 `null`)와 사이드카 `oracle/verdict.json`의 `candidates[*].rescued`(구제된 행만 `true`)·`final.rescued`(true/false)가 그것을 싣는다. `oracle_submitted`에는 안 싣는다 — 그 이벤트는 제출 시점에 나가는데 그때는 그 Finding이 `submit`할지 모른다. 구제된 최종은 run 경고도 낸다.
+- **안 바뀌는 것.** ① 새 제출·새 조회가 없다 ② `fix` 다리는 지정된 **하나**에만 한 번 돈다 ③ 결정 2(개정 2026-10-14) 그대로 — 지정이 읽는 채점기 값은 후보 자기 `vul` 응답 코드 **하나**다. 구제 여부는 `designatable`이라는 하네스 값에서 나오고 채점기 필드를 더 읽지 않는다 ④ **결정 5 그대로** — PoV 시점에 후보나 Finding에 `vul_crashed`·`rescued` 같은 파생 플래그를 스탬프하지 않는다. 구제 여부는 지정 시점에 장부에서 계산한다 ⑤ 결정 3(프롬프트 ⓑ)·4(재개 게이트)는 그대로다. 프롬프트는 **v8**이 한 줄을 더했다 — `submit` 없이 끝나면 하네스가 크래시 응답을 받은 중간 `gen`으로 물러날 수 있지만 제출된 후보보다 아래이니 기대지 말라(`prompts/pov/v8/meta.yaml`).
+- **한계.**
+  - 구제된 크래시는 다른 버그이거나 호스트 잡음(`vm.mmap_rnd_bits` 32의 무해 입력 139 — 2026-10-14 개정의 한계)일 수 있다. 그러면 `fix` 다리도 크래시라 점수는 0이다 — 구제가 없던 때(`no_poc`, 점수 0)보다 **나빠지지는 않는다**. 단 구제된 후보가 **더 나은** 다른 Finding의 제출 후보를 이기는 것은 계단이 다를 때뿐이고(위 순위) 그것은 2026-10-14 개정과 같은 의도다.
+  - 응답의 0은 타임아웃과 안 터진 것을 못 가르고, 서버 캐시(#385)가 옛 코드를 돌려줄 수 있다(2026-10-14 개정의 한계 그대로). 코드 1은 크래시로 센다.
+  - **v8의 한 줄이 모델 행동을 바꾸는지**(`submit`을 늦추는지 · 구제에 기대는지)는 **미실측**이다 — v8로 돈 run이 0건이다.
+  - 구제의 발생 비율과 구제된 후보가 `fix` 다리를 통과하는 비율은 **미실측**이다. 이 개정은 관측이 아니라 판단(council)에서 나왔다.
+  - 예산·게이트웨이로 `validated` 대상이 끊긴 run은 최종 지정 자체를 안 돌린다(`_analyze`의 `candidates` 조건 — 그대로 둔다). 중간 `gen`만 있는 그 run에서는 구제도 일어나지 않는다.
+- **결정 경로.** 4인 council — Pragmatist (b) · Critic 조건부 (b) · Skeptic (a) · Architect는 범위를 좁혀 (b) → @danielcho02 승인(2026-10-15). 라벨 (a)·(b)는 **이 개정 council의 것이다** — 이 ADR 위쪽 ⓐ~ⓓ와 2026-10-14 개정의 (a)~(d)와 **무관하다**. 채택된 것은 (b)이고 Skeptic만 (a)에 남았다.
 
 ## 대안과 기각 사유
 

@@ -1260,8 +1260,14 @@ def test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate(
     바이트는 `seen`에 있어 다시 내면 `REPEAT_SPEC`으로 루프가 서고, 그렇게 선 루프는 지정
     후보가 없다(`submit`만 후보다 — `_run_pov`). 그 처방을 적으면 모델이 스스로 최종 후보를
     지운다. (`gen`으로는 되살릴 수 없다 — 이긴 바이트를 되살리는 길은 `submit`의 `poc_sha256`
-    지명이다.)"""
-    oracle = ReadingOracle(codes=(77, 0))
+    지명이다.)
+
+    ⏵ 2026-10-15 (ADR 0013 결정 1 개정) — 제출된 후보가 없다는 사실은 그대로다. 달라진 것은
+    하네스가 그 루프의 **크래시 응답을 받은 중간 gen**을 구제해 지정할 수 있다는 것이다: 이긴
+    바이트(응답 77)가 지정되고 진 바이트(응답 0)는 아니다. 그래도 프롬프트는 재`gen`이 아니라
+    지명 `submit`을 쓰라고 적어야 한다 — 구제는 모델의 선택이 아니라 하네스의 대체 경로이고
+    제출된 후보보다 늘 아래다."""
+    oracle = ReadingOracle(codes=(77, 0), response_codes=(77, 0))
     winner, loser = _gen(count=3), _gen(count=1)
 
     scripted, state, _ = _feedback_run(
@@ -1270,8 +1276,8 @@ def test_regenerating_the_winning_bytes_ends_the_loop_with_no_final_candidate(
     runner._finalize_oracle(scripted, state)
 
     assert _stop_reasons(scripted)[-1] == PovStopReason.REPEAT_SPEC.value
-    assert state.oracle_ledger.candidates == []
-    assert oracle.final_calls == []
+    assert state.oracle_ledger.candidates == [], "submit이 없었다 - 제출된 후보는 0건이다"
+    assert [poc for poc, _ in oracle.final_calls] == [b"AAA"], "이긴 바이트만 구제돼 지정됐다"
 
 
 def test_a_variant_that_lands_inside_the_set_cannot_bring_the_winner_back(
@@ -1556,8 +1562,12 @@ def test_a_loser_left_unsubmitted_on_the_final_hop_leaves_no_candidate(
     """프롬프트가 안 내라는 쪽 — 앞선 `gen`도 셋 밖을 못 받은 채(전부 300) 마지막 `gen`이 제외 코드
     안이면 마지막 홉에 `submit`이 아닌
     액션(`inspect`의 `build`)을 낸다. 루프는 `MAX_HOP`으로 서고 후보도 최종 판정도 없다 — v3가
-    마감 앞에서 내던 결과와 같다(진 PoC가 다른 Finding의 이긴 PoC를 밀어내지 않는다)."""
-    oracle = ReadingOracle(codes=(300,) * 10)
+    마감 앞에서 내던 결과와 같다(진 PoC가 다른 Finding의 이긴 PoC를 밀어내지 않는다).
+
+    ⏵ 2026-10-15 — 제출 응답 코드를 관측과 같은 모양으로 고쳤다: 서버는 타임아웃 300을 응답에서
+    0으로 덮는다(#384). 고정 `FakeOracle`의 응답(77)을 그대로 두면 이 gen들이 크래시 계단이라 구제돼
+    「최종 판정 없음」이 깨진다."""
+    oracle = ReadingOracle(codes=(300,) * 10, response_codes=(0,) * 10)
 
     scripted, state, _ = _feedback_run(
         _with_hops(ctx, _FINAL_HOPS),

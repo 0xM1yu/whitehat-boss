@@ -132,6 +132,7 @@ def test_several_candidates_all_get_the_vul_leg_and_the_fix_leg_runs_once_on_the
         "reason": None,
         "poc_sha256": hashlib.sha256(_POCS[0]).hexdigest(),
         "poc_bytes": len(_POCS[0]),
+        "rescued": False,  # ⏵ 2026-10-15 - 제출된 후보라 구제가 아니다
         "task_id": TASK_ID,
         "error": None,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
@@ -164,6 +165,7 @@ def test_exactly_one_candidate_is_the_final_and_the_fix_leg_runs_exactly_once(
         "reason": None,
         "poc_sha256": hashlib.sha256(_POCS[0]).hexdigest(),
         "poc_bytes": len(_POCS[0]),
+        "rescued": False,  # ⏵ 2026-10-15 - 제출된 후보라 구제가 아니다
         "task_id": TASK_ID,
         "error": None,
         "record_ref": None,  # 이 문맥에는 사이드카 쓰는 객체가 없다
@@ -1735,8 +1737,11 @@ def test_there_is_no_tie_refusal_left_to_fall_back_on() -> None:
     key = runner._designation_key(
         _attempt("f", b"\x00"), {"f": EvidenceGrade.E0}, {"f": 0.5}, {"f": 1}
     )
-    assert len(runner._DESIGNATION_CHAIN) == len(key) == 6
-    assert runner._DESIGNATION_CHAIN[:2] == ("vul_crash", "critic_verdict")
+    # ⏵ 2026-10-15 - 여섯에서 일곱(`submitted_over_rescued`가 응답 코드 계단 바로 뒤에 붙었다)
+    assert len(runner._DESIGNATION_CHAIN) == len(key) == 7
+    assert runner._DESIGNATION_CHAIN[:3] == (
+        "vul_crash", "submitted_over_rescued", "critic_verdict",
+    )
 
 
 def _trap(name: str):  # noqa: ANN202

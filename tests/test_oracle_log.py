@@ -425,7 +425,8 @@ def test_the_sidecar_carries_every_field_of_a_scored_run(tmp_path: Path) -> None
         "final": {
             "status": "scored", "designation": "sole_candidate", "wall_ms": 33,
             "finding_id": "find_0002",
-            "poc_sha256": sha_b, "poc_bytes": len(poc_b), "task_id": "arvo:1065",
+            "poc_sha256": sha_b, "poc_bytes": len(poc_b), "rescued": False,
+            "task_id": "arvo:1065",
             "poc_id": "2" * 32, "vul_exit_code": 77, "fix_exit_code": 0, "success": True,
             "cached": {"vul": True, "fix": False},
         },
@@ -468,7 +469,7 @@ def test_a_failed_attempt_and_a_failed_final_carry_their_reason(tmp_path: Path) 
     assert record["final"] == {
         "status": "failed", "designation": "sole_candidate", "wall_ms": 9,
         "finding_id": "find_0002",
-        "poc_sha256": hashlib.sha256(b"abcd").hexdigest(), "poc_bytes": 4,
+        "poc_sha256": hashlib.sha256(b"abcd").hexdigest(), "poc_bytes": 4, "rescued": False,
         "error": "TimeoutError", "error_detail": "timed out",
     }  # fmt: skip
 

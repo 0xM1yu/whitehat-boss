@@ -949,7 +949,12 @@ models:
     # 「하네스는 채점기 코드로 가르지 않는다」가 거짓이라 다시 썼다)(`prompts/pov/v7/meta.yaml`).
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v7을 더했다. **v7로 돈 run은 0건 · 효과 미실측** - v6 이하와 직접 비교하지 않는다. 위 v6
     # 문단의 sha는 v6의 값이다.
-    prompt_template_version: "v7"
+    # ⏵ 2026-10-15 — v8로 올렸다(S20 Phase 15 · ADR 0013 2026-10-15 개정). v8은 v7에서 prefix 「Hop budget」 한 줄에 세 문장만 더했다:
+    # `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 하네스 쪽에서 제출된 후보보다 아래 순위로 구제될 수 있다
+    # (`prompts/pov/v8/meta.yaml`). prefix.md sha256 `34e8be7172d00b3b68e980c5815f66c05ef96f6d68f09936812538a9342dd911`.
+    # `nodes/pov._WIDE_INPUT_VERSIONS`에 v8을 더했다. **v8로 돈 run은 0건 · 효과 미실측** - v7 이하와 직접 비교하지 않는다. 위 v7
+    # 문단의 sha는 v7의 값이다.
+    prompt_template_version: "v8"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
