@@ -17,8 +17,8 @@ run당 한 번만 부른다.
 중간 PoC의 `vul` 판정 조회는 `query_vul`로 분리해 다음 PoV 홉에 원시 종료 코드만 돌려준다.
 최종 하나가 어느 후보인가는 `runner._designate_final`이 정한다 - 후보가 하나뿐이면 그
 하나고, **둘 이상이면 같은 PoC 바이트끼리 접은 뒤 전순서**
-(자기 `vul` 응답 종료 코드 계단 → Critic 판정 → 내부 근거 등급 → `confidence` → 작은 바이트 → PoC
-해시)**로 하나를 고른다**.
+(자기 `vul` 응답 종료 코드 계단 → 제출된 후보 < 구제된 중간 gen → Critic 판정 → 내부 근거 등급
+→ `confidence` → 작은 바이트 → PoC 해시)**로 하나를 고른다**.
 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다(그 함수 docstring —
 ⏵ 2026-10-04에 「동점이면 거부」가 이 사슬로 바뀌었다).
 🔴 **그 규칙이 이 파일이 내는 값 중 읽는 것은 `VulSubmission.response_exit_code` 하나다**
