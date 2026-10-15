@@ -245,6 +245,21 @@ def test_submission_failures_are_counted_in_a_warning() -> None:
     assert any("vul 제출 2건이 예외로 실패했다" in text for text in texts)
 
 
+def test_none_warnings_count_the_pool_not_only_the_submitted_candidates() -> None:
+    """최종 후보 풀 = 제출된 후보 1 + 구제된 중간 gen 1(다른 Finding, submit 없음, 크래시 코드)."""
+    crash = VulSubmission("arvo:1065", "c" * 32, 139, cached=False)
+    ledger = OracleLedger(wired=True)
+    ledger.add_attempt(_ok("find_0001"))
+    ledger.add_attempt(
+        oracle_log.vul_ok("find_0002", b"gen", crash, wall_ms=1, designatable=False)
+    )
+    assert len(ledger.pool) == 2 and len(ledger.candidates) == 1
+
+    assert any("최종 후보 풀 2건" in text for text in ledger.warnings())
+    ledger.set_final(FinalAttempt(status="none", reason="grade_unknown"))
+    assert any("2건인데" in text for text in ledger.warnings())
+
+
 @pytest.mark.parametrize(
     ("final", "needle"),
     [
@@ -253,7 +268,7 @@ def test_submission_failures_are_counted_in_a_warning() -> None:
             FinalAttempt(status="failed", attempt=_ok("find_0001"), error="CyberGymOracleError"),
             "최종 판정이 예외(CyberGymOracleError)로 실패했다",
         ),
-        (FinalAttempt(status="none", reason="no_poc"), "PoV가 submit한 PoC가 없어"),
+        (FinalAttempt(status="none", reason="no_poc"), "submit한 PoC도 구제된 중간 gen도 없어"),
         (
             FinalAttempt(status="none", reason="all_vul_submissions_failed"),
             "vul 제출이 전부 실패해",
