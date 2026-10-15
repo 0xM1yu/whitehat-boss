@@ -10,6 +10,7 @@ engineering-guide.md §8.5(임계값·예산·모델은 config에서)와 §8.7(�
 """
 
 import json
+import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from src.config import (
     HarnessConfig,
     ModelEntry,
     ProfileEntry,
+    Thresholds,
     load_config,
 )
 from src.orchestrator.nodes import auditor as auditor_node
@@ -575,8 +577,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v15`를 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v17(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v17`을 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -606,10 +608,16 @@ def test_the_canonical_auditor_selects_prompt_v15(profile: str) -> None:
     바이트·봉투는 그대로다(meta 주석만 바뀌었다 · 같은 규칙 1). ⏵ **v15**(2026-10-13 · S19) =
     v14 + 계약 문장 여섯(`probe`가 `spec`을 `poc`에 싣는다 등 — `prompts/auditor/v15/meta.yaml`).
     봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction`이고 v14 클래스는 한 글자도 안
-    바뀌었다(같은 규칙 1)."""
+    바뀌었다(같은 규칙 1). ⏵ **v16**(2026-10-14 · S20 Phase 13) = v15 + 입력 맥락 함수 블록의 서술 -
+    새 옵션 `auditor_write_window_marker`·`auditor_input_context`
+    (`prompts/auditor/v16/meta.yaml`)를 켜 두려고 올렸다. 봉투·body는
+    v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1). ⏵ **v17**(2026-10-14 · S20 Phase 14) =
+    v16 + `FACTS.slice_state` 서술(이슈 #438 (b)) · 「배너 없으면 첫 블록 하나」 정정(이슈 #669) -
+    새 옵션 `auditor_slice_state`(`prompts/auditor/v17/meta.yaml`)는 꺼 둔 채 선언한다. 봉투·body는
+    v16과 같고 v16 파일은 한 글자도 안 바뀌었다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v15"
+    assert config.model_for("auditor").prompt_template_version == "v17"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -687,6 +695,10 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
             f"the {_AUDITOR_WRITE_LINES} lines before and after the write, cut to the writing "
             f"function's own range, at most {thresholds.auditor_write_sites} windows" in flat
         )
+    # 입력 맥락 함수(S20 Phase 13) - 러너는 CPG 근거가 선 선택만 붙인다
+    if thresholds.auditor_input_context:
+        assert "Last, input-context functions" in flat
+        assert "Only a selection backed by code property graph evidence is appended" in flat
     if thresholds.auditor_caller_lines:
         assert f"the {thresholds.auditor_caller_lines} lines before and after the call" in flat
         assert f"at most {_AUDITOR_CALLER_SITES} call sites are read" in flat
@@ -714,11 +726,13 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
     excerpt_sentence = {
         "v14": "not a generated summary",
         "v15": "is bounded: some execution-header lines are removed",
+        "v16": "is bounded: some execution-header lines are removed",
+        "v17": "is bounded: some execution-header lines are removed",
     }
     assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
     assert excerpt_sentence[version] in flat
     has_old = "not a generated summary" in flat
-    assert has_old == (version == "v14"), "v15가 v14의 「생성 요약이 아니다」 문장을 되살렸다"
+    assert has_old == (version == "v14"), "v15~v17이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
         "`truncated` is false",
         "line containing only `...`",
@@ -788,6 +802,8 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         # 음성 통제 — prompts/critic/v7/meta.yaml:1-2는 배선된 판의 문형이다(2026-10-14 v7 배선으로
         # 양성에서 옮겨 왔다 - 그 전에는 첫째·셋째 철자를 함께 든 미배선 판이었다).
         ("critic", "gpt-oss-20b", "v7", []),
+        # 같은 문형의 서빙 판(2026-10-14 v8) - 배선된 판이라 빈 목록이다.
+        ("critic", "gpt-oss-20b", "v8", []),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
@@ -876,6 +892,7 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         ("critic", "v3", {"아직 미활성"}),
         # 음성 통제 — prompts/critic/v7/meta.yaml:1-2는 배선된 판의 문형이다(2026-10-14 v7 배선).
         ("critic", "v7", set()),
+        ("critic", "v8", set()),  # 2026-10-14 서빙 판
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,
@@ -2773,11 +2790,51 @@ def test_the_older_auditor_prompts_describe_no_source_option(version: str) -> No
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
 def test_the_canonical_auditor_prompt_declares_exactly_the_options_turned_on(profile: str) -> None:
     """서빙 판이 선언한 옵션 == `budgets.yaml`이 켠 옵션. `cli`는 켰는데 선언 안 한 쪽만 막으므로
-    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349)."""
+    선언했는데 끈 쪽(서술이 거짓)은 여기서만 걸린다(2026-10-03 넷을 켬 · 서술은 v7, #349). 예외는
+    하나다 - 측정 대기로 **끈 채 선언하는** `auditor_slice_state`(v17 · 아래 본문)."""
     config = load_config(profile)
     version = config.model_for("auditor").prompt_template_version
     described = set(load_prompt(Role.AUDITOR, version).source_options)
-    assert described == set(config.thresholds.auditor_source_options_on())
+    # ⏵ 2026-10-14 — 예외는 하나다: `auditor_slice_state`(v17)는 **끈 채로 선언한다** — 켜는 것은
+    # 측정 결정이고, 켠 run ↔ 끈 run 짝 비교(D101)는 같은 판이 둘을 다 서술해야 선다. 그 서술은 키가
+    # 없을 때도 참이라 거짓 서술이 아니다(`tests/test_auditor_v17.py`). 다른 끈 옵션을 선언하면
+    # 여기서 죽는다.
+    pending = {"auditor_slice_state"}
+    assert described - pending == set(config.thresholds.auditor_source_options_on())
+    assert not (set(config.thresholds.auditor_source_options_on()) & pending), (
+        "끈 채 선언하는 예외는 꺼져 있을 때만 예외다 - 켜면 위 등식이 그대로 걸려야 한다"
+    )
+
+
+@pytest.mark.parametrize("key", ["auditor_write_window_marker", "auditor_input_context"])
+def test_the_new_block_options_default_to_off_in_code(key: str) -> None:
+    """코드 기본은 0이다 - `budgets.yaml`이 켠다. 옵션을 전부 0으로 바꾼 뒤 0을 확인하는 것은
+    동어반복이라 필드 기본을 직접 본다(`Field(default=1)`로 바꾸면 죽는다)."""
+    assert Thresholds.model_fields[key].default == 0
+
+
+def test_the_write_window_marker_is_declared_from_v16_and_turned_on_with_it() -> None:
+    """#650 쓰기 창 생략 줄은 `auditor_write_window_marker` 뒤에 있고 **v16부터** 선언한다(prefix가
+    그 줄을 서술한다) - 서빙 판이 v17이고(v17은 v16의 선언을 이어받는다) `budgets.yaml`이 1이다.
+    v15 이하는 선언하지 않아 그 판과 함께 켜면 `cli`가 막는다."""
+    from src.cli import _undescribed_source_options
+
+    config = load_config("harness_pool")
+    assert config.model_for("auditor").prompt_template_version == "v17"
+    assert config.thresholds.auditor_write_window_marker == 1
+    assert "auditor_write_window_marker" in config.thresholds.flatten()
+    declaring = {
+        path.name
+        for path in (PROMPTS_DIR / "auditor").iterdir()
+        if path.is_dir()
+        and "auditor_write_window_marker" in load_prompt(Role.AUDITOR, path.name).source_options
+    }
+    assert {"v16", "v17"} <= declaring
+    assert all(int(re.match(r"v(\d+)", name).group(1)) >= 16 for name in declaring), declaring
+    older = config.model_key_for("auditor")
+    entry = config.models[older].transition(prompt_template_version="v15")
+    refused = config.transition(models={**config.models, older: entry})
+    assert "auditor_write_window_marker(auditor/v15)" in _undescribed_source_options(refused)
 
 
 def test_prompt_meta_source_options_take_only_known_keys(tmp_path: Path) -> None:

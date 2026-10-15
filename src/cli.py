@@ -92,6 +92,7 @@ from src.bench_report import apply_benchmarks, pending_updates, run_bench
 from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
+    RELAYED_SOURCE_OPTIONS,
     SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
@@ -643,22 +644,77 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     return [f"{key}(auditor/{version})" for key in on if key not in described]
 
 
+def _undescribed_relayed_options(
+    config: HarnessConfig, *, last_stage: Stage = MAX_STAGE
+) -> list[str]:
+    """켜진 `RELAYED_SOURCE_OPTIONS` 중 **Critic·PoV 좌석의 프롬프트 meta `source_options`가 안
+    든 것**(PR #676). 항목은 `옵션(역할/판)`이다 — 프로필에 Auditor가 없으면 `[]`다.
+
+    Auditor가 만든 `SOURCE` 문자열은 `runner.finding_sources`로 Critic
+    (`_SOURCE_INPUT_VERSIONS`)과 8단계 PoV(`_WIDE_INPUT_VERSIONS`)에도 같은 바이트로 간다.
+    `_undescribed_source_options`는 Auditor 판만 보므로 서빙 Auditor가 블록을 서술해도 그
+    문자열을 받는 Critic·PoV 판이 모르는 조합이 통과했다.
+
+    - SOURCE를 **받는 판만** 본다 — 받지 않는 판(Critic v1~v5 · PoV v2)은 문자열이 안 가서
+      서술이 필요 없다. 선언이 없는 판(v7 이하 · v6 이하)은 「서술하지 않는다」로 읽는다.
+    - Fake 좌석은 `[]`다(`_undescribed_source_options`와 같은 논법 - 정해진 답을 낸다).
+    - `last_stage`가 그 좌석의 첫 단계(`_PROMPT_FIRST_STAGE`)에 못 닿으면 건너뛴다
+      (`_check_prompts`와 같다 - `--stop-after 4` run이 8단계 PoV 판 때문에 막히지 않는다).
+    프롬프트를 못 읽으면 `PromptError`다.
+    """
+    on = [k for k in config.thresholds.auditor_source_options_on() if k in RELAYED_SOURCE_OPTIONS]
+    if not on or Role.AUDITOR.value not in config.profile.roles:
+        return []
+    receivers = {"critic": critic._SOURCE_INPUT_VERSIONS, "pov": pov._WIDE_INPUT_VERSIONS}
+    missing: list[str] = []
+    for role, versions in receivers.items():
+        if role not in config.profile.roles or _PROMPT_FIRST_STAGE[role] > last_stage:
+            continue
+        entry = config.model_for(role)
+        if entry.is_fake:
+            continue
+        version = entry.prompt_template_version
+        if version not in versions:
+            continue
+        described = load_prompt(Role(role), version).source_options
+        missing.extend(f"{key}({role}/{version})" for key in on if key not in described)
+    return missing
+
+
 def _check_source_options(config: HarnessConfig) -> list[Check]:
     """켜진 Auditor `SOURCE` 옵션을 프롬프트가 서술하지 않으면 ERROR — `--slices` 경고와 달리
-    설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다."""
+    설정 자체가 어긋난 것이라(thresholds는 모든 프로필 공통) doctor가 막는다. 같은 `SOURCE`를 받는
+    Critic·PoV 판이 서술하지 않는 경우도 따로 ERROR다(`_undescribed_relayed_options`, PR #676)."""
+    checks: list[Check] = []
+    # 둘은 **따로 시도한다** - 한 try에 묶으면 Critic·PoV 판 로드 실패가 이미 계산한 Auditor ERROR를
+    # 버린다. 로드 실패 자체는 `_check_prompts`가 이미 ERROR로 댄다.
     try:
         missing = _undescribed_source_options(config)
     except PromptError:
-        return []  # 로드 실패는 `_check_prompts`가 이미 ERROR로 댄다
-    if not missing:
-        return []
-    return [
-        Check(
-            Severity.ERROR,
-            f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
-            "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+        missing = []
+    try:
+        relayed = _undescribed_relayed_options(config)
+    except PromptError:
+        relayed = []
+    if missing:
+        checks.append(
+            Check(
+                Severity.ERROR,
+                f"Auditor SOURCE 옵션 {', '.join(missing)}을 프롬프트가 서술하지 않는다 — meta의 "
+                "source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
+            )
         )
-    ]
+    if relayed:
+        checks.append(Check(Severity.ERROR, _relayed_options_message(relayed)))
+    return checks
+
+
+def _relayed_options_message(relayed: list[str]) -> str:
+    return (
+        f"SOURCE 옵션 {', '.join(relayed)}을 그 좌석의 프롬프트가 서술하지 않는다 — Auditor가 만든 "
+        "SOURCE가 Critic·PoV에도 같이 가므로(finding_sources) meta의 source_options에 넣은 판"
+        "으로 올리거나 옵션을 끈다 (#676)"
+    )
 
 
 def _auditor_loop_problem(config: HarnessConfig) -> str | None:
@@ -1004,8 +1060,9 @@ def _oracle_for(
         f"{_ORACLE_KEY_ENV}가 이 주소의 private 경로로 간다. vul 다리에는 모델이 "
         "submit한 PoC와(pov v3 이상) 중간 gen을 보내고 중간 gen은 판정 조회도 한다. "
         "fix 다리와 최종 판정 조회는 최종으로 지정한 후보 하나에만 보낸다 - 후보가 하나뿐이면 "
-        "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 값의 전순위로 "
-        "하나를 고른다(Critic 판정 > 내부 근거 등급 > confidence > 작은 바이트 > PoC 해시). "
+        "그 하나고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 전순위로 "
+        "하나를 고른다(vul 응답 종료 코드 계단 > Critic 판정 > 내부 근거 등급 > confidence > "
+        "작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 아님 순이다). "
         "등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 보내지 않는다"
     )
     return TaskOracle(
@@ -1764,6 +1821,10 @@ def run(args: argparse.Namespace) -> int:
     # ⏵ 2026-10-11 — 서빙 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 옵션 서술은 v12와
     # 같다, 이슈 #67).
     # ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 — 옵션 서술·body는 v14와 같다, S19).
+    # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + `auditor_input_context` 서술 · 표지 줄
+    # `auditor_write_window_marker` 설명 — 두 옵션의 서술은 v16부터다, S20 Phase 13).
+    # ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + `auditor_slice_state` 서술 — 그 옵션의 서술은
+    # v17부터다, S20 Phase 14 · 이슈 #438 (b). 위 두 옵션은 v17도 선언한다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
@@ -1771,12 +1832,22 @@ def run(args: argparse.Namespace) -> int:
         except PromptError as exc:
             print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
             return 2
+        # Auditor 거절을 먼저 낸다 - Critic·PoV 판 로드 실패가 이 메시지를 가리지 않는다.
         if undescribed:
             print(
                 f"[ERROR] Auditor SOURCE 옵션 {', '.join(undescribed)}을 프롬프트가 서술하지 "
                 "않는다 — meta의 source_options에 넣은 판으로 올리거나 옵션을 끈다 (#349)",
                 file=sys.stderr,
             )
+            return 2
+        # **같은 SOURCE를 받는 Critic·PoV 좌석도 같은 가드다**(PR #676) - 그 run이 닿는 좌석만 본다.
+        try:
+            relayed = _undescribed_relayed_options(config, last_stage=Stage(spec.stop_at()[0]))
+        except PromptError as exc:
+            print(f"[ERROR] 프롬프트 로드 실패: {exc}", file=sys.stderr)
+            return 2
+        if relayed:
+            print(f"[ERROR] {_relayed_options_message(relayed)}", file=sys.stderr)
             return 2
     # **도구 루프 상한과 Auditor 프롬프트 선언이 어긋나면 시작하지 않는다**(#419). 위 가드와 같은
     # 모양· 같은 판단이다 — 켜 놓고 프롬프트가 안 알리면 모델이 도구를 영영 안 쓰는데 run은 정상
@@ -2131,9 +2202,9 @@ def build_parser() -> argparse.ArgumentParser:
         "vul 다리에는 모델이 submit한 PoC와(pov v3 이상) 중간 gen을 내고 중간 gen은 판정 조회도 "
         "한다. fix 다리와 최종 판정 조회는 최종 PoC 하나에만 run당 한 번 돈다 - vul 제출이 "
         "성공한 최종 후보가 "
-        "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 하네스가 만든 "
-        "값의 전순위(Critic 판정 > 내부 근거 등급 > confidence > 작은 바이트 > "
-        "PoC 해시)로 고른 하나에 "
+        "하나뿐이면 그 하나에 돌고, 둘 이상이면 같은 PoC 바이트끼리 접은 뒤 "
+        "전순위(vul 응답 종료 코드 계단 > Critic 판정 > 내부 근거 등급 > confidence > "
+        "작은 바이트 > PoC 해시. 계단은 크래시, 모름, 크래시 아님 순이다)로 고른 하나에 "
         "돈다 - 등급·confidence·Critic 판정 중 모르는 값이 있는 후보가 있으면 "
         "안 돈다(oracle_final은 status "
         "none, reason grade_unknown). "

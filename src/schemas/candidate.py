@@ -110,6 +110,38 @@ class Candidate(HarnessModel):
     slice_id: NonEmptyStr | None = None
 
 
+class InputContextFunction(HarnessModel):
+    """`analysis.input_context.functions[]` 한 항목 중 **읽는 네 키** — 위치만 든다.
+    종류(`kind`)·점수·증명 (`cpg`)은 안 읽는다. 본문은 소비하는
+    쪽(`orchestrator/source_input_context`)이 `read_source`로 읽는다."""
+
+    file: NonEmptyStr
+    symbol: str | None
+    line_start: int
+    line_end: int
+
+
+class InputContext(HarnessModel):
+    """슬라이서 `slices[].analysis.input_context`(`tools/slicer_v2/input_context.py`) 중 하네스가
+    읽는 키.
+
+    `SliceRef.input_context`가 `None`이면 **키가 없던 슬라이스**(`--index`를 안 줬다)이고, 이 객체의
+    `status == "none_selected"`는 「인덱스로 훑었는데 더할 함수가 없었다」다 — 둘은 다른 사실이라
+    합치지 않는다(CLAUDE.md §0). `cap_hit`이 서 있는 `none_selected`는 0이 아니라 **모름**이다 (잘린
+    탐색일 수 있다 — 슬라이서 README). `carried_decoders`·`dispatches`는 이 판이 싣지 않아 수만
+    든다(이벤트 보고용)."""
+
+    version: int
+    status: Literal["selected", "none_selected"]
+    # 선택의 근거 - `cpg`는 호출 경로 증명이 있고 `syntax`는 인덱스만으로 고른 약한 선택이다.
+    basis: Literal["cpg", "syntax"]
+    cap_hit: bool
+    cap_reasons: tuple[str, ...]
+    functions: tuple[InputContextFunction, ...]
+    carried_decoders: int
+    dispatches: int
+
+
 class SliceRef(HarnessModel):
     """러너가 슬라이스 하나를 타깃으로 세우는 데 필요한 것 — 어댑터가 `slices.json`에서 만든다.
 
@@ -142,9 +174,11 @@ class SliceRef(HarnessModel):
     # 기본 `{}`는 provenance 없는 입력(옛 슬라이스·degraded 빈 범주)이고, 그럴 땐 거리순만 남는다.
     provenance: dict[str, tuple[tuple[str, int], ...]] = Field(default_factory=dict)
     # 슬라이서의 분석 사실 — slice-v2 `analysis_kind`·`truncated`·`analysis.truncation_reasons`·
-    # `analysis.sinks_capped`·`analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
+    # `analysis.sinks_capped`·`analysis.cross_method_flow_truncated`·
+    # `analysis.boundaries`. 슬라이서가 내는데 예전엔 하네스가 **안 읽고
     # 버렸다** — 그러면 하류가 「이 슬라이스는 잘렸다·역추적이 호출 간선 없는 파라미터에 닿았다」를
-    # 못 안다(`orchestrator/source_gate.py`가 읽는다). 기본값은 옛 슬라이스(키가 없다)의 것이라
+    # 못 안다(`orchestrator/source_gate.py`가 읽고 ⏵ 2026-10-14 `orchestrator/slice_state.py`도 같은
+    # 필드를 읽는다 — 둘째 소비자, 이슈 #438 (b)). 기본값은 옛 슬라이스(키가 없다)의 것이라
     # `truncated=False`만으로는 「절단 아님」인지 「안 적었다」인지 안 갈린다 — `analysis_kind`가 빈
     # 문자열이면 슬라이서가 분석 사실을 안 적은 슬라이스다.
     analysis_kind: str = ""
@@ -163,3 +197,22 @@ class SliceRef(HarnessModel):
     # 않는다 — 인클루드 디렉터리가 겹쳐 붙은 꼴이 나온다:
     # `libavdevice/libavformat/libavformat/avio.h`. `line`은 -1일 수 있다(Joern이 줄을 못 준 노드).
     boundaries: tuple[tuple[str, str, int], ...] = ()
+    # 위 `truncated` · `truncation_reasons` · `boundaries`를 슬라이서가 **실제로 적었나**(이슈
+    # #438 (b)). 빈 값(`False` · `()`)만으로는 「적었는데 비었다」와 「그 키를 안 적는다」가 안
+    # 갈린다 — Case A `parameter_paths`와 `degraded_anchor_only`는 사유·경계를 둘 다 안 적는다.
+    # 기본 `False`는 모름이다. 읽는 곳은 `orchestrator/slice_state.py`(Auditor FACTS ·
+    # `auditor_slice_state`)다 - 사후 관측 `source_gate`는 안 읽는다(빈 값을 사유 없음으로 둔다).
+    truncated_recorded: bool = False
+    truncation_reasons_recorded: bool = False
+    boundaries_recorded: bool = False
+    # 슬라이서의 상한 둘을 **적었나**와 값(같은 규약). `sinks_capped`(위)는 Case A flows 질의만
+    # 적는다. `cross_method_flow_truncated`는 대상 지정 모드(`tools/slicer_v2`)만 적는다 — 교차
+    # 메서드 간선을 `CROSS_EDGE_LIMIT`개에서 잘랐다는 뜻이고 `truncated`·`truncation_reasons`와
+    # 별개다. 합친 슬라이스는 구성원 전부에서 OR로 모은다. 기본 `False`는 모름이다.
+    sinks_capped_recorded: bool = False
+    cross_method_flow_truncated: bool = False
+    cross_method_flow_truncated_recorded: bool = False
+    # 슬라이서의 `analysis.input_context` - 입력 디코더로 보이는 함수의 **이름**(소스는 안 싣는다).
+    # `None`은 키가 없다(`--index` 없이 돈 슬라이스·옛 슬라이스)이고 `none_selected`와 다르다. 읽는
+    # 곳은 `auditor_input_context`가 켜진 run의 `runner._auditor_source` 하나다.
+    input_context: InputContext | None = None

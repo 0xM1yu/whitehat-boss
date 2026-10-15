@@ -137,8 +137,8 @@ profiles:
     #   ⚠ 그래서 **세 역할 축이 재는 것은 전부 프롬프트 차이이고 모델 차이가 아니다**(§1 · ADR 0010 §3).
     #   injection은 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서,
     #   memory는 2026-09-25 실험팀 최종 권고로, boundary는 2026-10-14에 `seccoderx-8b`에서 옮겼다.
-    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v7이다(2026-10-14 — #497이 2026-10-05에 v6으로 배선했고
-    #   S20 Phase 11이 올렸다. v7은 SOURCE로 직접 검증하는 5-check 절차이고 입력은 v6과 같다).
+    # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v8이다(2026-10-14 — #497이 2026-10-05에 v6으로 배선했고
+    #   S20 Phase 11이 v7로, Phase 14가 v8로 올렸다. v7은 SOURCE로 직접 검증하는 5-check 절차이고 v8은 거기에 SOURCE 새 블록 둘 · Auditor 도구 관측 절 · `auditor_hops`의 서술을 더하고 그 절과 어긋나는 한 문장을 고쳤다 — 입력은 v6과 같다).
     #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
     # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
     #   registry가 근거 본문 배선과 함께 `v3`를 골랐다(auditor/v3는 2026-09-22 #237로 디스크에 있었고,
@@ -154,7 +154,9 @@ profiles:
     #   **v13으로 올렸다**(이슈 #67 — v11 + FACTS에서 `source` 사본을 뺀다). ⏵ 2026-10-11 —
     #   **v14로 올렸다**(v12 + FACTS `source` 제거 — v12 봉투, 이슈 #67 · #578). ⏵ 2026-10-13 —
     #   **v15로 올렸다**(v14 + 계약 문장 여섯 · 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction` ·
-    #   `facts_source: false`는 그대로다 — S19). critic gpt-oss와
+    #   `facts_source: false`는 그대로다 — S19). ⏵ 2026-10-14 — **v16으로 올렸다**(v15 + `auditor_input_context` 서술 · 쓰기 창 표지 줄(`auditor_write_window_marker`) 설명 —
+    #   S20 Phase 13 · 봉투·body·도구는 그대로다). ⏵ 2026-10-14 — **v17로 올렸다**(v16 + `FACTS.slice_state` 서술 ·
+    #   「배너 없으면 첫 블록 하나」 정정 — S20 Phase 14 · 봉투·body·도구는 그대로다 · v16이 선언한 옵션 둘은 v17도 선언한다). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.

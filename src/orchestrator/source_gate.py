@@ -3,7 +3,9 @@
 추적: #438. `runner._auditor_source`가 이미 아는 값만 받는 **순수 함수**다 — 파일도 인덱스도 안
 읽고(`src/adapters`를 import하지 않는다) 모르는 것을 사유로 지어내지 않는다. **읽기 전용 관측**이다:
 사유는 `auditor_source` 이벤트의 `gate_reasons`로만 나가고 Auditor 프롬프트·FACTS·`SOURCE`는 안
-바꾼다.
+바꾼다. ⏵ 2026-10-14 — 같은 `SliceRef` 필드를 모델에 보이는 둘째 소비자가 `slice_state`다
+(`auditor_slice_state` · FACTS `slice_state` · 이슈 #438 (b)) - 이쪽은 읽기 전용 관측이고 저쪽은
+모델 입력이다. 「적었나」를 재는 `*_recorded`는 저쪽만 읽는다.
 
 ⚠ **빈 목록은 「아래 검사가 하나도 안 걸렸다」이지 「SOURCE가 완전하다」가 아니다.** 아래 「못 내는
 것」은 검사하지 않고, 켜지 않은 단계(정의·피호출·호출자 창)는 그 검사가 안 돈다.

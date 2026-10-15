@@ -1045,7 +1045,9 @@ def test_pov_facts_carry_the_entrypoint_body_not_the_ne_followup_wrapper(
     첫 판은 `resolution.followup_text`를 `source`에 실었다. 그것은 함수 본문이 아니라
     `render_followup`이 만든 **다음 턴 전체**다 — `## Retrieved context (hop 1)` 머리, 줄번호
     gutter, 그리고 꼬리에 *"output one complete ScoutResponse JSON"*. `body.md`가 FACTS를 *"참조
-    가능한 사실 전부"*라 선언하므로, 거기 실린 **다른 역할의 지시**를 PoV가 사실로 읽는다.
+    가능한 사실 전부"*라 선언하므로(⏵ 2026-10-15 - PoV v2~v6 body의 것이다. v7은 「전부」라
+    하지 않지만 FACTS가 입력 사실 JSON인 것은 같다), 거기 실린 **다른 역할의 지시**를 PoV가
+    사실로 읽는다.
 
     앞의 두 검사는 `_resolution` 스텁이 `followup_text=<본문>`을 **지어내서** 이 결함을 못 잡았다.
     여기서는 `Resolution`을 **진짜 모양으로**(포장이 든 `followup_text` + 위치 블록) 주고, FACTS에
@@ -1363,8 +1365,8 @@ def test_pov_v2_prompt_ignores_the_pr_inputs_and_keeps_the_pre_pr_finding_format
     ① v2 FINDING 블록이 main `d85ea62`의 옛 모양과 **글자째** 같다(`_pre_pr_finding_block`).
     ② 이 PR의 입력을 전부 채운 렌더와 하나도 안 채운 렌더가 **prefix·body 모두 같다**
        (SOURCE·FACTS·FINDING 어디로도 새지 않는다).
-    ③ FACTS 키 집합이 opt-in 셋(`slice_criterion`·`fuzz_entrypoint`·`auditor_hops`)을 뺀
-       `FACT_KEYS`와 같다.
+    ③ FACTS 키 집합이 opt-in 넷(`slice_criterion`·`fuzz_entrypoint`·`auditor_hops`·
+       `slice_state`)을 뺀 `FACT_KEYS`와 같다.
     ④ v2 프롬프트 파일(prefix·body·meta)의 해시가 main blob과 같다 — 파일이 안 바뀌었다.
 
     ⚠ **「main과 바이트가 같다」의 전부는 아니다.** v2 요청에는 이 검사가 못 보는 차이가 둘 더
@@ -1388,7 +1390,9 @@ def test_pov_v2_prompt_ignores_the_pr_inputs_and_keeps_the_pre_pr_finding_format
     assert body_a == body_b, "v2 body가 이 PR의 입력에 따라 달라졌다"
     assert prompt_a.prefix == prompt_b.prefix
     facts = json.loads(prompt_a.body.split("```json")[1].split("```")[0])
-    assert set(facts) == set(FACT_KEYS) - {"slice_criterion", "fuzz_entrypoint", "auditor_hops"}
+    assert set(facts) == set(FACT_KEYS) - {
+        "slice_criterion", "fuzz_entrypoint", "auditor_hops", "slice_state",
+    }
     for name, digest in _V2_PROMPT_SHA256.items():
         text = (PROMPTS_DIR / "pov" / "v2" / name).read_text(encoding="utf-8")
         assert hashlib.sha256(text.encode()).hexdigest() == digest, f"v2/{name}이 바뀌었다"
@@ -2097,6 +2101,8 @@ def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
     split_sentences = {
         "v5": ("`poc`는 받는다", "셋은 안 받는다"),
         "v6": ("**`poc` receives your PoC.**", "do not receive your bytes"),
+        # 2026-10-14 - v7은 v6과 같은 절을 든다
+        "v7": ("**`poc` receives your PoC.**", "do not receive your bytes"),
     }[_POV_SERVED_VERSION]
     for sentence in split_sentences:
         assert sentence in prefix, sentence
@@ -2443,12 +2449,12 @@ def test_the_pov_prompt_metas_name_their_request_envelope() -> None:
     ⚠ **이 표는 열거라 다음 판(v7…)을 못 막는다** — 그 축은 아래
     `test_the_served_pov_version_requests_the_named_envelope`가 본다."""
     declared = {
-        v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5", "v6")
+        v: load_prompt(Role.POV, v).output_schema for v in ("v2", "v3", "v4", "v5", "v6", "v7")
     }
 
     assert declared == {
         "v2": "PovAction", "v3": "PovAction", "v4": "PovAction",
-        "v5": "PovActionNamed", "v6": "PovActionNamed",
+        "v5": "PovActionNamed", "v6": "PovActionNamed", "v7": "PovActionNamed",
     }
     assert pov_node.resolve_output_schema("PovActionNamed") is PovActionNamed
     assert pov_node.resolve_output_schema("PovAction") is PovAction

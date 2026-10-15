@@ -66,10 +66,14 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
     꺼진다**.
 
     🔴 **판 올림 경보기이기도 하다.** 서빙 판이 `PINNED_VERSION`과 다르면 실패한다 — 새 판의 문장을
-    읽고 이 파일의 핀을 의도적으로 다시 만들어야 초록이 된다(모듈 docstring 1)."""
+    읽고 이 파일의 핀을 의도적으로 다시 만들어야 초록이 된다(모듈 docstring 1).
+    ⏵ 2026-10-14 — 서빙 판 v7은 예외로 받는다: v7 = v6 + 고정된 편집 셋이라(`tests/test_pov_v7.py`가
+    바이트 등식으로 묶는다) 편집 밖 덩어리는 v6의 핀이 그대로 덮는다. 편집 안(SOURCE 서술 ·
+    `why-non-crash-not-submitted`의 최종 지정 문장 · body Facts 문장)은 v6 핀이 v7을 덮지
+    않는다 - 그 셋은 `test_pov_v7.py`가 문다. v8 이상이 배선되면 이 경보기가 다시 운다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
-    assert selected == PINNED_VERSION, (
+    assert selected in (PINNED_VERSION, "v7"), (
         f"서빙 판이 {selected}로 올라갔다 - 이 파일의 핀은 {PINNED_VERSION}의 문장이다. "
         f"{selected}/prefix.md를 읽고 `PINNED_VERSION`·`_PINNED_BLOCKS`·`_PINNED_HEADINGS`·"
         "`_DEFECT_EDITS`를 의도적으로 다시 만든다"
@@ -150,6 +154,7 @@ _PINNED_BLOCKS: dict[str, str] = {
         'the scorer and cannot become a candidate. Naming an earlier non-zero `gen` with '
         '`poc_sha256` is still allowed.'
     ),
+    # ⚠ v6의 문장이다 - #637(2026-10-14) 뒤 거짓이라 서빙 판 v7은 다시 썼다(`tests/test_pov_v7.py`).
     "why-non-crash-not-submitted": (
         "- Why a non-crash is not submitted: the final candidate competes with other Findings' "
         "PoCs (which may be scorer-confirmed) for the run's single slot, and the harness does "
@@ -621,7 +626,7 @@ def test_the_prefix_splits_the_four_tools_and_gives_the_poc_tool_no_score() -> N
     무는 것: ① `poc`가 PoC를 받는다 ② `asan`·`gdb`·`build`는 안 받는다(이름 셋) ③ 실행 환경 코드
     124~127이 대상의 판정이 아니다 ④ 채점은 `oracle_vul` 줄이 한다. 🔴 넘지 않는 선: `poc`가
     받는다고
-    적되 **점수를 낸다고는 적지 않는다**(ADR 0014 불변식 2 — 지정은 채점기 값만 읽는다)."""
+    적되 **점수를 낸다고는 적지 않는다**(ADR 0014 불변식 2 — 채점은 오라클만 한다)."""
     flat = " ".join(_prefix().split())
 
     assert "**`poc` receives your PoC.**" in flat
