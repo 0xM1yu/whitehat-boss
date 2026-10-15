@@ -93,7 +93,9 @@ graph LR
 >   하네스는 `slices.json`을 파일로 받는다. `--slices` 없는 run의 타깃은 앞 문장 그대로 tree-sitter 심볼이다.)
 >   (⏵ 2026-10-15 D97 — `candidate_max` 컷의 정렬 키는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`다. 신호가 같으면 과제
 >   설명(`vuln_description`)이 부른 심볼·파일이 먼저 들고, 설명이 없거나 안 맞으면 종전 순서다. 슬라이서도 `--description`으로 같은 설명을 우선 파일에 쓴다.
->   둘 다 순서만 바꾼다 — [D97](open-questions/D/D97.md).)
+>   둘 다 순서만 바꾼다 — [D97](open-questions/D/D97.md). ⏵ 같은 날 — 컷은 그 키 앞 `candidate_max`개가 **전부가 아니다**: 신호 후보 8개가
+  컷을 다 채워 설명과 맞는 후보가 잘린 리허설을 보고, `desc_rank` ≥ 2인 후보 앞 `thresholds.candidate_desc_reserve`개(2)를 신호와 무관하게
+  컷에 넣는다(`runner._cut_with_reserve`). 남긴 목록은 다시 키 순서다. 효과 미실측.)
 > - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012가 그 논의 전에 정해 두는
 >   것은 둘이다 — need_evidence는 결정론적 심볼 resolver가 풀고(결정 2), canonical 프로필은 합의 전까지
 >   `retriever: hybrid`를 쓰지 않는다. ~~canonical 프로필은 아직 없다(Phase 6).~~ (⏵ 2026-09-24 — 생겼다:

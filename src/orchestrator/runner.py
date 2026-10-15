@@ -69,6 +69,12 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 설명과 무관했다. 설명이 부른
 심볼(`desc_rank` 3 전체 이름 · 2 조각·확장 일치)·파일(1)을 신호 뒤, 경로 앞에 둔다 — 후보는 줄이지
 않고 순서만 바꾼다(`description_match.py`). 효과는 미실측.
+**그 키만으로는 컷이 설명 일치를 못 지킨다 — 예약이 있다(2026-10-15).** 리허설(arvo:1065
+번들)에서 semgrep 신호 후보 8개가 컷을 다 채워 설명과 맞는 유일한 후보(`funcs.c:file_regexec`,
+`desc_rank` 2)가 잘렸다(`signal_artifacts 8`/47 — 「Level 1은 신호가 없다」는 전제가 틀렸다).
+그래서 `desc_rank` ≥ 2인 후보 앞 `thresholds.candidate_desc_reserve`개(2)는 신호와 무관하게
+컷에 든다(`_cut_with_reserve` — 순서만 바꾸고 후보를 지어내지 않는다 · 효과 미실측). 남긴
+목록은 다시 키 순서라 ID 발급 순서는 그대로다.
 `--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
 `line_end`가 없다(`src/adapters/slices.py`). `_symbol_signal_rank`가 `end = line_end or start`로
 보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
@@ -4136,6 +4142,48 @@ def _plan_slice_targets(
         )
 
 
+def _cut_key(item: _Target) -> tuple[int, int, str, int, str, str]:
+    """후보 컷의 정렬 키. 나머지 네 항은 index.json의 순서와 같다 — 후보 순서가 곧 ID 발급 순서라
+    흔들리면 두 run의 trace를 대조할 수 없다(engineering-guide.md §5)."""
+    return (
+        -item.signal_rank,
+        -item.desc_rank,
+        item.location.file,
+        item.location.line_start or 0,
+        item.location.symbol or "",
+        # entry가 같은 슬라이스끼리의 순서 — 슬라이서가 매긴 id 순(슬라이스 없으면 모두 "").
+        item.slice_id or "",
+    )
+
+
+# 설명 일치 예약 대상: 심볼 이름이 설명과 맞은 것(2 조각·확장 일치, 3 전체 이름). 파일 이름만(1)은
+# 흔해서(같은 파일의 심볼 전부가 1이다) 예약을 다 채울 수 있으므로 뺀다.
+_DESC_RESERVE_MIN_RANK = 2
+
+
+def _cut_with_reserve(
+    ordered: list[_Target], limit: int, reserve: int
+) -> tuple[list[_Target], list[_Target], frozenset[int]]:
+    """키로 정렬된 `ordered`에서 앞 `limit`개를 남기되, 설명이 심볼 이름을 부른 것
+    (`desc_rank` ≥ 2) 앞 `reserve`개는 신호 순위와 무관하게 자리를 보장한다 (#377 (b) 후속 —
+    리허설에서 신호 후보 8개가 컷을 다 채워 설명과 맞는 유일한 후보가 잘렸다).
+
+    `(남긴 것, 잘린 것, 예약이 아니었으면 잘렸을 것의 id)` — 앞 둘은 `ordered`의 상대 순서를
+    그대로 둔다(`ordered`를 다시 걸러 낼 뿐이라 정렬 키가 같은 것끼리의 순서까지 같다). 후보
+    집합을 지어내지 않고 순서만 바꾼다. 예약이 0이거나 해당 후보가 없으면 `ordered[:limit]` ·
+    `ordered[limit:]`와 같다. 예약은 `limit`을 못 넘는다(`min`) — 설정 검증이 이미 막지만 이
+    함수가 단독으로도 안전하다.
+    """
+    reserved = [t for t in ordered if t.desc_rank >= _DESC_RESERVE_MIN_RANK][: min(reserve, limit)]
+    reserved_ids = {id(t) for t in reserved}
+    rest = [t for t in ordered if id(t) not in reserved_ids]
+    kept = reserved_ids | {id(t) for t in rest[: limit - len(reserved)]}
+    targets = [t for t in ordered if id(t) in kept]
+    deferred = [t for t in ordered if id(t) not in kept]
+    natural = {id(t) for t in ordered[:limit]}
+    return targets, deferred, frozenset(reserved_ids - natural)
+
+
 def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> None:
     """(a′) — 정적 신호를 게이트가 아니라 순서로 쓰고, 상한 초과분을 기록에 남긴다.
 
@@ -4143,8 +4191,16 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     둘째 항 `-desc_rank`(#377 (b))는 과제 설명이 부른 심볼 전체 이름(3)·심볼 조각·확장 일치(2)·
     파일(1)을 신호가 같은 것들 사이에서 앞세운다 — **순서만 바꾸고 후보를 줄이지 않는다.**
     설명이 없거나 아무것도 안 맞으면 전부 0이라 종전 순서 그대로다. 나머지 네 항은 index.json의
-    순서와 같다 — 후보 순서가 곧 ID 발급 순서라 흔들리면 두 run의 trace를 대조할 수 없다
-    (engineering-guide.md §5).
+    순서와 같다(`_cut_key`).
+
+    **컷은 키 앞 `candidate_max`개가 전부가 아니다 — 설명 일치 예약이 있다.**
+    신호 후보가 컷을 다 채우면 설명과 맞는 후보가 키 순서만으로는 잘린다(리허설: semgrep 신호
+    후보 8개가 arvo:1065의 `funcs.c:file_regexec`(desc 2)를 밀어냈다). 그래서 `desc_rank` ≥ 2인
+    후보 앞 `candidate_desc_reserve`개는 신호와 무관하게 남고(`_cut_with_reserve`), 남은 자리는
+    키 순서로 채운다. 남긴 목록은 다시 키 순서다 — 후보 순서가 ID 발급 순서다.
+
+    `target_plan.desc_reserved`·`target_planned.desc_reserved`는 **예약이 없었다면 잘렸을 후보**만
+    센다(예약 몫 전체가 아니다) — 신호 순서로도 이미 들어올 후보는 예약의 효과가 아니다.
 
     **신호는 심볼 단위다(#70), 단 3단이다.** 히트 줄이 든 심볼은 rank 2, 같은 artifact의
     나머지 심볼은 rank 1(신호는 있으나 이 심볼에 든 줄 미확인), 신호 없는 artifact는 0.
@@ -4152,20 +4208,10 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     위해서다(#249 리뷰). 위치 없는 신호(실 clang-tidy)·인덱스 없는 폴백은 rank 1로 떨어진다
     (artifact에 STATIC 신호가 있을 때 — 없으면 0).
     """
-    plan.collected.sort(
-        key=lambda item: (
-            -item.signal_rank,
-            -item.desc_rank,
-            item.location.file,
-            item.location.line_start or 0,
-            item.location.symbol or "",
-            # entry가 같은 슬라이스끼리의 순서 — 슬라이서가 매긴 id 순(슬라이스 없으면 모두 "").
-            item.slice_id or "",
-        )
-    )
+    plan.collected.sort(key=_cut_key)
     limit = ctx.config.thresholds.candidate_max
-    plan.targets = plan.collected[:limit]
-    deferred = plan.collected[limit:]
+    reserve = ctx.config.thresholds.candidate_desc_reserve
+    plan.targets, deferred, promoted = _cut_with_reserve(plan.collected, limit, reserve)
     # 설명 일치 수(#377 (b)): 컷 전 전체의 정확·조각·파일 일치와, 그중 컷에 잘린 수.
     ctx.trace.emit(
         EventKind.TARGET_PLAN,
@@ -4180,10 +4226,12 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         planned=len(plan.targets),
         deferred=len(deferred),
         candidate_max=limit,
+        candidate_desc_reserve=reserve,
         desc_exact_matches=sum(item.desc_rank == 3 for item in plan.collected),
         desc_part_matches=sum(item.desc_rank == 2 for item in plan.collected),
         desc_file_matches=sum(item.desc_rank == 1 for item in plan.collected),
         desc_matches_deferred=sum(item.desc_rank > 0 for item in deferred),
+        desc_reserved=len(promoted),
     )
     # **실행할 대상의 이름을 남긴다 (해소).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
     # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**
@@ -4192,7 +4240,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     # 모델을 부르기 전에 낸다. `target_plan`과 같은 계약이고, 그 뒤 어디서 죽어도 이 run이
     # 무엇을 보려 했는지는 남는다.
     for item in plan.targets:
-        _emit_planned(ctx, item.location, slice_id=item.slice_id)
+        _emit_planned(ctx, item, desc_reserved=id(item) in promoted)
     # 팬아웃되는(deferred 아닌) 대상 키. 리포트가 「모든 자리가 실패해 분석되지 않은 대상 수」를
     # 이것에서 뺀다(#193 ①) — 후보를 하나도 못 낸 대상이 곧 그 수다.
     state.dispatched_targets = {
@@ -4202,7 +4250,7 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     for item in deferred:
         _emit_skipped(
             ctx, item.location, stage=Stage.SIGNALS, reason=_REASON_OVER_MAX,
-            slice_id=item.slice_id,
+            slice_id=item.slice_id, ranks=item,
         )
 
 
@@ -6263,7 +6311,7 @@ def _drop(
     """
     _emit_skipped(
         ctx, target.location, stage=stage, reason=reason, detail=error_detail(exc),
-        member=role.value, slice_id=target.slice_id,
+        member=role.value, slice_id=target.slice_id, ranks=target,
     )
     state.dropped += 1
     if _rejects_every_request(exc):
@@ -6323,7 +6371,7 @@ def _drop_finding(
         ) from exc
 
 
-def _emit_planned(ctx: RunContext, target: Location, *, slice_id: str | None) -> None:
+def _emit_planned(ctx: RunContext, item: _Target, *, desc_reserved: bool) -> None:
     """4단계에 올린 target 하나를 기록한다 (해소).
 
     **`_emit_skipped`와 같은 필드를 같은 이름으로 싣는다.** 둘을 나란히 놓고 세는 것이 이
@@ -6331,18 +6379,26 @@ def _emit_planned(ctx: RunContext, target: Location, *, slice_id: str | None) ->
     빈 문자열·0으로 채우는 관용구도 그쪽에서 가져온다 — `Location`의 `symbol`·`line_start`가
     옵셔널이고(파일 단위 폴백에서는 실제로 빈다) 그 사실 자체가 #95의 폴백 여부를 지시한다.
 
+    **`signal_rank`·`desc_rank`를 싣는다** — 잘린 쪽(`_emit_skipped`)과 같은 값이라 「무엇이 왜
+    이 순서로 살았나」를 trace만으로 읽는다. `desc_reserved`는 **설명 일치 예약이 없었다면 잘렸을
+    후보**일 때만 참이다(`_order_and_cut`).
+
     **`reason`이 없다.** 그쪽은 "왜 못 갔는가"를 싣지만 이쪽은 간 것이라 사유가 없다.
     빈 사유를 넣으면 두 이벤트가 같은 모양이 되어 합쳐 세는 실수를 부른다.
     """
+    target = item.location
     ctx.trace.emit(
         EventKind.TARGET_PLANNED,
         stage=Stage.SIGNALS,
         file=target.file,
         symbol=target.symbol or "",
         line_start=target.line_start or 0,
+        signal_rank=item.signal_rank,
+        desc_rank=item.desc_rank,
+        desc_reserved=desc_reserved,
         # 슬라이스 타깃이면 그 id — entry가 같은 두 슬라이스를 가른다. 없으면 키를 안 만든다
         # (슬라이스 없는 run의 이벤트가 이 필드 이전과 같게 남는다). `_emit_skipped`와 같은 규칙.
-        **({"slice_id": slice_id} if slice_id is not None else {}),
+        **({"slice_id": item.slice_id} if item.slice_id is not None else {}),
     )
 
 
@@ -6355,6 +6411,7 @@ def _emit_skipped(
     detail: str = "",
     member: str | None = None,
     slice_id: str | None = None,
+    ranks: _Target | None = None,
 ) -> None:
     """4단계에 올리지 못한 target 하나를 기록한다.
 
@@ -6379,6 +6436,9 @@ def _emit_skipped(
 
     **`error_detail`은 있을 때만 싣는다.** 예산 절단에는 상세가 없고, 그 자리에 빈
     문자열을 넣으면 "상세가 비어 있었다"와 "상세라는 개념이 없다"가 같은 모양이 된다.
+
+    **`ranks`(`_Target`)를 주면 그 target의 `signal_rank`·`desc_rank`를 싣는다** — 컷에 잘린 쪽이
+    어느 순위로 졌는지를 trace만으로 읽는다(`target_planned`와 같은 값). 없으면 키를 안 만든다.
     """
     ctx.trace.emit(
         EventKind.TARGET_SKIPPED,
@@ -6392,6 +6452,11 @@ def _emit_skipped(
         # 단일 프로필은 `scout` 하나라 항상 같다. `None`이면 예산 절단(팬아웃 전)이라 자리가 없다.
         **({"scout_member": member} if member is not None else {}),
         **({"slice_id": slice_id} if slice_id is not None else {}),
+        **(
+            {"signal_rank": ranks.signal_rank, "desc_rank": ranks.desc_rank}
+            if ranks is not None
+            else {}
+        ),
         **({"error_detail": detail} if detail else {}),
     )
 

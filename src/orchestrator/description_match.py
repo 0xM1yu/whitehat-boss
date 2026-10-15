@@ -1,7 +1,9 @@
 """과제 설명(description.txt)과 후보 위치의 일치 — `candidate_max` 컷의 우선순위 (#377 (b)).
 
 순서에만 쓴다. 설명이 비었거나 아무것도 안 맞으면 모든 후보가 0이라 종전 순서 그대로다(틀린 설명도
-무언가 맞으면 그 후보가 앞선다). 토큰 규칙은
+무언가 맞으면 그 후보가 앞선다). 심볼 이름이 맞은 후보(`desc_rank` ≥ 2)는 컷에서 앞
+`candidate_desc_reserve`개가 신호 순위와 무관하게 자리를 보장받는다(`runner._cut_with_reserve`).
+토큰 규칙은
 `tools/slicer/slicer_description.py`와 같다(`src`는 슬라이서를 import하지 않으므로 두 번 적는다 —
 `tests/test_description_priority.py`가 둘이 같은 토큰을 내는지 묻는다).
 """
