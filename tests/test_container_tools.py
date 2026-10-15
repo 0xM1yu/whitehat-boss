@@ -2116,6 +2116,8 @@ def _many_sources() -> list[str]:
 def test_index_command_line_does_not_carry_the_file_names() -> None:
     """소스 1,200개(37,274자)로 `[WinError 206]`이 났다 - 명령줄에 이름이 없어야 개수와 무관하다.
 
+    (그 수는 S20 Phase 15 감사가 낸 프로브다 - run ID 없음, 다시 재지 않았다.)
+
     `plan()`이 낸 인자 길이는 파일 수와 무관하고, 모든 경로는 `scratch_files`의 목록에 들어 있다.
     """
     sources = _many_sources()

@@ -190,7 +190,8 @@ INDEX_FILE = "index.json"
 
 # 인덱서에 넘길 파일 목록. **명령줄에 안 싣고 scratch에 쓴다** - 호스트의 docker 명령줄이 파일
 # 수에 비례해 커지면 Windows `CreateProcess`의 상한(32,767자)에 걸린다: 소스 1,200개(37,274자)
-# 프로브가 `[WinError 206]`으로 죽었고, 그 `OSError`는 `ok=False`·exit 127이 되어 **인덱스 없이
+# 프로브가 `[WinError 206]`으로 죽었고(S20 Phase 15 감사가 이 Windows 호스트에서 낸 프로브 -
+# run ID 없음, 다시 재지 않았다), 그 `OSError`는 `ok=False`·exit 127이 되어 **인덱스 없이
 # run이 조용히 이어졌다.** 목록은 NUL로 구분한 경로들이다(공백·개행이 든 이름도 안 깨진다).
 #
 # 풀어 넘기는 일은 컨테이너 안에서 일어난다. `sh`가 아니라 `python3 -c`인 것은 이미지가 이미
