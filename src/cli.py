@@ -523,7 +523,7 @@ def _check_tokenizers(config: HarnessConfig) -> list[Check]:
 
     run에서는 같은 판정이 `token_counter` 이벤트(`approx`와 사유)로만 남아, Auditor SOURCE 20,000
     토큰 같은 상한이 실서빙보다 과소하게 세어진 채 도는 것을 run 뒤에야
-    안다(실측 세 점 1.47~1.80배 - CLAUDE.md §5. 글자/토큰 비는 호출마다 1.22~3.32로 벌어진다).
+    안다(실측 네 점 1.39~1.80배 - CLAUDE.md §5. 글자/토큰 비는 호출마다 1.22~3.32로 벌어진다).
     HF 캐시 파일만 본다 - 접속하지 않는다. **토큰을 세는 역할만 본다** — `COUNTED_ROLES`
     (scout·auditor)와 Scout 풀 멤버. critic·pov는 카운터를 안 켜 토크나이저가 없어도 run이
     달라지지 않고, embedding·reranker는 프롬프트를 안 만든다.
@@ -558,8 +558,8 @@ def _check_tokenizers(config: HarnessConfig) -> list[Check]:
             Check(
                 Severity.WARN,
                 f"실서빙 역할의 토크나이저를 못 쓴다: {', '.join(missing)} — 토큰 상한이 "
-                "글자수 근사(len//4)로 센다. 실서빙보다 과소하다(실측 세 점에서 1.47~1.80배 - "
-                "chars/token 2.224·2.702·2.724 · CLAUDE.md §5) - 상한을 넘은 요청이 "
+                "글자수 근사(len//4)로 센다. 실서빙보다 과소하다(실측 네 점에서 1.39~1.80배 - "
+                "chars/token 2.224·2.702·2.724·2.882 · CLAUDE.md §5) - 상한을 넘은 요청이 "
                 "서버에서 거절될 수 있다",
             )
         )

@@ -132,7 +132,8 @@ class Report:
     # 「미측정」이 아니라 「집계 실패」로 찍는다.
     trace_aggregate_failures: dict[str, str] | None = None
     # 채점기를 붙인 run의 최종 PoC 한 줄(`oracle_final` 이벤트의 요약) - 러너가 trace에서 뽑아
-    # 넘긴다. 키: `status`·`designation`·`reason`·`error`·`subject`(finding_id)·`poc_sha256`.
+    # 넘긴다. 키: `status`·`designation`·`reason`·`error`·`subject`(finding_id)·`poc_sha256`·
+    # `record_ref`(사이드카의 run_dir 상대 경로, 못 썼으면 `None`).
     # `None`이면 채점기를 안 붙인 run이라 줄을 안 낸다. 붙였는데 최종 단계에 못 닿았으면 러너가
     # `{"status": "not_reached"}`를 넘긴다(사이드카의 `final`과 같은 판정). `none`/`failed`는 줄을
     # 내고 사유를 적는다.
