@@ -242,11 +242,33 @@ def test_second_file_failing_leaves_the_first_out_of_out(hf, tmp_path):
     assert list(out.iterdir()) == []  # 첫 파일(repo-vul)은 검증을 통과했지만 옮기지 않았다
 
 
+def test_second_move_failing_is_recovered_by_rerun(hf, tmp_path, monkeypatch):
+    out = tmp_path / "t"
+    real, calls = os.replace, []
+
+    def flaky(src, dst):
+        calls.append(dst)
+        if len(calls) == 2:
+            raise OSError("디스크 오류")
+        real(src, dst)
+
+    monkeypatch.setattr(tool.os, "replace", flaky)
+    assert run("arvo:1065", "--out", out) == 1
+    assert [p.name for p in out.iterdir()] == [VUL]  # 첫 파일만 옮겨졌고 임시 폴더는 지워졌다
+    monkeypatch.setattr(tool.os, "replace", real)
+    hf.requested.clear()
+    assert run("arvo:1065", "--out", out) == 0
+    assert hf.file_requests() == [f"{hf.file_base}/description.txt"]  # 첫 파일은 해시가 맞아 건너뜀
+    assert sorted(p.name for p in out.iterdir()) == ["description.txt", VUL, "submit.sh"]
+
+
 def test_rerun_with_other_server_is_rejected(hf, tmp_path, capsys):
     out = tmp_path / "t"
     assert run("arvo:1065", "--out", out) == 0
     first = (out / "submit.sh").read_bytes()
+    hf.requested.clear()
     assert run("arvo:1065", "--out", out, "--server", "http://10.0.0.5:8666") == 2
+    assert hf.requested == []  # 파일만 읽어 가르므로 트리 API도 부르지 않는다
     assert "--force-submit" in capsys.readouterr().err
     assert (out / "submit.sh").read_bytes() == first
     assert run("arvo:1065", "--out", out, "--server", "http://10.0.0.5:8666", "--force-submit") == 0
