@@ -41,7 +41,10 @@ def _registry_hf_pairs(config_dir: Path = CONFIG_DIR) -> set[tuple[str, str]]:
 
 def test_every_hf_model_the_profile_uses_comes_out_as_a_repo_rev_pair() -> None:
     expected = _registry_hf_pairs()
-    assert len(expected) >= 7  # 이 레지스트리의 실물 — 비어 있으면 아래 단언이 허공이다
+    # 이 레지스트리의 실물 — 비어 있으면 아래 단언이 허공이다.
+    # ⏵ 2026-10-14 — 7에서 6으로 내렸다. `scout_boundary`가 `qwen3-14b`로 옮겨 `seccoderx-8b`가
+    # 로스터에서 내려왔다(PROJECT-CONTEXT.md §1). 이 수는 상한이 아니라 **허공 방지 하한**이다.
+    assert len(expected) >= 6
     got = prefetch_weights.targets(PROFILE, "all")
     assert set(got) == expected
     assert len(got) == len(set(got)), "같은 (repo, rev)를 두 번 낸다"

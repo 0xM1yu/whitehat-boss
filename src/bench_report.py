@@ -435,11 +435,11 @@ def pending_updates(report: Mapping[str, object]) -> tuple[dict[str, dict[str, f
     **0인 값은 제외한다.** `Benchmark.is_measured`가 0 여부로 판정하므로, 못 잰 값을
     넣으면 미측정 모델이 측정된 것으로 보이고 production 프로필로 가는 길이 열린다.
 
-    같은 model key를 여러 역할이 쓰면(`harness_pool`의 scout_memory·scout_injection이 같은
-    `qwen3-14b`, 2026-09-25부터) **먼저 나온 역할의
-    값을 쓴다.** 역할마다 캡슐 레벨이 달라 body 길이가 다르므로 수치도 다르다 — 평균이나
-    최대를 취하면 어느 조건의 수치인지 말할 수 없게 된다. 어느 역할에서 왔는지는 사유에
-    남는다.
+    같은 model key를 여러 역할이 쓰면(`harness_pool`의 scout_memory·scout_boundary·scout_injection이
+    같은 `qwen3-14b`, 2026-10-14부터 셋 — 그 전 2026-09-25부터는 memory·injection 둘)
+    **먼저 나온 역할의 값을 쓴다.** 역할마다 캡슐 레벨이 달라 body 길이가 다르므로 수치도
+    다르다 — 평균이나 최대를 취하면 어느 조건의 수치인지 말할 수 없게 된다.
+    어느 역할에서 왔는지는 사유에 남는다.
     """
     updates: dict[str, dict[str, float]] = {}
     skipped: list[str] = []

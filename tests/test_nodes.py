@@ -3925,6 +3925,10 @@ def _last_scout_facts(ctx: RunContext) -> dict:
     return json.loads(re.findall(r"```json\s*(\{.*?\})\s*```", body, re.DOTALL)[-1])
 
 
+def _window_fallback_events(ctx: RunContext) -> list:
+    return [e for e in ctx.trace.events if e.kind is EventKind.SCOUT_WINDOW_FALLBACK]
+
+
 def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -3950,6 +3954,7 @@ def test_a_source_declaration_gets_the_function_body_even_for_a_slice_target(
     body = ctx.models.last_for(Role.SCOUT).body
     assert "`parser.c` 의 `parse_header` (줄 3-6)" in body and "(줄 5-5)" not in body
     assert "slice_criterion" not in facts  # v4 산문이 그 키를 서술하지 않는다
+    assert _window_fallback_events(ctx) == []  # 심볼 범위 - 폴백 아님
     assert session.slice is ref
     # resolver의 `visible` — 모델이 본 줄은 함수 3~6이지 SliceRef.lines가 아니다.
     assert session.shown_lines == tuple(("parser.c", n) for n in range(3, 7))
@@ -3975,6 +3980,26 @@ def test_a_source_declaration_without_an_enclosing_symbol_reads_the_entry_window
     # 지우면 여기서 죽는다(`_ask_model`의 `if target.symbol is None` 두 줄). FACTS symbol 자체의
     # 출처는 #633이 따로 든다 — 이 핀은 **창 폴백**만 본다.
     assert facts["target"]["symbol"] == "parse_header"
+    # 요청 바이트는 위에서 그대로 핀했다 - 창 폴백이라는 사실은 trace가 남긴다.
+    (event,) = _window_fallback_events(ctx)
+    assert event.data["labeled_symbol"] == "parse_header"
+    assert (event.data["line_start"], event.data["line_end"]) == (4, 6)
+
+
+def test_a_window_fallback_past_the_end_of_the_file_is_visible_in_the_trace(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """기본 창(±50)은 짧은 파일의 끝을 넘는다 - FACTS `line_end`는 그대로 가고(v4 payload),
+    `shown_end`가 SOURCE의 실제 끝을 남긴다. 심볼 범위로 읽은 호출은 이벤트가 없다."""
+    ref = _source_declared_slice_ref(ctx, monkeypatch)
+    ctx.symbols_for = lambda _file: []
+
+    _slice_scout_session(ctx, ref)
+
+    (event,) = _window_fallback_events(ctx)
+    last = len(VULNERABLE_C.splitlines())
+    assert event.data["line_end"] > last and event.data["shown_end"] == last
+    assert _last_scout_facts(ctx)["target"]["line_end"] == event.data["line_end"]
 
 
 def test_a_slice_declaration_keeps_the_slice_render_and_criterion(
