@@ -156,7 +156,9 @@ def _without_source(config, role: str):
     `scout_memory`·`scout_injection`(같은 `qwen3-14b` — 2026-09-25부터 memory도)·`critic`
     (`gpt-oss-20b`)·`auditor`(`qwen3.8-27b` — 2026-09-26부터)에 `scout_boundary`(`seccoderx-8b` —
     #294로 `@rev`가 생겼다)까지 다섯 전부다(그 전 Auditor `qwen3.6-35b-a3b`도 #294로 `@rev`가
-    생겼다가 같은 날 지웠다). 경로가 풀려도 스냅샷에 `generation_config.json`이 없으면
+    생겼다가 같은 날 지웠다). ⏵ 2026-10-15 — 지금 `scout_boundary`도 `qwen3-14b`다(2026-10-14,
+    `seccoderx-8b`는 로스터에서 내려왔다). 그래서 Scout 셋이 한 모델이고,
+    읽히는 역할은 여전히 다섯이다. 경로가 풀려도 스냅샷에 `generation_config.json`이 없으면
     `file_absent`로 빠진다(리졸브 실패가 아니다). 이 테스트는 그것과 무관하게 `source`를
     `None`으로 비워 no-source 경로를 본다.
     """

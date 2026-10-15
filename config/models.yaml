@@ -131,7 +131,8 @@ models:
     #   로그 리다이렉트·readiness 루프(`until curl -s -f …/v1/models`)가 더 있고, 줄 이음이
     #   `\`다. 그리고 `TIKTOKEN_ENCODINGS_BASE`는 원문의 `$HOME/tiktoken_encodings`를
     #   `<harmony vocab dir>` 자리표시자로 **바꿔** 적은 것이다.
-    #   ⚠ 지금 포트는 8003이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   ⚠ 지금 포트는 8002다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다. ⏵ 2026-10-14 Scout가
+    #   한 서버가 되며 8003에서 한 칸 내려왔다). 위
     #   `--port 8006`은 그 (A) 팔의 값이라 기록으로 둔다.
     #
     # - **flashinfer가 JIT(ninja/nvcc)를 부르는데 ATOM에 없다** → 엔진 초기화가 죽는다.
@@ -216,6 +217,7 @@ models:
     # **request_timeout_s — 계산값, 미실측 · 원천 미공개(인용만)**: 900 s ≥ 8,192 ÷ 12 tok/s ≈ 683 s.
     # 식과 수는 2026-09-24 로딩·배선 조사 ②-2에서 옮겼다 — 그 조사는 저장소에 없어 여기서 다시 유도할 수 없다.
     # 12는 서버 동시 8에서 「스트림당 ≥12 tok/s」라는 가정이고 안 쟀다. 조사의 이 행은 아래 두 Scout 키와
+    # (⏵ 2026-10-15 — 그 「두 Scout 키」는 `seccoderx-8b`·`qwen3-14b`였다. 지금 Scout 키는 `qwen3-14b` 하나다.)
     # ⏵ 2026-10-12 — 「안 쟀다」는 낡았다: `run_20261011_0001`(vast · 순차)의 Critic 호출 1이 58,156 토큰(두 시도 합)을
     # 515 s에 냈다 — ≈113 tok/s(계산값 · 시도별 시간은 trace에 없다 · `config/budgets.yaml`의 같은 날짜 ⏵). 12는 그대로
     # 안 잰 가정이고, 이 값은 동시 8이 아니라 순차 1의 값이라 그 가정을 대신하지 않는다.
@@ -307,7 +309,7 @@ models:
     # 프로필에 못 들어간다. 그 미검증 리스크·재측정 항목은 PROJECT-CONTEXT.md와 open-questions가 든다.
     #
     # ⚠ **2026-09-20 — 위 「아직 안 됐다」는 둘 중 앞을 잘못 든다.** **기동은 2026-09-13에 됐다** —
-    # ATOM 8005에 떴다 — #152의 **입력 모양 보고서**가 바로 그 `--hf-overrides`와
+    # ATOM 8005에 떴다(⏵ 2026-10-15 — 지금 리랭커 포트는 8004다, `endpoint`) — #152의 **입력 모양 보고서**가 바로 그 `--hf-overrides`와
     # `POST …:8005/v1/rerank → 200`을 메타 표에 적는다. (자매 템플릿 보고서는 8005 기동만 적고
     # 상태 코드·오버라이드 문자열은 안 든다 — 200의 출처는 앞쪽 하나다.)
     # **안 된 것은 점수 정확성이다.** `benchmark`가 전부 `0`인 것도, production에 못 들어가는 것도
@@ -681,7 +683,8 @@ models:
       prefix_hit_ratio_batch32: null
 
   qwen3-14b:
-    # 로스터 Scout injection·memory (프롬프트 v3). Qwen/Qwen3-14B — dense 14.8B.
+    # 로스터 Scout memory·boundary·injection 세 자리 (프롬프트 v4). Qwen/Qwen3-14B — dense 14.8B.
+    # ⏵ 2026-10-15 — 이 머리줄은 「Scout injection·memory (프롬프트 v3)」였다(boundary가 옮겨 오기 전).
     # ⏵ 2026-09-25 — memory가 `seccoderx-8b`에서 이 키로 옮겼다(PROJECT-CONTEXT.md §1). 포트는
     # 그대로였다 — memory가 injection과 같은 서버를 썼다.
     # ⏵ 2026-10-14 — boundary도 이 키로 옮겨 **세 자리가 한 서버**다. 그리고 포트가 움직였다:
@@ -716,7 +719,8 @@ models:
     #     --revision 40c069824f4251a91eefaf281ebe4c544efd3e18 --served-model-name qwen3-14b \
     #     --host 127.0.0.1 --port 8010 --max-model-len 16384 --gpu-memory-utilization 0.30 \
     #     --max-num-seqs 4 --enforce-eager --reasoning-parser deepseek_r1
-    #   ⚠ 지금 포트는 8001이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다). 위
+    #   ⚠ 지금 포트는 8000이다(`endpoint` — 2026-09-24 교대가 띄우는 순서대로 다시 매겼다. 이 문장은
+    #   ⏵ 2026-10-15 8001에서 고쳤다 — 위 ⏵ 2026-10-14가 8000으로 내렸다). 위
     #   `--port 8010`은 그날 친 값이라 기록으로 둔다.
     #
     #   **축약이라 그대로 복붙하면 안 된다** — 원문은 venv의 `vllm`을 절대 경로로 부르고
@@ -802,7 +806,7 @@ models:
   # 이 키를 두 canonical 프로필 roles에 넣었고 `harness_pool.swap.swappable`에 pov를 올렸다 —
   # `load_config`의 swap 검사와 `check_serving`의 장비 파일 행 요구를 그래서 채웠다(`config/serving/*.yaml`에
   # feyospace 행). resident가 아니라 swappable이라 8단계에 들어갈 때만 콜드 기동한다. PROJECT-CONTEXT
-  # §1 로스터·model-serving.md 포트 표(8006)가 이 키를 든다.
+  # §1 로스터·model-serving.md 포트 표(8005 — ⏵ 2026-10-15 8006에서 고쳤다, 그 표는 이미 8005였다)가 이 키를 든다.
   # ⚠ **실장비 종단은 미실측이다** — checksum·benchmark 0(위), 서빙+도구 되는 호스트 확보 뒤 실측한다.
   #   ⏵ 2026-10-08 — 호스트는 위 ⏵대로 생겼다(`vastai-remote`). 실도구(docker)로 8단계에서 이 키를 부른 run은
   #   `run_20261007_0001` 하나다(`docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md`

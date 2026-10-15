@@ -1525,7 +1525,8 @@ def test_a_role_cap_one_below_the_window_still_loads(tmp_path: Path) -> None:
 def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: Path) -> None:
     """역할별 선언이 없는 역할은 전역 `output_max`가 실효 상한이다 — 그 값도 같은 대조를 받는다.
 
-    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b`·`qwen3-14b`)에 앉는다.
+    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b` 하나 —
+    ⏵ 2026-10-14 전에는 `qwen3-14b`·`seccoderx-8b` 둘)에 앉는다.
     """
     _copy_config(
         tmp_path,
@@ -2714,8 +2715,10 @@ def test_served_scout_and_critic_roles_declare_a_request_timeout() -> None:
     """실서빙 Scout·Critic 좌석마다 `request_timeout_s`가 있고, 속도를 아는 좌석은 벽시계가
     출력 상한보다 먼저 끊지 않는다(#261).
 
-    ATOM 09-24 실측 단일 요청 속도로는 `qwen3-14b` 13.3 · `qwen3-14b` 8.1 tok/s라
+    ATOM 09-24 실측 단일 요청 속도로는 옛 `seccoderx-8b` 13.3 · `qwen3-14b` 8.1 tok/s라
     전역 `output_max` 4,096에 각각 ≈308 s · ≈506 s가 걸려 어댑터 기본 300 s를 넘는다.
+    ⏵ 2026-10-15 — 13.3은 로스터에서 내려온 `seccoderx-8b`의 값이라
+    `_MEASURED_DECODE_TOK_S`에서 빠졌다. 지금 Scout 키는 `qwen3-14b` 하나(≈506 s)다.
     #274 뒤에는 그 후보만 버리지만, 연속 셋이면 `_MAX_CONSECUTIVE_DROPS`가 run을 세운다.
 
     Auditor는 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`가

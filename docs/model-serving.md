@@ -279,7 +279,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
                                           → embedding / reranker
 ```
 
-**위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 두 역할은 **한 서버를
+**위 그림은 역할의 배선이지 상주 서버 수가 아니다.** 같은 모델이 앉은 역할들(Scout 셋 — `qwen3-14b` — 이 그 예다)은 **한 서버를
 공유하고**, 어느 자리가 그런지는 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1·§2가 든다.
 
 > ### ⚠ 공유는 공짜가 아니다 — **한 서버가 두 이름에 답해야 한다** (2026-09-20)

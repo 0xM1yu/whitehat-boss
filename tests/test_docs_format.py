@@ -1386,7 +1386,7 @@ def test_the_context_roster_states_the_registry_reasoning_effort() -> None:
 
 _MODEL_SERVING = REPO_ROOT / "docs" / "model-serving.md"
 _UNAVOIDABLE = "회피 불가"
-# `docs/model-serving.md` 포트 표의 행 — `> | **8004** | \`qwen3-embedding-0.6b\` ← …`.
+# `docs/model-serving.md` 포트 표의 행 — `> | **8003** | \`qwen3-embedding-0.6b\` ← …`.
 _PORT_ROW = re.compile(r"^> \| \*\*(\d{4})\*\* \| `([^`]+)`", re.M)
 
 
@@ -1397,9 +1397,10 @@ def test_the_model_serving_port_table_matches_the_registry() -> None:
     `test_served_ports_count_up_from_8000_in_launch_order`). registry만 고치고 이 표를 놓치면
     표가 옛 번호로 서빙 절차를 안내한다 — 그 불일치를 사람이 기억해서 잡기를 기대하지 않는다.
     """
-    # 핀 — 양성은 저장소의 실제 행이다(`docs/model-serving.md` 포트 표의 8004 행 — 검색 모델이라
-    # 재배치에서 번호가 안 바뀐다). 음성은 같은 표의 머리 줄 모양이다 — 행이 아니다.
-    assert _PORT_ROW.search("> | **8004** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid` |")
+    # 핀 — 양성은 저장소의 실제 행이다(`docs/model-serving.md` 포트 표의 8003 행).
+    # ⏵ 2026-10-15 — 이 핀은 8004였다(2026-10-14에 Scout가 한 서버가 되며 검색이 한 칸 내려왔다 —
+    # 「검색 모델이라 번호가 안 바뀐다」는 틀렸다). 음성은 같은 표의 머리 줄 모양이다 — 행이 아니다.
+    assert _PORT_ROW.search("> | **8003** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid` |")
     assert not _PORT_ROW.search("> | 포트 | 어느 프로필이 어느 이름을 보내나 |")
     from src.config import CONFIG_DIR
 
