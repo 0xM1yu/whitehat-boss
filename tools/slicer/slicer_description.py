@@ -1,8 +1,9 @@
 """#377 (b) `--description`: the task description names files; those files are sliced first.
 
-Order only. The description is never trusted: a wrong or empty one matches nothing and the run is
-what it was without the flag. `src/orchestrator/description_match.py` holds the same token rule for
-the runner's `candidate_max` cut (`src` does not import the slicer, so it is written twice;
+Order only. The description is never trusted: one that matches no file leaves the run what it was
+without the flag (a wrong one that still matches some file moves those files first).
+`src/orchestrator/description_match.py` holds the same token rule for the runner's `candidate_max`
+cut (`src` does not import the slicer, so it is written twice;
 tests/test_description_priority.py pins that the two agree).
 """
 
@@ -29,8 +30,15 @@ def description_tokens(text: str) -> frozenset[str]:
     return frozenset(t for t in found if len(t) >= MIN_TOKEN and t not in STOPWORDS)
 
 
+def expand(tokens: frozenset[str]) -> frozenset[str]:
+    """The tokens plus their `_`-separated parts of MIN_TOKEN+ characters (`file_regexec` ->
+    `regexec`), so a description that spells the whole identifier still finds `regexec.c`."""
+    parts = (p for t in tokens for p in t.split("_") if len(p) >= MIN_TOKEN and p not in STOPWORDS)
+    return tokens | frozenset(parts)
+
+
 def matching_files(tokens: frozenset[str], repo: Path) -> set[str]:
-    """Repo-relative C/C++ files whose name without extension is a token.
+    """Repo-relative C/C++ files whose name without extension is a token or a part of one.
 
     Only names are read, never file contents, and symlinks are not followed (the same policy as
     Slicer.load_sources). Inaccessible directories are skipped: a file missed here is not boosted,
@@ -40,6 +48,7 @@ def matching_files(tokens: frozenset[str], repo: Path) -> set[str]:
     names: set[str] = set()
     if not tokens:
         return names
+    tokens = expand(tokens)
     for directory, dirs, files in os.walk(root, followlinks=False):
         dirs[:] = sorted(d for d in dirs if d != ".git")
         for name in files:

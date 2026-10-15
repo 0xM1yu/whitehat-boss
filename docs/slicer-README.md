@@ -521,24 +521,29 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 
 ⏵ **`--description`**(D97 · #377 (b)) -> `--description <description.txt>`는 과제 설명 한 파일을 읽어 **우선 파일 집합**을 만든다.
 `--priority-files`와 같은 집합·같은 `prioritize()`를 타므로 위 우선 파일의 모든 성질(순서만 바꿈 · `--case-order` 의존 · 끊긴 표본 비교 금지)이 그대로다
-- 하는 일 -> 설명에서 식별자(`[A-Za-z_][A-Za-z0-9_]*`, 4자 이상, 소문자, 영어 기능어 몇 개 제외)를 뽑고, 저장소의 C/C++ 파일 중
-  **확장자 뗀 이름이 그 식별자와 같은 것**을 우선 파일로 더한다. 파일 이름만 보고 내용은 안 읽는다(심링크 안 따라감, `.git` 제외). `--priority-files`와
+- 하는 일 -> 설명에서 식별자(`[A-Za-z_][A-Za-z0-9_]*`, 4자 이상, 소문자, 영어 기능어 몇 개 제외)를 뽑고(`file_regexec` 같은 밑줄 식별자는 `_`로 나눈
+  4자 이상 조각 `regexec`도 같이), 저장소의 C/C++ 파일 중 **확장자 뗀 이름이 그 식별자(또는 조각)와 같은 것**을 우선 파일로 더한다. 파일 이름만 보고 내용은 안 읽는다(심링크 안 따라감, `.git` 제외). `--priority-files`와
   같이 주면 합집합이다. **디렉터리는 거부**한다(파일 하나만)
 - 하지 않는 일 -> `--priority-case-a`를 **자동으로 켜지 않는다**(후보 집합을 바꾸는 옵션이라). 함께 쓰려면 `--description d.txt --priority-case-a`로 직접 준다
   -> 설명이 파일을 하나도 못 맞히면 빈 목록과 같이 거부한다. 심볼(함수 이름) 일치는 **슬라이서에 없다** — 러너 쪽 `-desc_rank`만 본다(아래)
-- 설명이 틀리거나 아무것도 안 맞으면 -> 우선 목록이 비어 `--priority-files`가 빈 목록일 때와 같다(stderr 한 줄 + `measurement_notes.priority_files`, 순서는 기본 그대로)
+- 아무 파일도 안 맞으면 -> 우선 목록이 비어 `--priority-files`가 빈 목록일 때와 같다(stderr 한 줄 — 어느 플래그가 만든 목록인지 이름을 단다 — + `measurement_notes.priority_files`, 순서는 기본 그대로).
+  **틀린 설명이라도 무언가 맞으면 그 파일이 앞선다** -> 「틀리면 종전 순서」가 아니라 「아무것도 안 맞으면 종전 순서」다
+- 인코딩 -> UTF-8(BOM 허용)이고 못 읽는 바이트는 대체 문자로 넘긴다(러너의 `read_description`과 같다). `description_sha256`은 원본 바이트의 것이다
 - 실행 계약이다 -> `settings.description_sha256`(설명 파일 바이트의 sha256, 안 줬으면 키가 없다)과, 고른 파일이 든 `settings.priority_files`.
   샤드·재개가 같은 `--description`을 안 주면 `Checkpoint mismatch: run_contract`/`Shard mismatch on run_contract`. `slice_sharded.py`는 `--` 뒤 인자를
   준비·샤드에 모두 넘긴다. 손으로 `--resume --cpg`를 돌릴 때는 준비 때와 같은 파일을 다시 준다
 - 정답 자료 -> 입력은 설명 파일 하나다. `patch.diff`·`error.txt`에서 만든 설명을 주면 정답 누출이다(위 「목록의 출처」)
 - 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서 심볼 이름
-  (이름 또는 `_`로 나눈 조각이 토큰 = 2) > 파일 이름(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
-  `target_plan` 이벤트의 `desc_symbol_matches`·`desc_file_matches`·`desc_matches_deferred`가 그 수를 남긴다. 토큰 규칙은 `src/orchestrator/description_match.py`와
+  전체 이름이 토큰(3) > `_`·`::`로 나눈 조각이 토큰 또는 그 조각(2) > 파일 이름(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
+  `target_plan` 이벤트의 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches`·`desc_matches_deferred`(컷에 잘린 일치)가 그 수를 남긴다. 토큰 규칙은 `src/orchestrator/description_match.py`와
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
+- ⚠ **흔한 영어 명사가 일치를 일으킬 수 있다** -> `buffer`·`read`·`parse`·`data` 같은 낱말이 설명에 있고 저장소에 그 이름의 파일(`buffer.c`)이 있으면
+  그 파일이 우선 파일이 된다. 불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_file_matches`가 터무니없이 크면 이것을 의심한다
 
 ```bash
-python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkpoint /work/state.db   --description /work/task/description.txt
+python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkpoint /work/state.db \
+  --description /work/task/description.txt
 ```
 
 ⏵ **`--priority-case-a`**(`--priority-files`나 `--description`과 같이만 · 기본 꺼짐) -> 우선 파일 목록이 Case A **발견**도 이끈다. 위 목록이
@@ -591,7 +596,7 @@ python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkp
 - **기본이 `ba`인 근거는 측정이다 — 다만 좁다** -> [D100](open-questions/D/D100.md) 관측 2·3(vast 6표본 · wall 900초 · 표본마다 같은 후보 집합에서 순서만 바꾼 쌍 둘 — `ab` 대 층 먼저 `ba`, 층 먼저 대 케이스 먼저. ⚠ **`ab` 대 케이스 먼저의 직접 쌍은 없다** — 두 쌍은 날·박스·코드가 달라 층 먼저를 매개로 이은 간접 비교다). 정답 앵커 후보 14개 중 wall 안에 끝난 것이 층 먼저 `ba` 5 -> 케이스 먼저 `ba` 10이지만
   **그 +5는 한 표본**에서 나왔고 정답 관련 full 슬라이스가 있는 표본이 5/6 -> 6/6인 것도 그 표본이다. 정답 관련 full 슬라이스의 합은 12 -> 11이고 Case A 완료는 426 -> 308로 줄었다(Case A 쪽 비용). ⚠ 6표본뿐이고 정답 관련이 전부 B degraded인 표본으로 골라 **B에 유리한 시험**이다. 케이스 먼저라는 안 자체가 이 6표본의 정답 위치 집계에서 나왔으므로 같은 6표본은 그 안의 독립 검증이 못 된다. 두 팔이 한 박스에서 동시에 돌았다. 상세와 한계는 D100
 - ⚠ **순서가 wall 안에 큐가 다 도는 것을 대신하지 않는다** -> 케이스 먼저로도 6표본 중 3표본은 wall 900초 안에 정답 앵커 후보에 닿지 못했다(큐 위치 1,340~3,614개 모자람 — 첫 정답 앵커 후보까지의 거리지 남은 큐가 아니다 · D100 관측 3). 처리량·wall의 한계다.
-  관련 항목은 [D97](open-questions/D/D97.md)(저장소 전체 후보의 비용 · 상한 아래 recall)과 [D96](open-questions/D/D96.md)(닫힘 2026-10-12 · 끝까지 돈 큰 슬라이스가 Scout 몫을 넘는 꼬리 — 케이스 먼저의 정답 관련 full 11개 중 6개가 4,000줄 이상)이다. 이 측정이 어느 쪽이 맞는 레버인지를 가리지는 않는다
+  관련 항목은 [D97](open-questions/D/D97.md)(저장소 전체 후보의 비용 · 상한 아래 recall — 2026-10-15 닫힘, (b) 구현 · 효과 미실측)과 [D96](open-questions/D/D96.md)(닫힘 2026-10-12 · 끝까지 돈 큰 슬라이스가 Scout 몫을 넘는 꼬리 — 케이스 먼저의 정답 관련 full 11개 중 6개가 4,000줄 이상)이다. 이 측정이 어느 쪽이 맞는 레버인지를 가리지는 않는다
 - 그대로인 것 -> 후보 집합과 수 · `candidate_key`(순서와 무관한 해시) · 온전히 잘린 후보의 슬라이스(클러스터링 전의 줄·코드·분석)
 - ⚠ 클러스터링 뒤의 슬라이스까지 같은 것은 **후보가 10,000개 미만일 때뿐이다** -> `cluster()`는 크기가 같은 슬라이스를 ID **문자열**로 가르고
   (`slicer_source.py`의 정렬 키와 마지막 `sorted`) `slice_10000`은 `slice_9999`보다 앞에 정렬된다. 9,999번까지는 문자열 순서가 숫자 순서라 `ba`·`ab`가 같은 묶음·같은 대표를 낸다(번호만 다르다). `--priority-files`의 분할은 ID를 안 건드리므로(`collect()`가 매긴 그대로) 이 전제는 우선 파일 유무·층 먼저/케이스 먼저와 무관하다.

@@ -146,7 +146,7 @@
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | ~~슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가~~ (전제 소멸 — Auditor 입력이 정의 블록을 싣는다 · v4 Scout 요청의 전달과 오버플로류 miss는 미측정) | 닫힘 | [본문](open-questions/D/D89.md) |
 | D90 | ~~Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다~~ (정렬 #324 · 서빙 대상 Case A 196 ≪ 상한 4000 · cap 상향은 실험팀 · 서빙 잔여는 열린 #467) | 닫힘 | [본문](open-questions/D/D90.md) |
-| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (recall 측정은 실험팀 범위 · 하위부류 효과 미실측 · 도구 결함·서빙 miss는 열린 #467·#377) | 닫힘 | [본문](open-questions/D/D91.md) |
+| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (recall 측정은 실험팀 범위 · 하위부류 효과 미실측 · 서빙 miss는 열린 #467 · #377은 10-15 닫힘) | 닫힘 | [본문](open-questions/D/D91.md) |
 | D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 | D94 | ~~Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다~~ (level-3 recall 손실은 실험팀 범위 · main_26·27 미실측 · 서빙 miss는 열린 #467) | 닫힘 | [본문](open-questions/D/D94.md) |
@@ -155,7 +155,7 @@
 | D97 | ~~벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다~~ ((b) 우선순위 구현 · 효과 미실측) | 닫힘 | [본문](open-questions/D/D97.md) |
 | D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
-| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97, D96은 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
+| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97·D96, 둘 다 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
 | D101 | **로더가 슬라이스의 `analysis`를 버리고 `degraded`는 Scout에만 실어, 절단·역추적 경계 신호가 Auditor 입력에 안 닿는다** | 열림 | [본문](open-questions/D/D101.md) |
 | D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 정의 오염 잔여는 추적 없음) | 닫힘 | [본문](open-questions/D/D102.md) |
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |
