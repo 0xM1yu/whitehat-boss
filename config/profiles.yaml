@@ -125,17 +125,18 @@ profiles:
       state_store: sqlite
     budget: dev_container
 
-  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
+  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
   harness_pool:
     # **§1 정본의 로스터를 배선한 canonical 프로필이다. checksum·처리량 검증 전.**
     # 2026-09-24 `local_balanced_pool`에서 이름을 바꿨다(조민규 — 로스터 확정에 따라 프로필 배선).
     # 그 이름으로 적힌 날짜 붙은 서술(PR #190·#240 등)은 이 프로필의 옛 이름을 가리킨다.
     #
     # - **Scout 풀** — scout_{memory,boundary,injection}이 각자 CWE 계열을 본다(ADR 0010 §3).
-    #   memory·injection = `qwen3-14b`(한 키가 두 역할, 프롬프트 v3 폴더가 내용을 가름 —
-    #   scout_memory/v3=옛 v14s), boundary = `seccoderx-8b`(v3, scout_boundary/v3=옛 v15s).
+    #   ⏵ 2026-10-14 — **셋 다 `qwen3-14b` 한 키다**(실험팀 프롬프트 개선 작업에서 정한 교체 —
+    #   PROJECT-CONTEXT.md §1). 프롬프트가 역할 폴더로 갈린다(`scout_{memory,boundary,injection}/v4`).
+    #   ⚠ 그래서 **세 역할 축이 재는 것은 전부 프롬프트 차이이고 모델 차이가 아니다**(§1 · ADR 0010 §3).
     #   injection은 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서,
-    #   memory는 2026-09-25 실험팀 최종 권고로 `seccoderx-8b`에서 옮겼다(PROJECT-CONTEXT.md §1).
+    #   memory는 2026-09-25 실험팀 최종 권고로, boundary는 2026-10-14에 `seccoderx-8b`에서 옮겼다.
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v8이다(2026-10-14 — #497이 2026-10-05에 v6으로 배선했고
     #   S20 Phase 11이 v7로, Phase 14가 v8로 올렸다. v7은 SOURCE로 직접 검증하는 5-check 절차이고 v8은 거기에 SOURCE 새 블록 둘 · Auditor 도구 관측 절 · `auditor_hops`의 서술을 더하고 그 절과 어긋나는 한 문장을 고쳤다 — 입력은 v6과 같다).
     #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
@@ -179,6 +180,9 @@ profiles:
     # ⏵ 2026-10-08 — 위 두 합은 ATOM 값이다(ATOM 사용 종료 2026-09-29, #340 · docs/portability.md §6). 지금 vast 장비
     #   파일 `config/serving/vastai-remote.yaml`로 세면 0.35 + 0.55 + 0.90 + 0.90 + 0.90(pov) = 3.60(계산값)이라
     #   「1을 넘는다」는 그대로 선다.
+    # ⏵ 2026-10-15 — 위 2.60·3.60은 서버 **다섯**일 때의 합이다(`seccoderx-8b` 0.30·0.35 포함). Scout 셋이 `qwen3-14b`
+    #   한 서버가 된 지금 서버는 **넷**이고 같은 식(각 장비 파일의 util, 계산값)으로 ATOM은 0.40 + 0.80 + 0.30 + 0.80
+    #   = 2.30, vast(`vastai-remote.yaml`)는 0.55 + 0.90 + 0.90 + 0.90 = 3.25다. 「1을 넘는다」는 그대로 선다.
     #
     # ## 교대 — 단계 경계 콜드 재기동(`execution.swap`, 2026-09-29 — ADR 0009 「2026-09-29 제안」 절)
     #
@@ -207,14 +211,14 @@ profiles:
     #   ⏵ 2026-10-13: 노드가 `SOURCE`의 모양을 meta `input`으로 골라 `--slices` run에서도 v4는 함수
     #   본문을 받는다(#529).
     #   `production: false`가 실제로
-    #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 네 키
-    #   (`seccoderx-8b`·`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
+    #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 세 키
+    #   (`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
     #   돈 run은 비교표에서 제외된다(CLAUDE.md §0).
-    description: "로스터 canonical 배선(§1 정본: Scout 풀 seccoderx·qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + PoV feyospace + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
+    description: "로스터 canonical 배선(§1 정본: Scout 풀 qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + PoV feyospace + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
     production: false
     roles:
       scout_memory: qwen3-14b
-      scout_boundary: seccoderx-8b
+      scout_boundary: qwen3-14b
       scout_injection: qwen3-14b
       auditor: qwen3.8-27b
       critic: gpt-oss-20b
@@ -234,7 +238,10 @@ profiles:
         swappable: [scout_memory, scout_boundary, scout_injection, auditor, critic, pov]
         # 교대 한 번(내림 + 기동 + 준비 확인)의 마감 — **계산값, 미실측.** 두 장비 파일 중 가장 무거운 교대인
         # ATOM Auditor 교대로 잡았다: 앞 단계 Scout 둘 내림 2 × 50 s + 시도 2 × (준비 상한 1,720 s + 시도당
-        # 300 s) = 4,140 s → 4,200 s. 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
+        # 300 s) = 4,140 s → 4,200 s. ⏵ 2026-10-15 — Scout가 한 서버(`qwen3-14b`)가 되어 지금 식은 내림 1 × 50 s +
+        # 2 × (1,720 + 300) = 4,090 s(계산값)이고 4,200 s는 그 위의 상한으로 남는다(`tests/test_serve_scripts.py`의
+        # `test_the_swap_deadline_covers_every_swap_on_every_device`가 장비 파일마다 잠근다). 값은 안 줄였다 —
+        # 줄일 근거인 실측이 없다(CLAUDE.md §0). 시도당 300 s = 메모리 대기 60 s + 마지막 폴링 둘 2 × 5 s + 마지막 채팅
         # 요청의 `curl -m` 상한 120 s(준비 상한을 넘겨서도 붙잡는다) + `/v1/models` 확인 60 s + 실패 기동 내림
         # 50 s(TERM 20 + KILL 30). 준비 상한의 근거는 `config/serving/atom.yaml`의 그 행이고, 나머지는
         # `tools/serve/swap.sh`의 상수와 `src/bench_metrics.py`의 `_TIMEOUT_S`다. `tests/test_serve_scripts.py`가
@@ -261,7 +268,7 @@ profiles:
     # 자리다 — 축이 하나여야 어느 쪽 효과인지 갈린다. 옛 `local_balanced_hybrid`가 같은 이유로
     # `local_balanced`와 나뉘었다(둘 다 2026-09-24에 지웠다).
     #
-    # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout seccoderx·qwen3-14b(v3),
+    # ⚠ **전 역할이 `harness_pool`과 같은 §1 키다** — Scout `qwen3-14b`(⏵ 2026-10-14 — 셋 다 한 키 · v4),
     #   Auditor `qwen3.8-27b`(⏵ 2026-09-29 — 근거 본문 배선과 함께 v3, 같은 날 v4로 올렸다 ·
     #   ⏵ 2026-10-03 v6 — #418·#421 · 사고 켬 · ⏵ 2026-10-04 v7 — #349 SOURCE 서술 · 같은 날 v8 —
     #   #419 도구 루프 · ⏵ 2026-10-06 v9 — `auditor_guards` 서술 · ⏵ 2026-10-07 v10 — v7 전면 재작성),
@@ -303,7 +310,7 @@ profiles:
     # 갈린다. tests/test_config.py가 roles·budget·나머지 어댑터까지 기계로 고정한다.
     roles:
       scout_memory: qwen3-14b
-      scout_boundary: seccoderx-8b
+      scout_boundary: qwen3-14b
       scout_injection: qwen3-14b
       auditor: qwen3.8-27b
       critic: gpt-oss-20b

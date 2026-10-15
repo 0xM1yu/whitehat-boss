@@ -202,8 +202,9 @@ class ModelEntry(HarnessModel):
     # `--apply`는 이 필드를 건드리지 않는다(`benchmark:` 블록 밖이고 `APPLY_KEYS`에 없다).
     source: NonEmptyStr | None = None
     # **베이스 가중치의 제작사** — 양자화한 조직이 아니라 가중치가 나온 조직이다
-    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `seccoderx-8b`의
-    # 출처는 `hf://SecCoderX/…`지만 가중치의 베이스는 Qwen3-8B이므로 계열은 `qwen`이다.
+    # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `feyospace-v1-small`의
+    # 출처는 `hf://feyospace/…`지만 가중치의 베이스는 Qwen3.8-27B이므로 계열은 `qwen`이다.
+    # (⏵ 2026-10-14 — 이 예시는 `seccoderx-8b`였고 그 키가 로스터에서 내려와 옮겼다.)
     # (2026-09-24에 지운 옛 키 `qwen3-8b`·`qwen3-coder-30b-a3b`도 NVIDIA·NVFP4 조직이 양자화한
     # 가중치라 `qwen`이었다.)
     #
@@ -261,7 +262,9 @@ class ModelEntry(HarnessModel):
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
     # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·
-    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). `sampling`·`thinking_token_budget`은 그때
+    #   `gpt-oss-20b`)도 선언한다(#261 — 계산값). ⏵ 2026-10-14 — 그 셋이 둘이 됐다
+    #   (`qwen3-14b`·`gpt-oss-20b` — `seccoderx-8b`가 로스터에서 내려왔다).
+    #   `sampling`·`thinking_token_budget`은 그때
     #   Auditor뿐이었고, `chat_template_kwargs`는 어느 모델도 안 쓴다.
     # ⏵ 2026-09-30 — `feyospace-v1-small`(8단계 pov 좌석)도 `reasoning_effort`·`sampling`·
     #   `thinking_token_budget`·`request_timeout_s` 넷을 Auditor 값 그대로 선언한다
