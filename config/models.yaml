@@ -822,7 +822,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5와 서빙 판 v6·v7은 `PovActionNamed`)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5~v8은 `PovActionNamed`이고 서빙 판은 v8)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -885,7 +885,12 @@ models:
     # 「하네스는 채점기 코드로 가르지 않는다」가 거짓이라 다시 썼다)(`prompts/pov/v7/meta.yaml`).
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v7을 더했다. **v7로 돈 run은 0건 · 효과 미실측** - v6 이하와 직접 비교하지 않는다. 위 v6
     # 문단의 sha는 v6의 값이다.
-    prompt_template_version: "v7"
+    # ⏵ 2026-10-15 — v8로 올렸다(S20 Phase 15 · ADR 0013 2026-10-15 개정). v8은 v7에서 prefix 「Hop budget」 한 줄에 두 문장만 더했다:
+    # `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 하네스 쪽에서 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있다
+    # (`prompts/pov/v8/meta.yaml`). prefix.md sha256 `192dc978fa02097a5e5d76854e6dae267f11f7ff42db2c629b465f2faa145395`.
+    # `nodes/pov._WIDE_INPUT_VERSIONS`에 v8을 더했다. **v8로 돈 run은 0건 · 효과 미실측** - v7 이하와 직접 비교하지 않는다. 위 v7
+    # 문단의 sha는 v7의 값이다.
+    prompt_template_version: "v8"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고

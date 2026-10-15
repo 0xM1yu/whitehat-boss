@@ -254,10 +254,10 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 `wall_ms`나 사이드카로 낸다(`oracle_log`의 선례).
 
 ⚠ **예외 하나(⏵ 2026-10-14 이슈 #637):** `oracle_final`의 `designation`·`subject_id`·`poc_sha256`·
-`poc_bytes`는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로 그 코드에 일부 달렸다. 코드가
-고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은 입력의 코드가 갈리면 이 네 필드가
-갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 — 서버 경로의 비율은 미실측, `oracle_log`
-모듈 docstring).
+`poc_bytes`·`rescued`(⏵ 2026-10-15)는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로
+그 코드에 일부 달렸다. 코드가 고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은
+입력의 코드가 갈리면 이 필드들이 갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 —
+서버 경로의 비율은 미실측, `oracle_log` 모듈 docstring).
 """
 
 import json
@@ -799,12 +799,18 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 여덟이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
+    # **`designation`은 아홉이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
     # 코드 하나(`vul_crash`)만 읽는다**(`oracle_log`가 목록을 든다 · ⏵ 2026-10-14 이슈 #637) —
+    # ⏵ 2026-10-15 (ADR 0013 결정 1 개정) - 후보 풀에는 `submit` 없이 끝난 Finding의 중간 gen 중
+    # 자기 응답 코드가 크래시 계단인 것이 **구제**돼 든다. `rescued`는 지정된 후보가 그런 구제된
+    # gen이면 `true`, 제출된 후보면 `false`, 지정이 없으면 `null`이다(`designation`처럼 응답 코드에
+    # 달려 Fake 경로 밖에서는 결정론이 아니다). 같은 계단에서 제출된 후보가 구제된 것을 이기면
+    # `submitted_over_rescued`다.
     # 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
-    # 갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
-    # 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든 값의 전순서다).
+    # 갈랐다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·`top_confidence`·
+    # `smallest_poc`·`poc_digest` — 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든
+    # 값의 전순서다).
     # 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다
     # (`status=none` · `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고
     # 판정이 있는 것이 아니다.

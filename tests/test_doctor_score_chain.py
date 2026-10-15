@@ -77,8 +77,9 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
 
 
 # pov는 v3(2026-10-05~10-08 서빙 판) · v4(10-08~) · v5(10-09~) · v6(2026-10-13~) ·
-# v7(2026-10-14~ 서빙 판)이 모두 넓은 입력 판이다. ⏵ 2026-10-13 — v5·v6을 더했다.
-# ⏵ 2026-10-14 — v7을 더했다(서빙 판이 v7로 올랐다). critic은 v8(2026-10-14~)이 서빙 판이다.
+# v7(2026-10-14~) · v8(2026-10-15~ 서빙 판)이 모두 넓은 입력 판이다. ⏵ 2026-10-13 — v5·v6을 더했다.
+# ⏵ 2026-10-14 — v7을 더했다(⏵ 2026-10-15 v8로 올라 서빙 판이다).
+# critic은 v8(2026-10-14~)이 서빙 판이다.
 @pytest.mark.parametrize(
     "role,version",
     [
@@ -90,6 +91,7 @@ def test_old_real_prompt_outside_content_set_errors(monkeypatch, tmp_path, role)
         ("pov", "v5"),
         ("pov", "v6"),
         ("pov", "v7"),
+        ("pov", "v8"),  # 2026-10-15 - 서빙 판
         ("auditor", "v7"),
     ],
 )
@@ -134,6 +136,8 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
     # 같은 사고가 난다.
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v6"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v7"),
+    # v8이 지금 서빙 판이다(2026-10-15)
+    ("pov", pov, "_WIDE_INPUT_VERSIONS", "v8"),
     ("auditor", auditor, "_CONTENT_AWARE_VERSIONS", "v7"),
 ])
 def test_reads_the_nodes_live_content_set(monkeypatch, tmp_path, role, module, attribute, version):
