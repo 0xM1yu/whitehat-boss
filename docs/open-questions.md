@@ -80,7 +80,7 @@
 | D21 | ~~토큰 계상이 실서빙 실측보다 1.8배 과소다~~ (서빙 로컬 카운터는 `approx`지만 묶는 자리가 모두 여유 · 실 토크나이저 PR #31은 ATOM 증명뿐 · 미실측 병기 · 캡슐 예산은 그 여유 밖) | 닫힘 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | ~~`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다~~ (등급 영향 0 · 잔여는 순서 해상도뿐 · 위치 불일치는 #563) | 닫힘 | [본문](open-questions/D/D23.md) |
-| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 256은 정한 값) | 닫힘 | [본문](open-questions/D/D24.md) |
+| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 정한 값 — 10-15 8로 낮춤) | 닫힘 | [본문](open-questions/D/D24.md) |
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | ~~장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다~~ (실서빙 프로필에 Fake 좌석 없음 · 서빙 장부가 서버 적중과 같은 방향 · 정량 대조 미실측) | 닫힘 | [본문](open-questions/D/D27.md) |
