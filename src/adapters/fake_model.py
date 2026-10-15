@@ -673,7 +673,7 @@ def _build_auditor_procedure_probe_input_action(
 def _build_pov_action_named(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovActionNamed:
-    """형제 봉투(`PovActionNamed` · v5~v8, 서빙 판은 v8)의 fake — `_build_pov_action`과 같은
+    """형제 봉투(`PovActionNamed` · v5~v9, 서빙 판은 v9)의 fake — `_build_pov_action`과 같은
     액션(`poc_sha256` 없음)."""
     return PovActionNamed(**_build_pov_action(context, produced_by, history).model_dump())
 
