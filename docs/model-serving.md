@@ -370,16 +370,16 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 
 - **감시자** — `tools/serve/guard.sh`, **run마다 하나 띄운다.** 교대 명령은 감시자가 떠 있고 다른 run 것이
   아닐 때만 띄우고(띄우는 run이 기동 직전마다 감시자를 자기 것으로 적는다), run 끝 내림이 그 run 서버를 다 내리면
-  감시자를 멈춘다 — 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않게. 「떠 있다」는 pid 파일의 번호와 시작
-  시각이 함께 맞는다는 것이다 — 번호만 든 옛 형식은 감시자가 아니다. 마감(`MAX_HOURS`)은 지키는 run의
-  서버만 내린다. 메모리 두 층 — 통합메모리의 MemAvailable 하한, 그리고 cgroup 층(상한이 걸린 cgroup의 anon >
+  감시자를 멈춘다 — (마감을 켰다면) 끝난 run의 감시자 마감이 다음 run 서버를 죽이지 않게. 「떠 있다」는 pid 파일의 번호와 시작
+  시각이 함께 맞는다는 것이다 — 번호만 든 옛 형식은 감시자가 아니다. 마감(`MAX_HOURS`)은 **기본 꺼짐**이고(⏵ 2026-10-15 사용자 결정 - 10시간 마감이 10-12 run을 8단계 중간에 끊었다)
+  양의 정수를 주면 지키는 run의 서버만 내린다. **위험: 마감이 없으면 로컬 run이 run 끝 내림 없이 죽었을 때(PC 종료·Ctrl-C 뒤 내림 실패 등) 원격 서버가 GPU를 계속 잡는다 → 사람이 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`로 내리고 vast 인스턴스를 지운다.** 메모리 두 층 — 통합메모리의 MemAvailable 하한, 그리고 cgroup 층(상한이 걸린 cgroup의 anon >
   상한의 90% — 옛 스모크 감시자의 「anon > 72 GiB」) — 은 장비 보호라 교대 명령이 띄운 서버를 run과 무관하게 전부
   내린다. cgroup 층의 판정은 장비 무관이지만 **자동 탐색은 cgroup v2만이다** — v1이면 `GUARD_CGROUP_DIR`로 시작
   디렉터리를 줘야 한다(v1은 가짜 트리로만 확인했다). 무엇을 보는지는 감시자 시작 로그의 `cgroup=`이 적는다(자동
   탐색이 상한을 못 찾으면 `없음` — 그 층은 안 돈다. `GUARD_CGROUP_DIR`로 준 곳에서 못 찾으면 감시자가 뜨지 않는다).
   감시자가 뜨지 못한 사유는 `$SERVE_DIR/logs/guard.log`의 「시작 거부」 줄에도 남는다(기동 줄이 stderr를 버린다).
-  run 끝 내림이 실패하면(러너는 run 결과를 바꾸지 않고 경고로 남긴다) 감시자도 안 멈추므로, 남은 서버는 그
-  마감이나 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`가 치운다. 감시자 확인은 서버를 띄우기 직전마다 한다 —
+  run 끝 내림이 실패하면(러너는 run 결과를 바꾸지 않고 경고로 남긴다) 감시자도 안 멈추므로, 남은 서버는 (마감을 켰다면) 그
+  마감이나 `HARNESS_RUN_ID=<run> bash tools/serve/swap.sh`가 치운다 - 마감이 기본 꺼짐이라 보통은 사람이다. 감시자 확인은 서버를 띄우기 직전마다 한다 —
   한 교대가 두 키를 띄우는 중 감시자가 끝나면 둘째 키는 안 띄운다.
   ⚠ `STOP_GUARD`는 run 끝 내림의 신호이자 사람의 멈춤 스위치다. run 도중 사람이 만들면 감시자가 멈추고 그 run의
   다음 기동이 「STOP_GUARD가 있다」로 거부돼 run이 `model_swap_failed`로 멈춘다 — 그때까지 떠 있던 서버는 그
