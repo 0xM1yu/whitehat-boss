@@ -357,9 +357,10 @@ class RunRecord(UtcModel):
     # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급·
     # `confidence`·Critic 판정 중 모르는 것이 있었다. 사유는 `final_reason` — `no_poc`·
     # `all_vul_submissions_failed`·`rate_limited`·`grade_unknown`) ·
-    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 예산·서버 쪽 게이트웨이
-    # 오류로 끊겨도 이미 낸 최종 후보가 있거나 추가 PoV 대상에서 끊긴 run은 최종 단계를 부르고
-    # 끝난다)이고 `record`는 사이드카의 run_dir 상대 경로다.
+    # `not_reached`(최종 단계가 안 불렸다 — 8단계가 끝까지 안 돌았다. 단 이미 낸 최종 후보가 있으면
+    # 어떤 `Exception`으로 끊겨도(⏵ 2026-10-15), 예산·서버 쪽 게이트웨이 오류가 추가 PoV 대상에서
+    # 끊긴 run은 후보가 없어도 최종 단계를 부르고 끝난다)이고 `record`는 사이드카의 run_dir 상대
+    # 경로다.
     # 카나리에 기댄 run은 `canary_path`(풀어 쓴 경로)·`canary_sha256`(게이트가 **검사한 바이트의**
     # 해시)가 더 붙는다 - 점수가 어느 보고서에 기댔는지 사후에 변호하는 값이다(#487).
     # **판정 값(종료 코드·`success`)은 여기에 없다** — 서버가 돌려준 값이라 사이드카에 두고, 이

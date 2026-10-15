@@ -13,6 +13,16 @@ from src.schemas.enums import RebuttalAxis, Verdict
 # `Decision.ungrounded_reason`의 값 - `critic_normalized` trace의 `reason`이 그대로 쓴다(ADR 0015).
 EMPTY_AXIS = "empty_axis"
 INVALID_AXIS = "invalid_axis"
+# v8 이상에서 `evidence_refs`만 든 `rebut`의 사유 - ID가 있는데도 근거가 못 되는 판이라 위 둘과
+# 가른다.
+REBUT_IDS_ONLY = "rebut_ids_only"
+
+# `rebut`의 근거를 **`rebuttal_axis`로만** 세는 Critic 프롬프트 판 (ADR 0015 ⏵ 2026-10-15).
+# 이 판들은 `rebut`에 Evidence ID를 금지한다 - ID를 든 `rebut`은 규약을 어긴 것이고 근거가 아니다.
+# 노드의 `_CONTENT_AWARE_VERSIONS`와 같은 이름 목록 패턴이다(meta 선언은 `prompts/`를 건드려야 해서
+# 안 썼다). ⚠ 판이 늘 때 여기를 잊으면 새 판에서 ID-only `rebut`이 **조용히** 근거가 된다 -
+# `tests/test_critic_v8.py`가 `prompts/critic/`의 v8 이상 디렉터리가 이 집합에 드는지 문다.
+AXIS_ONLY_GROUNDING_VERSIONS = frozenset({"v8"})
 
 
 class Decision(HarnessModel):
@@ -55,28 +65,35 @@ class Decision(HarnessModel):
     def ungrounded_reason(self) -> str | None:
         """반박이 근거를 못 갖춘 사유 - 갖췄으면 `None` (agent-contracts.md §2.3 · ADR 0015).
 
-        근거는 둘 중 하나다. ① `evidence_refs`가 비어 있지 않다 - v6(2026-10-14 전의 서빙 판)의
-        `rebut`은 등록된 ID를 인용한다. ② `rebuttal_axis`가 비어 있지 않고 **전부**
-        `RebuttalAxis`다 - v7은 `rebut`에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
-        ⚠ **②는 v7 전용이 아니다** — 이 술어에 판 구분이 없어 v6 `rebut`도 ID 없이 유효 축만
-        들면 ①을 안 거쳐 ②로 근거가 된다(ADR 0015의 v6 뒤집힘 표). 위 v6/v7 꼬리표는
-        「그 규약을 요구하는 프롬프트」를 가리키지 술어의 적용 범위가 아니다.
-        ⚠ ②는 **모델의 자기 신고**다. 인용한 코드가 SOURCE에 실재하는지는 보지 않는다(ADR 0015 P0b,
+        근거는 둘 중 하나다. ① `rebuttal_axis`가 비어 있지 않고 **전부** `RebuttalAxis`다 - v7 이후
+        판은 `rebut`에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다. ② `evidence_refs`가 비어
+        있지 않다 - v6(2026-10-14 전의 서빙 판)의 `rebut`은 등록된 ID를 인용한다.
+        ⚠ ①은 판 구분이 없다 - v6 `rebut`도 ID 없이 유효 축만 들면 ①로 근거가 된다(ADR 0015의 v6
+        뒤집힘 표).
+        ⏵ 2026-10-15 (ADR 0015 개정) - **②는 `AXIS_ONLY_GROUNDING_VERSIONS`(v8 이상)에는 없다.** 그
+        판은 `rebut`에 ID를 금지하므로 ID만 든 `rebut`은 규약 위반이고, 게이트가 못 보는 ID 하나로
+        「근거 있는 반박」이 되어 `gate.normalize`를 비껴가던
+        길(`nodes/critic._record_unknown_refs`)을 닫는다. 그 `rebut`은 `REBUT_IDS_ONLY`로
+        `need_evidence`에 정규화된다. 판은 `produced_by.prompt_version`이 정한다(하네스가 넣는 값 -
+        모델 출력이 아니다). v6·v7은 종전 그대로다.
+        ⚠ ①은 **모델의 자기 신고**다. 인용한 코드가 SOURCE에 실재하는지는 보지 않는다(ADR 0015 P0b,
         보류). 어휘 안인 축이 근거의 자격이지 근거의 참이 아니다.
         """
-        if self.evidence_refs:
+        if self.rebuttal_axis and not self.invalid_axes:
             return None
-        if not self.rebuttal_axis:
-            return EMPTY_AXIS
-        if self.invalid_axes:
-            return INVALID_AXIS
+        axis_reason = INVALID_AXIS if self.rebuttal_axis else EMPTY_AXIS
+        if not self.evidence_refs:
+            return axis_reason
+        if self.produced_by.prompt_version in AXIS_ONLY_GROUNDING_VERSIONS:
+            return REBUT_IDS_ONLY if axis_reason == EMPTY_AXIS else axis_reason
         return None
 
     @property
     def is_grounded(self) -> bool:
         """반박이 근거를 동반하는가 (agent-contracts.md §2.3).
 
-        `bool(evidence_refs) or (rebuttal_axis가 비어 있지 않고 전부 RebuttalAxis)`. `False`인
+        `bool(evidence_refs) or (rebuttal_axis가 비어 있지 않고 전부 RebuttalAxis)` - 단 v8 이상
+        (`AXIS_ONLY_GROUNDING_VERSIONS`)은 앞 항이 없다(⏵ 2026-10-15). `False`인
         `rebut`은 오케스트레이터가 **`need_evidence`**로 정규화하고 그 사건을 사유와 함께 지표에
         남긴다 (⏵ 2026-10-13, ADR 0015 - 전엔 `uphold`로 정규화했다). 여기서 판정만 제공하고
         처리는 하지 않는다.

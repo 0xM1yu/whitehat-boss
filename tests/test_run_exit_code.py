@@ -33,12 +33,13 @@ def _analyze_raises(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> None:
     monkeypatch.setattr(runner, "_analyze", boom)
 
 
-# 장애로 멈춘 넷 — 러너 `except` 갈래(`MODEL_SWAP_FAILED` 등)가 각각 이 예외를 받는다.
+# 장애로 멈춘 다섯 — 러너 `except` 갈래(`MODEL_SWAP_FAILED` 등)가 각각 이 예외를 받는다.
 FAULTS = [
     (ModelSwapError("교대 실패"), ReasonCode.MODEL_SWAP_FAILED),
     (ModelGatewayError("연결 실패"), ReasonCode.MODEL_GATEWAY_UNAVAILABLE),
     (runner._TooManyDrops("연속 폐기"), ReasonCode.CONSECUTIVE_TARGET_FAILURES),
     (SchemaParseError("파싱 실패"), ReasonCode.SCHEMA_PARSE_FAILED),
+    (runner._IndexUnavailable("색인 실패"), ReasonCode.INDEX_UNAVAILABLE),
 ]
 
 
