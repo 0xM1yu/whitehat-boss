@@ -70,7 +70,7 @@ tree-sitter 인덱서, 그리고 **이미지에 구워 넣은 semgrep 룰셋**.
 
 | 경로 | 내용 | 고정 방법 |
 | --- | --- | --- |
-| `/opt/semgrep-rules/c` | 공개 [semgrep-rules](https://github.com/semgrep/semgrep-rules)의 C 부분 | `--build-arg SEMGREP_RULES_COMMIT=<40 hex>`. 해석된 커밋은 이미지 안 `/opt/semgrep-rules/COMMIT`에 남는다 |
+| `/opt/semgrep-rules/c` | 공개 [semgrep-rules](https://github.com/semgrep/semgrep-rules)의 C 부분 — 빌드 때 `languages: [c]`를 `[c, cpp]`로 바꿔 C++ 파일(`.cc`·`.cpp`·`.hpp`)에도 건다(#689) | `--build-arg SEMGREP_RULES_COMMIT=<40 hex>`. 해석된 커밋은 이미지 안 `/opt/semgrep-rules/COMMIT`에 남는다 |
 | `/opt/semgrep-rules/harness` | `tools/harness-tools/rules/*.yaml` (이 저장소가 버전 관리) | 이 저장소의 커밋 |
 
 semgrep 자체 버전은 `--build-arg SEMGREP_VERSION=` (기본 1.86.0)로 고정한다.

@@ -6,7 +6,7 @@
 # 최소 보증선이다 — 픽스처의 취약/benign 구분이 공개 룰셋의 버전에 좌우되면 안 된다.
 rules:
   - id: harness-memcpy-nonconstant-length
-    languages: [c]
+    languages: [c, cpp]
     severity: WARNING
     message: 길이가 상수가 아닌 memcpy — 대상 버퍼 크기와 비교되지 않았을 수 있다
     patterns:
@@ -18,7 +18,7 @@ rules:
           regex: ^[A-Za-z_]
 
   - id: harness-unbounded-string-copy
-    languages: [c]
+    languages: [c, cpp]
     severity: ERROR
     message: 길이 상한이 없는 문자열 함수 — 대상 버퍼를 넘길 수 있다
     pattern-either:
