@@ -552,6 +552,14 @@ class ReasonCode(StrEnum):
     # 이쪽은 띄우지를 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를
     # 본다.
     MODEL_SWAP_FAILED = "model_swap_failed"
+    # 1단계 색인(index)이 실패해(`graph` Evidence `ok=False` - 시간 초과 124·OOM 137·컨테이너 기동
+    # 125·실행 불가 127 등) **실서빙 모델을 부르기 전에** 멈춘 run (2026-10-15). 심볼 인덱스 없이
+    # 4단계로 가면 전 타깃이 파일 단위 폴백으로 돌고 GRAPH 근거를 잃어 E2 위가 불가능한데 GPU 시간은
+    # 그대로 쓴다. `run --allow-missing-index`가 이 정지를 풀고(경고만 남긴다) 풀었다는 사실은
+    # trace `index_stop_lifted`에 남는다. 위 사유들과 가르는 것은 대응이다 - 이쪽은 서버가
+    # 아니라 **인덱서 도구**(이미지·마운트·시간 상한)를 본다. 모델 호출 0건에서 서므로 `run`의
+    # 종료 코드는 `_NORMAL_STOPS` 밖이라 3이다.
+    INDEX_UNAVAILABLE = "index_unavailable"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
     # Queue 규칙 (architecture.md §3)
@@ -562,8 +570,9 @@ class ReasonCode(StrEnum):
     # ⚠ **범위는 `_analyze`(1~8단계)다** — `_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트
     # 재등급·리포트 렌더·`finish_run`)에서 **처음** 나는 예외는 이 사유를 못 받고 매니페스트도 안
     # 남는다. `_analyze`에서 난 뒤에는 후처리를 건너뛰므로 2차 예외가 원 예외를 덮지 않는다.
-    # 위 다섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
-    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`)는 **예상한** 형이고 이것은 그 밖 전부다.
+    # 위 여섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
+    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`·`INDEX_UNAVAILABLE`)는 **예상한** 형이고
+    # 이것은 그 밖 전부다.
     # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
     # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
     # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로

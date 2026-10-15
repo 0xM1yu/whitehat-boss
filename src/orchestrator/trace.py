@@ -83,9 +83,15 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
+| 정지 해제 | `index_stop_lifted` | `index_missing_allowed=true`. **부재 = 안 풀었다**(아래) |
+
+⏵ **2026-10-15 — `index_stop_lifted`.** `run --allow-missing-index`가 1단계 색인 실패 정지를
+**실제로** 푼 run에만 1건이다(키 `index_missing_allowed`·`exit_code`·`error`). 그 run은 GRAPH 근거가
+없어 E2 위가 불가능하다. 색인이 멀쩡하거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다.
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
-`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`reason`(`empty_axis` · `invalid_axis` · v8 이상의 `rebut_ids_only`)과 어휘 밖 축 원문
+`invalid_axes`(JSON 배열 문자열 —
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
 `count(reason=invalid_axis) / count(rebut)`.
 ⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
@@ -569,7 +575,8 @@ class EventKind(StrEnum):
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
     # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
-    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis` | `rebut_ids_only` -
+    # 끝은 v8 이상, ADR 0015 ⏵ 2026-10-15) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
@@ -813,9 +820,10 @@ class EventKind(StrEnum):
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
-    # `oracle.final`이 `not_reached`다. 단 예산·서버 쪽 게이트웨이 오류로 끊겨도 이미 낸 최종 후보가
-    # 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은 최종 지정까지 하고 끝나 `oracle_final`이
-    # 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
+    # `oracle.final`이 `not_reached`다. 단 이미 낸 최종 후보가 있으면 어떤 `Exception`으로
+    # 끊겨도(⏵ 2026-10-15), 예산·서버 쪽 게이트웨이 오류가 `pov_attempt_top_n`의 추가 대상에서
+    # 끊긴 run은 후보가 없어도
+    # 최종 지정까지 하고 끝나 `oracle_final`이 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
     # 남기지 않는다:
     # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
     # PoC로 컨테이너를 돌렸을 수 있다.
@@ -902,6 +910,12 @@ class EventKind(StrEnum):
     # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
+    # `run --allow-missing-index`가 **실제로** 1단계 색인 실패 정지를 푼 사건 (2026-10-15). 내는
+    # 곳은 `runner._require_index`이고 run당 0건 또는 1건이다. 키: `index_missing_allowed`(항상
+    # `true`) · `exit_code`(색인 Evidence의 종료 코드) · `error`(자른 사유). **이벤트 부재 = 정지를
+    # 푼 적 없다**(색인이 멀쩡했거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다).
+    # `RunRecord`에는 안 남는다 - 저장 형태 판을 올리지 않으려는 것이다.
+    INDEX_STOP_LIFTED = "index_stop_lifted"
 
 
 class TraceEvent(HarnessModel):
