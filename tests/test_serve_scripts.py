@@ -560,7 +560,7 @@ def test_the_guard_deadline_terms_then_kills_only_its_own_run(rig: Rig) -> None:
                 f"{key} {proc.pid} {run} {_starttime(proc.pid)}\n"
                 for key, proc, run in (
                     ("qwen3-14b", stubborn, RUN_ID),
-                    ("qwen3-14b", polite, RUN_ID),
+                    ("qwen3.8-27b", polite, RUN_ID),
                     ("gpt-oss-20b", stranger, "run_other"),
                 )
             ),
