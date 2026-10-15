@@ -74,7 +74,8 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
 ⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
 `evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
-이 값을 한 열에 놓지 않는다.** |
+이 값을 한 열에 놓지 않는다.**
+v8 이상 run은 `rebut_ids_only`도 분자에 더하므로(2026-10-15) 그 앞 run과도 한 열에 잇지 않는다. |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
@@ -613,10 +614,6 @@ class EventKind(StrEnum):
     # 거르고 `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는
     # `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고,
     # ID 갈래만으로도 참이라 이 경로는 그대로다.
-    # ⏵ 2026-10-15 — 위 서술은 v6·v7이다. v8 이상은 ID만 든 `rebut`이 `rebut_ids_only`로
-    # `need_evidence`가 되어 이 길이 닫혔다(`schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`).
-    # `grounded`는 verdict가 `rebut`일 때만 뜻이 있다 - v8의 `uphold`가 ID를 인용하면 축이 없어
-    # `grounded=false`로 남는다(정규화 대상이 아니다).
     # 그래서 게이트가 못 보는 ID 하나로도 `rebut`이 「근거 있는 반박」이 되어
     # `gate.normalize`를 비껴가고 F-6 `queued`로 간다. 그 길이 생긴 것은 홉 관측이 `probe`
     # Evidence의 `evidence_id`를 Critic에 보이게 한 뒤다(#600 H2ⓐ · 이슈 #419의 E4 경계).
@@ -625,6 +622,10 @@ class EventKind(StrEnum):
     # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
     # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
     # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    # ⏵ 2026-10-15 — 위 서술은 v6·v7이다. v8 이상은 ID만 든 `rebut`이 `rebut_ids_only`로
+    # `need_evidence`가 되어 이 길이 닫혔다(`schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`).
+    # `grounded`는 verdict가 `rebut`일 때만 뜻이 있다 - v8의 `uphold`가 ID를 인용하면 축이 없어
+    # `grounded=false`로 남는다(정규화 대상이 아니다).
     CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"

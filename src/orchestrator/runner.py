@@ -1073,6 +1073,7 @@ def run_pipeline(
         # 남았다 — 교대 밖에서 올라온 것(방어선 경로)에는 그 이벤트가 없다.
         stopped_after = int(ctx.current_stage)
         stop_reason = ReasonCode.MODEL_SWAP_FAILED
+        # `__notes__`는 안 옮긴다 — 노트를 붙이는 PoV 루프 안에서는 이 예외가 올라오지 않는다.
         warnings.append(f"모델 교대가 실패해 중단했다: {error_detail(exc)}")
     except ModelGatewayError as exc:
         # 서버 쪽 사건이라 남은 target을 태워도 얻는 것이 없다. **그래도 여기까지 만든
