@@ -836,28 +836,132 @@ def test_a_final_designation_failure_reaches_the_run_warnings(
     ), result.warnings
 
 
-def test_a_non_target_exception_inside_the_pov_loop_does_not_run_the_final_designation(
+def test_a_non_target_exception_after_a_submitted_poc_still_runs_the_final_designation(
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
-    """**「그 밖의 예외는 안 덮는다」의 핀이다** - `except (BudgetExhausted, ModelGatewayError)`를
-    `except Exception`으로 넓히는 변이를 문다. 핸들러가 `raise`로 다시 올리므로 어느 예외가 run을
-    멈추느냐는 그 변이로도 안 바뀐다 - 바뀌는 것은 **임의 예외에서도 오라클 네트워크 호출(`fix`
-    다리·판정 조회)이 도는 것**이다. 앞 대상이 PoC를 냈고(후보 1건) 끊긴 곳이 추가 대상이라
-    조건식은 **둘 다 참**이다 - 그래서 이 검사가 가르는 것은 예외 종류 하나뿐이다."""
+    """**낸 PoC가 있으면 예외 종류를 가리지 않고 최종 지정이 돈다** (2026-10-15 조민규 승인 - 전엔
+    이 자리가 「그 밖의 예외는 안 덮는다」의 핀이었고 `except Exception`으로 넓히는 변이를 물었다).
+    앞 대상이 PoC를 냈고(후보 1건) 추가 대상에서 계약 밖 예외가 난다 - `fix` 다리·판정 조회가
+    정확히 한 번 돌고 `oracle.final`이 `scored`이며, **원 예외가 그대로 올라가고** 노트가 붙는다.
+    그 뒤 다시 불러도 둘째 지정은 안 돈다."""
     state, validated, extra = _validated_and_one_extra(ctx)
     reached = _pov_loop_that_runs_out_of_budget_at(
         monkeypatch, 1, error=RuntimeError("계약 밖 예외")
     )
     ctx.oracle = oracle = FakeOracle()
 
-    with pytest.raises(RuntimeError, match="계약 밖 예외"):
+    with pytest.raises(RuntimeError, match="계약 밖 예외") as raised:
         runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
     assert oracle.vul_calls == [_POCS[0]]
+    assert oracle.final_calls == [(_POCS[0], oracle.vul_results[0])]
+    summary = state.oracle_ledger.summary()
+    assert summary is not None
+    assert (summary["final"], summary["final_reason"]) == ("scored", None)
+    assert type(raised.value) is RuntimeError, "원 예외가 그대로 올라간다"
+    assert any("최종 지정을 돌렸다" in note for note in raised.value.__notes__)
+    runner._finalize_oracle(ctx, state)  # 둘째 호출 - 표지가 막는다
+    assert len(oracle.final_calls) == 1
+    assert len(_events(ctx, EventKind.ORACLE_FINAL)) == 1
+
+
+def test_a_non_target_exception_without_a_submitted_poc_leaves_the_final_not_reached(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """**후보가 0건이면 종전 그대로다** - 첫 `validated` 대상에서 계약 밖 예외가 나면 최종 지정은
+    안 불리고 `oracle.final`은 `not_reached`다. 조건이 후보 유무를 안 보고 예외 종류만 보는
+    변이(`except Exception`이 무조건 부른다)를 문다."""
+    state, validated, _extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(
+        monkeypatch, 0, error=RuntimeError("계약 밖 예외")
+    )
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(RuntimeError, match="계약 밖 예외"):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id]
     assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
     summary = state.oracle_ledger.summary()
     assert summary is not None and summary["final"] == "not_reached"
+
+
+def test_no_oracle_wired_means_no_final_designation_note_on_a_cut_extra_target(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """채점기가 없으면 `_finalize_oracle`은 조용히 돌아온다 - 그런데도 「최종 지정을 돌렸다」 노트가
+    붙으면 안 돈 지정이 돈 것으로 읽힌다(2026-10-15 리뷰). 추가 대상에서 예산이 끊긴다 - 조건은
+    참이지만 지정은 안 돈다."""
+    state, _validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1)
+    assert ctx.oracle is None, "전제 - 채점기가 없다"
+
+    with pytest.raises(BudgetExhausted) as raised:
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached[-1] == extra.finding_id, "추가 대상에 못 닿았다 - 공허하다"
+    assert not getattr(raised.value, "__notes__", [])
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt, SystemExit], ids=lambda e: e.__name__)
+def test_an_interrupt_in_the_pov_loop_never_runs_the_final_designation(
+    ctx, monkeypatch, interrupt  # noqa: ANN001, F811
+) -> None:
+    """**`BaseException`은 최종 지정을 안 부른다** - 후보가 있어도(앞 대상이 PoC를 냈다) 중단
+    신호에 채점기 네트워크 호출이 돌면 안 된다. `except Exception`을 `except BaseException`으로
+    넓히는 변이를 문다."""
+    state, validated, extra = _validated_and_one_extra(ctx)
+    reached = _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1, error=interrupt())
+    ctx.oracle = oracle = FakeOracle()
+
+    with pytest.raises(interrupt):
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert reached == [validated.finding_id, extra.finding_id], "추가 대상에 못 닿았다 - 공허하다"
+    assert oracle.vul_calls == [_POCS[0]], "전제 - 후보가 있다"
+    assert oracle.final_calls == [] and not _events(ctx, EventKind.ORACLE_FINAL)
+    summary = state.oracle_ledger.summary()
+    assert summary is not None and summary["final"] == "not_reached"
+
+
+def test_a_final_designation_that_raises_does_not_replace_the_original_exception(
+    ctx, monkeypatch  # noqa: ANN001, F811
+) -> None:
+    """최종 지정이 던져도 **원 예외가 올라간다** - 던진 사유는 원 예외의 노트로 붙는다."""
+    state, _validated, _extra = _validated_and_one_extra(ctx)
+    _pov_loop_that_runs_out_of_budget_at(monkeypatch, 1, error=RuntimeError("계약 밖 예외"))
+    ctx.oracle = FakeOracle()
+    calls: list[str] = []
+
+    def broken(ctx_, state_):  # noqa: ANN001, ANN202
+        calls.append("finalize")
+        raise OSError("장부 쓰기 실패")
+
+    monkeypatch.setattr(runner, "_finalize_oracle", broken)
+
+    with pytest.raises(RuntimeError, match="계약 밖 예외") as raised:
+        runner._analyze(ctx, [], state, int(Stage.VALIDATE))
+
+    assert calls == ["finalize"], "한 번만 시도한다"
+    assert any(
+        "최종 지정을 돌리지 못했다: OSError: 장부 쓰기 실패" in note
+        for note in raised.value.__notes__
+    )
+
+
+def test_the_final_designation_runs_once_per_run(ctx) -> None:  # noqa: ANN001, F811
+    """`_finalize_oracle`은 표지를 **네트워크 호출 전에** 세운다 - 두 번째 호출은 아무것도 안 한다.
+    PoV 루프의 `except`와 8단계 끝의 정상 호출이 겹쳐도 지정이 둘이 되지 않는 근거다."""
+    state, _validated, _extra = _validated_and_one_extra(ctx)
+    ctx.oracle = oracle = FakeOracle()
+
+    runner._finalize_oracle(ctx, state)
+    assert state.oracle_finalized is True
+    runner._finalize_oracle(ctx, state)
+
+    assert len(_events(ctx, EventKind.ORACLE_FINAL)) == 1
+    assert oracle.final_calls == []  # 후보 0건 - `status=none` 한 건뿐이다
 
 
 def test_an_intermediate_gen_submission_alone_does_not_make_a_validated_stop_designate(
@@ -1431,7 +1535,8 @@ def test_two_pocs_from_one_finding_are_separated_by_the_smaller_bytes() -> None:
 # `confidence`로 공식 최종 제출이 되지 않도록 판정이 등급보다 **앞**이다(⏵ 2026-10-14 - 사슬의
 # 맨 앞은 이제 ⓿ 후보 자기 `vul` 응답 코드이고 판정은 그 바로 뒤다, 아래 「지정 키의 첫 계단」 절
 # · #637).
-# 0 = uphold, 1 = 판정 없음(미경유), 2 = 보류 (이슈 #604 (b)의 순서 - 반박은 3이고 풀 밖이다).
+# 0 = uphold, 1 = 판정 없음(미경유·판정 호출 실패), 2 = 보류
+# (이슈 #604 (b)의 순서 - 반박은 3이고 풀 밖이다).
 
 
 def test_an_upheld_poc_is_designated_over_a_held_poc_with_a_higher_confidence() -> None:

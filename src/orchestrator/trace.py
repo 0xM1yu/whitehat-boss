@@ -74,7 +74,8 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 근거 없는 반박 비율 | `critic_normalized` | `count(*) / count(critic의 model_call)`.
 ⚠ **2026-10-13 앞뒤가 같은 지표가 아니다 (ADR 0015)** — 근거의 정의가 넓어져 「유효 축 +
 `evidence_refs=[]`」 rebut이 분자에서 빠졌다(그 건은 이제 근거 있는 반박이다). **그 날 앞뒤 run의
-이 값을 한 열에 놓지 않는다.** |
+이 값을 한 열에 놓지 않는다.**
+v8 이상 run은 `rebut_ids_only`도 분자에 더하므로(2026-10-15) 그 앞 run과도 한 열에 잇지 않는다. |
 | wall-clock latency | `stage_end.wall_ms` | 단계별 / run 합계 |
 | 예산 소진 지점 | `budget` | `RunRecord.stopped_after`의 근거 |
 | 채점기 최종 판정 | `oracle_final` | run당 0건 또는 1건. 값은 `oracle/verdict.json`(trace 밖) |
@@ -85,13 +86,20 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
 | 0단계 분류 | `preprocess_classified` | `unknown / files`. run당 1건(0단계 예외면 0) |
+| 정지 해제 | `index_stop_lifted` | `index_missing_allowed=true`. **부재 = 안 풀었다**(아래) |
+
+⏵ **2026-10-15 — `index_stop_lifted`.** `run --allow-missing-index`가 1단계 색인 실패 정지를
+**실제로** 푼 run에만 1건이다(키 `index_missing_allowed`·`exit_code`·`error`). 그 run은 GRAPH 근거가
+없어 E2 위가 불가능하다. 색인이 멀쩡하거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다.
 
 ⏵ **2026-10-13 (ADR 0015) — 「근거 없는 반박 비율」의 사건이 사유를 싣는다.** `critic_normalized`는
-`reason`(`empty_axis` · `invalid_axis`)과 어휘 밖 축 원문 `invalid_axes`(JSON 배열 문자열 —
+`reason`(`empty_axis` · `invalid_axis` · v8 이상의 `rebut_ids_only`)과 어휘 밖 축 원문
+`invalid_axes`(JSON 배열 문자열 —
 `TraceValue`가 스칼라라서다 · 최대 5개 · 값마다 40자)를 싣는다. **무효 축 비율** =
 `count(reason=invalid_axis) / count(rebut)`.
-⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(`evidence_refs`가 있으면
-`ungrounded_reason`이 즉시 `None`이다). 그래서 ID와 축을 둘 다 요구하는
+⚠ **분자에 사각지대가 있다** — 사유는 **ID가 없을 때만** 선다(v6·v7. v8 이상은 ID가 있어도
+축이 없으면 `rebut_ids_only`다)(`evidence_refs`가 있으면 `ungrounded_reason`이 즉시 `None`이다
+- 이것도 v6·v7). 그래서 ID와 축을 둘 다 요구하는
 v6(2026-10-14 전의 서빙 판)에서 규약을 지킨 rebut의 어휘 변형은 이 지표에 **0으로 보인다** —
 ADR 0015가 예측한 실패 양상 (2)(어휘 변형 → 대량 `need_evidence`)을 보는 검출기가
 이 지표라서 그 한계를 같이 적는다.
@@ -571,7 +579,8 @@ class EventKind(StrEnum):
     # 실어 스냅샷까지 특정되게 한다.
     TOKEN_COUNTER = "token_counter"
     # 근거 없는 `rebut`을 `need_evidence`로 정규화한 사건 (ADR 0015 - 전엔 `uphold`).
-    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis`) · `invalid_axes`.
+    # 키: `original_verdict` · `reason`(`empty_axis` | `invalid_axis` | `rebut_ids_only` -
+    # 끝은 v8 이상, ADR 0015 ⏵ 2026-10-15) · `invalid_axes`.
     CRITIC_NORMALIZED = "critic_normalized"
     # Critic verdict를 표준값으로 **못 읽어** `need_evidence`(보류)로 보낸 사건. 자유 verdict
     # (enum grammar 회피, `DecisionDraft`)가 표준 어휘도 명백한 동의어도 아닐 때 원문을 남긴다.
@@ -615,6 +624,10 @@ class EventKind(StrEnum):
     # 읽은 뒤의 값이고 **`gate.normalize` 전**이다. 이 이벤트를 내는 자리가 그 호출 앞이라서다 —
     # 정규화 뒤 값이 궁금하면 `critic_normalized`를 같이 본다) · `grounded`
     # (`Decision.is_grounded`). `subject_id`는 Finding이다.
+    # ⏵ 2026-10-15 — 위 서술은 v6·v7이다. v8 이상은 ID만 든 `rebut`이 `rebut_ids_only`로
+    # `need_evidence`가 되어 이 길이 닫혔다(`schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`).
+    # `grounded`는 verdict가 `rebut`일 때만 뜻이 있다 - v8의 `uphold`가 ID를 인용하면 축이 없어
+    # `grounded=false`로 남는다(정규화 대상이 아니다).
     CRITIC_UNKNOWN_EVIDENCE_REFS = "critic_unknown_evidence_refs"
     BUDGET = "budget"
     POLICY_DECISION = "policy_decision"
@@ -845,9 +858,11 @@ class EventKind(StrEnum):
     #
     # ⚠ **이벤트 부재는 「제출 안 함」이 아니다.** 채점기가 배선되지 않았거나, 8단계가 끝까지 돌지
     # 않았다(예산 소진 등 — 그래도 `oracle_submitted`가 있으면 vul 제출은 나갔고 매니페스트의
-    # `oracle.final`이 `not_reached`다. 단 예산·서버 쪽 게이트웨이 오류로 끊겨도 이미 낸 최종 후보가
-    # 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은 최종 지정까지 하고 끝나 `oracle_final`이
-    # 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
+    # `oracle.final`이 `not_reached`다. 단 이미 낸 후보나 구제된 중간 gen(`pool`)이 있으면
+    # 어떤 `Exception`으로
+    # 끊겨도(⏵ 2026-10-15), 예산·서버 쪽 게이트웨이 오류가 `pov_attempt_top_n`의 추가 대상에서
+    # 끊긴 run은 후보가 없어도
+    # 최종 지정까지 하고 끝나 `oracle_final`이 있다). 그리고 호출 도중에 끊긴 것은 어느 이벤트도
     # 남기지 않는다:
     # `Exception`만 흡수하므로 TERM·HUP(`SystemExit`)·Ctrl-C는 이벤트 없이 올라가고, 서버는 그
     # PoC로 컨테이너를 돌렸을 수 있다.
@@ -954,6 +969,12 @@ class EventKind(StrEnum):
     # JSON 객체 문자열, 많은 순 최대 10개, 확장자 없음은 빈 문자열 키) · `unknown_suffixes_omitted`
     # (상한에 잘린 확장자 **종류** 수 - 파일 수가 아니다). 대상 트리가 비면 `files`가 0이다.
     PREPROCESS_CLASSIFIED = "preprocess_classified"
+    # `run --allow-missing-index`가 **실제로** 1단계 색인 실패 정지를 푼 사건 (2026-10-15). 내는
+    # 곳은 `runner._require_index`이고 run당 0건 또는 1건이다. 키: `index_missing_allowed`(항상
+    # `true`) · `exit_code`(색인 Evidence의 종료 코드) · `error`(자른 사유). **이벤트 부재 = 정지를
+    # 푼 적 없다**(색인이 멀쩡했거나 모델에 안 닿는 run은 플래그를 줘도 이벤트가 없다).
+    # `RunRecord`에는 안 남는다 - 저장 형태 판을 올리지 않으려는 것이다.
+    INDEX_STOP_LIFTED = "index_stop_lifted"
 
 
 class TraceEvent(HarnessModel):

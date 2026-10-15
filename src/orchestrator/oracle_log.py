@@ -55,7 +55,8 @@ digest가 아니다 (휘발 값의 digest는 휘발이다).
 아니면 `null`)·`error_detail`, 0바이트라 제출하지 않았으면 `status: skipped`·`error: empty_poc`) ·
 `final`. `final`은 run이 최종 단계에 못 닿았으면(8단계가 끝까지 가지 못했다 — 단 예산·서버 쪽
 게이트웨이 오류로 끊겨도 이미 낸 최종 후보가 있거나 `pov_attempt_top_n`의 추가 대상에서 끊긴 run은
-최종 지정까지 하고 끝난다) `null`이고 아니면
+최종 지정까지 하고 끝난다. ⏵ 2026-10-15 - 낸 후보가 있으면 어떤 `Exception`으로 끊겨도 같다)
+`null`이고 아니면
 `status`(`scored` | `failed` | `none`)·`designation`(지정 근거 — 지정 못 했으면 `null`)과 그에
 따른 값이다. 후보가 둘 이상이어서 지정이 등급을 읽었으면 `candidate_grades`(`finding_id` → 지정이
 읽은 내부 근거 등급)도 든다 — 키가 없으면 등급을 읽지 않았다(후보 0·1건).
@@ -92,7 +93,8 @@ PoC 사이의 동점이 남지 않는다 — 거부할 자리가 없어져 사�
 run에서 후보 8건이 **같은 바이트 1개**였고(제출 8 = 고유 PoC 1 = DB 행 1) 동점 거부가 그
 run의 점수를 0으로 만들었다.
 ⏵ 2026-10-11 — 사슬 맨 앞에 **Critic 판정**이 붙어 다섯이다(`critic_verdict`: 보류 PoC는
-미경유 PoC 뒤, 미경유 PoC는 uphold PoC 뒤다 — ⏵ 2026-10-12 미경유를 uphold에서 떼었다).
+미경유·판정 호출 실패 PoC 뒤,
+미경유·판정 호출 실패 PoC는 uphold PoC 뒤다 — ⏵ 2026-10-12 미경유를 uphold에서 떼었다).
 ⏵ 2026-10-14 — 사슬 맨 앞에 **후보 자기 `vul` 응답 종료 코드의 계단**이 붙어 여섯이다(`vul_crash`:
 크래시 < 모름 < 크래시 아님 — `vul_code_tier`, 이슈 #637). ⚠ **그래서 `designation`·`subject_id`·
 `poc_*`(`oracle_final`)는 이제 응답 코드에 일부 달렸다** — 위 「trace — 하네스가 정하는 값」의
@@ -286,7 +288,7 @@ DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택�
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
 DESIGNATION_VUL_CRASH = "vul_crash"  # 자기 vul 응답 코드 — 크래시 < 모름 < 크래시 아님 순
 DESIGNATION_SUBMITTED_OVER_RESCUED = "submitted_over_rescued"  # 같은 계단 - 제출이 구제를 이겼다
-DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유 < 보류 순으로 앞선다
+DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유·판정 호출 실패 < 보류
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
 DESIGNATION_SMALLEST_POC = "smallest_poc"  # 등급·confidence 동점 — 바이트가 작은 쪽

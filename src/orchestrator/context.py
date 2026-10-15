@@ -935,7 +935,8 @@ class RunContext:
         (agent-contracts.md §2.3 · ADR 0015).
 
         분모가 `model_call(role=critic)`이므로 판정과 별개의 이벤트로 남긴다. 키:
-        `original_verdict`(= `rebut`) · `reason`(`empty_axis` | `invalid_axis`) ·
+        `original_verdict`(= `rebut`) · `reason`(`empty_axis` | `invalid_axis` | `rebut_ids_only` -
+        끝은 v8 이상에서 ID만 든 `rebut`, ADR 0015 ⏵ 2026-10-15) ·
         `invalid_axes`(어휘 밖 원문의 JSON 배열 문자열 - `TraceValue`가 스칼라라서다.
         최대 `_INVALID_AXES_KEPT`개, 값마다 `_INVALID_AXIS_CHARS`자. `empty_axis`면 `"[]"`).
         """
