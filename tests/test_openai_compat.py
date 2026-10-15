@@ -15,6 +15,7 @@ import re
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -77,7 +78,10 @@ class Many(BaseModel):
     items: list[Tiny]
 
 
-def _client(retries: int = 2, max_tokens: int = 8192) -> OpenAICompatModelClient:
+def _client(
+    retries: int = 2, max_tokens: int = 8192, sleep: Callable[[float], None] = lambda _s: None
+) -> OpenAICompatModelClient:
+    # 연결 재시도가 실제로 자지 않게 기본 대기를 비운다.
     return OpenAICompatModelClient(
         endpoint="http://127.0.0.1:9/v1",
         model_name="test-model",
@@ -86,6 +90,7 @@ def _client(retries: int = 2, max_tokens: int = 8192) -> OpenAICompatModelClient
         max_tokens=max_tokens,
         seed=7,
         retries=retries,
+        sleep=sleep,
     )
 
 
@@ -642,6 +647,94 @@ def test_a_broken_connection_becomes_a_gateway_error_not_a_raw_exception(
 
     assert caught.value.status is None, "전송 실패에는 상태 코드가 없다"
     assert type(error).__name__ in caught.value.detail
+
+
+# --- 연결 단계 단절은 짧게 다시 보낸다 (터널 순단 한 번에 15시간 run을 잃지 않는다) -------------
+
+_OK_BODY = json.dumps(
+    {
+        "choices": [{"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}],
+        "usage": {"prompt_tokens": 5, "completion_tokens": 2},
+    }
+).encode()
+
+
+def _fail_then_answer(monkeypatch: pytest.MonkeyPatch, errors: list[Exception]) -> list[int]:
+    """`errors`를 차례로 던진 뒤 200을 준다. 호출 수를 센다."""
+    calls: list[int] = []
+
+    def fake_urlopen(request, timeout=None):  # noqa: ANN001, ANN202, ARG001
+        calls.append(1)
+        if len(calls) <= len(errors):
+            raise errors[len(calls) - 1]
+        return _FakeResponse(_OK_BODY)
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    return calls
+
+
+def test_a_refused_connection_is_retried_and_the_ledger_is_not_double_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """연결 거절 둘 뒤 성공 - 정상 응답이고 대기는 둘, 스키마 시도(`attempts`)는 1, 토큰은 1회분."""
+    _no_metrics(monkeypatch)
+    errors = [
+        urllib.error.URLError(ConnectionRefusedError(111, "refused")),
+        ConnectionResetError(104, "reset"),
+    ]
+    calls = _fail_then_answer(monkeypatch, errors)
+    waits: list[float] = []
+
+    result = _client(sleep=waits.append).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert result.value.ok is True
+    assert len(calls) == 3
+    assert waits == list(openai_compat._RECONNECT_WAITS_S[:2])
+    assert result.attempts == 1, "연결 재시도는 스키마 재시도 카운트에 안 든다"
+    assert (result.usage.input_tokens, result.usage.output_tokens) == (5, 2)
+
+
+def test_a_connection_that_never_comes_back_raises_the_same_error_with_the_retry_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _no_metrics(monkeypatch)
+    n = len(openai_compat._RECONNECT_WAITS_S)
+    calls = _fail_then_answer(monkeypatch, [http.client.RemoteDisconnected("gone")] * (n + 5))
+    waits: list[float] = []
+
+    with pytest.raises(ModelGatewayError) as caught:
+        _client(sleep=waits.append).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert len(calls) == n + 1 and len(waits) == n
+    assert caught.value.status is None
+    assert "RemoteDisconnected" in caught.value.detail
+    assert f"연결 재시도 {n}회" in caught.value.detail
+    assert f"연결 재시도 {n}회" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("timed out"),
+        _http_error(400, _OVERFLOW),
+        http.client.IncompleteRead(b"partial"),
+        urllib.error.URLError("Connection refused"),  # reason이 문자열 - 연결 단절로 안 읽는다
+        OSError("other"),
+    ],
+    ids=["timeout", "http_400", "incomplete_read", "urlerror_str_reason", "plain_oserror"],
+)
+def test_only_connection_drops_are_retried(
+    monkeypatch: pytest.MonkeyPatch, error: Exception
+) -> None:
+    """변이: `_is_connection_drop`을 항상 참으로 하면 다섯 모두 빨개진다."""
+    _no_metrics(monkeypatch)
+    calls = _fail_then_answer(monkeypatch, [error] * 10)
+    waits: list[float] = []
+
+    with pytest.raises(ModelGatewayError):
+        _client(sleep=waits.append).complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    assert len(calls) == 1 and waits == []
 
 
 def test_a_non_utf8_response_becomes_a_gateway_error(monkeypatch: pytest.MonkeyPatch) -> None:

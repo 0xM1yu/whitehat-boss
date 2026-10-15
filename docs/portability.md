@@ -70,8 +70,9 @@
 # 1) 원격 사본 — 로컬 HEAD를 원격 루트에 푼다. 커밋이 바뀌면 다시(미커밋 변경은 안 간다)
 SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> SWAP_REMOTE_ROOT=/root/harness \
   SWAP_REMOTE_PYTHON=/usr/bin/python3 bash tools/serve/vast-bootstrap.sh
-# 2) 원격 감시자 — run마다 하나
-ssh -p <포트> root@<호스트> 'cd /root/harness && MAX_HOURS=10 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &'
+# 2) 원격 감시자 — run마다 하나. MAX_HOURS=24: 2026-10-12 run은 10시간에 8단계 중간에서 끊겼다
+#    (5단계 5h47m · 8단계 3h44m에서 잘림). 24는 여유를 둔 값이지 측정이 아니다
+ssh -p <포트> root@<호스트> 'cd /root/harness && MAX_HOURS=24 setsid nohup bash tools/serve/guard.sh > /dev/null 2>&1 < /dev/null &'
 # 4) 터널 — 별도 창, run 동안 둔다. --loop: ssh가 끊기면 5초 뒤 다시 잇는다
 SWAP_SSH_HOST=root@<호스트> SWAP_SSH_PORT=<포트> bash tools/serve/vast-tunnel.sh --loop
 ```
