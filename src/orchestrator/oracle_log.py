@@ -635,7 +635,7 @@ def _none_warning(final: FinalAttempt, candidates: int) -> str:
     cause = (
         "vul 제출이 전부 실패해"
         if final.reason == REASON_ALL_VUL_FAILED
-        else "PoV가 submit한 PoC가 없어"
+        else "submit한 PoC도 구제된 중간 gen도 없어"
     )
     return f"채점기에 낼 최종 PoC를 지정하지 못했다({cause}) - {tail}"
 

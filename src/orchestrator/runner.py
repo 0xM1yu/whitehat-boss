@@ -2639,16 +2639,18 @@ def _designation_key(
     **그 분기에 닿은 실 run은 0건이다** — 10-08·10-11·10-12 run은 전부 `final: none`이었고 10-12의
     PoC는 전부 코드 0이었다. 발생 비율은 미실측이다. 결정은 council → 조민규 승인(2026-10-14).
     ⓿이 Critic 계단보다 **앞**이라 **계단이 뒤인 PoC가 앞인 PoC를 이긴다**(보류·크래시 >
-    uphold·코드 0) — 의도한 것이다. 한 코드 계단 안에서는 ⓪~④가 개정 전 그대로 정한다(같은 코드
-    계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` · 환경 실패 코드)은 크래시도 아니고
+    uphold·코드 0) — 의도한 것이다. 한 코드 계단 안에서는 ⓪~④가 개정 전 그대로 정한다
+    (구제가 없는 run에서 같은 코드 계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` ·
+    환경 실패 코드)은 크래시도 아니고
     크래시 아님도 아니다**(§0) — 둘 사이에 둔다.
 
     ⏵ 2026-10-15 — ⓿′을 ⓿ **바로 뒤**에 붙였다(ADR 0013 결정 1 개정). 풀에는 `submit` 없이 끝난
     Finding의 크래시 계단 중간 gen이 **구제**돼 들어온다(`OracleLedger.rescued`). 같은 응답 코드
     계단에서는 제출된 후보가 구제된 것보다 **늘 앞선다** — Critic 판정·등급·`confidence`가 구제된
     쪽에 유리해도 그렇다. 계단이 다르면 ⓿이 먼저라 구제된 크래시가 제출된 비-크래시를 이긴다(의도한
-    것이다). ⓿′은 후보의 `designatable` 속성(하네스가 정한 값)을 읽고 채점기 값이 아니다. 같은
-    바이트가 제출과 구제 양쪽에 있으면 제출된 쪽이 지정돼 구제로 안 센다.
+    것이다). ⓿′은 후보의 `designatable` 속성(하네스가 정한 값)을 읽고 채점기 값이 아니다.
+    같은 바이트가 제출과 구제 양쪽에 있으면 지정되는 행이 어느 쪽이든 `final.rescued`는
+    거짓이다(같은 응답 계단이면 제출된 행이 지정된다).
 
     🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 다섯이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
@@ -2860,10 +2862,11 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
-    `ModelGatewayError`로 끊겨도 오라클에 이미 낸 후보가 있거나(`candidates`) `pov_attempt_top_n`의
-    추가 대상에서 끊겼으면 `_analyze`가 이 단계를 부른 뒤 예외를 올린다 — 앞 대상이 이미 낸 PoC의
-    최종 지정을 잃지 않으려는 것이다(#532). `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가
-    대상이 도는 것은 설정상 평상시다 — 이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
+    `ModelGatewayError`로 끊겨도 오라클에 이미 낸 후보나 구제된 중간 gen이 있거나(`pool`)
+    `pov_attempt_top_n`의 추가 대상에서 끊겼으면 `_analyze`가 이 단계를 부른 뒤 예외를 올린다 —
+    앞 대상이 이미 낸 PoC의 최종 지정을 잃지 않으려는 것이다(#532).
+    `pov_attempt_top_n`이 8이라(`config/budgets.yaml`) 추가 대상이 도는 것은 설정상 평상시다 —
+    이 경로는 드문 예외가 아니다(그 비율은 안 쟀다). 그 밖의
     중단은 불리지 않고 매니페스트의 `oracle.final`이 `not_reached`로 남는다.
 
     ⚠ **그 밖의 중단은 둘이고 축이 다르다.** ① 그 두 예외 **밖의** 예외로 끊긴 run(예외 종류) ②
@@ -2879,8 +2882,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     「PoV가 끝까지 돌아 submit을 못 냈다(후보 없음 - 중간 gen은 `vul_intermediate`가 센다)」와
     「예산·게이트웨이가 PoV를 끊었다」를 이 요약은 못 가른다 —
     후자는 run 수준의 `stopped_after`·`BUDGET_EXHAUSTED`·`MODEL_GATEWAY_UNAVAILABLE`·경고가 말한다.
-    후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다(`vul_candidates` - 중간 gen이
-    없던 run은 `vul_submitted` - 와 `stopped_after`로 재구성한다).
+    후보가 있어 `scored`가 된 run도 **부분 후보 집합 위의 지정**이다
+    (`vul_candidates`는 제출된 후보만 센다 - 중간 gen이 없던 run은
+    `vul_submitted` - 와 `stopped_after`로 재구성한다).
     """
     if ctx.oracle is None:
         return
