@@ -94,7 +94,6 @@ from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
     RELAYED_SOURCE_OPTIONS,
-    RETRIEVAL_ROLES,
     SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
@@ -141,7 +140,7 @@ from src.orchestrator.trace import TraceWriter
 from src.schemas.common import PLACEHOLDER_DIGEST
 from src.schemas.enums import ReasonCode, Role
 from src.schemas.finding import Finding
-from src.tokens import using_counter
+from src.tokens import COUNTED_ROLES, using_counter
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ARTIFACTS_ROOT = REPO_ROOT / "artifacts"
@@ -524,25 +523,46 @@ def _check_tokenizers(config: HarnessConfig) -> list[Check]:
 
     run에서는 같은 판정이 `token_counter` 이벤트(`approx`와 사유)로만 남아, Auditor SOURCE 20,000
     토큰 같은 상한이 실서빙보다 1.8배 과소하게 세어진 채 도는 것을 run 뒤에야 안다(CLAUDE.md §5).
-    HF 캐시 파일만 본다 - 접속하지 않는다. embedding·reranker는 프롬프트를 안 만들어 뺀다.
+    HF 캐시 파일만 본다 - 접속하지 않는다. **토큰을 세는 역할만 본다** — `COUNTED_ROLES`
+    (scout·auditor)와 Scout 풀 멤버. critic·pov는 카운터를 안 켜 토크나이저가 없어도 run이
+    달라지지 않고, embedding·reranker는 프롬프트를 안 만든다.
+
+    파일이 있는데 못 읽으면(깨짐) run도 같은 예외로 죽으므로 ERROR다.
     """
-    missing = sorted(
-        f"{role}({reason})"
-        for role, key in config.served_models().items()
-        if role not in RETRIEVAL_ROLES
-        for source in [config.models[key].source]
-        for reason in [counter_reason_for_source(source) if source else REASON_NO_SOURCE]
-        if reason is not None
-    )
-    if not missing:
-        return [Check(Severity.OK, "실서빙 역할의 토크나이저를 모두 쓸 수 있다(또는 대상 없음)")]
-    return [
-        Check(
-            Severity.WARN,
-            f"실서빙 역할의 토크나이저를 못 쓴다: {', '.join(missing)} — 토큰 상한이 글자수 근사"
-            "(len//4)로 센다. 실서빙보다 최대 1.8배 과소라 상한을 넘은 요청이 서버에서 "
-            "거절될 수 있다",
+    counted = {*COUNTED_ROLES, *SCOUT_POOL_ROLES}
+    missing: list[str] = []
+    broken: list[str] = []
+    for role, key in sorted(config.served_models().items()):
+        if role not in counted:
+            continue
+        source = config.models[key].source
+        try:
+            reason = counter_reason_for_source(source) if source else REASON_NO_SOURCE
+        except Exception as exc:  # noqa: BLE001 - 어떤 로더 예외든 doctor를 죽이지 않고 보고한다
+            broken.append(f"{role}({type(exc).__name__}: {exc})")
+            continue
+        if reason is not None:
+            missing.append(f"{role}({reason})")
+    checks: list[Check] = []
+    if broken:
+        checks.append(
+            Check(
+                Severity.ERROR,
+                f"토크나이저 파일을 읽지 못한다: {', '.join(broken)} — run도 같은 예외로 "
+                "죽는다. HF 캐시를 다시 받는다",
+            )
         )
+    if missing:
+        checks.append(
+            Check(
+                Severity.WARN,
+                f"실서빙 역할의 토크나이저를 못 쓴다: {', '.join(missing)} — 토큰 상한이 "
+                "글자수 근사(len//4)로 센다. 실서빙보다 최대 1.8배 과소라 상한을 넘은 요청이 "
+                "서버에서 거절될 수 있다",
+            )
+        )
+    return checks or [
+        Check(Severity.OK, "실서빙 역할의 토크나이저를 모두 쓸 수 있다(또는 대상 없음)")
     ]
 
 
