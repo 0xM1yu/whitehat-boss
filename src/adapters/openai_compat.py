@@ -14,6 +14,7 @@ model-serving.md §6: 도메인 로직은 `ModelClient` 인터페이스에만 �
 
 import http.client
 import json
+import logging
 import time
 import urllib.error
 import urllib.request
@@ -39,11 +40,15 @@ from src.schemas.enums import Role
 
 _TIMEOUT_S = 300
 
+_log = logging.getLogger(__name__)
+
 # 연결 단계에서 끊긴 요청을 다시 보내기 전의 대기(초). 터널(`tools/serve/vast-tunnel.sh --loop`)이
 # ssh 단절 5초 뒤 다시 붙는 것과 ssh 재접속을 덮는 값이다. 합 185초는 계산·추정이고 실측이 아니다.
 _RECONNECT_WAITS_S = (5, 10, 20, 30, 60, 60)
-# 이것들만 재시도한다 — 응답이 없었으니 서버가 만든 토큰이 없다. `HTTPError`(상태 있음)·
-# `TimeoutError`(`generating` 판정)·디코드 오류·그 밖 `OSError`는 아니다.
+# 이것들만 재시도한다. `ConnectionRefusedError`는 요청이 서버에 안 닿았다(토큰 없음). 리셋·중단·
+# `RemoteDisconnected`는 응답을 읽는 도중(서버가 생성하던 중)에도 나서 서버가 토큰을 만들었을 수
+# 있고 그 소비는 장부에 안 잡힌다(과소 계상). `HTTPError`(상태 있음)·`TimeoutError`
+# (`generating` 판정)·디코드 오류·그 밖 `OSError`는 재시도하지 않는다.
 _CONNECTION_DROPS = (
     ConnectionRefusedError,
     ConnectionResetError,
@@ -285,7 +290,12 @@ class OpenAICompatModelClient:
                 # 응답을 못 받은 시도도 칸을 지킨다 — `AttemptRecord()`는 전부 `None`이다.
                 # 200이었으나 모양이 계약과 달라 온 예외는 읽을 수 있었던 추론을 든다.
                 attempt_log.append(
-                    AttemptRecord(reasoning=exc.reasoning, reasoning_field=exc.reasoning_field)
+                    AttemptRecord(
+                        reasoning=exc.reasoning,
+                        reasoning_field=exc.reasoning_field,
+                        reconnects=len(waited),
+                        reconnect_wait_s=sum(waited),
+                    )
                 )
                 # 그 200의 원문(또는 추론)도 마지막 칸으로 올린다.
                 # ⚠ **칸이 안 생기는 조건은 「`message`를 못 읽었다」가 아니다** — 아래 둘이
@@ -319,6 +329,8 @@ class OpenAICompatModelClient:
                     finish_reason=posted.finish_reason,
                     reasoning=posted.reasoning,
                     reasoning_field=posted.reasoning_field,
+                    reconnects=len(waited),
+                    reconnect_wait_s=sum(waited),
                 )
             )
             try:
@@ -444,20 +456,26 @@ class OpenAICompatModelClient:
     def _post_reconnecting(self, payload: dict, waited: list[float]) -> PostedResponse:
         """`_post`에 연결 단절 재시도를 건다 - 터널 순단 한 번에 run을 잃지 않으려는 것이다.
 
-        단절은 응답 전이라 토큰이 안 들고 스키마 재시도(`retries`)도 안 센다. 잔 시간은 `waited`에
-        쌓아 `complete()`가 `gpu_ms`에서 뺀다. 다 실패하면 같은 `ModelGatewayError`에 횟수를
-        붙여 올린다.
+        스키마 재시도(`retries`)는 안 센다. 연결 거절은 서버가 요청을 못 받았지만 리셋·중단은 생성
+        도중에도 나서, 버려진 그 생성의 토큰·GPU는 장부에 안 잡힌다(과소 계상). 횟수·잔 시간은
+        `waited`에 쌓아 `complete()`가 `gpu_ms`에서 빼고 `AttemptRecord`로 trace까지 싣는다.
+        마지막 오류가 단절이었으면 같은 `ModelGatewayError`에 횟수를 붙여 올린다.
         """
         for tried, wait in enumerate((*_RECONNECT_WAITS_S, None)):
             try:
                 return self._post(payload)
             except ModelGatewayError as exc:
                 if wait is not None and _is_connection_drop(exc):
+                    _log.warning(
+                        "%s 연결 단절(%s) - %s초 뒤 재시도 %d/%d",
+                        self.endpoint, type(exc.__cause__).__name__, wait, tried + 1,
+                        len(_RECONNECT_WAITS_S),
+                    )
                     slept = time.monotonic()
                     self._sleep(wait)
                     waited.append(time.monotonic() - slept)
                     continue
-                if tried:
+                if tried and _is_connection_drop(exc):
                     note = f" (연결 재시도 {tried}회 뒤에도 실패)"
                     exc.args = (f"{exc.args[0]}{note}",)
                     exc.detail = f"{exc.detail}{note}"
@@ -512,8 +530,9 @@ class OpenAICompatModelClient:
                 generating=generating,
             ) from exc
         except (urllib.error.URLError, json.JSONDecodeError) as exc:
-            # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는
-            # 이것을 서버 쪽 사건(`model_gateway_unavailable`)으로 읽고 즉시 멈춘다.
+            # 상태 코드가 없다 — 연결 자체가 안 됐거나 응답이 JSON이 아니다. 러너는 이것을 서버 쪽
+            # 사건(`model_gateway_unavailable`)으로 읽고 멈춘다 - 연결 단절이면
+            # `_post_reconnecting`이 최대 185초(`_RECONNECT_WAITS_S`, 추정) 재시도한 **뒤**다.
             raise ModelGatewayError(f"{self.endpoint} 호출 실패: {exc}", detail=f"{exc}") from exc
         except (OSError, http.client.HTTPException, UnicodeDecodeError) as exc:
             # ⏵ **2026-10-02 — 끊긴 연결이 여기까지 새고 있었다.** 위 셋만 잡던 동안 아래가
