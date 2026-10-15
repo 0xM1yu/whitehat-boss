@@ -2347,3 +2347,22 @@ def test_an_unwritable_index_listing_is_failed_evidence_and_starts_no_process(
     assert "입력 파일" in evidence.error
     assert "/host/secret" not in evidence.error
     assert spy.calls == []
+
+
+def test_every_harness_semgrep_rule_also_covers_cpp() -> None:
+    """하네스 룰이 C++ 파일에도 걸린다(#689).
+
+    `languages: [c]`만이면 semgrep이 `.cc`·`.cpp`·`.hpp`를 **아예 안 연다** — oss-fuzz:368076871
+    리허설에서 C++ 셋이 「스캔한 파일 없음」이었다. 공개 룰셋 쪽은 Dockerfile의 빌드 가드가 막는다.
+    """
+    import yaml
+
+    rules_dir = Path(__file__).resolve().parents[1] / "tools" / "harness-tools" / "rules"
+    rules = [
+        rule
+        for path in sorted(rules_dir.glob("*.yaml"))
+        for rule in yaml.safe_load(path.read_text(encoding="utf-8"))["rules"]
+    ]
+    assert rules, "전제 — 하네스 룰이 있다"
+    missing = [rule["id"] for rule in rules if not {"c", "cpp"} <= set(rule["languages"])]
+    assert missing == []
