@@ -488,7 +488,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   읽을 곳」). 러너는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
-  **미측정** — ⏵ 2026-10-15 `candidate_max`를 256에서 **8**로 낮춰서 220조각급 run이면 컷이 실제로 문다). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
+  **미측정** — ⏵ 2026-10-15 `candidate_max`를 256에서 **8**로 낮춰서 target(조각)이 8을 넘는 run(arvo:1065는 220조각 — [10-04 run 보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md))이면 컷이 실제로 문다). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
   ([D97](open-questions/D/D97.md)의 선택지 (b))
   - ⏵ 2026-10-15 D97 -> 러너는 이 목록을 여전히 안 읽는다(위 문장은 목록에 대해 참). 대신 러너 `_order_and_cut`이 **과제 설명**을 직접
     읽는 정렬 항 `-desc_rank`를 받았다 -> 키는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`. 아래 「`--description`」
@@ -534,7 +534,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   준비·샤드에 모두 넘긴다. 손으로 `--resume --cpg`를 돌릴 때는 준비 때와 같은 파일을 다시 준다
 - 정답 자료 -> 입력은 설명 파일 하나다. `patch.diff`·`error.txt`에서 만든 설명을 주면 정답 누출이다(위 「목록의 출처」)
 - 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서
-  심볼 전체 이름이 토큰(3) > 심볼의 `_`·`::` 조각이 원 토큰이거나 심볼 전체 이름이 토큰의 `_` 조각(2) > 파일 이름이 토큰 또는 그 조각(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
+  심볼 전체 이름이 토큰(3) > 심볼의 `_`·`::` 조각이 원 토큰이거나 심볼 전체 이름이 토큰의 `_` 조각(2) > 파일 이름이 토큰 또는 그 조각(1) > 없음(0) 순으로 `candidate_max`(8 — ⏵ 2026-10-15 256 → 8) 컷에 먼저 든다. **후보는 줄이지 않는다.**
   `target_plan` 이벤트의 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches`·`desc_matches_deferred`(컷에 잘린 일치)가 그 수를 남긴다. 토큰 규칙은 `src/orchestrator/description_match.py`와
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
