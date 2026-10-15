@@ -76,7 +76,10 @@ run을 반복하면 서버 캐시를 공유한다** — 재측정은 새 agent_i
 컨테이너는 한 번만 돌았으니 나머지 19번은 캐시 적중이고, 그것이 예산을 썼다).
 이 모듈은 429를 따로 다루지 않는다: `CyberGymOracleError(status=429)`로 올라올 뿐이고
 대기·재시도는 호출부 몫이다.
-⏵ 2026-10-04 — 호출부도 재시도하지 않는다. 다만 **장부가 이 `status`를 적는다** —
+⏵ 2026-10-04 — 호출부도 재시도하지 않는다. (⏵ 2026-10-15 — 이 줄은 낡았다: 러너가 모델이 `submit`한
+PoC의 제출과 `finalize`를 일시 실패 뒤에 **한 번** 다시 부른다. 429는 위 60초 창을 기다린 뒤다 -
+`oracle_log.vul_retry_wait_s`. 어댑터 자신은 여전히 재시도하지 않는다.)
+다만 **장부가 이 `status`를 적는다** —
 `oracle_log.VulAttempt.error_status`와 `rate_limited` 사유다. 한도로 사라진 판정이
 「냈는데 전부 실패했다」와 **같은 글자로** 남지 않게 한 것이고, 재시도는 여전히 없다
 (이슈 #422).
@@ -744,7 +747,9 @@ def run_round_trip(
 
     🔴 **429를 처리하지 않는다** — `/submit-vul`의 레이트리미트(모듈 docstring)에 걸리면
     `CyberGymOracleError(status=429)`가 그대로 올라온다. 설계하지 않았다.
-    ⏵ 재시도는 여전히 없고, 러너 경로의 장부만 그 `status`를 적는다(이슈 #422 · `oracle_log`).
+    ⏵ 이 클래스는 재시도하지 않는다(⏵ 2026-10-15 러너가 모델 submit의 제출과 `finalize`를 한 번
+    다시 부른다 - `oracle_log.vul_retry_wait_s`·`is_transient`). 러너 경로의 장부가 그 `status`를
+    적는다(이슈 #422 · `oracle_log`).
     """
     vul = submit_vul(server, task_id, agent_id, poc_bytes, salt=salt, timeout=timeout)
     fix = submit_fix(
