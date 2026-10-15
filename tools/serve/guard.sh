@@ -24,7 +24,7 @@
 #      MAX_HOURS가 양의 정수이면 감시자 시작 후 그 시간에 **지키는 run의 서버만** 내린다. 미지정·0이면 이 층이
 #      없다(시작 로그 `deadline=none`). **위험: 마감이 없으면 로컬 run이 run 끝 내림 없이 죽었을 때(PC 종료 ·
 #      Ctrl-C 뒤 내림 실패 등) 원격 서버가 GPU를 계속 잡는다 → 사람이 `HARNESS_RUN_ID=<run> bash
-#      tools/serve/swap.sh`로 내리고 vast 인스턴스를 지운다.** 다른 run의 서버는 그 run의 감시자 몫이다.
+#      tools/serve/swap.sh`로 내리고 vast 인스턴스를 지운다.** 다른 run의 서버는(마감을 켰다면) 그 run의 감시자 몫이다.
 #   2) 통합메모리(nvidia-smi 메모리 `[N/A]` — GB10 ATOM)에서만: MemAvailable < MIN_AVAIL_GIB — **swap.sh가 띄운
 #      서버를 run과 무관하게 전부** 내린다. 장비 보호다 — vLLM의 GPU 할당이 장비 전체 MemAvailable을 깎아,
 #      누구의 서버든 떠 있으면 장비 전체가 굶는다. swap.sh의 기동 전 여유 판정과 같은 하한이다.
@@ -59,7 +59,7 @@
 #
 # GUARD_MAX_S·GUARD_POLL_S·GUARD_TERM_WAIT_S는 초 단위 덮어쓰기다 — 테스트가 마감을 초로 줄이는 자리이다.
 # GUARD_MAX_S가 0이거나 없으면 MAX_HOURS를 따른다. MAX_HOURS·GUARD_MAX_S는 0 이상 정수이고 아니면 뜨지
-# 않는다. 운영 기본값은 마감 없음 · 5 s · 20 s다.
+# 않는다(9자리 이하). 운영 기본값은 마감 없음 · 5 s · 20 s다.
 #
 # -e는 쓰지 않는다 — 긴 감시 루프라 일시적 실패(이미 사라진 그룹에 kill, /proc 읽기)로 감시자가 죽으면 서버가
 # 감시 없이 남는다. 실패를 봐야 하는 자리는 명시적으로 검사한다.
@@ -118,8 +118,8 @@ case "$CG_PCT" in # 1~100 정수만 — 소수·문자는 셸 산술에서 감�
   *) refuse "GUARD_CGROUP_PCT=$CG_PCT — 1~100 정수여야 한다" ;;
 esac
 for name in MAX_HOURS GUARD_MAX_S; do # 0 이상 정수만 — 문자는 셸 산술에서 감시자가 죽는다
-  case "${!name}" in
-    '' | *[!0-9]*) refuse "$name=${!name} — 0 이상 정수여야 한다(0 = 마감 없음)" ;;
+  case "${!name}" in # 9자리 상한: 64비트를 넘기면 마감이 조용히 꺼지거나 date가 범위 밖이다
+    '' | *[!0-9]* | ??????????*) refuse "$name=${!name} — 9자리 이하의 0 이상 정수여야 한다(0 = 마감 없음)" ;;
   esac
 done
 MAX_S=$((10#$GUARD_MAX_S)) # 10#: 앞의 0을 8진수로 읽지 않는다

@@ -93,6 +93,8 @@ def test_the_guard_deadline_is_off_by_default_and_the_documented_command_sets_no
     assert _GUARD_EXAMPLE.findall(guard) == [], "guard.sh 머리의 기동 예시에 MAX_HOURS가 있다"
     assert _GUARD_EXAMPLE.findall(portability) == [], "portability.md 기동 예시에 MAX_HOURS가 있다"
     assert "guard.sh > /dev/null" in portability, "전제 - 문서에 기동 예시가 있다"
+    # 64비트 넘침이 마감을 조용히 끄므로 자릿수 상한(9자리 = 10자리 이상 거부)이 있어야 한다.
+    assert "| ??????????*) refuse" in guard, "MAX_HOURS·GUARD_MAX_S 자릿수 상한이 없다"
     # 음성: 환경 변수 기본값을 든 다른 줄은 안 걸린다. 24로 되돌린 줄은 걸리되 `0`이 아니다.
     assert _GUARD_DEFAULT.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
     assert _GUARD_DEFAULT.findall('MAX_HOURS="${MAX_HOURS:-24}"') == ["24"]
@@ -945,6 +947,9 @@ def test_the_guard_leaves_every_server_while_cgroup_anon_stays_under_the_thresho
         pytest.param("MAX_HOURS", "abc", id="hours-abc"),
         pytest.param("MAX_HOURS", "-1", id="hours-negative"),
         pytest.param("GUARD_MAX_S", "1.5", id="max_s-1.5"),
+        pytest.param("MAX_HOURS", "9223372036854775808", id="hours-huge"),
+        pytest.param("MAX_HOURS", "1234567890", id="hours-10-digits"),
+        pytest.param("GUARD_MAX_S", "99999999999999999999", id="max_s-huge"),
     ],
 )
 def test_the_guard_refuses_to_start_on_a_cgroup_setting_it_cannot_use(
@@ -1048,6 +1053,22 @@ def test_a_positive_max_hours_turns_the_deadline_on(rig: Rig, env: dict[str, str
         assert "deadline=none" not in log and "deadline=20" in log, log
         match = re.search(r"deadline_left=(\d+)s", log)
         assert match and 3500 < int(match.group(1)) <= 3600, log
+    finally:
+        (rig.dir / "STOP_GUARD").touch()
+        if guard is not None:
+            _wait_exit(guard, 5) or guard.kill()
+
+
+@needs_linux
+def test_a_leading_zero_max_hours_is_read_as_decimal(rig: Rig) -> None:
+    """`MAX_HOURS=08`은 8시간이다 - 셸 산술이 8진수로 읽어 죽거나 0으로 떨어지지 않는다."""
+    rig.env.pop("GUARD_MAX_S", None)
+    guard = None
+    try:
+        guard = rig.guard(MAX_HOURS="08")
+        assert not _wait_exit(guard, 3), "08시간 마감인데 감시자가 바로 끝났다"
+        match = re.search(r"deadline_left=(\d+)s", _guard_log(rig))
+        assert match and 28700 <= int(match.group(1)) <= 28800, _guard_log(rig)
     finally:
         (rig.dir / "STOP_GUARD").touch()
         if guard is not None:
