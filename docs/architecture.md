@@ -58,7 +58,7 @@ graph LR
 | 1 | Index & Graph | `Artifact[]` | 소스: tree-sitter로 함수·symbol·AST 분해 · **Joern 슬라이서**(무모델 Case A·B — [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §2. 지금은 하네스 밖 오프라인 `slicer.py`) / 바이너리·펌웨어: strings, readelf, objdump, Ghidra Headless. 공통으로 symbol table, xref, function boundary, call graph 추출 | Code Index, Graph · `slices.json`(아래 ⚠ ADR 0012) | 대상 함수 심볼 해석 성공 |
 | 2 | Signal Collection | Artifact, Index | Semgrep · clang-tidy · grep/custom rule 정적분석, **build 프로브**(빌드되는가 — Auditor가 `repro_spec`을 쓸 근거, 아래 build 주), sanitizer log·stack trace 파싱, AFL++/libFuzzer coverage, diff 분석 | `Evidence[]` | 실패해도 진행(신호 부재로 기록) |
 | 3 | Retrieval | 후보 seed | symbol·graph·keyword 광역 수집 → embedding + reranker 재선별(쓰임은 아래 ⚠ ADR 0012 — 열림) | `ContextCapsule` | capsule 토큰 상한 이내 |
-| 4 | Scout / Triage | `ContextCapsule`(경량) + 대상 코드(아래 ⚠ ADR 0012 — 슬라이스로 바뀐다) | 후보 우선순위 분류, 위험 카테고리 부여 | `Candidate[]` (score, CWE 추정) | `score >= scout_threshold` |
+| 4 | Scout / Triage | `ContextCapsule`(경량) + 대상 코드(아래 ⚠ ADR 0012 — 슬라이스로 바뀐다) | 후보 우선순위 분류, 위험 카테고리 부여 | `Candidate[]` (score, CWE 추정) | 서빙 Scout v3 이상: 최종 **신호**가 `review`(`policy.py` `_scout_triage` - 점수는 `basis`에 참고로만 남는다). v1·v2(신호 없음): `score >= scout_threshold` |
 | 5 | Primary Auditor | `ContextCapsule`(확장) + `Candidate` + 대상 원본 소스(슬라이스 타깃이면 걸친 함수들 — 아래 ⚠ ADR 0012 결정 1-b) | source-to-sink, memory lifetime, boundary·guard 분석, RCA 초안 | `Finding`(draft) + `MissingEvidence[]` | Evidence Gate 판정 |
 | 6 | Evidence Gate | `Finding` + `Evidence[]` | 결정론적 규칙으로 근거 충족 여부 판정. 애매한 경우에만 모델 호출 | 상태 승격/보류/폐기 | 근거 등급 §4 참조 |
 | 7 | Independent Critic | 상위 `Finding`만 | 다른 계열 모델로 guard·reachability·aliasing·lifetime·환경 조건 반박 | `Decision`(rebut/uphold) + 근거 | 반박이 기각될 때 |

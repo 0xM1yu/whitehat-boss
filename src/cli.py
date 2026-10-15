@@ -82,6 +82,7 @@ from src.adapters.cybergym_oracle import (
 from src.adapters.factory import Deps, build_deps, describe_wiring
 from src.adapters.fake_retriever import read_raw_source, read_symbol_source
 from src.adapters.slices import SliceInputError, SliceSet, load_slices, render_slices
+from src.adapters.tokenizer import REASON_NO_SOURCE, counter_reason_for_source
 from src.bench import (
     DEFAULT_CONCURRENCY,
     DEFAULT_CONTEXTS,
@@ -93,6 +94,7 @@ from src.config import (
     CONFIG_DIR,
     PROMPTED_ROLES,
     RELAYED_SOURCE_OPTIONS,
+    RETRIEVAL_ROLES,
     SCOUT_POOL_ROLES,
     AdapterSelection,
     ConfigError,
@@ -258,6 +260,7 @@ def doctor(
     checks.extend(_check_serving(config, device, config_dir))
     checks.extend(_check_benchmarks(config))
     checks.extend(_check_checksums(config))
+    checks.extend(_check_tokenizers(config))
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
     checks.extend(_check_auditor_loop(config))
@@ -512,6 +515,33 @@ def _check_checksums(config: HarnessConfig) -> list[Check]:
             f"model checksum이 자리표시자(전부 0)다: {', '.join(placeholder)} — 이대로 run하면 "
             "어느 모델로 돈 기록인지 지시하지 못해 모델 비교표에서 제외된다 "
             "(산출 절차는 model-serving.md §5)",
+        )
+    ]
+
+
+def _check_tokenizers(config: HarnessConfig) -> list[Check]:
+    """실서빙 역할의 토크나이저를 쓸 수 있는가 — 없으면 토큰 수가 `len//4` 근사다.
+
+    run에서는 같은 판정이 `token_counter` 이벤트(`approx`와 사유)로만 남아, Auditor SOURCE 20,000
+    토큰 같은 상한이 실서빙보다 1.8배 과소하게 세어진 채 도는 것을 run 뒤에야 안다(CLAUDE.md §5).
+    HF 캐시 파일만 본다 - 접속하지 않는다. embedding·reranker는 프롬프트를 안 만들어 뺀다.
+    """
+    missing = sorted(
+        f"{role}({reason})"
+        for role, key in config.served_models().items()
+        if role not in RETRIEVAL_ROLES
+        for source in [config.models[key].source]
+        for reason in [counter_reason_for_source(source) if source else REASON_NO_SOURCE]
+        if reason is not None
+    )
+    if not missing:
+        return [Check(Severity.OK, "실서빙 역할의 토크나이저를 모두 쓸 수 있다(또는 대상 없음)")]
+    return [
+        Check(
+            Severity.WARN,
+            f"실서빙 역할의 토크나이저를 못 쓴다: {', '.join(missing)} — 토큰 상한이 글자수 근사"
+            "(len//4)로 센다. 실서빙보다 최대 1.8배 과소라 상한을 넘은 요청이 서버에서 "
+            "거절될 수 있다",
         )
     ]
 

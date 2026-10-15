@@ -1219,6 +1219,24 @@ def test_a_resolver_value_error_is_fed_back_not_fatal(
     assert "ValueError" in body and secret not in body
 
 
+@pytest.mark.parametrize("raised", [KeyError("line_start"), TypeError("int() of None")])
+def test_a_malformed_index_record_is_a_lookup_error_not_a_run_stop(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, raised: Exception
+) -> None:
+    """인덱스 레코드에 `line_start`·`file`이 없으면 리졸버가 `KeyError`/`TypeError`를 올린다
+    (`symbol_resolver._record_range`). 보조 정보 실패라 `ValueError`와 같이 `lookup_error`로 남고
+    run을 `UNFORESEEN_FAILURE`로 세우지 않는다."""
+    candidate, capsule, evidences = _triage(ctx, VULN_TARGET)
+    _arm(ctx, monkeypatch, tmp_path, hops=4)
+    ctx.resolve_requests = _StubResolver(raises=raised)
+
+    finding, _ = auditor.run(ctx, candidate=candidate, capsule=capsule, evidences=evidences)
+
+    assert isinstance(finding, Finding)
+    data = _hops(ctx)[0].data
+    assert data["lookup_error"] == type(raised).__name__ and "resolved" not in data
+
+
 # --- 실패의 사유 — 모델 호출이 실패한 사건만 C-6·C-7을 단다 --------------------------
 
 
@@ -1661,6 +1679,10 @@ def test_any_other_model_call_failure_keeps_the_old_label_and_gets_no_overflow_e
     assert _queue_transitions(ctx, candidate) == [("C-6", "schema_parse_failed")]
 
 
+def _no_finding_warnings(result) -> list[str]:  # noqa: ANN001
+    return [w for w in result.warnings if "Finding 없이 선 후보" in w]
+
+
 def _overflow_warnings(result) -> list[str]:  # noqa: ANN001
     return [w for w in result.warnings if "크기 거절 — 후보를 버렸다(#514)" in w]
 
@@ -1795,6 +1817,9 @@ def test_the_runner_survives_a_candidate_the_loop_stopped_without_a_finding(
     ]
     # 다른 후보가 앞 단계에서 문턱 아래로 `queued`된 것은 이 검사의 대상이 아니다.
     assert queued.count("capsule_expansion_exhausted") == 1
+    # Finding 없는 정지는 run 경고에도 오른다(사유별 건수) - 「찾은 게 없다」와 구별된다.
+    (warning,) = _no_finding_warnings(result)
+    assert "max_hop 1건" in warning and "repeat_request" not in warning
 
 
 # --- 러너 — 루프가 돌았는데 probe가 0이면 run 경고 (#617) -----------------------------
@@ -1868,6 +1893,9 @@ def test_a_loop_run_that_probes_or_never_looped_says_nothing_about_probes(
     off, off_trace = _run(tmp_path, "off")  # dev_fake 한 방 판 - 홉 이벤트가 없다
     assert "auditor_hop" not in off_trace.read_text(encoding="utf-8"), "전제 - 루프 꺼짐"
     assert _zero_probe_warnings(off) == []
+    # 같은 음성 쌍 - Finding까지 간 run과 루프가 꺼진 run엔 정지 경고가 없다.
+    assert _no_finding_warnings(probed) == []
+    assert _no_finding_warnings(off) == []
 
 
 # --- B7: 켜졌는데 프롬프트가 도구 루프를 못 받친다 ---------------------------------
