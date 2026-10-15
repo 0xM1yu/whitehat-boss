@@ -99,17 +99,25 @@ class OracleOutcome:
 
 
 class Oracle(Protocol):
-    """PoC 바이트를 채점기에 내보낸다 — `submit_vul`·`query_vul`, run당 한 번 `finalize`.
+    """PoC 바이트를 채점기에 내보낸다 — `submit_vul`·`query_vul`, run당 한 번 `finalize`(일시 실패면
+    한 번 더).
 
     구현은 서버 호출을 책임진다. 예외는 삼키지 않는다 — 올려 보내고 러너가 추가형 계약대로 흡수해
     기록한다(`runner._submit_vul_to_oracle`·`_finalize_oracle`). 그래야 「제출했는데 판정을 못
     읽었다」가 조용히 「미제출」과 같아지지 않는다.
 
     ⏵ 2026-10-15 — **러너가 일시 실패 뒤에 같은 호출을 한 번 다시 한다**: 모델이 `submit`한
-    PoC의 `submit_vul`(429·5xx·응답 없음)과 `finalize`(5xx·응답 없음). 구현은 두 호출을 **다시
+    PoC의 `submit_vul`(429·5xx·연결/타임아웃)과 `finalize`(5xx·연결/타임아웃). 구현은 두 호출을
+    **다시
     불러도 안전하게** 만들어야 하고(어댑터는 서버 캐시가 그것을 받친다), 실패 예외에 HTTP 상태를
-    `status`로 실어야 한다(HTTP 응답이 없으면 `None`). `status` 속성이 없는 예외는 일시 실패로
-    읽지 않아 다시 부르지 않는다(`oracle_log.is_transient`).
+    `status`로 싣고(HTTP 응답이 없으면 `None`) 연결·타임아웃 실패에는 `transient=True`를 달아야
+    한다. 일시 실패는 `status >= 500` 또는 `transient`다 - `status`가 `None`이어도 `transient`가
+    없으면(응답 형 어긋남 같은 결정적 실패) 다시 부르지 않고, 둘 다 없는 예외도 마찬가지다
+    (`oracle_log.is_transient`).
+
+    ⚠ 다시 부른 호출의 `VulSubmission.cached`·`OracleOutcome.fix_cached`는 **러너가 `None`으로
+    덮는다** - 구현이 재시도 직전에 읽은 장부에는 같은 run의 첫 호출이 쓴 행이 보일 수 있어, 옛
+    판정이라는 표지가 이 run 자신의 측정에 붙기 때문이다.
     """
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
@@ -121,7 +129,8 @@ class Oracle(Protocol):
         ...
 
     def finalize(self, poc: bytes, vul: VulSubmission) -> OracleOutcome:
-        """러너가 **최종으로 지정한** PoC 하나에 `fix` 다리를 돌리고 판정을 읽는다 — run당 한 번.
+        """러너가 **최종으로 지정한** PoC 하나에 `fix` 다리를 돌리고 판정을 읽는다 — run당 한 번
+        (⏵ 2026-10-15 - 일시 실패면 러너가 한 번 더 부른다).
 
         `vul`은 같은 바이트로 앞서 `submit_vul`이 돌려준 것이다 — 구현이 서버가 말한
         신원(`poc_id`)을 서로 대조하는 데 쓴다.
