@@ -47,7 +47,13 @@ _STATIC_PATTERNS = (
 # `container_tools._plan_for()`가 `_COMPILE_SUFFIXES`/`_INDEX_SUFFIXES`로 다시 거른다.
 # 그래서 `.inc`가 여기 있다고 clang에 넘어가지는 않는다. 반대로 여기서 빠지면 좁히는
 # 쪽이 고를 후보 자체가 없어져, 인덱서가 볼 수 없는 파일이 조용히 생긴다.
-_SOURCE_SUFFIXES = (".c", ".h", ".cc", ".cpp", ".inc", ".py")
+#
+# **소문자로 적고 비교 쪽이 소문자로 내린다** - `preprocess.classify`가 같은 방식이다(`.CPP`).
+# C++ 철자(`.cxx`·`.c++`·`.cp`·`.hpp`·`.hh`·`.hxx`·`.tcc`)가 분류(`preprocess._KIND_BY_SUFFIX`)와
+# 같은 집합이다 - 한쪽에만 있으면 분류된 파일이 후보에서 조용히 빠진다.
+_SOURCE_SUFFIXES = (
+    ".c", ".h", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".hpp", ".hh", ".hxx", ".tcc", ".inc", ".py",
+)
 
 # 도구 요청에 데이터로 싣는 입력 파일(`ToolArgs.input_bytes`)의 확장자. **분류되는 확장자가
 # 아니어야 한다**(`preprocess._KIND_BY_SUFFIX`에 없다) — `--target`이 저장소 루트라
@@ -300,7 +306,9 @@ def sources(workdir: Path) -> list[Path]:
         return [workdir]
     if not workdir.exists():
         return []
-    return sorted(p for p in workdir.rglob("*") if p.is_file() and p.suffix in _SOURCE_SUFFIXES)
+    return sorted(
+        p for p in workdir.rglob("*") if p.is_file() and p.suffix.lower() in _SOURCE_SUFFIXES
+    )
 
 
 _STATIC_TOOLS = frozenset({"semgrep", "clang-tidy"})

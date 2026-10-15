@@ -84,6 +84,7 @@ v8 이상 run은 `rebut_ids_only`도 분자에 더하므로(2026-10-15) 그 앞 
 | 심볼 도장 | `scout_symbol_stamped` | `hop`·`symbol`. null 심볼에 품는 함수를 찍은 홉 (#633) |
 | 중복 제거 대응 | `finding_deduped` | `= Report.duplicates`. **부재 = 안 합쳤다**(9단계 도달 run) |
 | 8단계 재현 미시도 | `repro_not_measured` | `count(*)`. 「제거율 — Tool」 밖. **부재 = 시도** |
+| 0단계 분류 | `preprocess_classified` | `unknown / files`. run당 1건(0단계 예외면 0) |
 | 정지 해제 | `index_stop_lifted` | `index_missing_allowed=true`. **부재 = 안 풀었다**(아래) |
 
 ⏵ **2026-10-15 — `index_stop_lifted`.** `run --allow-missing-index`가 1단계 색인 실패 정지를
@@ -916,6 +917,15 @@ class EventKind(StrEnum):
     # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
+    # 0단계의 파일 분류 결과 - **0단계가 끝난 run당 정확히 1건**(0단계 구간 안, `stage=0`). 0단계가
+    # 예외로 서면(파일을 읽지 못함 - architecture.md §3 0단계 행) 분류 전이라 0건이다.
+    # 0단계에는 차단 조건이 없어서(표에 없는 확장자는 `kind=unknown`으로 남는다)
+    # 분류 실패는 이 이벤트로만 센다.
+    # 키: `files`(전체) · `source`·`config`·`binary`·`firmware`·`unknown`(`ArtifactKind` 값 전부,
+    # 0도 싣는다 - 합이 `files`다) · `unknown_suffixes`(`unknown` 파일의 확장자 -> 개수, 소문자,
+    # JSON 객체 문자열, 많은 순 최대 10개, 확장자 없음은 빈 문자열 키) · `unknown_suffixes_omitted`
+    # (상한에 잘린 확장자 **종류** 수 - 파일 수가 아니다). 대상 트리가 비면 `files`가 0이다.
+    PREPROCESS_CLASSIFIED = "preprocess_classified"
     # `run --allow-missing-index`가 **실제로** 1단계 색인 실패 정지를 푼 사건 (2026-10-15). 내는
     # 곳은 `runner._require_index`이고 run당 0건 또는 1건이다. 키: `index_missing_allowed`(항상
     # `true`) · `exit_code`(색인 Evidence의 종료 코드) · `error`(자른 사유). **이벤트 부재 = 정지를

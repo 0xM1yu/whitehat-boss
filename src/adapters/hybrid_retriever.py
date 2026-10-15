@@ -111,14 +111,19 @@ DEFAULT_TOP_K = 32
 DEFAULT_TOP_N = 5
 
 SOURCE_SUFFIXES = frozenset(
-    {".py", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".java", ".js", ".ts", ".go",
-     ".rs", ".php", ".rb"}
+    {".py", ".c", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".h", ".hh", ".hpp", ".hxx", ".tcc",
+     ".java", ".js", ".ts", ".go", ".rs", ".php", ".rb"}
 )
 SKIP_DIRS = frozenset({".git", "__pycache__", "artifacts", "node_modules", ".venv", "venv"})
 
 # 대상이 이 계열이면 후보도 이 계열 조각만 쓴다(#336). C 대상에 `.py`·`.rs` 조각이 섞이던
 # 자리다. 다른 언어 대상은 예전처럼 `SOURCE_SUFFIXES` 전체를 본다.
-C_FAMILY_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx"})
+# ⏵ 2026-10-15 — `preprocess`가 SOURCE로 읽는 C++ 철자(`.c++`·`.cp`·`.tcc`)를 두 집합 모두에
+# 더했다. 빠지면 그 파일은 코퍼스에 없거나 대상 계열 판정에서 빠진다.
+# 철자는 원문 그대로 비교한다(`.CPP`는 안 잡힌다 - 이 집합은 소문자 비교를 하지 않는다).
+C_FAMILY_SUFFIXES = frozenset(
+    {".c", ".cc", ".cpp", ".cxx", ".c++", ".cp", ".h", ".hh", ".hpp", ".hxx", ".tcc"}
+)
 
 # 레벨별 섹션 구성. LIGHT는 검색하지 않는다 — Scout는 후보 전량에 대해 도는 단계라
 # 여기서 임베딩을 부르면 model-serving.md §2의 "Scout는 크게 배칭" 전제가 무너진다.

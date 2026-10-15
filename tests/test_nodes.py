@@ -195,6 +195,75 @@ def test_include_fragment_is_classified_as_analyzable_source() -> None:
     assert kind in runner._ANALYZABLE
 
 
+def test_cpp_spellings_and_case_variants_are_classified_as_analyzable_source() -> None:
+    """`unknown`이면 `runner._ANALYZABLE`이 걸러 그 파일의 슬라이스 타깃이 조용히 버려진다."""
+    for name in (
+        "a.hpp", "a.hh", "a.hxx", "a.tcc", "a.cxx", "a.c++", "a.cp",  # 새로 든 철자
+        "A.CPP", "A.HPP", "A.C", "A.H", "a.Cxx",  # 대소문자
+    ):
+        kind = preprocess.classify(Path(name))
+
+        assert kind is ArtifactKind.SOURCE, name
+        assert kind in runner._ANALYZABLE, name
+
+
+def test_preprocess_reports_the_classification_counts_inside_the_stage(ctx: RunContext) -> None:
+    """0단계에는 차단 조건이 없다 - 분류 실패(`unknown`)는 이 이벤트로만 센다."""
+    root = _root_of(ctx)
+    for name in ("a.hpp", "conf.yaml", "blob.bin", "x.xyz", "y.XYZ", "Makefile"):
+        (root / name).write_text("x", encoding="utf-8")
+
+    preprocess.run(ctx, source_root=root)
+
+    events = ctx.trace.events
+    (event,) = [e for e in events if e.kind is EventKind.PREPROCESS_CLASSIFIED]
+    assert event.stage == int(Stage.PREPROCESS)
+    assert event.data == {
+        "files": 8,  # parser.c · util.c + 위 여섯
+        "source": 3,
+        "config": 1,
+        "binary": 1,
+        "firmware": 0,
+        "unknown": 3,
+        "unknown_suffixes": '{".xyz": 2, "": 1}',
+        "unknown_suffixes_omitted": 0,
+    }
+    kinds = [e.kind for e in events]
+    start, end = kinds.index(EventKind.STAGE_START), kinds.index(EventKind.STAGE_END)
+    assert start < events.index(event) < end
+
+
+def test_preprocess_emits_no_classification_event_when_stage_zero_raises(
+    ctx: RunContext, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이벤트는 0단계가 **끝난** run에만 1건이다. 파일을 읽다 예외로 서면 분류 전이라 0건이다."""
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise OSError("unreadable")
+
+    monkeypatch.setattr(preprocess, "_artifact", boom)
+
+    with pytest.raises(OSError):
+        preprocess.run(ctx, source_root=_root_of(ctx))
+
+    assert [e for e in ctx.trace.events if e.kind is EventKind.PREPROCESS_CLASSIFIED] == []
+
+
+def test_preprocess_caps_the_unknown_suffix_list_and_says_how_many_were_cut(
+    ctx: RunContext,
+) -> None:
+    root = _root_of(ctx)
+    for i in range(12):
+        (root / f"f.ext{i:02d}").write_text("x", encoding="utf-8")
+
+    preprocess.run(ctx, source_root=root)
+
+    (event,) = [e for e in ctx.trace.events if e.kind is EventKind.PREPROCESS_CLASSIFIED]
+    assert event.data["unknown"] == 12
+    assert len(json.loads(str(event.data["unknown_suffixes"]))) == 10
+    assert event.data["unknown_suffixes_omitted"] == 2  # 파일 수가 아니라 확장자 종류 수
+
+
 def test_static_tool_failure_is_recorded_not_raised(ctx: RunContext) -> None:
     """도구 실패는 예외가 아니라 Evidence로 남는다 (engineering-guide.md §8.3)."""
     evidences = signals.run(ctx, workdir="../outside")
