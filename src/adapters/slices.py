@@ -43,12 +43,16 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import NamedTuple
 
 from src.paths import PathEscape, safe_join
-from src.schemas.candidate import SliceRef
+from src.schemas.candidate import InputContext, InputContextFunction, SliceRef
 from src.schemas.common import Location
 
 SUPPORTED_SLICE_VERSION = "slice-v2"
+# 읽는 `analysis.input_context.version`(`tools/slicer_v2/input_context.py`의 `VERSION`) - 모르는
+# 판은 모양을 믿을 수 없어 로드에서 죽는다.
+SUPPORTED_INPUT_CONTEXT_VERSION = 1
 
 # 슬라이서 `case` → v3 `slice_criterion.given_end`
 # (`prompts/scout_*/v3/prefix.md` 「Slice criterion」: `source`면 앞으로, `sink`면 뒤로 자른 것).
@@ -83,9 +87,10 @@ def split_source(raw: bytes) -> list[str]:
 
 @dataclass(frozen=True)
 class Slice:
-    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·경계만
-    싣고 줄 목록·카운터 같은 나머지 세부는 버린다. `candidate_manifest`의 `sink_arguments`(후보마다
-    싱크 호출의 인자)는 아직 안 싣는다 — 미뤘다(#438)."""
+    """`slices[]` 한 항목. 러너가 쓰는 필드만 든다 — 분석(`analysis`)은 절단 사유·싱크 cap·
+    교차 메서드 간선 cap·경계만 싣고 줄 목록·카운터 같은 나머지 세부는 버린다.
+    `candidate_manifest`의 `sink_arguments`(후보마다 싱크 호출의 인자)는 아직 안 싣는다 —
+    미뤘다(#438)."""
 
     id: str
     candidate_key: str
@@ -111,6 +116,16 @@ class Slice:
     truncation_reasons: tuple[str, ...] = ()
     sinks_capped: bool = False
     boundaries: tuple[tuple[str, str, int], ...] = ()
+    # 슬라이서가 그 키를 **실제로 적었나**(`SliceRef`에 같은 이름으로 든다 - 뜻은 거기 적었다).
+    truncated_recorded: bool = False
+    truncation_reasons_recorded: bool = False
+    boundaries_recorded: bool = False
+    # 슬라이서의 또 다른 상한 둘 - 값과 적었는지(`SliceRef`에 같은 이름으로 든다 - 뜻은 거기).
+    sinks_capped_recorded: bool = False
+    cross_method_flow_truncated: bool = False
+    cross_method_flow_truncated_recorded: bool = False
+    # `analysis.input_context` - `None`은 키가 없다. `SliceRef`가 같은 이름으로 들고 간다.
+    input_context: InputContext | None = None
 
     @property
     def given_end(self) -> str:
@@ -257,34 +272,149 @@ def _array(raw: object, name: str) -> list:
     return raw
 
 
-def _analysis_facts(
-    item: dict,
-) -> tuple[tuple[str, ...], tuple[tuple[str, str, int], ...], bool]:
+def _int(raw: object, name: str) -> int:
+    """JSON 정수만 받는다 - `bool`은 `int`의 서브클래스라 따로 거른다. 강제 변환하지 않는다."""
+    if type(raw) is not int:
+        raise TypeError(f"{name}: 정수가 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _listed(raw: object, name: str) -> list:
+    """`_array`와 달리 `null`을 빈 목록으로 읽지 않는다 - 읽는 키가 `null`이면 모양이 틀린
+    것이다."""
+    if not isinstance(raw, list):
+        raise TypeError(f"{name}: 배열이 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _str(raw: object, name: str) -> str:
+    if not isinstance(raw, str):
+        raise TypeError(f"{name}: 문자열이 아니다 - {type(raw).__name__}")
+    return raw
+
+
+def _input_context(item: dict) -> InputContext | None:
+    """`analysis.input_context`에서 **하네스가 쓰는 키만** 엄격히 읽는다. 키가 없으면 `None`
+    (`--index` 없이 돈 슬라이스)이고 `none_selected`와 다르다 - `null`은 키가 없는 것이 아니라
+    모양이 틀린 것이다. 모양이 틀리면(모르는 판 · 모르는 `status`/`basis` · 불리언이 아닌
+    `cap_hit` · 함수 위치가 정수가 아니다 · 끝 줄이 시작 줄 앞) `KeyError`/`TypeError`/
+    `ValueError`로 로드를 멈춘다 - 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
+
+    클러스터가 합친 슬라이스는 `analysis`가 대표 후보의 것이다 - 그 대표의 선택을 읽는다
+    (구성원별 분석은 `member_analysis`에 있고 여기서는 안 읽는다). `carried_decoders`·
+    `dispatches`는 싣지 않는 것들이라 **개수만** 센다."""
+    analysis = _object(item.get("analysis"), "analysis")
+    if "input_context" not in analysis:
+        return None
+    raw = analysis["input_context"]
+    if not isinstance(raw, dict):
+        raise TypeError(f"input_context: 객체가 아니다 - {type(raw).__name__}")
+    # 읽는 키는 **전부 있어야 한다**(`[]` 색인 → 없으면 `KeyError`로 로드가 선다). 없는 `cap_hit`을
+    # `False`로 읽으면 「상한에 안 닿았다」는 안 잰 사실이 된다.
+    context = raw
+    version = _int(context["version"], "input_context.version")
+    if version != SUPPORTED_INPUT_CONTEXT_VERSION:
+        raise ValueError(
+            f"input_context.version {version}는 읽지 않는다 - "
+            f"{SUPPORTED_INPUT_CONTEXT_VERSION}만 받는다"
+        )
+    status, basis = context["status"], context["basis"]
+    if status not in ("selected", "none_selected"):
+        raise ValueError(f"input_context.status {status!r}")
+    if basis not in ("cpg", "syntax"):
+        raise ValueError(f"input_context.basis {basis!r}")
+    functions = []
+    for entry in _listed(context["functions"], "input_context.functions"):
+        if not isinstance(entry, dict):
+            raise TypeError(f"functions[]: 객체가 아니다 - {type(entry).__name__}")
+        start = _int(entry["line_start"], "functions[].line_start")
+        end = _int(entry["line_end"], "functions[].line_end")
+        if not 1 <= start <= end:
+            raise ValueError(f"functions[]: 줄 범위 {start}-{end}")
+        symbol = entry["symbol"]
+        functions.append(
+            InputContextFunction(
+                file=_str(entry["file"], "functions[].file"),
+                symbol=None if symbol is None else _str(symbol, "functions[].symbol"),
+                line_start=start,
+                line_end=end,
+            )
+        )
+    if type(context["cap_hit"]) is not bool:
+        got = type(context["cap_hit"]).__name__
+        raise TypeError(f"input_context.cap_hit: 불리언이 아니다 - {got}")
+    return InputContext(
+        version=version,
+        status=status,
+        basis=basis,
+        cap_hit=context["cap_hit"],
+        cap_reasons=tuple(
+            _str(reason, "cap_reasons[]")
+            for reason in _listed(context["cap_reasons"], "cap_reasons")
+        ),
+        functions=tuple(functions),
+        carried_decoders=len(_listed(context["carried_decoders"], "carried_decoders")),
+        dispatches=len(_listed(context["dispatches"], "dispatches")),
+    )
+
+
+class _AnalysisFacts(NamedTuple):
+    truncation_reasons: tuple[str, ...]
+    boundaries: tuple[tuple[str, str, int], ...]
+    sinks_capped: bool
+    reasons_recorded: bool
+    boundaries_recorded: bool
+    sinks_capped_recorded: bool
+    cross_method_flow_truncated: bool
+    cross_method_flow_truncated_recorded: bool
+
+
+def _analysis_facts(item: dict) -> _AnalysisFacts:
     """`analysis`의 절단 사유(`truncation_reasons`) · 역추적이 멈춘 자리(`boundaries`) · flows의
-    싱크 cap(`sinks_capped`).
+    싱크 cap(`sinks_capped`) · 대상 지정 모드의 교차 메서드 흐름 cap(`cross_method_flow_truncated`).
 
     클러스터링이 합친 슬라이스의 `analysis`는 **대표 후보의 것**이고 구성원별 분석은
     `member_analysis`에 있다(대표 자신도 든다 — `slicer_source.cluster`). 최상위 `truncated`가
-    구성원의 OR이라 셋 다 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 · 사유·경계를
-    안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는 처음 나온
-    순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이 아니다 · cap이
-    불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이 사실처럼 읽힌다.
+    구성원의 OR이라 이 값들도 구성원 전부에서 모은다(cap은 OR). 키가 없으면(옛 슬라이스 ·
+    사유·경계를 안 내는 Case A · cap을 안 내는 Case B) 빈 튜플·`False`다. 사유는 정렬하고 경계는
+    처음 나온 순서로 중복을 뺀다. 모양이 틀리면(사유·경계가 배열이 아니다 · 사유가 문자열이
+    아니다 · cap이 불리언이 아니다) `TypeError`로 로드를 멈춘다 — 강제 변환하면 깨진 입력이
+    사실처럼 읽힌다.
+
+    ⏵ 2026-10-14(이슈 #438 (b)) — `*_recorded`는 **그 키를 슬라이서가 적었나**다(구성원 중
+    하나라도 `null`이 아닌 키를 들었으면 참). 빈 튜플·`False`만으로는 「적었는데 비었다」와 「안
+    적었다」가 안 갈린다(Case A `parameter_paths`와 `degraded_anchor_only`는 사유·경계를 둘 다 안
+    적는다 · `sinks_capped`는 Case A만, `cross_method_flow_truncated`는 대상 지정 모드만 적는다).
     """
     members = _object(item.get("member_analysis"), "member_analysis")
     reasons: dict[str, None] = {}
     boundaries: dict[tuple[str, str, int], None] = {}
-    sinks_capped = False
+    sinks_capped = cross_truncated = False
+    reasons_recorded = boundaries_recorded = sinks_recorded = cross_recorded = False
     for raw in list(members.values()) or [item.get("analysis")]:
         analysis = _object(raw, "analysis")
+        reasons_recorded = reasons_recorded or analysis.get("truncation_reasons") is not None
+        boundaries_recorded = boundaries_recorded or analysis.get("boundaries") is not None
+        sinks_recorded = sinks_recorded or analysis.get("sinks_capped") is not None
+        cross_recorded = (
+            cross_recorded or analysis.get("cross_method_flow_truncated") is not None
+        )
         for reason in _array(analysis.get("truncation_reasons"), "truncation_reasons"):
             if not isinstance(reason, str):
                 raise TypeError(f"truncation_reasons: 문자열이 아니다 — {type(reason).__name__}")
             reasons[reason] = None
         sinks_capped = _flag(analysis.get("sinks_capped"), "sinks_capped") or sinks_capped
+        cross_truncated = (
+            _flag(analysis.get("cross_method_flow_truncated"), "cross_method_flow_truncated")
+            or cross_truncated
+        )
         for boundary in _array(analysis.get("boundaries"), "boundaries"):
             where = boundary["location"]
             boundaries[(str(boundary["reason"]), str(where["file"]), int(where["line"]))] = None
-    return tuple(sorted(reasons)), tuple(boundaries), sinks_capped
+    return _AnalysisFacts(
+        tuple(sorted(reasons)), tuple(boundaries), sinks_capped, reasons_recorded,
+        boundaries_recorded, sinks_recorded, cross_truncated, cross_recorded,
+    )
 
 
 def _slice(item: dict) -> Slice:
@@ -296,7 +426,7 @@ def _slice(item: dict) -> Slice:
     code = item["code"]
     if not isinstance(code, str):
         raise TypeError("code")
-    truncation_reasons, boundaries, sinks_capped = _analysis_facts(item)
+    facts = _analysis_facts(item)
     return Slice(
         id=str(item["id"]),
         candidate_key=str(item["candidate_key"]),
@@ -309,9 +439,16 @@ def _slice(item: dict) -> Slice:
         provenance=_provenance(item.get("line_provenance")),
         analysis_kind=_kind(item.get("analysis_kind")),
         truncated=_flag(item.get("truncated"), "truncated"),
-        truncation_reasons=truncation_reasons,
-        sinks_capped=sinks_capped,
-        boundaries=boundaries,
+        truncation_reasons=facts.truncation_reasons,
+        sinks_capped=facts.sinks_capped,
+        boundaries=facts.boundaries,
+        truncated_recorded=item.get("truncated") is not None,
+        truncation_reasons_recorded=facts.reasons_recorded,
+        boundaries_recorded=facts.boundaries_recorded,
+        sinks_capped_recorded=facts.sinks_capped_recorded,
+        cross_method_flow_truncated=facts.cross_method_flow_truncated,
+        cross_method_flow_truncated_recorded=facts.cross_method_flow_truncated_recorded,
+        input_context=_input_context(item),
     )
 
 
@@ -352,6 +489,13 @@ def slice_refs(loaded: SliceSet) -> tuple[SliceRef, ...]:
                 truncation_reasons=item.truncation_reasons,
                 sinks_capped=item.sinks_capped,
                 boundaries=item.boundaries,
+                truncated_recorded=item.truncated_recorded,
+                truncation_reasons_recorded=item.truncation_reasons_recorded,
+                boundaries_recorded=item.boundaries_recorded,
+                sinks_capped_recorded=item.sinks_capped_recorded,
+                cross_method_flow_truncated=item.cross_method_flow_truncated,
+                cross_method_flow_truncated_recorded=item.cross_method_flow_truncated_recorded,
+                input_context=item.input_context,
             )
         )
     return tuple(refs)
@@ -410,15 +554,21 @@ def render_slices(loaded: SliceSet, root: Path) -> dict[str, str]:
         except OSError as exc:
             raise SliceInputError(f"{relative}: 하네스 사본에 없다 — drift ({exc})") from exc
 
-    return {
-        item.id: render(item, read_bytes)
-        for item in loaded.slices
-        if _under(root, item.entry["file"]).is_file()
-    }
+    renderable = [item for item in loaded.slices if _under(root, item.entry["file"]).is_file()]
+    # `analysis.input_context.functions[].file`도 같은 못 믿는 경로다 — 5단계의 `read_source`가
+    # 읽는데 거기서 `PathEscape`가 나면 run 전체가 죽는다(Scout가 GPU를 쓴 뒤). 그래서 여기서 먼저
+    # 막는다. 읽히는 것만 본다 — `carry_input_context`가 읽는 것은 렌더되는 슬라이스의 `selected`
+    # + `cpg`뿐이라, 안 읽는 슬라이스의 경로까지 막으면 쓰지도 않을 입력으로 run이 멈춘다.
+    for item in renderable:
+        context = item.input_context
+        if context is not None and context.status == "selected" and context.basis == "cpg":
+            for function in context.functions:
+                _under(root, function.file)
+    return {item.id: render(item, read_bytes) for item in renderable}
 
 
 def _under(root: Path, relative: str) -> Path:
     try:
         return safe_join(root, relative)
     except PathEscape as exc:
-        raise SliceInputError(f"{relative}: 대상 루트 밖을 가리킨다 — {exc}") from exc
+        raise SliceInputError(str(exc)) from exc

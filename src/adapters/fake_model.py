@@ -9,7 +9,9 @@
 
 프롬프트 본문의 마지막 ```json 펜스가 모델이 읽는 사실이다(`FakeContext`). 실제 모델도
 같은 블록을 읽으므로 이 계약은 Fake 전용 우회로가 아니다. ⏵ 2026-10-10 — 단 `facts_source: false` 판
-(Auditor v13·v14 · ⏵ 2026-10-13 v15도)은 `source`가 펜스에 없고 Fake가 산문 원문 블록에서 읽는다.
+(Auditor v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 `source`가 펜스에 없고 Fake가
+산문 원문
+블록에서 읽는다.
 
 아래 가중치는 **정책 임계값이 아니라 테스트 대역의 휴리스틱**이라 config가 아니라 여기 있다.
 실제 판정 임계값(`scout_threshold`)은 config에서 오고 이 어댑터는 그것을 모른다.
@@ -143,6 +145,10 @@ class FakeContext(HarnessModel):
     # Critic의 홉 관측 수(`prompt_loader.FACT_KEYS`의 opt-in 키 — #600 H2ⓐ). `fuzz_entrypoint`와
     # 같은 처리: Fake는 판정에 안 쓰지만 안 받으면 `extra="forbid"`가 사실 블록 파싱을 죽인다.
     auditor_hops: int | None = None
+    # Auditor의 슬라이스 정적 상태(`prompt_loader.FACT_KEYS`의 opt-in 키 — 이슈 #438 (b)).
+    # `auditor_hops`와 같은 처리: Fake는 판정에 안 쓰지만 안 받으면 `extra="forbid"`가 사실 블록
+    # 파싱을 죽인다.
+    slice_state: dict[str, object] | None = None
 
 
 class FakeModelError(RuntimeError):
@@ -223,9 +229,9 @@ class FakeModelClient:
 
 
 # FACTS에 `source`가 없는 판(meta `facts_source: false` — Auditor v13·v14, 이슈 #67 ·
-# ⏵ 2026-10-13 v15도 — 서빙 판)의 원문 자리.
+# ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도 — 서빙 판)의 원문 자리.
 # 그 판은 원문을 산문 블록 하나로만 싣는다(`prompts/auditor/v13/body.md`·`v14/body.md`·
-# `v15/body.md`의 이 머리와 다음 `### Facts` 사이).
+# `v15/body.md`·`v16/body.md`·`v17/body.md`의 이 머리와 다음 `### Facts` 사이).
 _PROSE_SOURCE = re.compile(
     r"^### Target under analysis — original source code\n\n(?P<source>.*)\n\n### Facts\n",
     re.DOTALL | re.MULTILINE,
@@ -667,13 +673,14 @@ def _build_auditor_procedure_probe_input_action(
 def _build_pov_action_named(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovActionNamed:
-    """형제 봉투(`PovActionNamed` · v5와 서빙 판 v6)의 fake — `_build_pov_action`과 같은
+    """형제 봉투(`PovActionNamed` · v5와 서빙 판 v6·v7)의 fake — `_build_pov_action`과 같은
     액션(`poc_sha256` 없음)."""
     return PovActionNamed(**_build_pov_action(context, produced_by, history).model_dump())
 
 
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`(⏵ 2026-10-11 — v5는
-# 형제 `PovActionNamed` · ⏵ 2026-10-13 — v6도 그 형제이고 v6이 서빙 판이다)을 요청하고, `gen`이
+# 형제 `PovActionNamed` · ⏵ 2026-10-13 — v6도 그 형제 · ⏵ 2026-10-14 — v7도 그 형제이고
+# v7이 서빙 판이다)을 요청하고, `gen`이
 # 실은 `PovSpec`은 `_build_pov_action`이 `_build_pov`로 채운다(단발판 제거로 엔트리는 죽어 뺐다).
 # `AuditorAction.spec`(`probe`가 싣는 `PovSpec`)도 같다 — 봉투 안에 들어가고 따로 요청되지 않는다.
 # fake의 `probe`는 `spec`을 아예 싣지 않는다(`_auditor_investigation`).

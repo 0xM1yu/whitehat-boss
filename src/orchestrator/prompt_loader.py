@@ -32,6 +32,11 @@ vLLM automatic prefix caching이 빗나가고 cache hit ratio(핵심 지표)를 
 `cli`가 run을 막는다(#351 리뷰 MEDIUM-2). **모르는 키는 거절한다** — 오타 하나가 그 가드를 조용히
 끈다(`input`과 같은 판단).
 
+**Critic·PoV meta도 이 키를 쓴다**(PR #676). 같은 `SOURCE` 문자열이 그 좌석에도 가므로
+(`runner.finding_sources`) 두 좌석의 판은 `config.RELAYED_SOURCE_OPTIONS`(쓰기 창 표지 줄 · 입력
+디코더 블록) 중 자기 prefix가 서술하는 것만 선언한다 - `cli._undescribed_relayed_options`가 읽는다.
+선언이 없는 판은 서술하지 않는 판이다.
+
 ## meta의 `tools` — 그 프롬프트 판이 모델에게 광고하는 도구
 
 `PROMPT_TOOL_NAMES` 중 그 프롬프트의 prefix가 「쓸 수 있는 도구」로 서술하는 이름의 목록이다
@@ -81,9 +86,15 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
-v13·v14 · ⏵ 2026-10-13 v15도)은 그 블록에 `source`가 없고 body 머리 문장도 「전부」라 하지
-않는다 — 분석 대상 코드는 산문
-SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈 #67). ID는 노드가 미리 발급해 여기 실어 보낸다
+v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 그 블록에 `source`가 없고 body 머리 문장도
+「전부」라 하지 않는다 — 분석 대상 코드는 산문 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈
+#67). ⏵ 2026-10-15 — 「전부」라 하지 않는 body는 그 판들만이 아니다. **PoV v7**은
+`facts_source: false`가 아니면서도 「JSON의 Finding 데이터는 `finding_id`뿐」이라 적는다(CWE·제목·
+경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649). **Critic v4~v8**은 「전부」를 「추가 사실
+(additional facts)의 전부」로 좁힌다(CLAIM·PATH·EVIDENCE는 산문 블록이다). 「전부」를 그대로
+선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2 · scout_* v2 ·
+single v2다(2026-10-15 `prompts/*/*/body.md`를 전부 읽어 센 값 — scout_* v3·v4는 선언하지 않는다).
+ID는 노드가 미리 발급해 여기 실어 보낸다
 — 구조화 출력 스키마가 ID를 필수 필드로 갖기 때문에(`Candidate.candidate_id`)
 모델이 ID를 지어내면 안 된다. `build_facts()`가 그 딕셔너리를 만든다.
 
@@ -120,15 +131,17 @@ FACTS_TOKEN = "FACTS"
 # `build_facts()`가 만드는 키. S1이 굳힌 계약이며 어댑터의 `FakeContext`와 같은 집합이다
 # (`extra="forbid"`이므로 여기서 키를 하나 더 넣으면 Fake가 로드 시점에 실패한다).
 #
-# **opt-in은 셋이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
-# ⏵ 2026-10-13 셋째 `auditor_hops`):
+# **opt-in은 넷이다**(⏵ 2026-10-02 — 전 판은 *"`slice_criterion`만"*이라 적었다 ·
+# ⏵ 2026-10-13 셋째 `auditor_hops` · ⏵ 2026-10-14 넷째 `slice_state`):
 #   - `slice_criterion` — 슬라이스 타깃이고 `input: slice`를 선언한 Scout 프롬프트에만(ADR 0012
 #     결정 1, Scout v3 prefix의 「Slice criterion」 절 · ⏵ 2026-10-13 `source`는 안 받는다 — #529).
 #   - `fuzz_entrypoint` — **PoV만**(아래 그 항목의 주석).
 #   - `auditor_hops` — **Critic만, content-aware 판이고 홉 관측 사본이 1개 이상인 Finding에만**
 #     (아래 그 항목의 주석 · #600 H2ⓐ).
+#   - `slice_state` — **Auditor만, `auditor_slice_state`가 켜졌고 슬라이스가 있는 후보에만**(이슈
+#     #438 (b) · 아래 그 항목의 주석).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판
-# (v13·v14·v15)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기
+# (v13·v14·v15·v16·v17)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기
 # 전과 **글자가 같다** — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
@@ -149,6 +162,11 @@ FACT_KEYS = (
     # (사본 0이면 키 자체가 없다 — `0`을 적지 않는다, 바이트 동일), 본문은 EVIDENCE 블록
     # (`critic._describe_hop_observations`)에 있다.
     "auditor_hops",
+    # 슬라이스의 정적 상태(`analysis_kind` · `degraded` · `truncated` + 사유 · 경계 사유 —
+    # #438 (b)). **Auditor만, `thresholds.auditor_slice_state`가 켜졌고 슬라이스가 있는
+    # 후보에만** 싣는다 — 안 주면 키 자체가 없다(바이트 동일). 값은
+    # `orchestrator/slice_state.facts`가 만든다. 모름은 `null`이다(`false`가 아니다).
+    "slice_state",
 )
 
 
@@ -353,8 +371,9 @@ _TRUNCATION_MARKER = "\n...\n"
 # ⚠ 뺀 뒤에도 **절단이지 요약이 아니다** — semgrep JSON의 `message` 같은 가운데는 잘릴
 # 수 있다(구조 추출은 semgrep만 #496이 히트를 한 줄씩 접는다 — 그 밖의 도구는 #562에 남는다).
 # 그리고:
-# - 못 빼는 호스트 경로 — 실행 전 거절 사유(`# 실행하지 않았다: …` — 그 줄이 곧 실패
-#   사유다), 런타임 CLI가 stderr에 쓴 문구(도구 stderr와 한 절이라 가를 표지가 없다),
+# - (⏵ 2026-10-15 #670 — 실행 전 거절 사유는 이 목록에서 빠졌다: `_fail`의 문구가 더는 호스트
+#   경로를 싣지 않는다 — SIF 없음은 파일 이름, `PathEscape`·루트 밖 소스는 대상 루트 기준 경로다.)
+# - 못 빼는 호스트 경로 — 런타임 CLI가 stderr에 쓴 문구(도구 stderr와 한 절이라 가를 표지가 없다),
 #   줄바꿈이 쪼갠 명령줄의 둘째 줄: env 키·값에 줄바꿈이 있으면 그 뒤의 바인드 인자가
 #   거기 가고(지금 env를 채우는 노드는 없다), singularity면 작업 디렉터리 이름의 줄바꿈
 #   뒤에 SIF 경로가 간다. 호스트 경로(대상 루트 · artifacts 루트) 자체에 줄바꿈이 있어도 그
@@ -665,6 +684,7 @@ def build_facts(
     slice_criterion: Mapping[str, object] | None = None,
     fuzz_entrypoint: Mapping[str, object] | None = None,
     auditor_hops: int | None = None,
+    slice_state: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     """마지막 ```json 펜스에 들어갈 사실 딕셔너리.
 
@@ -681,15 +701,20 @@ def build_facts(
     evidence에 `location`(없으면 `null`)이 실리고, 끄면 키가 없다(종전과 바이트 동일).
 
     `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
-    `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67 · ⏵ 2026-10-13 v15도 — 서빙
-    판)에만 노드가 `False`를 준다.
-    그때 키가 **없다** — `""`나 `null`로 남기지 않는다. 빈 문자열은 「원문이 비었다」로, `null`은
-    「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문 SOURCE 블록에 있다. 다른 역할·판은 바이트
-    그대로다.
+    `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14
+    v16·v17도 — 서빙 판)에만 노드가 `False`를 준다. 그때 키가 **없다** — `""`나 `null`로
+    남기지 않는다.
+    빈 문자열은 「원문이 비었다」로, `null`은 「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문
+    SOURCE 블록에 있다. 다른 역할·판은 바이트 그대로다.
 
     `auditor_hops`도 같은 opt-in이다 — **Critic만**, Critic용 홉 관측 사본이 1개 이상인
     Finding일 때만 준다(**사본 수** - 돈 홉 수가 아니다). 사본이 없으면 `None`이라 키가 없다 —
     `0`으로 적으면 사본 0 Finding의 FACTS 바이트가 바뀐다(#600 H2ⓐ).
+
+    `slice_state`도 같은 opt-in이다 — **Auditor만**, `thresholds.auditor_slice_state`가 켜졌고
+    후보에 슬라이스가 있을 때만 준다(#438 (b)). 안 주면 키가 없다 — 슬라이스 없는 후보와 끈 run의
+    FACTS 바이트가 그대로다. 값 안의 모름은 `null`이다(`slice_state.facts`가 `false`·`[]`와
+    가른다).
 
     `fuzz_entrypoint`도 같은 opt-in이다 — **PoV만** 준다. 단 PoV는 **못 찾았을 때도 준다**(빈
     `source` + `reason`): 키가 아예 없으면 "안 찾았다"와 "찾았는데 없다"가 구별되지 않는다
@@ -704,9 +729,11 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
-        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15)은 `source`를 여기 안 싣고
-        # body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은 그 판도
-        # 싣는다.
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17)은 `source`를 여기
+        # 안 싣고 body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은
+        # 그 판도 싣는다. ⏵ 2026-10-15 — 「전부」라 못박는 body는 모든 판이 아니다: PoV v7은
+        # 하지 않고(이슈 #649) Critic v4~v8은 「추가 사실의 전부」로 좁힌다(모듈 docstring
+        # 「body의 마지막 json 펜스」).
         "capsule_sections": [
             {
                 "kind": section.kind,
@@ -784,6 +811,7 @@ def build_facts(
         **({"slice_criterion": dict(slice_criterion)} if slice_criterion is not None else {}),
         **({"fuzz_entrypoint": dict(fuzz_entrypoint)} if fuzz_entrypoint is not None else {}),
         **({"auditor_hops": auditor_hops} if auditor_hops is not None else {}),
+        **({"slice_state": dict(slice_state)} if slice_state is not None else {}),
     }
 
 

@@ -119,7 +119,8 @@ def macro_alias_target(text: str) -> str | None:
     대치 목록이 식별자로 시작하면(`#define ND_TCHECK(p) ND_TCHECK2(p, sizeof(*(p)))` ->
     `ND_TCHECK2`, `#define gf_strdup gf_mem_strdup` -> `gf_mem_strdup`) 그 첫 식별자를 별칭 대상으로
     본다. `do {`·`(`·숫자·문자열로 시작하는 매크로는 식만 담은 것이라 `None`이다. 자기 이름 ·
-    파라미터 · C 키워드면 `None`이다. 주석·문자열은 먼저 지우고 줄 잇기(`\` 줄바꿈)는 공백으로 본다.
+    파라미터 · C 키워드면 `None`이다. 주석·문자열은 먼저 지우고 줄 잇기(`\\` 줄바꿈)는
+    공백으로 본다.
     """
     head = _DEFINE_HEAD.match(text)
     if head is None:

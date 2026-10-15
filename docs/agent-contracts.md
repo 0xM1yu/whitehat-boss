@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15 → ⏵ 2026-10-14 v16 → ⏵ 2026-10-14 v17)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15·v16·v17 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -195,13 +195,13 @@ agent:
   `cli` run·doctor가 선다. ⏵ 2026-10-03 -> 넷을 켰다(`config/budgets.yaml` — 20,000토큰 상한 · 정의 · 피호출 본문 1단 · 호출자 창 10줄, entry 줄이기만 꺼짐 ·
   사용자 결정). 위 「문자 수 상한」은 토큰 상한이 되고, 함수 뒤에 정의 · 피호출 본문 · 호출자 창이 붙는다. 서빙 판이
   그 모양을 서술하고 meta `source_options`로 선언한다. ⏵ 2026-10-04 -> 그 판은 v6를 그 자리에서 고친 것이 아니라 **v7**이다
-  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). ⏵ 2026-10-11 — 지금 배선된 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578, 옵션 서술은 v12와 바이트 동일, PR #601). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS` 아홉 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
+  (`prompts/auditor/v7/prefix.md`의 「Original-source input contract」 · v6 + 그 서술). ⏵ 같은 날 — **v8**이 그 절을 v7에서 바이트 그대로 물려받았다(`tests/test_auditor_prompt_v8.py`). ⏵ 2026-10-06 — v9가 들어왔고(v8 + `auditor_guards` 서술 한 항목, `tests/test_auditor_prompt_v9.py`) ⏵ 2026-10-07 **v10이 배선됐다**(v7 전면 재작성 — 아래 「도구 루프」의 ⏵ 2026-10-06 · ⏵ 2026-10-10 정정: 전에는 「같은 날(10-06)」로 적었다, #557). ⏵ 2026-10-09 — **지금 배선된 판은 v11**이다(v10 + `cwe` 서술 네 줄 — 옵션 서술은 v10과 바이트 동일, [D107](open-questions/D/D107.md)). ⏵ 2026-10-10 — 지금 배선된 판은 v13이다(v11 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67, 옵션 서술은 v11과 바이트 동일). ⏵ 2026-10-11 — 지금 배선된 판은 v14다(v12 + FACTS에서 `source` 사본을 뺀다 — 이슈 #67 · #578, 옵션 서술은 v12와 바이트 동일, PR #601). v10은 켜진 옵션 여덟을 모두 서술하고 meta `source_options`로 선언한다(`AUDITOR_SOURCE_OPTIONS`(v10 시점 아홉) 중 꺼진 `auditor_entry_trim`만 빠진다). v6는 #418이 A/B를 잰 문장 그대로
   1-b 모양(15,000자)만 서술한다(§4 규칙 1). ⏵ 2026-10-04 -> 피호출 본문은 1단이 기본이고, 다섯째 옵션
   `auditor_callee_wrappers`(이슈 #451 · `budgets.yaml`이 켬)가 켜지면 붙인 피호출 함수가 짧은 래퍼(10줄 이하 · 정의를 아는
   함수 1~2개 호출)일 때 그 너머를 2단까지, 이름만 바꾸는 매크로의 대상 정의·함수를 2번까지 더 붙인다(v7·v8이 서술 · v4_t1은 서술 안 함).
   ⏵ 같은 날 -> 여섯째·일곱째 옵션 `auditor_indirect_callees`(필드 경유 호출 `sys->alloc(…)`이 갈 수 있는 함수 본문 —
   필드마다 아직 안 실린 후보 3개 이하일 때만)·`auditor_write_sites`(슬라이스 줄의 파일 변수·필드에 쓰는 지점 앞뒤 3줄 창, 6곳까지 · 호출자 창 뒤)도
-  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다.
+  `budgets.yaml`이 켜고 v7·v8이 서술한다(#304). 둘 다 index-v3 표를 쓰므로 인덱서 이미지가 v3로 재빌드되기 전에는 아무것도 안 붙는다. ⏵ 2026-10-14 (#650) -> 쓰기 창은 못 실은 창이 있고 새 옵션 `auditor_write_window_marker`가 1이면 SOURCE 끝(모든 블록 뒤)에 `/* ... +N more write windows not shown ... */` 한 줄이 붙는다(옵션 기본은 꺼짐이고 `budgets.yaml`은 1이다 — v16이 이 줄을 서술하고 meta `source_options`로 선언한다. v15 이하는 선언하지 않아 켜고 그 판을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다).
   ⏵ 같은 날 -> 여덟째 옵션 `auditor_guards`(sink 앞 구문상 가드 목록 — Case B만, `source_guards`)는 ⏵ 2026-10-06 **켜져 있다** —
   `budgets.yaml`이 키를 `1`로 둔다. **v9·v10이 이 옵션을 서술하고 meta `source_options`로 선언한다.** v7·v8은 선언하지 않아 켜고 그
   둘을 고르면 `cli` run·doctor가 막는다. 켠 효과는 미실측이다. 켜면 entry 함수 **바로 뒤**(다른 함수·정의보다 앞)에
@@ -213,6 +213,30 @@ agent:
   않는다) `functions`에는 안 든다. 인덱스 표를 안 읽는다 — 원문만 본다. 켠 효과는 미실측이다.
   ⚠ **PoV도 이 블록을 받는다** — 러너가 Auditor가 본 SOURCE 문자열을 `state.finding_sources`로 물려 주고 8단계 PoV가
   `pov._WIDE_INPUT_VERSIONS`인 판에서 그대로 싣는다. 옵션을 켜면 PoV 프롬프트에도 GUARDS가 든다.
+  ⏵ **2026-10-14 — 열째 옵션 `auditor_input_context`**(S20 Phase 13 · council + 사용자 최종 승인 · `budgets.yaml` 1 · **켠 효과는 미실측이다**).
+  슬라이서가 `--index`로 낸 `analysis.input_context`(`docs/slicer-README.md`)의 `functions[]` 중 `status: selected` ∧ `basis: cpg`인 선택만,
+  그 함수 **본문**을 쓰기 지점 창 **뒤**의 마지막 블록(#650 표지 줄이 있으면 그 앞)에 같은 상한(`auditor_source_tokens`)으로 붙인다(`orchestrator/source_input_context.py`
+  · `runner._auditor_source`). 새 수치 상한은 없다. 함수 **전체**가 이미 `SOURCE`에 실린 범위 안(한 범위, 또는 여러 범위의 합집합)에 들면 건너뛴다(슬라이서의 `identical_to_auditor_input`은 믿지 않는다).
+  호출자 창·쓰기 지점 창 조각과 **일부만 겹치면 건너뛰지 않고** 완전한 함수를 붙인다(창과 몇 줄이 겹쳐 중복되는 것은 받아들인다). 상한에 넘치면 통째로 뺀다. `basis: syntax` 선택·`dispatches`·`carried_decoders`는 안 싣고 수만 남긴다. 슬라이스에 키가 없으면(`--index` 없이 돈 슬라이서)
+  아무것도 안 붙고 `SOURCE`는 옵션이 없을 때와 바이트 동일이다. `functions`(이벤트)에는 안 들고 `input_context_added`가 센다. 이벤트 필드는 `input_context`
+  (`absent` · `none_selected` · `selected` - **`absent`는 수를 0으로 채우지 않는다**) · `input_context_basis` · `input_context_cap_hit`(슬라이서가 쓴 그대로 -
+  `none_selected`에 서 있으면 0이 아니라 모름) · `_cap_reasons` · `_listed` · `_added` · `_chars`(`SOURCE`가 **실제로 늘어난 길이** — 디코더 블록만 붙인 자리에 entry 함수 배너가 새로 생기면 그 배너도 든다) · `_skipped_syntax`(`syntax` 근거) · `_skipped_carried`(전체가 이미 SOURCE에 **실린** 범위 안) ·
+  `_skipped_size`(상한) · `_skipped_empty`(읽은 본문이 비었다 - 없는 파일) · `_carried_decoders` · `_dispatches`다. **v16부터 서술·선언한다** - v15 이하를 고르고 켜면 `cli` run·doctor가 막는다.
+  ⚠ **PoV·Critic도 이 본문을 받는다**(`finding_sources` - 위 GUARDS와 같은 경로. Critic은 `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때 - 이 블록과 표지 줄을 prefix가 서술하는 판은 Critic v8·PoV v7부터다 - 그 전 판 좌석과 함께 켜면 `cli` run·doctor가 막는다, 위 §4 ⏵ 2026-10-15). 「이미 실렸나」는 러너의 `shown`(블록을 붙인 자리에서만 느는 목록)으로 본다 - `seen`은
+  상한에 못 실은 범위도 들어서 안 쓴다. 줄여 실은 entry 함수는 남은 줄 범위만 `shown`에 들고(`_shown_ranges`), 줄여 실은 enum은 일부만 보여 안 든다.
+  ⏵ **2026-10-14 — 열한째 옵션 `auditor_slice_state`**(S20 Phase 14 · 이슈 #438 선택지 (b) · `budgets.yaml` **0 — 꺼져 있다. 켜는 것은 측정 결정이다**: [D101](open-questions/D/D101.md)의 닫히는 조건이
+  켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정 분포가 움직일 방향은 안 쟀다). `SOURCE`가 아니라 **FACTS**를 넓힌다: 켜면 슬라이스가 있는 후보의 hop0 FACTS에 opt-in 키
+  `slice_state`가 붙는다(`prompt_loader.FACT_KEYS` · **Auditor만** — `build_facts`에 그 인자를 넘기는 곳은 `nodes/auditor.py`의 `_render_hop0` 하나다. Scout·Critic·PoV의 FACTS는 옵션과 무관하게 바이트 그대로다).
+  값은 슬라이서가 `slices.json`에 쓴 **정적 사실**을 그대로 옮긴 일곱이다(`orchestrator/slice_state.facts` — LLM이 만든 주장은 없다): `analysis_kind` · `degraded` · `truncated` · `truncation_reasons` ·
+  `sinks_capped`(Case A flows 질의가 전역 싱크 집합을 `FLOWS_SINK_CAP`에서 잘랐나) · `cross_method_flow_truncated`(대상 지정 모드가 교차 메서드 간선을 `CROSS_EDGE_LIMIT`에서 잘랐나 — 둘 다 `truncated`와 별개의 상한이라 `truncated: false`는 완전하다는 뜻이 아니다. ⚠ **상한이 이 둘뿐인 것은 아니다** — 슬라이서가 자르고도 어느 키에도 안 싣는 자리가 알려진 것만 둘이다: Case A 흐름 질의(`flows_query`)가 싱크 후보를 `CASE_B_*_CAP` 상수로 미리 자르는 절단(`sinks_capped: false`여도 안 드러난다)(`slicer_queries.py`의 `CASE_B_WRITER_CAP`·`CASE_B_OPERATOR_CAP` 등 `.take(...)`, `sinksCapped` 계산 앞) · 대상 지정 모드의 시작 노드 동점 절단(`tied_truncated`, 슬라이스가 아니라 locate note에만 남는다). 그래서 `slice_state`의 `false`·`null`은 어떤 상한에도 안 닿았다는 증거가 아니고, v17 프롬프트도 그렇게 적는다. 싣는 상한 2 대 알려진 미싣기 2) ·
+  `boundary_reasons`(의존 역추적이 끝난 자리의 사유 — `entry_parameter`는 CPG에 호출 간선이 없는 함수의 파라미터에 닿았다는 뜻이지 호출자가 **없다**는 뜻이 아니다. 슬라이서가 쓰는 다른 사유도 그대로 나간다). `analysis_kind`의 값 집합은 닫혀 있지 않다(`tools/slicer`의 `parameter_paths`·`backward_ddg`·`degraded_anchor_only`에 더해 대상 지정 모드 `tools/slicer_v2`가 `forward_ddg`·`degraded_lexical`을 쓴다 — 프롬프트는 「for example」로 적는다). **「모름」은 `false`가 아니라 `null`이다**
+  ([CLAUDE.md](../CLAUDE.md) §0): `false`·`[]`는 슬라이서가 **그 키를 실제로 적었을 때만** 나간다 — 로더가 키마다 센다(`SliceRef.truncated_recorded` · `truncation_reasons_recorded` · `boundaries_recorded` · `sinks_capped_recorded` · `cross_method_flow_truncated_recorded`). 상한 둘은 그 키를 적는 슬라이서 종류에서만 `true`·`false`고 나머지는 `null`이다.
+  그래서 Case A `parameter_paths`와 `degraded_anchor_only`(둘 다 사유·경계를 안 적는다)의 그 자리는 `[]`(없다)가 아니라 `null`(안 적었다)이고, `analysis_kind`가 빈 옛 슬라이스는 `degraded`도 `null`이다
+  (슬라이서는 `degraded`를 대체 슬라이스에만 적는다). 서 있는 신호(`true`·사유가 있는 목록)는 적었는지와 무관하게 그대로 나간다. ⚠ `[]`는 「적었는데 사유가 없다」이지 슬라이스가 완전하다는 뜻이 아니다. 같은 값이 `auditor_source` 이벤트에 `slice_state_*`로 남는다(`slice_state_analysis_kind` · `_degraded` · `_truncated` ·
+  `_truncation_reasons` · `_boundary_reasons` · `_sinks_capped` · `_cross_method_flow_truncated` — 사유는 쉼표로 이은 문자열, 모름은 `None`) — **이벤트는 모델에게 보인 값이다**(러너가 한 번 만들어 노드와 이벤트가 같이 쓴다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
+  이벤트가 이 옵션이 생기기 전과 **바이트 동일**하다(`tests/test_slice_state.py`). `degraded`·`truncated`·경계는 선택지 (a)의 `gate_reasons`(`auditor_source_gate`)와 같은 신호의 다른 출구다 — 사후 집계는 이벤트가, 모델 입력은 이 키가 든다.
+  **v17부터 서술·선언한다**(v16 이하를 고르고 켜면 `cli` run·doctor가 막는다). 아직 안 쓴 것: 켠 run 짝 비교는 0건이다. ⚠ `analysis_kind`는 슬라이서의 방법 이름이다 —
+  `slice_criterion`(어느 끝을 쥐여 줬는가)이 아니고 그 키는 Auditor에 안 간다.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -596,14 +620,14 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 · ⏵ 2026-10-14 v16 · ⏵ 2026-10-14 v17)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
 
 - 목적: 상위 후보만 **다른 모델 계열**로 반박한다. Auditor 설명의 재진술은 실패로 본다.
-- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). **2026-10-14부터 서빙 Critic은 v7로 본문·위치·SOURCE를 받는다**(2026-10-05 #497이 v6으로 배선했고 S20 Phase 11이 올렸다). `dev_*`의 공유 fake v1은 metadata 계약을 유지한다. SOURCE는 Auditor의 최초 읽기 캐시이며 원문 블록과 FACTS에 함께 실린다. v3 확인 run 선행은 유지하지 않는다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v7 · 근거 본문·SOURCE」).
-  ⏵ **2026-10-13 (#600 H2ⓐ, 저자 결정 2026-10-10) — Auditor 도구 루프의 홉 *관측*은 전달한다.** 가려지는 것은 Auditor의 *추론*(모델 응답 턴·`rca_draft`)이고, **하네스가 렌더한 조회·도구의 출력**(`lookup`이 푼 코드, `probe`의 도구 로그)은 다른 범주다. 안 주던 동안 Critic은 Auditor가 도구로 확인한 것을 모른 채 반박했다(오반박 쪽). 정확히는 **「하네스가 렌더한 관측에서 모델이 고른 식별자를 가린 것」**이다 - resolver 줄은 모델이 보낸 `kind`·`target`·거절 사유의 `got '…'`를 그대로 되울리는데(`Not resolved: <kind>:<target> (…)` · `Already in SOURCE: <kind>:<name> …` · 라벨 `type of <target>`) 그대로 주면 모델의 문장이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서 Critic용 사본(`auditor.critic_safe_observation` - `_observe`가 만드는 **유일한 자리**, 단 `observations`를 받은 run에서만 만든다)은 `kind`를 요청 어휘 여덟 (`variable`·`type`·`macro`·`function`·`caller`·`allocation`·`guard`·`context`) 안일 때만, `target`을 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고 아니면 `<non-vocabulary>`·`<non-identifier>`로 바꾸며 `got '…'` 상세는 버린다(사유는 `reason: not_found` 같은 enum 값). **줄을 렌더된 글에서 되읽지 않고 resolver가 준 구조값에서 다시 쓴다** - `Not resolved`는 `Resolution.unfilled`, `Already in SOURCE`는 `Resolution.already_entries`(`kind`·`name`·`file`·줄 - resolver가 그 줄을 렌더한 바로 그 값, 글자 상한에 못 실린 줄은 없다)에서 쓴다(렌더된 `Already` 줄을 정규식으로 되읽던 첫 판은 `kind`에 든 콜론·` at `이 경계를 속여 모델 글이 위치 칸으로 샜다 - 실제 `resolve()`로 독립 리뷰의 스크래치 퍼즈(미커밋)에서 재현). `kind`는 어휘 여덟 중 하나와 **정확히 같을 때만** 남는다. 구조값이 없거나(`None`이고 `already`가 비지 않음) 렌더된 줄이 구조값과 다르면 `PromptError`다. **바꿀 자리는 글을 찾아서 정하지 않고 렌더 구조의 위치로 정한다** - 알림 줄은 `Resolution.alert_lines`를 이은 글을 상태 줄(마지막 `\n\nlookup requested=`) 바로 앞에서 통째로 맞춰 떼고, 조각 머리는 `blocks` 순서대로 앞 머리가 끝난 자리부터 찾는다(줄마다 `replace`하면 한 요청의 `target`이 다른 요청의 렌더 줄을 품을 때 먼저 바꾼 쪽이 뒤 줄을 깨뜨려 그 줄의 모델 글이 샜다). **보장은** 알림 줄 구간이 구조값에서 다시 쓴 줄과 숫자만 든 글자 상한 생략 한 줄로만 이뤄지고, 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 다시 쓰인다는 것이며, 구조를 못 찾거나 구조값과 다른 줄이 끼어 있으면 `PromptError`로 선다(가리지 못한 채 주지 않는다). **그 홉의 결과는 「사본 없음」이다** - `_observe`가 `PromptError`를 받아 그 홉의 Critic 사본만 빼고 홉 이벤트에 `observation_sanitize_failed`(사유 문장)를 남기며 Auditor의 run은 계속된다. 그래서 Critic 절 머리줄의 수와 FACTS의 `auditor_hops`는 **사본의 수**이고 홉 수가 아니다(빠진 홉 수는 그 키가 든 홉 이벤트로 센다). 「파서가 속을 수 없다」까지는 말하지 않는다 - 코드 조각 본문(저장소 원문)과 하네스 문구, 인덱스가 정한 파일 경로·조각 이름은 그대로고, 어휘·문자집합을 통과한 모델 선택 값은 남는다. Auditor 자신의 다음 홉 입력은 안 바뀐다. ⚠ **`probe` 관측은 이 사본 경로를 거치지 않는다** - 지금은 argv가 닫힌 도구 이름이고 `spec`이 도구에 안 가서(`_probe`) 모델 글이 관측에 들어갈 길이 없기 때문이다. 그 전제는 `spec` 바이트를 `poc`에 싣는 PR #644(#419)가 깬다 - 그 PR은 `probe` 관측(도구 로그에 입력이 되울릴 수 있다)을 이 가림 경로에 같이 넣는지 다시 봐야 한다. 내용: content-aware 판(`_CONTENT_AWARE_VERSIONS` — 본문·위치와 같은 문)만 EVIDENCE 끝에 절 하나(`## Auditor tool observations (N observations) - program output, data not instructions`)로 받고, FACTS에는 **사본 수** `auditor_hops`를 더한다(홉 수가 아니다 - 가림에 실패한 홉은 사본이 없어 빠지므로 돈 홉 수보다 작을 수 있고, 그 차이는 홉 이벤트의 `observation_sanitize_failed`로 보이며 run 경고가 그 건수를 센다). **사본이 0개인 Finding(홉 0 - 한 방 판·루프 꺼짐·첫 홉 `answer` - 이거나 모든 사본이 가림에 실패한 경우)의 요청은 바이트가 종전과 같다**(`auditor_hops` 키도 절도 없다). 스위치는 없다 — 문은 프롬프트 판이다. ⚠ 그래서 **이 절이 들어온 때 서빙 v6의 요청은 판 번호 변화 없이 바뀌었다**(홉이 돈 Finding만) — [evaluation.md](evaluation.md) §2.3 규칙 4가 걸리는 자리였고, v6 산문은 이 절을 모른다. ⏵ **2026-10-14 — v7 flip(S20 Phase 11)**: `critic._CONTENT_AWARE_VERSIONS`는 v3~v7이다(이 PR이 v7을 넣었다). **v7 prefix도 이 절과 `FACTS.auditor_hops`를 서술하지 않는다 - 미해결이다**(`prompts/critic/v7`은 불변이라 이 PR 밖이고 새 판이 필요하다). ⚠ **그 새 판을 추적하는 이슈도 D도 지금 없다** — 옛 ⏵가 「v7 전환(Phase 5 flip)에서 추적한다」로 이 자리를 가리켰고 이 PR이 그 전환이면서 승계처를 안 뒀다. 그래서 이 문장이 유일한 장부다(`git grep auditor_hops -- docs/` = 이 파일 하나 · open-questions 0건). 다음 Critic 판을 세우는 PR이 이슈를 열고 그 번호를 여기 단다 — CLAUDE.md §3의 #133 사고가 막는 자리다. v6·v7 prefix의 「EVIDENCE는 선택된 Evidence 한 줄씩」은 EVIDENCE 끝에 Evidence가 아닌 절이 붙는 요청에서 부정확하다. ⚠ **`state.finding_observations`는 프로세스 메모리에만 산다**(`state.db`에 안 쓴다) - 러너에 resume이 없어 이 run 안에서 5단계와 7단계가 같은 프로세스이므로 버그가 아니라 **문서화된 한계**다. resume을 만들면 이 관측도 같이 저장해야 한다.
+- 입력: `Finding` + Evidence 목록. **Auditor의 원문 추론은 전달하지 않는다**(주장·경로·근거(ID·kind·ok·source — EVIDENCE 줄)를 전달하고, content-aware 프롬프트 버전에서는 근거 본문의 유계 절단(머리줄을 뺀 도구 로그 — 위 §2.2)과 Evidence `location`(판단 보조 — 등급 근거가 아니다, 위 §2.2의 ⏵ 2026-10-04)까지 싣는다 — #237/#247). **2026-10-14부터 서빙 Critic은 v8로 본문·위치·SOURCE를 받는다**(2026-10-05 #497이 v6으로 배선했고 S20 Phase 11이 v7로, Phase 14가 v8로 올렸다). `dev_*`의 공유 fake v1은 metadata 계약을 유지한다. SOURCE는 Auditor의 최초 읽기 캐시이며 원문 블록과 FACTS에 함께 실린다. v3 확인 run 선행은 유지하지 않는다([PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §5 「Critic v8 · 근거 본문·SOURCE」).
+  ⏵ **2026-10-13 (#600 H2ⓐ, 저자 결정 2026-10-10) — Auditor 도구 루프의 홉 *관측*은 전달한다.** 가려지는 것은 Auditor의 *추론*(모델 응답 턴·`rca_draft`)이고, **하네스가 렌더한 조회·도구의 출력**(`lookup`이 푼 코드, `probe`의 도구 로그)은 다른 범주다. 안 주던 동안 Critic은 Auditor가 도구로 확인한 것을 모른 채 반박했다(오반박 쪽). 정확히는 **「하네스가 렌더한 관측에서 모델이 고른 식별자를 가린 것」**이다 - resolver 줄은 모델이 보낸 `kind`·`target`·거절 사유의 `got '…'`를 그대로 되울리는데(`Not resolved: <kind>:<target> (…)` · `Already in SOURCE: <kind>:<name> …` · 라벨 `type of <target>`) 그대로 주면 모델의 문장이 하네스 출력의 얼굴로 Critic에 닿는다. 그래서 Critic용 사본(`auditor.critic_safe_observation` - `_observe`가 만드는 **유일한 자리**, 단 `observations`를 받은 run에서만 만든다)은 `kind`를 요청 어휘 여덟 (`variable`·`type`·`macro`·`function`·`caller`·`allocation`·`guard`·`context`) 안일 때만, `target`을 `[A-Za-z0-9_:.$]{1,64}`일 때만 남기고 아니면 `<non-vocabulary>`·`<non-identifier>`로 바꾸며 `got '…'` 상세는 버린다(사유는 `reason: not_found` 같은 enum 값). **줄을 렌더된 글에서 되읽지 않고 resolver가 준 구조값에서 다시 쓴다** - `Not resolved`는 `Resolution.unfilled`, `Already in SOURCE`는 `Resolution.already_entries`(`kind`·`name`·`file`·줄 - resolver가 그 줄을 렌더한 바로 그 값, 글자 상한에 못 실린 줄은 없다)에서 쓴다(렌더된 `Already` 줄을 정규식으로 되읽던 첫 판은 `kind`에 든 콜론·` at `이 경계를 속여 모델 글이 위치 칸으로 샜다 - 실제 `resolve()`로 독립 리뷰의 스크래치 퍼즈(미커밋)에서 재현). `kind`는 어휘 여덟 중 하나와 **정확히 같을 때만** 남는다. 구조값이 없거나(`None`이고 `already`가 비지 않음) 렌더된 줄이 구조값과 다르면 `PromptError`다. **바꿀 자리는 글을 찾아서 정하지 않고 렌더 구조의 위치로 정한다** - 알림 줄은 `Resolution.alert_lines`를 이은 글을 상태 줄(마지막 `\n\nlookup requested=`) 바로 앞에서 통째로 맞춰 떼고, 조각 머리는 `blocks` 순서대로 앞 머리가 끝난 자리부터 찾는다(줄마다 `replace`하면 한 요청의 `target`이 다른 요청의 렌더 줄을 품을 때 먼저 바꾼 쪽이 뒤 줄을 깨뜨려 그 줄의 모델 글이 샜다). **보장은** 알림 줄 구간이 구조값에서 다시 쓴 줄과 숫자만 든 글자 상한 생략 한 줄로만 이뤄지고, 조각 머리는 블록 수만큼 모두 자기 자리에서 한 번씩 다시 쓰인다는 것이며, 구조를 못 찾거나 구조값과 다른 줄이 끼어 있으면 `PromptError`로 선다(가리지 못한 채 주지 않는다). **그 홉의 결과는 「사본 없음」이다** - `_observe`가 `PromptError`를 받아 그 홉의 Critic 사본만 빼고 홉 이벤트에 `observation_sanitize_failed`(사유 문장)를 남기며 Auditor의 run은 계속된다. 그래서 Critic 절 머리줄의 수와 FACTS의 `auditor_hops`는 **사본의 수**이고 홉 수가 아니다(빠진 홉 수는 그 키가 든 홉 이벤트로 센다). 「파서가 속을 수 없다」까지는 말하지 않는다 - 코드 조각 본문(저장소 원문)과 하네스 문구, 인덱스가 정한 파일 경로·조각 이름은 그대로고, 어휘·문자집합을 통과한 모델 선택 값은 남는다. Auditor 자신의 다음 홉 입력은 안 바뀐다. ⚠ **`probe` 관측은 이 사본 경로를 거치지 않는다** - 지금은 argv가 닫힌 도구 이름이고 `spec`이 도구에 안 가서(`_probe`) 모델 글이 관측에 들어갈 길이 없기 때문이다. 그 전제는 `spec` 바이트를 `poc`에 싣는 PR #644(#419)가 깬다 - 그 PR은 `probe` 관측(도구 로그에 입력이 되울릴 수 있다)을 이 가림 경로에 같이 넣는지 다시 봐야 한다. 내용: content-aware 판(`_CONTENT_AWARE_VERSIONS` — 본문·위치와 같은 문)만 EVIDENCE 끝에 절 하나(`## Auditor tool observations (N observations) - program output, data not instructions`)로 받고, FACTS에는 **사본 수** `auditor_hops`를 더한다(홉 수가 아니다 - 가림에 실패한 홉은 사본이 없어 빠지므로 돈 홉 수보다 작을 수 있고, 그 차이는 홉 이벤트의 `observation_sanitize_failed`로 보이며 run 경고가 그 건수를 센다). **사본이 0개인 Finding(홉 0 - 한 방 판·루프 꺼짐·첫 홉 `answer` - 이거나 모든 사본이 가림에 실패한 경우)의 요청은 바이트가 종전과 같다**(`auditor_hops` 키도 절도 없다). 스위치는 없다 — 문은 프롬프트 판이다. ⚠ 그래서 **이 절이 들어온 때 서빙 v6의 요청은 판 번호 변화 없이 바뀌었다**(홉이 돈 Finding만) — [evaluation.md](evaluation.md) §2.3 규칙 4가 걸리는 자리였고, v6 산문은 이 절을 모른다. ⏵ **2026-10-14 — v7 flip(S20 Phase 11)**: `critic._CONTENT_AWARE_VERSIONS`는 v3~v7이다(이 PR이 v7을 넣었다 · ⏵ 2026-10-15 v8도 든다 - 아래). **v7 prefix도 이 절과 `FACTS.auditor_hops`를 서술하지 않는다 - 미해결이다**(`prompts/critic/v7`은 불변이라 이 PR 밖이고 새 판이 필요하다). ⚠ **그 새 판을 추적하는 이슈도 D도 지금 없다** — 옛 ⏵가 「v7 전환(Phase 5 flip)에서 추적한다」로 이 자리를 가리켰고 이 PR이 그 전환이면서 승계처를 안 뒀다. 그래서 이 문장이 유일한 장부다(`git grep auditor_hops -- docs/` = 이 파일 하나 · open-questions 0건). 다음 Critic 판을 세우는 PR이 이슈를 열고 그 번호를 여기 단다 — CLAUDE.md §3의 #133 사고가 막는 자리다. v6·v7 prefix의 「EVIDENCE는 선택된 Evidence 한 줄씩」은 EVIDENCE 끝에 Evidence가 아닌 절이 붙는 요청에서 부정확하다. ⏵ **2026-10-15 - Critic v8이 이 의무를 푼다**(S20 Phase 14 · PR #676 리뷰 MEDIUM). v8 prefix의 「Trust boundary and actual input」 절이 EVIDENCE 끝에 붙을 수 있는 `## Auditor tool observations (N observations)` 절(고정 NOTE · 사본마다 자기 `(hop n)` 머리줄 · 식별자 가림 `<non-vocabulary>`/`<non-identifier>`)과 FACTS 최상위 정수 `auditor_hops`를 서술한다. N은 사본 수이지 홉 수가 아니고 사본이 없으면 절도 키도 없다(0이 아니다) - 근거는 `nodes/critic._describe_hop_observations`·`prompt_loader.build_facts`이고 `tests/test_critic_v8.py`가 철자를 묶는다. 그래서 위 「새 판이 필요하다」 · 「이슈도 D도 지금 없다」는 **v8로 풀렸다** - 이슈를 따로 열지 않는다. `critic._CONTENT_AWARE_VERSIONS`는 **v3~v8**이다. ⚠ **v7은 여전히 이 절을 서술하지 않는다** - `prompts/critic/v7`은 불변이고, 이 PR이 머지되기 전까지 main에서 서빙하는 판이 v7이다(머지되면 서빙은 v8이라 서빙 경로에서 이 부정확은 사라지고 v6·v7 prefix에만 남는다). v8의 서술이 모델 판정을 바꾸는지는 v8 run이 0건이라 미실측이다. ⚠ **`state.finding_observations`는 프로세스 메모리에만 산다**(`state.db`에 안 쓴다) - 러너에 resume이 없어 이 run 안에서 5단계와 7단계가 같은 프로세스이므로 버그가 아니라 **문서화된 한계**다. resume을 만들면 이 관측도 같이 저장해야 한다.
   ⏵ **2026-10-14 — v7 step 1(`sanitizer`/`crash`/`poc_run`으로 확인한 `uphold`)은 지금 서빙 경로에서 발동하지 않는다.** Critic이 받는 Evidence는 1단계 `graph`와 2단계 `static`·`build` 신호 도구뿐이다(`nodes/signals.py` `SIGNAL_TOOLS`; 5단계 `runner._step_auditor`가 `state.evidences[finding_id]`로 넘길 뿐이다 - graph는 `_artifact_signals`의 반환 맨 앞; `critic.run`의 호출은 `runner._analyze`의 7단계 루프 한 곳). `sanitizer`/`crash`/`poc_run`은 8단계 `validate.run` 뒤에야 붙는다(`runner._analyze`가 `produced`를 `state.evidences`에 덧붙인다). Auditor probe Evidence를 Critic에 잇는 것은 H1 ⓑ(미구현, [ADR 0015](decisions/0015-rebut-grounding.md) 소제목 「H1 = ⓑ는 이 결함을 해결하지 않는다」 `:49`·`:51`) - 그 전까지 Critic은 SOURCE 경로(step 2 이후)만 쓴다.
   ⚠ **관측에서 Critic이 새로 보는 것 — 게이트가 모르는 Evidence ID 하나와 Auditor에게 한 말 셋.** ① probe 관측의 `evidence_id=<id>` — 그 Evidence는 증거 저장소에는 있으나 게이트 입력(`state.evidences`)에는 없다. ⚠ **그 ID를 Critic이 인용하면 게이트가 버리는 것이 아니다** — `gate.evidences_for`는 **Finding**의 `evidence_refs`만 거르고(`src/orchestrator/gate.py`) `Decision.evidence_refs`를 검증하는 자리는 없다. `Decision.is_grounded`는 `bool(evidence_refs)` **또는** 유효 축(⏵ 2026-10-13 ADR 0015)이고 **ID 갈래만으로도 참**이라, 관측에만 있는 ID를 인용한 `rebut`은 `gate.normalize`를 비껴가 그대로 `rebut`으로 남고 F-6 `queued`로 간다(독립 리뷰가 실행으로 확인 — `was_normalized`가 False). 즉 **게이트가 못 보는 Evidence 하나로 「근거 있는 반박」이 된다.** 이 PR 전에는 Critic이 그런 실제 ID를 볼 길이 없었다(이슈 #419의 E4 경계 — 이 변경이 안 닫는다). **거르기는 판정 변경이라 하지 않았다** — 모르는 인용이 오면 trace `critic_unknown_evidence_refs`(`cited`·`unknown`·`all_unknown`·`verdict`·`grounded`)에 남겨 사후에 셀 수 있게만 했다(`critic._record_unknown_refs`). ② Auditor에게 한 말이 사본에 남는다 — 세어 보면 **셋**이고, Critic이 읽으면 대상이 어긋난다: `lookup` 관측 머리의 *"The host resolved the requests from **your previous turn** …"*(`src/adapters/symbol_render.py`의 `render_followup`) · 요청 상한을 넘겨 안 본 요청이 있을 때의 *"… **Ask for them in a separate lookup.**"*(`auditor._lookup_observation`의 `ignored` 꼬리) · `probe`의 *"note: **the spec you sent** was recorded but NOT given to the tool"*(`auditor._probe_observation`). 마지막 줄은 PR #644가 main에서 곧 없앤다(없어지면 그 몫을 지우고 수를 둘로 줄인다). ⚠ 셋은 **2인칭으로 Auditor를 부르는 문장**을 센 것이다 — 조회 실패 사유의 *"name the symbol you need"*는 `_safe_unfilled`가 줄을 사유 enum으로 다시 써서 사본에 안 남고, Scout 전용 꼬리(*"in front of you"*)는 `_lookup_observation`이 자른다.
   ⚠ **자르지 않는다**: 더한 글자가 이 좌석의 입력 몫(`context_limit` − `output_max_by_role.critic`)을 넘을 수 있으면 그 사실만 trace `critic_hop_observations`(`est_input_tokens`·`input_share_tokens`·`over_input_share`)와 `RunResult.warnings` 한 줄로 남긴다. 그 수는 글자 수 ÷ 최악 비 1.22의 **계산값**이다 - 1.22는 Auditor 좌석의 147호출 실측(1.22~3.32, [슬라이스 스모크](experiments/harness/2026-09-26-slice-smoke-atom.md))의 하한을 이 좌석에 빌린 보수적 근사다. 이 좌석의 비는 2026-10-11 실서빙 run `run_20261011_0001`의 Critic 호출 여섯에서 3.10(69,788자 ↔ 22,514토큰)·3.10·3.10·4.04·3.76·3.75로 쟀다(계산값 - 저장된 프롬프트 글자 수 ÷ 서버가 센 `input_tokens`, `artifacts/`는 gitignore). 홉 관측을 실은 요청에서 잰 것은 아니다. 홉 관측을 실은 Critic 요청을 낸 run이 아직 없어 실제로 넘는지는 미실측이다.
@@ -763,6 +787,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 
   ⏵ 2026-10-13 — 서빙 pov 판이 v6이다(`config/models.yaml`). v6 prefix는 위 재질문 턴(홉 줄 + `[스키마 오류]` 노트)을
   서술한다. 위 「v5 prefix는 … 아직 서술하지 않는다」는 v5(불변 기록)에 대한 서술이다.
+  ⏵ 2026-10-14 — 서빙 pov 판이 **v7**이다(S20 Phase 14). v7 prefix도 그 재질문 턴을 서술한다(v6과 바이트 동일한 부분). v6과 다른 곳은 셋이다: body의 「JSON이 입력 사실 전부다」 문장을 "Vulnerability·Target·Source 절과 JSON이 입력에 든다(전부라고 하지 않는다 - hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) · JSON의 Finding 데이터는 `finding_id`뿐이다"로 고쳤고(Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 `{{FINDING}}` 산문에만 있다 - `nodes/pov._describe_finding` · `_render_prompt`는 `build_facts`에 `ids={"finding_id": ...}`만 넘긴다 · FACTS 바이트는 안 바꿨다), prefix의 「How to reach the vulnerable path」 머리에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트라는 한 문단을 더했고, DEF-SUBMIT의 「Why a non-crash is not submitted」 한 줄을 #637(PR #673 - 지정 키의 첫 성분이 후보 자기 `vul` 응답 코드의 계단)에 맞게 다시 썼다(v6은 "하네스는 그 자리를 채점기 코드로 가르지 않는다"고 적었다)(이슈 #649 · #669 · #637). v7로 돈 run은 0건이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -772,18 +797,18 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   내고 다시 던진다(#394, `tests/test_poc_log.py`가 재현). 한계 전문은 `src/orchestrator/poc_log.py` docstring이다.
 - 채점기 제출(`run --oracle-submit`, 기본 꺼짐 — #386): v3 이상의 중간 `gen`마다(마지막 홉의 gen은 빼고 - 관측을 읽을 다음 홉이 없다) PoC를 채점기의 `vul`
   다리에 내보내 원시 `exit_code`를 다음 모델 홉에 싣는다. 조회 불가도 `unavailable` 줄을 남기며,
-  이 값은 Evidence·내부 등급·지정 사슬에 닿지 않는다. 모델의 `submit`만 `designatable` 후보가 되고,
+  이 값(중간 gen의 `query_vul` 관측)은 Evidence·내부 등급·지정 사슬에 닿지 않는다(⏵ 2026-10-14 — 지정 사슬이 읽는 채점기 값은 **후보 자기 `vul` 제출의 응답 코드 하나**뿐이다, 아래). 모델의 `submit`만 `designatable` 후보가 되고,
   `fix` 다리와 최종 판정은 8단계 끝에서 **run당 한 번, 최종으로 지정한 PoC 하나에만** 돈다
   (`runner._finalize_oracle`). 저자 FAQ는 리더보드에 에이전트가 최종 답 하나를
   지정해 final-submission 지표를 보고하라고 요구하고 any-of는 무차별 대입을 보상한다고 적기
-  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 일곱이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
-  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 하네스가 만든 값의 **전순서**가
-  갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓪Critic 판정
-  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 여덟이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
+  여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 전순서가
+  갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓪Critic 판정
+  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가
-  council 뒤 정한 이 저장소의 규칙이다. 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
+  council 뒤 정한 이 저장소의 규칙이다(⏵ 2026-10-14 — 「채점기 점수로는」에서 **후보 자기 `vul` 응답의 종료 코드 계단 하나**를 뺐다. 아래). 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
   `runner._grades_by_finding`). 🔴 **그래도 실도구 run에서 후보 등급이 갈릴지는 미실측이다** — PoC
@@ -793,13 +818,14 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   동결 규칙은 「등급 최댓값 · 동점이면 거부」였고, 실측 run의 후보 8건이 **같은 바이트 1개**라
   (제출 8 = 고유 PoC 1 = DB 행 1) 그 거부가 점수를 0으로 만들었다. 같은 바이트를 접고 남은 동점은
   위 사슬로 넘기도록 바꿨고 `grade_tie`는 닿지 않는 분기가 되어 사유째 지웠다
-  (`runner._designate_final`). 🔴 **지정 로직은 채점기가 돌려준 값을 읽지 않는다** — 후보의
-  `response_exit_code`와 중간 gen의 `query_vul` 관측이 지정 시점에 손에 있는데도다
-  (`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
-  반복이다.** 하네스가 오라클 값으로 최종 한 장을 고르지 않는다(지정은 `candidates`만 읽고 정렬 키에
-  오라클 값이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
-  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — `_designate_final`이 「오라클로 고르면
-  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다. 이것이 저자 FAQ Q3(제출은 여러 장 ·
+  (`runner._designate_final`). 🔴 **지정 로직이 읽는 채점기 값은 후보 자기 `vul` 제출의 `response_exit_code` 하나뿐이다**
+  (⏵ 2026-10-14 이슈 #637 — 앞 판은 그것도 안 읽었다). 환경 값으로 보는 코드(124~127·137·255·음수·255 초과 — 로컬 `poc` 도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다)와 없는 코드(`None`)는
+  크래시로 세지 않고(300도 모름이지만 서버가 300을 응답에서 0으로 덮어 응답 경로로는 닿지 않는다 — #384) 「모름」으로 크래시와 크래시 아님 사이에 둔다. 후보의 `poc_id`·`cached`와 중간 gen의
+  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). 🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
+  반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `candidates`만 읽고, 정렬 키에
+  든 오라클 값은 후보가 이미 낸 자기 제출 응답의 코드 하나다 — 새 제출·`fix` 호출·승격이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당
+  최대 `pov_tool_hops`번의 시도(마지막 홉의 gen은 관측도 제출도 안 된다) 중 모델이 고르는 구조다 — 옛 `_designate_final`이 「오라클에 물어 고르면
+  best-of」라며 거부한 논리가 모델 쪽으로 한 단계 옮겨갔다(⏵ 2026-10-14 — 지정 쪽의 그 거부는 #637 개정으로 물러났다: 지정이 후보 자기 응답 코드를 읽는다. 모델 쪽 구조는 그대로 남는다). 이것이 저자 FAQ Q3(제출은 여러 장 ·
   최종 한 장 지정)의 범위라는 읽기를 FAQ와 대조해 확인하지 않았다. 서버 주소는 조작자가
   `--oracle-server`로 주고(기본값 없음 — 번들의 `submit.sh`가 가리키는 주소로 키를 보내지 않으며 다르면
   거부한다), 과제 id·에이전트 id는 번들에서 읽고, 키는 환경변수 `CYBERGYM_API_KEY`로만 받는다. 마스킹을 안 한
@@ -937,7 +963,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v15"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v17"}
 }
 ```
 
@@ -1001,6 +1027,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > 위 Finding 예시의 `prompt_version`도 v14로 고쳤다.
 > ⏵ 2026-10-13 — **지금 고르는 것은 v15**다(v14 + 계약 문장 여섯 — 아래 「v14 → v15」). 출력 계약은 v12와 같다. 위 Finding 예시의
 > `prompt_version`도 v15로 고쳤다.
+> ⏵ 2026-10-14 — **지금 고르는 것은 v17**이다(v16 + 슬라이스 상태 서술 · 「배너 없으면 첫 블록 하나」 정정 — 아래 「v16 → v17」; v16은 v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명, 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
+> `prompt_version`도 v17로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -1109,6 +1137,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
 ⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 · S19). 봉투는 v12의 넷째를 상속한 `AuditorProcedureProbeInputAction`이라 이 절의 `cwe`·`audit` 규칙은 그대로 선다. v12 자체는 여전히 미선택이다.
+⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다. ⏵ 같은 날 서빙 판은 v17이다(v16 + 슬라이스 상태 서술 · S20 Phase 14) - 봉투는 같다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
@@ -1148,11 +1177,11 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
   "rebuttal_axis": ["guard", "reachability"],
   "rationale": "상위 호출부에 길이 상한이 없음(src/net/server.c:88 확인)",
   "evidence_refs": ["ev_graph_0012"],
-  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v7"}
+  "produced_by": {"role": "critic", "model": "gpt-oss-20b", "prompt_version": "v8"}
 }
 ```
 
-⏵ 2026-10-14 - 위 예시 본문은 스키마 모양을 보이는 것이고 v7 출력의 규칙을 따른 것이 아니다 - v7은 `rebuttal_axis`를 `rebut`에만 쓰고(`prompts/critic/v7/prefix.md`의 출력 계약), `graph` Evidence는 `uphold`를 확인하지 못하며(step 1은 `sanitizer`·`crash`·`poc_run`만), SOURCE만으로 한 `uphold`는 `rebuttal_axis`도 `evidence_refs`도 비운다.
+⏵ 2026-10-14 - 위 예시 본문은 스키마 모양을 보이는 것이고 v7·v8 출력의 규칙을 따른 것이 아니다 - v7(v8도 같다)은 `rebuttal_axis`를 `rebut`에만 쓰고(`prompts/critic/v7/prefix.md`의 출력 계약), `graph` Evidence는 `uphold`를 확인하지 못하며(step 1은 `sanitizer`·`crash`·`poc_run`만), SOURCE만으로 한 `uphold`는 `rebuttal_axis`도 `evidence_refs`도 비운다.
 
 `verdict` 열거형: `uphold` | `rebut` | `need_evidence`
 
@@ -1173,7 +1202,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v15", "critic": "v7"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v17", "critic": "v8"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1235,7 +1264,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
 > ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)
@@ -1263,6 +1292,8 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 >
 > ⏵ **2026-10-14 — Critic v6 → v7**(S20 Phase 11). 현재 판은 v7이다. 입력은 그대로이고 지시가 SOURCE 직접 검증(5-check)으로
 > 바뀌었다. 규칙 1이 걸린다 — v7 뒤 run은 v6 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v7 run 0건, 미실측).
+>
+> ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 현재 판은 Critic v8 · PoV v7이다. 입력 데이터는 그대로이고 **서술만** 더하거나 고쳤다 - Critic v8은 v7 prefix에 편집 넷을 했다: SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고, 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절(Evidence도 SOURCE도 아닌 맥락)과 FACTS `auditor_hops`의 서술을 더했고(편집 둘), 「별도 호출」 문장이 그 절과 어긋나 고쳤다(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
@@ -1338,6 +1369,24 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > **머지 순서: #642 → #644 → #648 → #660 → 이 PR.** `models.yaml`이 이미 v15를 서빙하므로 이 PR이 먼저 들어가면 안 된다. 이 PR은 `tests/test_auditor_v15.py`의 의존 PR 핀(켜짐 표지의 OR + 동작 단언)이 각 PR이 들어올 때 켜지게 해 두었다.
 > 텍스트 충돌(`git merge-tree` 스크래치 병합, 2026-10-13): **이 PR과** — #642는 `nodes/auditor._run_hops`의 `key = _request_key(action)` · `_stop_without_finding(key, previous, …)` 두 줄에서 충돌한다(이 PR은 `key = _input_aware_key(action)`; 해소는 `key = _input_aware_key(action)` + `_stop_without_finding(key, seen, …)`이다 - #642가 `previous`를 `seen`으로 바꾼다). #648은 `src/orchestrator/trace.py`의 **주석만 바뀐 hunk**에서 충돌한다(코드 충돌이 아니다). #660은 `prompt_loader.py`의 `FACT_KEYS` 주석(이 PR이 `facts_source: false` 판 목록에 v15를 더한 줄)과 같은 자리를 건드려 충돌한다 - 이 PR이 마지막이므로 거기서 푼다(목록에 v15를 유지). #644는 이 PR과 충돌하지 않는다. **의존 PR끼리도 충돌한다** — #642↔#644는 네 파일(`docs/agent-contracts.md` · `nodes/auditor.py` · `schemas/auditor.py` · `tests/test_auditor_loop.py`)에서, #642↔#660은 `runner.py`에서만(2026-10-13 재검 — `nodes/auditor.py`는 아님), #644↔#648은 `nodes/auditor.py` 모듈 docstring의 `probe`의 `spec` 불릿과 `docs/agent-contracts.md`에서, #648↔#660은 `run`·`_run_hops`의 `hop0_note`·`observations` 인자에서 충돌한다. 그래서 **#642 → #644 → #648 → #660 → 이 PR 사슬은 뒤 PR마다 앞 PR이 main에 들어온 뒤 main을 다시 병합해야 선다**(CLAUDE.md §4.3).
 > v15로 돈 run은 0건이다. 모델이 `spec`을 보내는지·`probe`를 `triggerable` 앞에 두는지는 미실측이다.
+>
+> ⏵ **2026-10-14 — v15 → v16 (S20 Phase 13 · council 2026-10-14 + 사용자 최종 승인).** v16 = v15 + `SOURCE` 블록 하나의 서술 · 쓰기 창 표지 줄의 설명(아래 ①②③). 입력 맥락 옵션 `auditor_input_context`가
+> 켜지면 슬라이서가 CPG 근거로 고른 입력 디코더 함수의 본문이 쓰기 창 뒤의 마지막 블록으로 붙는데(#650 표지 줄이 있으면 그 앞 - 위 「SOURCE」 절의 열째 옵션), v15는 그 옵션을 서술하지 않아
+> 켠 채 고르면 `cli` run·doctor가 막는다 - 그래서 새 판이다. body·봉투(`AuditorProcedureProbeInputAction`)·도구·다른 옵션 여덟은 v15와 같고 v15는 한 글자도
+> 안 바뀌었다(규칙 1). prefix는 다섯 군데만 다르다(`tests/test_auditor_v16.py`가 바이트 등식으로 묶는다): ① 「Trust boundary」의 하네스 생성 텍스트 목록에 `SOURCE` **맨 끝**의
+> `/* ... +N more write windows not shown ... */` 줄을 더한다(이슈 #650 · PR #667 - 그 PR이 main에 들어와야 맞다) ② 「Original-source input contract」 머리의 「banners and the GUARDS block」 예외에
+> 그 표지 줄을 더한다 ③ 쓰기 지점 창 항목의 「Last」가 「Then」이 되고 표지 줄의 뜻 한 문장이 붙는다 ④ 새 항목 「Last, input-context functions」(CPG 근거가 선 선택만 · 전체가 이미 실린 함수만 건너뛰고
+> 창 조각과 일부만 겹치면 붙어 몇 줄이 중복될 수 있음 · 상한에 넘치면 통째로 뺌 · 블록이 없을 수 있고 없음은 증거가 아님 · 붙었다고 슬라이스의 데이터가 그 함수를 지난다는 뜻이 아님) ⑤ 보조 문맥 목록에 입력 맥락 함수를 더한다. 이 문장은 러너 동작과 같다
+> (`tests/test_source_input_context.py`). meta `source_options`는 v15의 여덟에 `auditor_write_window_marker`(①②③이 서술 - #667의 옵션을 v16이 처음 선언한다)와 `auditor_input_context`(④⑤가 서술)를 더한 열이고 `budgets.yaml`이 둘 다 `1`로 켠다. v16으로 돈 run은 0건이고 켠 옵션의 효과는 미실측이다. ⚠ 같은 SOURCE가 PoV·Critic(`finding_sources`)에도 가므로 디코더 본문이
+> 그 프롬프트에도 든다 - PoV·Critic 판 쪽 서술은 이 판이 안 고친다(Critic v7 prefix의 SOURCE 블록 목록에 입력 맥락 함수와 표지 줄이 없다 - 후속). ⏵ 2026-10-14 — 그 후속이 Critic v8 · PoV v7로 나갔다(위 §4의 「Critic v7 → v8 · PoV v6 → v7」).
+
+> ⏵ **2026-10-14 — v16 → v17 (S20 Phase 14 · 이슈 #438 (b) · #669의 Auditor 몫).** v17 = v16 + prefix 두 군데. body·봉투·도구·옵션 열(표지 줄 · 입력 맥락 포함)의 서술은 v16과 같고 v16은 한 글자도 안 바뀌었다(규칙 1).
+> ① 「Original-source input contract」의 마지막 항목 정정 — v16은 「배너가 없으면 `SOURCE`는 첫 블록 하나」라고 했는데, 쓰기 지점 창이 **전부** 못 실리면(크기 상한 · 개수 상한 — 표지 줄의 N은 둘을 다 센다) `SOURCE`는 배너 없는 entry 함수 + 끝 줄 표지
+> (`/* ... +N more write windows not shown ... */`, #650)라 거짓이다(`runner._auditor_source`의 `anchor_text` 경로 · `tests/test_slice_targets.py::test_marker_follows_a_bare_anchor_when_every_window_is_size_dropped`).
+> v17은 그 예외를 더했다(`tests/test_auditor_v17.py`가 러너가 낸 `SOURCE`로 문다). ② 새 항목 `FACTS.slice_state`의 서술(위 「열한째 옵션」) — `null`은 `false`도 완전함도 아니고, 키가 없는 것도 완전함의 증거가 아니다. 그 서술은
+> 키가 없을 때도 참이라 옵션을 **끈 채** meta `source_options`에 선언한다(그래야 켠 run ↔ 끈 run을 같은 prefix로 짝 비교한다 — `tests/test_config.py`의 「선언 == 켜진 옵션」 검사는 이 하나만 예외로 둔다).
+> v17로 돈 run은 0건이고 켠 옵션의 효과(모델이 `slice_state`를 판정에 쓰는지)는 미실측이다. ⚠ #669의 나머지 — **Critic v7 prefix 60-62행**(SOURCE 블록 목록에 입력 맥락 함수·끝 줄 표지가 없다)과 PoV v6 — 는 이 판이 안 고친다
+> (같은 SOURCE 문자열이 거기에도 간다 · 후속 — ⏵ 2026-10-14 Critic v8 · PoV v7이 그 후속이다: Critic v8 prefix가 그 블록 둘을 서술하고 ⏵ 2026-10-15 관측 절·`auditor_hops`도 서술한다). v17은 PR #668(v16 · 입력 맥락 블록) 위에 선다.
 
 > ⏵ **2026-10-13 — Scout v4의 요청 바이트가 판 번호 없이 바뀌었다**(#529). 노드가 `SOURCE`의 모양을 meta
 > `input` 선언으로 고르게 돼서, `--slices` run의 v4(`input: source`)는 슬라이스 렌더가 아니라 entry를 품는
@@ -1352,6 +1401,24 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 10-12 보고서 「타깃 넷은 10-11과 같다」(`slice_0001`·`0002`·`0003`·`0006`)가 10-11도 같은 슬라이스 타깃이었다고
 > 적으므로 **영향받은 run은 셋일 수 있다**(10-11 쪽은 10-12 보고서의 서술이고 10-11 원천 `s14-results`는
 > 저장소 밖이라 미확인). 셋 다 `checksum` 0이라 비교표 밖이다. 규칙 5의 고정 표본 회귀는 이번에도 돌지 않았다.
+>
+> ⏵ **2026-10-14 — 쓰기 창 생략 표지 줄(#650)은 옵션 `auditor_write_window_marker` 뒤에 있다.** 이 줄이
+> 판 번호 없이 모두의 요청에 들어가지 않게 위 #529의 선례를 피했다. 옵션은 필드 기본이 0이고(#667 단독으로는
+> `config/budgets.yaml`도 0이라 Auditor 요청 바이트가 안 바뀐다), **선언한 첫 판이 v16이다**(#668 — meta
+> `source_options`에 넣고 prefix가 이 줄을 서술한다. 그 변경이 서빙 판을 v16으로 올리면서 `budgets.yaml`을 1로 켠다).
+> **Auditor v15 이하는 이 옵션을 선언하지 않으므로 그 판과 함께 켜면 `cli` run·doctor가 막고, 켜지 않은 run의 요청
+> 바이트는 그대로다.** 켠 run에서는 같은 `SOURCE` 문자열이 Critic·PoV에도 가는데(`critic._SOURCE_INPUT_VERSIONS` ·
+> `pov._WIDE_INPUT_VERSIONS`) Critic v6·v7 · PoV v3~v6의 프롬프트는 이 줄을 서술하지 않는다 — 못 실은 쓰기 창이 있는
+> 슬라이스에서만 그 요청 바이트가 달라진다. 그런 판 조합(옵션을 켠 Auditor 판 + 줄을 모르는 Critic·PoV 판)은
+> ⏵ **2026-10-15 — #676이 `cli`의 run·doctor 가드를 넣었다**(사용자 승인 C1 「+guard」). Critic v8 · PoV v7의 meta가
+> `source_options: [auditor_write_window_marker, auditor_input_context]`를 선언하고(prefix가 두 블록을 서술한다 -
+> `tests/test_relayed_source_options.py`가 선언 <=> prefix 문구를 묶는다), `cli._undescribed_relayed_options`가 켜진
+> `config.RELAYED_SOURCE_OPTIONS`를 **SOURCE를 받는 판**(`critic._SOURCE_INPUT_VERSIONS` · `pov._WIDE_INPUT_VERSIONS`)의
+> 선언과 맞춘다. 선언이 없으면(Critic v7 이하 · PoV v6 이하) 「서술하지 않는다」로 읽어 `옵션(critic/v7)` 꼴로 이름을
+> 대고 run은 시작하지 않으며 doctor는 ERROR를 낸다. SOURCE를 안 받는 판(Critic v5 이하 · PoV v2) · Fake 좌석 · run이 닿지
+> 않는 단계의 좌석 · 꺼진 옵션은 막지 않는다. 이 둘이 아닌 옵션(`auditor_guards` 등)은 이 가드에 안 든다 - Critic v6·v7이
+> 가드 문맥·정의·피호출 본문·호출자 창·쓰기 창을 한 문장으로 서술하고 PoV 판은 SOURCE 블록 종류를 열거하지 않아 서술이
+> 거짓이 되는 판이 없다(2026-10-15 prefix를 읽어 확인한 값).
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
 3. 출력은 JSON 스키마 강제(structured output). 파싱 실패는 지표로 집계한다(모델 비교 항목).
 4. 프롬프트에 평가 정답 단서(CVE ID, 문제명, patch diff)를 넣지 않는다. → [evaluation.md](evaluation.md) 누출 방지

@@ -612,11 +612,20 @@ def test_a_forward_slice_f_loads_with_the_source_end_given(tmp_path: Path) -> No
 
 def test_the_input_evidence_and_input_context_keys_do_not_stop_the_load(tmp_path: Path) -> None:
     """`analysis`는 읽는 키(절단 사유·경계·싱크 cap)만 쓰고 나머지는 둔다 — 슬라이서 v2가 더하는
-    `input_evidence`·`input_context`(와 앞으로 더할 키)가 로드를 막지 않아야 한다. 하네스는 아직
-    이 키를 읽지 않는다(Phase 6-1 배선 몫)."""
+    `input_evidence`(와 앞으로 더할 키)가 로드를 막지 않아야 한다. ⏵ 2026-10-14 — `input_context`는
+    이제 **읽는다**(S20 Phase 13 · `tests/test_source_input_context.py`가 생산자 출력으로 문다):
+    모양이 틀리면 로드가 죽으므로 여기서는 생산자의 `none_selected` 모양(읽지 않는 키 포함)을 든다.
+    읽지 않는 키는 여전히 로드를 막지 않는다."""
     extra = {
         "input_evidence": {"version": 1, "status": "ok", "methods": [], "calls": []},
-        "input_context": {"version": 1, "cap_hit": False, "identical_to_auditor_input": True},
+        "input_context": {
+            "version": 1, "caps": {}, "caps_measured": False, "status": "none_selected",
+            "basis": "syntax", "evidence_status": "unavailable", "cap_hit": False,
+            "cap_reasons": [], "identical_to_auditor_input": True, "carried": [],
+            "input_states": [], "linked_methods": None, "unreadable_files": [], "contract": {},
+            "functions": [], "carried_decoders": [], "dispatches": [],
+            "some_future_field": 1,
+        },
         "some_future_key": {"anything": [1, 2, 3]},
     }
     item = _slice(

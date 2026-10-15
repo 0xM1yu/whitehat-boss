@@ -131,6 +131,7 @@ from src.interfaces.retriever import Retriever
 from src.interfaces.state_store import StateStore
 from src.interfaces.tool_runner import ToolRunner
 from src.orchestrator import gate, oracle_log, source_gate, state_machine
+from src.orchestrator import slice_state as slice_state_module
 from src.orchestrator.budget import BudgetExhausted, BudgetLedger
 from src.orchestrator.context import TAIL_WHITESPACE_CHARS, RunContext
 from src.orchestrator.entry_scope import (
@@ -166,6 +167,7 @@ from src.orchestrator.source_definitions import (
     slice_names_first,
 )
 from src.orchestrator.source_guards import scan_guards
+from src.orchestrator.source_input_context import carry_input_context
 from src.orchestrator.stages import MAX_STAGE, Stage
 from src.orchestrator.trace import (
     EventKind,
@@ -1575,7 +1577,9 @@ def _pov_targets(
     든다. 정렬 키(판정 계단 → `confidence` → `finding_id`)는 반박을 맨 뒤(3)에 두지만
     (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
     **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
-    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 첫 계단).
+    uphold **뒤** 미경유 **뒤**로 낮춘다(아래 정렬 키 · `_designation_key`의 **둘째** 계단이다 —
+    ⏵ 2026-10-14 첫 계단은 후보 자기 `vul` 응답 코드가 됐다(이슈 #637). 그래서 보류 PoC도 크래시를
+    냈으면 앞선다).
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -1688,8 +1692,11 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
 
     `repro_not_measured`의 `reason`으로 둘을 가른다. **`poc` 신호**는 이 노드가 안 돌리는 것이고,
     그 뒤는 프로필이 가른다 - pov 좌석이 있으면 PoV 루프의 몫이고 없으면 **어디서도 안 돈다.**
-    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)와 컴파일·링크 실패(#507)는
-    원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수 없다."""
+    **도구가 측정을 못 낸 건**은 종료 코드별로 센다 - `124`(시간 초과)·컴파일·링크 실패(#507)·
+    실행 전 거절(`ContainerToolRunner._fail`)은 원인이 달라 한 숫자로 합치면 읽는 쪽이 가를 수
+    없다. 다만 코드가 원인을 가르지는 못한다 - 실행 전 거절의 코드는 `_fail`이 정한 값(SIF 없음
+    127)이라 컨테이너 안 프로세스가 낸 값(대상 미기동 127)과 겹칠 수 있다. 원인은 trace의
+    `error`가 든다."""
     events = [e for e in trace.events if e.kind is EventKind.REPRO_NOT_MEASURED]
     if not events:
         return None
@@ -1712,7 +1719,10 @@ def _repro_not_measured_warning(trace: TraceWriter, *, has_pov_seat: bool) -> st
             f"{code}{'(시간 초과)' if code == validate.TIMEOUT_EXIT else ''} {count}건"
             for code, count in sorted(codes.items())
         )
-        parts.append(f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code})")
+        parts.append(
+            f"도구가 측정을 못 낸 건 {sum(codes.values())}건(종료 코드별 {by_code}"
+            " - 124 밖의 코드는 원인을 가르지 못한다, 원인은 trace repro_not_measured의 error)"
+        )
     return (
         f"8단계가 재현 결과를 내지 않은 validated Finding {len(events)}건 - {' / '.join(parts)}. "
         f"상태는 그대로이고 도구 검증 제거율에 안 든다 (#326)"
@@ -2037,6 +2047,9 @@ def _fuzz_entrypoint(ctx: RunContext, target_file: str) -> dict[str, object]:
     # 꼬리에 *"output one complete ScoutResponse JSON"*이 붙는다. FACTS는 body.md가 *"참조 가능한
     # 사실 전부"*라 선언하는 블록이라, 거기에 **다른 역할의 지시**가 실리면 PoV가 그것을 사실로
     # 읽는다(적대적 리뷰 2026-10-02 H-1). 그래서 위치만 받고 **원문은 직접 읽는다.**
+    # ⏵ 2026-10-15 — 그 「전부」 선언은 PoV v2~v6 body의 것이다. PoV v7 body는 「JSON의 Finding
+    # 데이터는 `finding_id`뿐」이라 적고 「전부」라 하지 않는다(`prompts/pov/v7/body.md`). 지시를
+    # FACTS에 안 싣는 이유는 v7에서도 같다 - FACTS는 입력 사실 JSON이다.
     lines = sorted(block.lines)
     lo, hi = lines[0], lines[-1]
     try:
@@ -2283,8 +2296,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     원시 종료 코드를 다음 홉에 싣는다.
     루프가 `SUBMITTED`로 끝나 바이트가 있으면 이 함수가 같은 바이트를 `designatable=True`로 내어
     모델의 최종 지정 신호를 기록한다. `fix` 다리와 판정은 8단계 끝에서 run당 한 번, 지정한 하나에만
-    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓪Critic 판정 ①내부 근거 등급
-    ②`confidence` ③작은 바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
+    돈다(`_finalize_oracle` — 후보가 여럿이면 같은 바이트를 접은 뒤 ⓿후보 자기 `vul` 응답 코드
+    (크래시 < 모름 < 크래시 아님, 이슈 #637) ⓪Critic 판정 ①내부 근거 등급 ②`confidence` ③작은
+    바이트 ④PoC 해시의 전순서로 가른다, `_designate_final`).
     `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`로 끝난 루프의 마지막 바이트는 최종 지정 후보가 아니지만,
     그 전에 완료된 중간 gen 제출은 장부에 남는다. 그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
@@ -2580,6 +2594,7 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
 # 보아 처음 값이 갈리는 자리가 그 run의 `designation`이다. 이름과 키의 길이가 어긋나면
 # `zip(..., strict=True)`가 터진다(키를 늘리고 이름을 안 붙이는 변이를 그 자리가 막는다).
 _DESIGNATION_CHAIN = (
+    oracle_log.DESIGNATION_VUL_CRASH,
     oracle_log.DESIGNATION_CRITIC_VERDICT,
     oracle_log.DESIGNATION_TOP_GRADE,
     oracle_log.DESIGNATION_TOP_CONFIDENCE,
@@ -2593,17 +2608,31 @@ def _designation_key(
     grades: Mapping[str, EvidenceGrade],
     confidences: Mapping[str, float],
     verdicts: Mapping[str, int],
-) -> tuple[int, int, float, int, str]:
-    """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값뿐이다.
+) -> tuple[int, int, int, float, int, str]:
+    """최종 PoC 정렬 키 — **작을수록 먼저**다. 읽는 것은 하네스가 만든 값과, 후보 자기 `vul`
+    제출의 종료 코드 **하나**뿐이다.
 
+    ⓿자기 `vul` 응답 코드의 계단(크래시 0 < 모름 1 < 크래시 아님 2 — `oracle_log.vul_code_tier`)
     ⓪Critic 판정(uphold 0 < 미경유 1 < 보류 2 < 반박 3) ①등급 내림차순 ②`confidence` 내림차순
-    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순. ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서
-    「모르겠다」고 한 PoC가 등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604).
-    판정 계단이 등급보다 앞서므로 **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 >
-    E4 보류, E2 uphold > E3 미경유) — 의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은
-    계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰, `_verdict_ranks_by_finding`).
+    ③PoC 바이트 **작은** 쪽 ④PoC 해시 사전순.
 
-    🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 셋이 전부 같아도
+    ⏵ 2026-10-11 — ⓪을 붙였다: 보류 Finding이 풀에 들면서 「모르겠다」고 한 PoC가
+    등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604). 판정 계단이 등급보다 앞서므로
+    **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유 > E4 보류, E2 uphold > E3 미경유) —
+    의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은 계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰,
+    `_verdict_ranks_by_finding`).
+
+    ⏵ 2026-10-14 — ⓿을 맨 앞에 붙였다(이슈 #637, ADR 0013 결정 2 개정). **동기는 관측이 아니라 코드
+    판독에서 나온 계산상의 구멍이다**: 앞 판은 Finding A의 `submit`된 gen이 크래시 코드를 받았어도
+    Finding B의 코드 0인 gen이 Critic 계단·등급·`confidence`에서 앞서면 B가 최종이 될 수 있었다.
+    **그 분기에 닿은 실 run은 0건이다** — 10-08·10-11·10-12 run은 전부 `final: none`이었고 10-12의
+    PoC는 전부 코드 0이었다. 발생 비율은 미실측이다. 결정은 council → @danielcho02 승인(2026-10-14).
+    ⓿이 Critic 계단보다 **앞**이라 **계단이 뒤인 PoC가 앞인 PoC를 이긴다**(보류·크래시 >
+    uphold·코드 0) — 의도한 것이다. 한 코드 계단 안에서는 ⓪~④가 개정 전 그대로 정한다(같은 코드
+    계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` · 환경 실패 코드)은 크래시도 아니고
+    크래시 아님도 아니다**(§0) — 둘 사이에 둔다.
+
+    🔴 **④가 이 키를 전순서로 만든다.** 서로 다른 PoC는 해시가 다르므로 앞 다섯이 전부 같아도
     갈린다 — 그래서 「동점이라 못 가렸다」는 분기가 없다. ④는 **내용**에서 나오는 값이고 자리
     (처음·마지막)가 아니다. 자리로 고르지 않는다는 규칙은 그대로다 — 같은 후보 묶음을 어떤
     순서로 넣어도 같은 PoC가 지정된다.
@@ -2611,7 +2640,11 @@ def _designation_key(
     ⚠ **④는 약한 근거다.** 거기까지 와서 갈린 run은 `designation`이 `poc_digest`로 찍힌다 —
     읽는 쪽이 「해시로 골랐다」를 알아야 한다(§0).
     """
+    # 후보는 제출이 성공한 시도라 `submission`이 있다. 없으면(직접 부른 호출) 코드를 모르는 것이다.
+    submission = attempt.submission
+    code = None if submission is None else submission.response_exit_code
     return (
+        oracle_log.vul_code_tier(code),
         verdicts[attempt.finding_id],
         -gate.GRADE_ORDER.index(grades[attempt.finding_id]),
         -confidences[attempt.finding_id],
@@ -2648,7 +2681,8 @@ def _designate_final(
     - **후보가 둘 이상이다** → `_designation_key`의 **전순서**로 하나를 고른다. 같은 바이트끼리
       먼저 접고(`poc_sha256`), 접은 뒤 남은 PoC가 하나면 `sole_poc`다 — 어느 후보를 지정해도
       **제출되는 바이트가 같아** 선택이 없다. 둘 이상 남으면 사슬의 어느 단계가 갈랐는지가
-      `designation`이다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest`).
+      `designation`이다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·
+      `poc_digest`).
       `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
       기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, @sumin0218 리뷰).
 
@@ -2660,32 +2694,53 @@ def _designate_final(
     ② 남은 동점은 거부가 아니라 **사슬의 다음 단계**로 넘긴다. 사슬의 끝(PoC 해시)이 전순서라
     `grade_tie`가 닿지 않는 분기가 되어 **사유 상수째 지웠다**(`oracle_log`).
 
-    🔴 **이 함수는 채점기가 돌려준 값을 읽지 않는다.** 후보의 `submission`에는
-    `response_exit_code` 같은 오라클 응답 값이 실려 **지정 시점에 손에 있는데도** 그렇다. 이것은
-    **이 저장소의 결정이고 저자의 금지 문장이 아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가
-    정확히 하나 지정하라고 요구하고 any-of가 무차별 대입을 보상한다고 적을 뿐 고르는 방법을
-    금지하지 않는다(조사 문서 1.3절 — docs/research/2026-09-29-cybergym-pov-design.md). 그 값으로
-    후보를 가르면 후보를 채점기에 물어 고르는 best-of가 되어 읽지 않기로 했다. 읽는 것은
-    `attempt.ok`(제출이 성공했나 — 후보 자격이고 판정이 아니다)와 **하네스가 만든 값**
-    (Critic 판정 계단 · 내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)뿐이다. 내부 등급은
-    하네스가 도구를 돌려 낸 근거(8단계 `produced`)에서 나오고 채점기 응답에서
-    안 나온다(`_grades_by_finding`).
+    🔴 **이 함수가 읽는 채점기 값은 후보 자기 `vul` 제출의 종료 코드 하나다**
+    (`submission.response_exit_code` → `oracle_log.vul_code_tier` — 크래시 < 모름 < 크래시 아님,
+    지정 키의 **첫** 계단). 그 코드는 **모든 후보 것을 읽어 서로 견준다.** 그 밖의 채점기 값 —
+    `poc_id`·`cached`(어느 후보의 것이든)·`fix` 판정·중간 gen의 `query_vul` 관측 — 은
+    **지정 시점에 손에 있는데도** 안 읽는다. 이것은 **이 저장소의 결정이고 저자의 금지 문장이
+    아니다** — 저자 `FAQ.md`는 최종 답을 에이전트가 정확히 하나 지정하라고 요구하고 any-of가
+    무차별 대입을 보상한다고 적을 뿐 고르는 방법을 금지하지 않는다(조사 문서 1.3절 —
+    docs/research/2026-09-29-cybergym-pov-design.md). 읽는 것은 `attempt.ok`(제출이 성공했나 —
+    후보 자격이고 판정이 아니다), 위 한 코드, 그리고 **하네스가 만든 값**(Critic 판정 계단 ·
+    내부 등급 · `confidence` · PoC 바이트 수 · PoC 해시)이다. 내부 등급은 하네스가 도구를 돌려 낸
+    근거(8단계 `produced`)에서 나오고 채점기 응답에서 안 나온다(`_grades_by_finding`).
+    **코드를 크래시로 세는 것은 환경 값으로 보는 코드를 거른 뒤다** — 124~127·137·255·음수·255 초과·
+    `None`은 모름이고 크래시로 안 센다(`oracle_log.ENV_FAILURE_VUL_EXIT_CODES` — 근거는 로컬 `poc`
+    도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다). 모름은 크래시와 크래시
+    아님 **사이**다(§0). 1은 크래시로 센다 — 실제 ASan 종료일 수도, 인프라 값일 수도 있어 둘이
+    안 갈린다(ADR 0013 · 0014). 300(채점기의 제외 코드이자 255 초과 — 모름)은 **응답 경로로는
+    닿지 않는다**: 서버가 300을 응답에서 0으로 덮는다(#384). 방어적으로만 모름에 둔다.
 
-    `test_designation_does_not_read_oracle_fields`가 **`submission` 접근**(속성·`vars`·`repr`·
-    `==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단 미상 ·
-    후보 하나) 문다.
+    ⏵ **2026-10-14 — 「채점기 값을 안 읽는다」(2026-10-03 · ADR 0013 결정 2)를 이 한 코드만큼
+    개정했다**(이슈 #637, council → @danielcho02 승인). **동기는 관측이 아니라 코드 판독에서 나온 계산상의
+    구멍이다**(`_designation_key` docstring): 앞 판은 자기 응답 코드를 든 후보끼리의 비교에서도
+    그 코드를 못 봤다. 그런 run은 **관측 0건**이다. 이 개정이 하는 것은 **모델이 이미 `submit`한
+    후보들 사이에서 그 코드로 고르는 것**이다 — 후보를 채점기에 새로 묻는 것은 아니다: 새 제출·새
+    조회·`fix` 호출이 없고 PoC를 승격하지 않는다(승격은 ADR 0013 결정 1이 여전히 안 한다).
+    ⚠ 응답의 0은 타임아웃과 안 터진 것을 못 가른다(`vul_code_tier` docstring · 이슈 #384). 서버는
+    같은 `(agent_id, task_id, sha256)`이면 옛 코드를 돌려주므로(#385 · `VulSubmission.cached`)
+    그 코드는 이번 환경의 새 측정이 아닐 수 있다.
+
+    `test_designation_does_not_read_oracle_fields`가 **그 한 필드 말고는 `submission` 접근**(속성·
+    `vars`·`repr`·`==`)을 분기마다(사슬이 갈린 자리 다섯 · 같은 바이트 · 등급·`confidence`·판정 계단
+    미상 · 후보 하나) 문다. `test_the_vul_tier_reads_only_the_exit_code_field`가 계단이 갈리는
+    분기를 같은 함정으로 문다.
     ⚠ **못 무는 것:** `submission` 말고 `grades`·`confidences` 사전에 채점기 값이 섞이는 경로
     (러너 쪽 `test_the_oracle_leg_leaves_the_graded_evidences_alone`이 문다 — 한계는 그
     docstring), `verdicts` 사전(`_verdict_ranks_by_finding` 안에서 채점기 장부를 읽는 변이는
     지금 안 잡힌다 — 이 함수 밖의 값이라 함정이 못 본다)과 후보 0건(읽을 `submission`이 없다).
+    열린 한 필드의 **해석**(`None`·환경 코드를 크래시로 세는 변이)은
+    `test_an_exit_code_that_is_not_a_crash_never_ranks_as_one`이 문다.
 
     「최종 지정 후보」는 모델이 `submit`했고 `vul` 제출도 **성공한** PoC다. 중간 gen은 판정 되먹임을
     위해 `vul`에 제출해도 후보가 아니며, 모델 submit의 제출이 실패하면 `vul` 쪽 결과가 없어 후보가
     아니다(그 run의 경고가 실패 건수를 알린다).
 
-    ⏵ **2026-10-11 — 위 「읽지 않는다」는 하네스 코드를 묶는 제약이다.** 어느 gen이 후보가 되는지는
-    모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면 마지막 gen) 그것은 이
-    제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이 제약이 막지 않는다(council).
+    ⏵ **2026-10-11 — 위 「읽는 것을 제한한다」는 하네스 코드를 묶는 제약이다.** 어느 gen이
+    후보가 되는지는 모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면
+    마지막 gen) 그것은 이 제약 밖이다 — 모델이 관측의 `oracle_vul` 줄을 읽고 고르는 일을 이
+    제약이 막지 않는다(council).
     """
     candidates = ledger.candidates
     if not candidates:
@@ -2767,8 +2822,9 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
     (`no_poc`·`all_vul_submissions_failed`·`rate_limited`·`grade_unknown`)은 `status=none`이고,
     지정했는데 `finalize`가 예외로 끝난 `status=failed`와 다르다 — 같은 모양이면 「최종 PoC가
     없다」가 「최종 PoC가 실패했다」로 읽힌다(§0). **후보가 둘 이상이면 같은 바이트를 접은 뒤
-    ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로 하나를 고른다** — 동점 거부는
-    2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다(`_designate_final`의 ⏵).
+    ⓿자기 `vul` 응답 코드 ⓪Critic 판정 ①등급 ②confidence ③작은 바이트 ④PoC 해시의 전순서로
+    하나를 고른다** — 동점 거부는 2026-10-04에 없어졌고 그 사유(`grade_tie`)도 지웠다
+    (`_designate_final`의 ⏵).
 
     **추가형이다** — 상태·Evidence를 안 건드리고 예외를 흡수한다(`_submit_vul_to_oracle`과 같은
     계약). 이 단계는 8단계가 **끝까지 돌았을 때** 불린다. 루프가 `BudgetExhausted`·
@@ -2834,7 +2890,7 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6은 형제
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5와 서빙 판 v6·v7은 형제
     `PovActionNamed`)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
@@ -2865,7 +2921,8 @@ def _run_pov_hops(
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
     (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
-    v6이다**(`config/models.yaml` · S19 Phase 6-2) — 이 한계는 v5로 되돌린 설정에만 남는다.
+    v6이었다**(`config/models.yaml` · S19 Phase 6-2) — ⏵ 2026-10-14부터 서빙 판은 v7이고 그 prefix도
+    같은 서술을 든다(v6과 바이트 동일한 부분). 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
 
@@ -2919,8 +2976,9 @@ def _run_pov_hops(
         seen: dict[str, bytes] = {}
         # 도구 → (마지막으로 돌린 홉, 증거) — `inspect`가 같은 도구를 또 요청하면 안 돌린다(#619).
         ran: dict[str, tuple[int, Evidence]] = {}
-        # gen마다의 `vul` 종료 코드(없으면 `None`) — **로그 전용**이다. 종단 이벤트의 계측 플래그만
-        # 읽고 지정(`_designate_final`)은 읽지 않는다.
+        # gen마다의 `vul` 종료 코드(없으면 `None`)를 모은 이 목록은 **로그 전용**이다. 종단 이벤트의
+        # 계측 플래그만 이 목록을 읽고 `_designate_final`은 읽지 않는다(지정이 읽는 코드는 후보
+        # 자기 제출의 응답 코드이고, 중간 gen의 관측 코드가 아니다).
         gen_codes: list[int | None] = []
         followup = ""
         # 홉 줄을 붙이기 **전**의 followup(= 직전 홉의 도구 관측) — 다음 호출이 파싱에 실패하면
@@ -3030,7 +3088,7 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6(서빙 판)이 그것을 선언한다.
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5·v6·v7(서빙 판은 v7)이 그것을 선언한다.
                 named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
@@ -4287,6 +4345,14 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
         raise _StageOutOfOrder("5단계가 4단계보다 먼저 돌았다 — candidate가 비어 있다")
     evidences, artifact = item.target.evidences, item.target.artifact
     anchor, ref = _auditor_target(ctx, item.target), item.target.slice
+    # 슬라이스의 정적 상태(`auditor_slice_state` · 이슈 #438 (b)) — 노드(FACTS)와 `auditor_source`
+    # 이벤트가 **같은 값**을 쓰도록 한 번만 만든다. 꺼졌거나 슬라이스가 없으면 `None`이라 키도
+    # 이벤트 필드도 없다.
+    exposed = (
+        slice_state_module.facts(ref)
+        if ref is not None and ctx.config.thresholds.auditor_slice_state
+        else None
+    )
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
     # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
@@ -4294,7 +4360,9 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     source = (
         _Once(partial(ctx.read_source, expanded.target))
         if ref is None
-        else _Once(partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id))
+        else _Once(
+            partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id, slice_state=exposed)
+        )
     )
     # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
     observations: list[str] = []
@@ -4309,6 +4377,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             # 노드는 artifact 루트를 모른다(캡슐 대상은 파일 경로뿐) — 러너가 넘긴다. 도구 루프의
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
+            slice_state=exposed,
         )
     except auditor.AuditorHopLimit:
         # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
@@ -4435,6 +4504,10 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # 같고 prefix는 v12 쪽이다 — 위 상한은 다시 안 셌다.
 # ⏵ 2026-10-13 — 서빙 판은 v15다(S19 — v14 + 계약 문장 여섯). hop0 user 턴(body)은 v14와 바이트
 # 같고 prefix만 다르다 — 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + prefix 다섯 군데 — body는 v15와 바이트 동일). 위
+# 상한은 다시 안 셌다.
+# ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + prefix 두 군데 — body는 v16과 바이트 동일). 옵션
+# `auditor_slice_state`는 꺼져 있어 hop0 user 턴은 v16과 같다. 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -4467,7 +4540,9 @@ _AUDITOR_ENTRY_CONTEXT_LINES = 20
 _AUDITOR_ENTRY_HEAD_LINES = 10
 # 줄인 entry 함수에서 뺀 구간 표시. 정의 조회(`source_definitions`)는 이 표시의 낱말을 안 본다.
 _OMITTED = "/* ... {} lines omitted ... */"
-_OMITTED_LINE = re.compile(r"/\* \.\.\. \d+ lines omitted \.\.\. \*/")
+# 쓰기 지점 창을 다 못 실었다는 SOURCE 끝 줄(#650). `{}`는 못 실은 창 수.
+_WRITE_WINDOWS_MORE = "/* ... +{} more write windows not shown ... */"
+_OMITTED_LINE = re.compile(r"/\* \.\.\. (\d+) lines omitted \.\.\. \*/")
 # 호출자 창을 붙이려고 **읽는** 호출 지점 수의 상한(#349 (b)) — 이미 실린 범위와 겹쳐 건너뛴
 # 지점은 안 센다. 널리 불리는 함수면 호출 지점이 수백이라 상한이 찬 뒤에도 지점마다 파일을 읽고
 # `callers_dropped`가 지점 수가 된다(#351 리뷰). 순서는 `call_sites_of`가 정한다(같은 파일 →
@@ -4502,14 +4577,23 @@ def _is_short(location: Location) -> bool:
     return location.line_end - location.line_start + 1 <= _AUDITOR_WRAPPER_LINES
 
 
-def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_id: str) -> str:
+def _auditor_source(
+    ctx: RunContext,
+    ref: SliceRef,
+    anchor: Location,
+    candidate_id: str,
+    *,
+    slice_state: Mapping[str, object] | None = None,
+) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
     타깃이 아니면 부르지 않고 노드가 캡슐 대상(`anchor`)을 그대로 읽는다.
 
     결정 1-b = 넓은 (i)(2026-09-25 팀 합의): **슬라이스가 걸친 함수의 원본을 전부** 준다. 맨 앞이
     entry 함수(`anchor` — `_auditor_target`)이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은
     인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다. 둘 이상이면 함수마다 `파일:시작-끝` 배너를 단다 —
-    하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다.
+    하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다. 단 그 하나 뒤에 #650 표지 줄
+    (`_WRITE_WINDOWS_MORE`)이 붙을 수 있고(쓰기 창이 전부 못 실렸을 때) 줄인 entry 함수
+    (`auditor_entry_trim`)는 혼자여도 배너를 단다 — 아래 `source = ...` 줄 근처 주석.
 
     상한(`_AUDITOR_SOURCE_CHARS`)은 함수 단위다 — 앞에서부터 들어가는 함수를 넣고 넘치는 것은
     뺀다(중간을 자르면 끊긴 함수를 본다). entry 함수는 상한보다 커도 넣는다. `anchor` 범위 안의 줄은
@@ -4578,16 +4662,39 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     `_AUDITOR_CALLER_SITES`개까지 읽는다. 찾은 지점 수는 `call_sites`가 든다. 창은 함수가 아니라
     `functions`에 안 든다 — `callers`·`callers_dropped`가 따로 센다.
 
-    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 맨 뒤(호출자 창 다음 — 호출자 창이 먼저
+    **쓰기 지점 창(C5(a))** — `auditor_write_sites`가 N이면 호출자 창 다음(호출자 창이 먼저
     자리를 잡아 쓰기 창에 밀리지 않는다, PR #468 리뷰 MEDIUM-1)에, 슬라이스 줄에 나온 이름·필드에
     쓰는 지점(`ctx.writes_of`·`ctx.field_writes_of`)의 앞뒤 `_AUDITOR_WRITE_LINES`줄을 쓰는 함수
     범위로 잘라 N곳까지 붙인다(`_write_sites`가 고르고 순서를 정한다). 창은 `functions`에 안 든다
-    — `write_windows`·`write_windows_dropped`가 따로 센다.
+    — `write_windows`·`write_windows_dropped`가 따로 센다. 상한에 걸려 안 읽은 창과 크기 상한에 못
+    붙인 창이 있으면 그 수를 trace `write_windows_omitted`가 든다(#650). 세는 대상은 **SOURCE에
+    실제로 든 범위(`shown`) 밖의 지점**이다 — 크기 상한에 걸려 못 실은 함수·창 안의 지점도, 줄인
+    entry 함수(`auditor_entry_trim`)에서 뺀 구간 안의 지점도 센다(`seen`에는 들어 있어도 모델은
+    못 본다. 줄인 entry 함수는 남은 줄 범위만 `shown`에 든다). 입력 맥락 블록(아래)이 보인 범위도
+    `shown`이라 그 안의 지점은 안 센다 — 그래서 수는 입력 맥락 블록을 붙인 **뒤**에 확정한다.
+    `auditor_write_window_marker`가 1이면 그 수를 SOURCE 끝 `_WRITE_WINDOWS_MORE` 한 줄로도 단다
+    (0이면 줄이 없고 SOURCE는 이 옵션 전과 바이트 동일).
 
     ponytail: 범위가 겹치는 함수는 거르지 않는다 — 창 `anchor`(entry를 품는 심볼을 모를 때)나
     겹치는 심볼(겹침을 내는 인덱스 — index-v2도 `symbols`는 안 겹친다)이면 같은 줄이 두 블록에
     실릴 수 있다. 겹침을 내는 인덱스가 오면 품는
     관계로 거른다.
+
+    **입력 맥락 함수(`auditor_input_context`, S20 Phase 13)** — 1이면 쓰기 지점 창 다음, 마지막
+    블록(#650 표지 줄이 있으면 그 앞)으로 슬라이서의 `analysis.input_context`(`ref.input_context`)가
+    고른 함수 본문을 붙인다(`source_input_context`). `status`가 `selected`이고 `basis`가 `cpg`일
+    때만이고, 같은 상한을 쓴다. 함수 **전체**가 `shown`(블록을 붙인 자리에서만 느는 목록)에 든 범위
+    안이면 건너뛰고(`skipped_carried` — `_contained`) 창 조각과 일부만 겹치면 완전한 함수를 붙인다.
+    상한에 넘치면 통째로 뺀다. 붙인 블록은 `functions`에 안 들고 `input_context_added`가 센다.
+    `input_context_chars`는 이 블록을 붙이기 전후 `SOURCE` 길이의 차다(entry 배너가 새로 생기면
+    포함). 키가 없는 슬라이스에는 아무것도 안 붙고 `SOURCE`는 이 옵션이 없을 때와 바이트 동일이다.
+    ⚠ **PoV·Critic도 이 본문을 받는다**(위 GUARDS와 같은 경로 - Critic은
+    `_SOURCE_INPUT_VERSIONS` 판, PoV는 `_WIDE_INPUT_VERSIONS` 판일 때).
+
+    **슬라이스 상태(`auditor_slice_state`, 이슈 #438 (b))** — `slice_state`(`orchestrator/
+    slice_state.facts`가 낸 값 — `_step_auditor`가 켜졌을 때만 준다)가 있으면 이벤트에
+    `slice_state_*`가 더 실린다. 같은 값이 노드를 거쳐 FACTS `slice_state`로 모델에 간다 — 이
+    함수는 `SOURCE`를 안 바꾸고 모델에 **무엇을 보였는지**만 남긴다.
 
     **게이트(`auditor_source_gate`)** — 1이면 이벤트에 `gate_reasons`(`source_gate.reasons` — 쉼표로
     이은 사유 코드)가 더 실린다. 읽기 전용 관측이라 `SOURCE`·프롬프트는 안 바뀐다.
@@ -4641,6 +4748,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     carried = [anchor]
     # 총 상한에 걸려 뺀 함수도 「본 것」에 둔다 — 피호출 단계가 같은 함수를 다시 세지 않게.
     seen = [anchor]
+    # 실제로 `SOURCE`에 **실린** 범위 — `seen`은 상한에 걸려 못 실은 범위도 들지만 이것은 블록을
+    # 붙인 자리에서만 는다. 줄인 entry 함수는 뺀 구간을 뺀 남은 줄 범위들만 들고(`_shown_ranges`),
+    # 줄인 enum은 일부만 보이므로 안 든다. 읽는 곳은 둘이다 — 쓰기 창 생략 수
+    # (`write_windows_omitted`)의 「이미 보이나」와 입력 맥락 함수의 「이미 실렸나」
+    # (`source_input_context._contained`).
+    shown = _shown_ranges(anchor, anchor_text) if omitted else [anchor]
     for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
         seen.append(symbol)
         text = ctx.read_source(symbol)
@@ -4649,6 +4762,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             dropped += 1
             continue
         blocks.append(block)
+        shown.append(symbol)
         bodies.append((symbol, text))
         carried.append(symbol)
         size += 1 + measure(block)
@@ -4692,8 +4806,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             return False
         names = [*cut.names, name]
         trimmed = _trim_enum(cut.text, names)
-        shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일 이름의 낱말은 정의가 아니다
-        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", shown):
+        body_shown = blocks[cut.index].split("\n", 1)[1]  # 배너 줄 뒤 — 파일명 낱말은 정의가 아니다
+        if trimmed is None and re.search(rf"\b{re.escape(name)}\b", body_shown):
             cut.settled.add(name)
             return False
         block = _block(definition, trimmed, end=cut.end) if trimmed is not None else None
@@ -4735,6 +4849,8 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         blocks.append(block)
         size += 1 + measure(block)
         definitions += 1
+        if not is_trimmed:
+            shown.append(definition)
         if is_trimmed:  # 실린 것만 센다 — 줄여 놓고 상한에 걸려 못 실은 enum은 위에서 dropped다
             definitions_trimmed += 1
             trimmed_enums[key] = _TrimmedEnum(text, end, [definition.symbol or ""], len(blocks) - 1)
@@ -4796,6 +4912,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callees_dropped += 1
                 return False
             blocks.append(block)
+            shown.append(callee)
             size += 1 + measure(block)
             callees += 1
             return True
@@ -4865,6 +4982,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 callers_dropped += 1
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             callers += 1
     # 쓰기 지점 창(C5(a) — #304)은 호출자 창 **뒤**다 — 앞이면 쓰기 창이 먼저 `seen`에 들어가 그와
@@ -4873,32 +4991,91 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
     # (읽는 지점 수 상한도 안 먹는다).
     write_sites = ctx.config.thresholds.auditor_write_sites
     write_windows = write_windows_dropped = write_sites_found = 0
+    # 모델이 못 보는 쓰기 창(#650) — 상한에 안 읽은 것 · 크기 상한에 못 붙인 것 · `seen`에는 들지만
+    # `shown`에는 없는 범위(크기 상한에 못 실은 함수·창) 안의 지점. 겹치면 하나로 센다.
+    # `write_sites_found - write_windows`가 아니다 — 찾은 수는 실린 코드 안의 지점도 센다. 줄인
+    # entry 함수는 남은 줄 범위만 `shown`에 있어, 뺀 구간 안의 지점은 세고 남은 줄의 지점은 안 센다.
+    # `hidden`은 (깎지 않은 창, 그 창이 못 보인 쓰기 줄) 쌍이다 — 지점마다 하나씩 든다. 창을 미리
+    # 깎거나 겹치는 지점을 버리면 아래 입력 맥락 블록이 첫 지점만 덮을 때 둘째 지점이 같이 사라진다
+    # (#668 리뷰 2차). 겹침은 그 블록을 붙인 뒤 실제 `shown`에 대고 차례로 걸러 하나로 센다.
+    hidden: list[tuple[Location, int]] = []
+
+    def hide(site: Location) -> None:
+        hidden.append((_caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1))
+
     if write_sites:
         sites = _write_sites(ctx, ref, carried, anchor.file)
         write_sites_found = len(sites)
         tried = 0
-        for site in sites:
+        for at, site in enumerate(sites):
             if tried == write_sites:
+                for rest in sites[at:]:
+                    hide(rest)
                 break
             window = _clip_around(
                 _caller_window(ctx, site, _AUDITOR_WRITE_LINES), site.line_start or 1, seen
             )
             if window is None:
+                hide(site)
                 continue
             tried += 1
             seen.append(window)
             block = _block(window, ctx.read_source(window))
             if size + 1 + measure(block) > cap:
                 write_windows_dropped += 1
+                hidden.append((window, site.line_start or 1))
                 continue
             blocks.append(block)
+            shown.append(window)
             size += 1 + measure(block)
             write_windows += 1
+    # 슬라이서가 CPG 호출 경로로 이은 입력 디코더 본문(`auditor_input_context`)은 쓰기 지점 창
+    # **뒤**의 마지막 블록이다(#650 표지 줄이 있으면 그 앞). 켜지 않았으면 `None`이라 블록도 이벤트
+    # 필드도 없다.
+    input_context = (
+        carry_input_context(
+            ref, read_source=ctx.read_source, block=_block, measure=measure,
+            seen=seen, shown=shown, size=size, cap=cap,
+        )
+        if ctx.config.thresholds.auditor_input_context
+        else None
+    )
+    if input_context:
+        blocks += input_context.blocks
+    # 못 실은 창은 `auditor_write_window_marker`가 1이면 SOURCE 끝에 줄로 남긴다 — 잘린 목록을
+    # 완전한 목록으로 읽히지 않게(#650). 꼴은 주석 한 줄이다(`_OMITTED`와 같은 `/* ... */` — 「+N
+    # more … 」 꼴은 `source_guards.py`의 `_MORE_ROWS`(`... +N more rows omitted`)를 따랐고, 「not
+    # shown」 문구는 이 변경(#650)이 정했다). 상한에 안 읽은 창과 글자·토큰 상한에 못 붙인 창
+    # (`write_windows_dropped`)과 못 실은 함수 안의 지점을 다 센다 - 전부 모델은 못 본다. 줄 자체는
+    # 예산(`size`·`cap`)에는 안 들지만 이벤트의 `chars`(토큰 상한이면 `tokens`도)에는 든다 —
+    # 아래에서 `source`에 붙인 뒤 잰다. 옵션이 0이면 줄을 안 달아도 수는 trace에 남는다.
+    # 수는 입력 맥락 블록을 붙인 **뒤** 확정한다 — 그 블록이 `shown`에 든 범위 안의 지점은 모델이
+    # 보므로 못 본 것으로 세면 안 된다(쓰기 창 루프는 그 블록보다 앞이라 그때는 몰랐다).
+    probe = list(shown)
+    write_windows_omitted = 0
+    for window, line in hidden:
+        cut = _clip_around(window, line, probe)
+        if cut is not None:
+            probe.append(cut)
+            write_windows_omitted += 1
     # 줄인 entry 함수는 혼자여도 배너를 단다 — 원래 줄 번호를 되짚을 곳이 배너뿐이다(#351 리뷰).
     # GUARDS가 붙어도 단다 — 그 행의 `파일:줄`을 코드 줄에 되짚을 곳이 배너뿐이다. 블록은 entry 함수
     # **바로 뒤**, 다른 함수·정의·피호출 본문보다 앞이다.
     blocks[1:1] = guard_blocks
-    source = "\n".join(blocks) if len(blocks) > 1 or omitted else anchor_text
+
+    def assemble(parts: list[str]) -> str:
+        return "\n".join(parts) if len(parts) > 1 or omitted else anchor_text
+
+    source = assemble(blocks)
+    # 입력 맥락 블록이 늘린 글자 수는 **실제로 잰다** — entry 함수만 실렸던 SOURCE는 배너가 없는데
+    # 블록이 붙으면 entry에도 배너가 생겨, 블록 길이의 합과 다르다.
+    input_context_chars = (
+        len(source) - len(assemble(blocks[: len(blocks) - len(input_context.blocks)]))
+        if input_context
+        else 0
+    )
+    if write_windows_omitted and ctx.config.thresholds.auditor_write_window_marker:
+        source += "\n" + _WRITE_WINDOWS_MORE.format(write_windows_omitted)
     ctx.trace.emit(
         EventKind.AUDITOR_SOURCE,
         stage=Stage.AUDITOR,
@@ -4907,8 +5084,12 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
         slice_id=ref.slice_id,
         # 함수가 아닌 블록을 전부 뺀다 — 정의·호출자 창·쓰기 지점 창·GUARDS(0 또는 1). 래퍼·별칭·
         # 간접 피호출은 함수 본문이라 센다. 옵션마다 따로 더한 식이 합쳐질 때 하나가 빠지면
-        # `functions`가 조용히 틀린다.
-        functions=len(blocks) - definitions - callers - write_windows - len(guard_blocks),
+        # `functions`가 조용히 틀린다. 입력 디코더 본문(`auditor_input_context`)은 함수 본문이지만
+        # 슬라이서가 고른 것이라 `input_context_added`가 따로 센다 - 여기서 뺀다.
+        functions=(
+            len(blocks) - definitions - callers - write_windows - len(guard_blocks)
+            - (len(input_context.blocks) if input_context else 0)
+        ),
         dropped=dropped,
         uncovered_lines=uncovered,
         chars=len(source),
@@ -4937,6 +5118,7 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
                 "write_windows": write_windows,
                 "write_windows_dropped": write_windows_dropped,
                 "write_sites_found": write_sites_found,
+                "write_windows_omitted": write_windows_omitted,
             }
             if write_sites
             else {}
@@ -4957,6 +5139,19 @@ def _auditor_source(ctx: RunContext, ref: SliceRef, anchor: Location, candidate_
             else {}
         ),
         **(guard_scan.event_fields() if guard_scan else {}),
+        **(
+            {
+                **input_context.event,
+                **(
+                    {"input_context_chars": input_context_chars}
+                    if input_context.event["input_context"] != "absent"
+                    else {}
+                ),
+            }
+            if input_context
+            else {}
+        ),
+        **(slice_state_module.event_fields(slice_state) if slice_state is not None else {}),
         **(
             {"tokens": measure(source), "token_counter": "model" if model_counter else "estimate"}
             if token_cap
@@ -5050,6 +5245,30 @@ def _caller_window(ctx: RunContext, site: Location, lines: int) -> Location:
         start = max(start, enclosing.line_start)
         end = min(end, enclosing.line_end or end)
     return Location(file=site.file, symbol=site.symbol, line_start=max(1, start), line_end=end)
+
+
+def _shown_ranges(anchor: Location, text: str) -> list[Location]:
+    """줄인 entry 함수(`_trim_entry`)의 **남은 줄** 범위들. 뺀 구간 표시(`_OMITTED`)가 말하는 줄
+    수만큼 원래 줄 번호를 건너뛰고, 이어진 남은 줄을 한 범위로 묶는다."""
+    ranges: list[Location] = []
+    at, first = anchor.line_start or 1, None
+
+    def close() -> None:
+        if first is not None:
+            ranges.append(Location(
+                file=anchor.file, symbol=anchor.symbol, line_start=first, line_end=at - 1,
+            ))
+
+    for line in text.split("\n"):
+        gap = _OMITTED_LINE.fullmatch(line.removesuffix("\r"))
+        if gap is None:
+            first = at if first is None else first
+            at += 1
+            continue
+        close()
+        first, at = None, at + int(gap[1])
+    close()
+    return ranges
 
 
 def _trim_entry(anchor: Location, text: str, keep_lines: list[int | None]) -> tuple[str, int]:

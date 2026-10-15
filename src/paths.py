@@ -26,5 +26,7 @@ def safe_join(root: Path, relative: str) -> Path:
     base = root.resolve()
     joined = (base / relative).resolve()
     if joined != base and base not in joined.parents:
-        raise PathEscape(f"대상 루트({base}) 밖을 가리킨다: {relative!r}")
+        # 호스트 루트 경로를 안 싣는다 — `Evidence.error`로 모델 관측에 가는 자리가 있다
+        # (`ContainerToolRunner.run`의 workdir 검사). 거절된 상대 경로만 든다.
+        raise PathEscape(f"대상 루트 밖을 가리킨다: {relative!r}")
     return joined

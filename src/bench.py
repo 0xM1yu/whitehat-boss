@@ -109,7 +109,7 @@ ROLE_SPEC: dict[Role, tuple[type[BaseModel], CapsuleLevel]] = {
     # `Role.SINGLE`만 추가하고 여기를 비워 두면 `bench_report._role_report()`의
     # `ROLE_SPEC[role_enum]`이 `KeyError`가 된다 — 고치려던 크래시가 자리만 옮긴다.
     Role.SINGLE: (Finding, CapsuleLevel.EXPANDED),
-    # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit · v5와 서빙 판 v6은 형제
+    # PoV — 모델은 매 홉 `PovAction`(gen/inspect/submit · v5와 서빙 판 v6·v7은 형제
     # `PovActionNamed`)을 낸다(PoV 툴
     # 루프, `prompts/pov/`).
     # `gen`이 실은 `PovSpec`은 순수 조립기가 바이트로 만든다. `_render`에 pov 분기가 있다
@@ -202,7 +202,7 @@ def _render(role: Role, template: PromptTemplate, filler: str) -> Prompt:
         target=_TARGET,
         source=filler,
         # 선언을 따른다 — `facts_source: false` 판(Auditor v13·v14 · 이슈 #67 · ⏵ 2026-10-13
-        # v15도 — 서빙 판)은 FACTS에 `source`가
+        # v15 · 2026-10-14 v16·v17도 — 서빙 판)은 FACTS에 `source`가
         # 없다. ⚠ 노드와 같은 것은 Auditor뿐: 다른 역할이 선언하면 bench만 빼고 노드는 안 뺀다.
         include_source=template.facts_source,
     )
@@ -220,7 +220,8 @@ def sized_prompt(role: Role, template: PromptTemplate, tokens: int, variant: int
     """렌더 결과가 목표 토큰 수에 준하도록 채움 길이를 맞춘다.
 
     `source`가 FACTS 블록과 본문에 두 번 실리므로(실제 노드도 그렇다) 채움 길이와 렌더 길이가 선형이
-    아니다. ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15 · 이슈 #67)은 FACTS에
+    아니다. ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17 ·
+    이슈 #67)은 FACTS에
     `source`가 없어 한 번만 실린다(노드도 그렇다). 다른 판은 그대로 두 번이다. 그래서 재보고
     조정한다 — 길이를 상수로 박지 않는다. 목표값은 `thresholds.capsule_budget_tokens`(config)에서
     온다.
@@ -666,8 +667,8 @@ def _one_context(
         # **peak이 몇 표본에서 나왔는지 함께 남긴다.** `*_peak: 0.0` + `reason`은 "한 번도
         # 못 쟀다"만 구별하고, **3 표본에서 나온 peak과 300 표본에서 나온 peak을 구별하지
         # 못한다.** 폴링 간격이 생기면서 표본이 줄어 그 구멍이 커지므로 함께 넣는다 —
-        # 캡슐의 `items=k`가 잘린 값인지 캡슐만 봐서는 모르는 것(#63 잔여 (b) — #78)과 같은
-        # 모양이다.
+        # 캡슐의 `items=k`가 잘린 값인지 몰랐던 것(#63 잔여 (b) — #78)과 같은 모양이었다 -
+        # 그쪽은 `ContextCapsule.cuts`(#663)가 닫았고 이 개수는 그와 별개로 남긴다.
         #
         # 필드 이름이 곧 지표의 열 이름이다(`IndexSummary.as_trace_fields` docstring).
         # `*_peak`과 짝이 되게 `*_samples`로 붙인다.

@@ -1033,7 +1033,8 @@ def judge(tool: str, steps: list[Step], total: int) -> tuple[bool, int | None, s
     """
     if not steps:
         # 명령이 하나도 안 돌았으면 돌려줄 종료 코드가 없다 - 127을 지어내면 「대상이 안 떴다」로
-        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). 명세의 실패다(`_refuse`와 같은 `None`).
+        # 읽혀 8단계가 측정을 못 낸 건으로 보류한다(#326). `plan()`은 argv를 안 받고 명령을 늘 하나
+        # 이상 내므로 도달 불가 방어 갈래다 - 종료 코드를 지어내지 않으려고 `None`이다.
         return False, None, f"{tool}: 실행된 명령이 없다"
     last = steps[-1]
     code = last.exit_code
@@ -1444,13 +1445,15 @@ class ContainerToolRunner:
                 sif = sif_path(self.sif_dir, image)
                 if not sif.exists():
                     # 자동으로 pull 하지 않는다 — 실행 중 네트워크는 network=False와 충돌한다.
+                    # 오류 문구에는 호스트 경로를 안 싣는다 — `Evidence.error`는 PoV·Auditor 관측
+                    # 머리줄로 모델에 가고 로그 본문도 같은 문구다. SIF 파일 이름만 든다.
                     return self._fail(
                         evidence_id,
                         tool,
                         kind,
                         args,
                         127,
-                        f"SIF가 없다: {sif} (변환 절차는 tools/README.md)",
+                        f"SIF가 없다: {sif.name} (변환 절차는 tools/README.md)",
                     )
         try:
             commands = self._plan_for(tool, resolved)
@@ -1706,7 +1709,20 @@ class ContainerToolRunner:
         exit_code: int,
         error: str,
     ) -> Evidence:
-        """실행 전에 거절된 경우. 프로세스를 띄우지 않는다."""
+        """실행 전에 거절된 경우. 프로세스를 띄우지 않는다.
+
+        `ok=False`에 정수 `exit_code`를 적으므로 `validate._not_measured`가 「측정 못 함」
+        (`validated` 보류)으로 센다 - 명세 실패(F-11, `exit_code=None`)가 아니다. `validate`
+        경로에서는 그 분류가 맞다(#670): 모델이 쓴 요청(`repro_spec.steps` -> `args.argv`)은
+        `plan()`에 닿지 않고 도구는 고정된 build 단계와 `tool_for` 대응표가 고른다. 거절 사유는
+        대상 내용이나 하네스 쪽 사정이다 - 정책 밖 도구(127 - 그 대응표로는 닿지 않는다) ·
+        네트워크 요청 · 경로 이탈 · workdir 없음 · SIF 없음 · `_plan_for`의 `ValueError`(`plan()`의
+        넷 - C·C++ 혼합 대상 · 컴파일할 C 소스 없음 · `poc_target` 없음 · 조립 규칙 없는 도구 - 과
+        루트 밖으로 풀리는 소스 경로) · 스크래치 쓰기 실패 · 입력 없는 `poc`. 스크래치 쓰기
+        실패는 `input_bytes`를 실은 요청에서만 나는데 `validate._call`은 입력을 안 싣는다.
+        `poc_target` 없음·입력 없는 `poc`는 `poc` 실행에서만 나는데 `validate`는 `poc`를 안
+        돌린다.
+        """
         return self._write(
             evidence_id,
             tool,
@@ -1815,8 +1831,22 @@ def _by_language(compile_sources: list[str]) -> list[tuple[str, list[str]]]:
 
 
 def _in_container(root: Path, path: Path) -> str:
-    """호스트 경로 → 컨테이너 안 경로. 마운트 밖은 `safe_join`이 이미 걸렀다."""
-    relative = path.resolve().relative_to(Path(root).resolve()).as_posix()
+    """호스트 경로 → 컨테이너 안 경로. 마운트 밖은 `safe_join`이 이미 걸렀다.
+
+    **루트 밖으로 풀리는 소스(루트 안 심링크)는 `safe_join`이 못 본다** - 그 경로는 `ValueError`로
+    거절한다. 문구에는 **풀기 전** 경로의 루트 기준 상대 이름만 싣는다(어느 소스인지 알려야
+    한다) - 호스트 경로는 안 싣는다(`relative_to`의 기본 문구는 두 경로를 다 든다). 풀기 전
+    경로도 루트 밑이 아니면 파일 이름만 싣는다.
+    """
+    base = Path(root).resolve()
+    try:
+        relative = path.resolve().relative_to(base).as_posix()
+    except ValueError:
+        try:
+            shown = path.relative_to(base).as_posix()
+        except ValueError:
+            shown = path.name
+        raise ValueError(f"대상 루트 밖으로 풀리는 소스 경로가 있다: {shown}") from None
     return MOUNT if relative == "." else f"{MOUNT}/{relative}"
 
 

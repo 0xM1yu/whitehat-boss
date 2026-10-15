@@ -34,7 +34,7 @@ from src.adapters.index_graph import (
 from src.ids import IdFactory, sha256_text
 from src.interfaces.retriever import Query
 from src.paths import safe_join
-from src.schemas.capsule import CapsuleSection, ContextCapsule
+from src.schemas.capsule import CapsuleCuts, CapsuleSection, ContextCapsule
 from src.schemas.common import Location
 from src.schemas.enums import CapsuleLevel
 from src.schemas.finding import MissingEvidence
@@ -144,20 +144,22 @@ class FakeRetriever:
             return cached
 
         source = self._target_source(query)
+        sections, cuts = _sections_for(
+            level,
+            source,
+            query.budget_tokens,
+            self.graph,
+            query.target,
+            self._slice_body(query),
+        )
         capsule = ContextCapsule(
             capsule_id=self.ids.next("capsule"),
             run_id=self.run_id,
             target=query.target,
             level=level,
             budget_tokens=query.budget_tokens,
-            sections=_sections_for(
-                level,
-                source,
-                query.budget_tokens,
-                self.graph,
-                query.target,
-                self._slice_body(query),
-            ),
+            sections=sections,
+            cuts=cuts,
             cache_key=cache_key,
         )
         self._cache[cache_key] = capsule
@@ -185,7 +187,7 @@ class FakeRetriever:
                 # 그래프 분기는 `HybridRetriever.expand()`와 **같은 함수**를 부른다.
                 # ponytail: 캡슐이 slice id를 안 들어 슬라이스 캡슐도 entry 한 줄로 센다(#220 ①의
                 # 줄 집합이 아니다). 호출 지점이 0이라 둔다 — 배선할 때 캡슐에 slice id를 싣는다.
-                section, stop = graph_section(kind, self.graph, capsule.target, remaining)
+                section, stop, _ = graph_section(kind, self.graph, capsule.target, remaining)
                 if section is None:
                     if stop:
                         # 붙일 것은 있는데 예산이 없다. "더 붙일 것이 없음"과 다른
@@ -290,8 +292,11 @@ def _sections_for(
     graph: GraphIndex,
     target: Location,
     slice_body: SliceBody | None = None,
-) -> list[CapsuleSection]:
-    """예산을 넘기지 않는 선에서 레벨별 섹션을 채운다.
+) -> tuple[list[CapsuleSection], CapsuleCuts]:
+    """예산을 넘기지 않는 선에서 레벨별 섹션을 채운다. `(섹션, 절단 표지)`.
+
+    **표지는 내용이 갈린 자리에서만 남긴다**(#663) — 두 `break`(그래프 `stop`·보조 섹션 예산 0)와
+    그래프 섹션의 못 담은 항목. `min(cost, remaining)`는 내용을 안 바꿔 세지 않는다.
 
     `ContextCapsule`은 섹션 합이 예산을 넘으면 생성 자체가 실패한다. 넘겼다면 캡슐을
     만들 게 아니라 섹션을 줄여야 하므로(스키마 주석) 여기서 자른다.
@@ -301,15 +306,22 @@ def _sections_for(
     """
     sections: list[CapsuleSection] = []
     used = 0
-    for kind in LEVEL_SECTIONS[level]:
+    kinds = LEVEL_SECTIONS[level]
+    dropped: list[str] = []
+    graph_stopped = False
+    graph_skipped = 0
+    for index, kind in enumerate(kinds):
         remaining = budget - used
         if kind in GRAPH_SECTION_KINDS:
             # 그래프 분기는 `HybridRetriever._sections_for()`와 **같은 함수**를 부른다.
             # 복사본 둘이 갈리면 같은 index.json에서 두 구현이 다른 캡슐을 낸다.
-            section, stop = graph_section(kind, graph, target, remaining, slice_body)
+            section, stop, skipped = graph_section(kind, graph, target, remaining, slice_body)
+            graph_skipped += skipped
             if section is None:
                 if stop:
                     # 붙일 것은 있는데 예산이 없다.
+                    graph_stopped = True
+                    dropped = list(kinds[index:])
                     break
                 # 인덱서가 안 돌았거나 형식이 어긋났다 — 섹션을 만들지 않는다.
                 # 0건 섹션으로 내면 "그래프가 비었다"와 구별되지 않는다.
@@ -326,8 +338,12 @@ def _sections_for(
         # 않는다.** 닿으면 줄은 그대로 두고 토큰만 깎는 것이 되어 `CapsuleSection`의
         # 검증기에서 죽는다 — 그 사실이 두 함수 사이의 암묵이 아니라 구조로 있어야 한다.
         if cost > 0 and remaining <= 0:
+            dropped = list(kinds[index:])
             break
         tokens = min(cost, remaining)
         sections.append(CapsuleSection(kind=kind, tokens=tokens))
         used += tokens
-    return sections
+    cuts = CapsuleCuts(
+        dropped_sections=dropped, graph_stopped=graph_stopped, graph_skipped=graph_skipped
+    )
+    return sections, cuts

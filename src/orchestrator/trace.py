@@ -23,6 +23,9 @@ trace는 로그가 아니라 **지표의 원본 데이터**다. 여기 남지 �
 | 도구 시간 | `tool_call.wall_ms` | **GPU가 아니다** — `Budget.tool_seconds` 소관 |
 | 검색 비용 | `retrieval_call` | 부품·단계별 합계. `model_call`과 분모가 다르다 |
 | 검색 범위 절단 | `retrieval_truncated` | `collected`−`kept`. **이벤트 부재 = 안 잘림** |
+| 캡슐 예산 절단 (#663) | `capsule_cut` | `subject_id`(캡슐)별 - `dropped_sections`(상한)·
+`graph_stopped`·`graph_skipped`(하한)·`related_skipped`. `retrieval_truncated`(청크 개수)와
+다른 질문이다. **이벤트 부재 = 안 잘림, 단 이 이벤트가 생긴 뒤 run만** |
 | Auditor 원문 범위 | `auditor_source` | 뺀 함수·못 본 줄·entry 크기. **슬라이스 run만** |
 | Auditor 도구 홉 | `auditor_hop` | 성공한 모델 호출당 1건 — action·tool·stop_reason·usage
 (⏵ 2026-10-13 크기 거절당한 홉도 1건: `stop_reason=context_overflow` · action 없음, #514). **루프
@@ -247,6 +250,12 @@ Scout 제거율의 분모는 4단계에서 **생성된** Candidate 수이므로 
 시간 상한에 닿는 시점이 `budget` 이벤트 열 자체를 바꾼다. 그래서 비교에서 빼는 것을 `data` 키로
 넓히지 않는다. 위 「새 필드」 규칙은 그래도 모든 run에 선다 — 새 휘발 값은 `data`가 아니라 최상위
 `wall_ms`나 사이드카로 낸다(`oracle_log`의 선례).
+
+⚠ **예외 하나(⏵ 2026-10-14 이슈 #637):** `oracle_final`의 `designation`·`subject_id`·`poc_sha256`·
+`poc_bytes`는 지정이 후보 자기 `vul` 응답 종료 코드의 계단을 읽으므로 그 코드에 일부 달렸다. 코드가
+고정인 Fake 경로에서는 위 계약이 그대로 서고, 실서버에서 같은 입력의 코드가 갈리면 이 네 필드가
+갈릴 수 있다(`run_container` 직접 호출 실측에서는 갈렸다 — 서버 경로의 비율은 미실측, `oracle_log`
+모듈 docstring).
 """
 
 import json
@@ -454,7 +463,13 @@ class EventKind(StrEnum):
     # `auditor_write_sites`가 양수면 `write_windows`·`write_windows_dropped`(붙인·상한에 못 붙인
     # 쓰기 지점 창 수 — `functions`에는 안 든다)·`write_sites_found`(창을 붙일 후보 쓰기 지점 수
     # — 같은 줄은 한 번,
-    # 쓰는 함수의 같은 이름 지역은 뺀 수. 이미 실린 범위 안의 지점도 센다)가 더 실린다(#304).
+    # 쓰는 함수의 같은 이름 지역은 뺀 수. SOURCE에 든 코드 안의 지점도 센다)·
+    # `write_windows_omitted`(모델이 못 본 쓰기 창 수 — 상한에 안 읽은 창 + `write_windows_dropped`
+    # + 크기 상한에 못 실은 함수·창 안의 지점. SOURCE에 실제로 든 범위(줄인 entry 함수는 남은 줄)
+    # 안의 지점은 뺀다 — 줄여서 뺀 구간 안의 지점은 센다.
+    # `write_sites_found - write_windows`가 아니다. `write_windows_dropped`를 이미 포함하니 둘을
+    # 더하지 않는다. `auditor_write_window_marker`가 1이면 SOURCE 끝 `+N more write windows not
+    # shown` 줄의 N이고 0이면 줄 없이 이 수만 남는다)가 더 실린다(#304 · #650).
     # `auditor_caller_lines`가 양수면
     # `callers`·`callers_dropped`(붙인·상한에 못 붙인 호출자 창 수 — `functions`에는 안 든다)·
     # `call_sites`(찾은 호출 지점 수 — 앞 몇 개만 읽는다)가 더 실린다.
@@ -469,6 +484,25 @@ class EventKind(StrEnum):
     # 어긋날 수 있다) · `bare_cr`(원본 바이트에 `\n`을 안 단 `\r`이 함수 앞·안에 있다 — 텍스트
     # 읽기가 `\r`을 `\n`으로 접어 인덱서와 줄 번호가 어긋난다) · `no_sink`(sink 줄이 원문 밖이거나
     # sink에서 이름을 못 뽑았다). GUARDS는 함수가 아니라 `functions`에 안 든다.
+    # `auditor_input_context`가 1이면(S20 Phase 13) `input_context`가 더 실린다 -
+    # `absent`(슬라이스에 키가 없다: 수는 **안 적는다**, 0이 아니라 모름) · `none_selected` ·
+    # `selected`. 키가 있으면 `input_context_basis`(`cpg`/`syntax`) · `_cap_hit`(슬라이서가 쓴
+    # 그대로 - `none_selected`에 서 있으면 잘린 탐색일 수 있어 0이 아니라 모름) ·
+    # `_cap_reasons`(쉼표로 이은 문자열) · `_listed` (슬라이서가 고른 함수 수) · `_added`(SOURCE에
+    # 붙인 수) · `_chars`(러너가 잰 SOURCE 길이 증가 — 블록을 붙이며 entry 배너가 새로 생기면
+    # 포함) · 건너뜀 넷이 더 실린다:
+    # `_skipped_syntax`(`syntax` 근거라 안 읽음) · `_skipped_carried`(함수 전체가 이미 든 범위
+    # 안이다 - 일부만 겹치면 붙인다) · `_skipped_size`(상한에 넘침) · `_skipped_empty`(읽은 본문이
+    # 비었다). 그리고 이 판이 싣지 않는 `_carried_decoders`·
+    # `_dispatches`의 수다. 붙인 본문은 `functions`에 안 든다 - `input_context_added`가 센다.
+    # `auditor_slice_state`가 1이면(이슈 #438 (b)) **모델에게 보인 슬라이스 상태**가 더 실린다 -
+    # `slice_state_analysis_kind`(슬라이서가 쓴 그대로) · `_degraded` · `_truncated` ·
+    # `_truncation_reasons` · `_boundary_reasons`(사유는 쉼표로 이은 문자열, 빈 문자열은 사유 없음)
+    # · `_sinks_capped` · `_cross_method_flow_truncated`(상한 둘, 적은 슬라이서 종류만 불리언).
+    # **`None`은 모름이다** - 키마다 슬라이서가 그 사실을 안 적었을 때 `false`·빈 문자열이 아니라
+    # `None`이다(`analysis_kind`는 비었을 때, `_degraded`는 `analysis_kind`가 비었을 때, 나머지는
+    # 그 키를 안 적었을 때 - `slice_state.facts`). 이 값이 FACTS `slice_state`와 같은 것에서 나온다.
+    # 꺼져 있으면 필드가 없다.
     #
     # **`anchor_chars`가 따로 있는 이유** — 상한은 뒤에 붙는 함수만 거르고 entry 함수는 상한보다
     # 커도 늘 들어간다(`auditor_entry_trim`이 0일 때 — 1이면 줄여서 들어간다). 그래서 `chars`가
@@ -731,7 +765,8 @@ class EventKind(StrEnum):
     # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
     # 갈려서 trace의 재현성 기준(아래)을 깬다(분류는 `oracle_log` 모듈 docstring). 그래서 이
     # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
-    # `oracle_final` 하나다.**
+    # `oracle_final` 하나다.** (⏵ 2026-10-14 — 다만 어느 후보가 `oracle_final`로 지정되는지가
+    # 후보 자기 응답 종료 코드의 계단에 일부 달렸다: 아래 `ORACLE_FINAL` 주석.)
     ORACLE_SUBMITTED = "oracle_submitted"
     # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 제출 하나가 실패했거나(`leg=vul`)
     # 중간 gen의 판정 조회가 실패했거나(`leg=query_vul`) 0바이트 PoC를 안 냈다
@@ -744,14 +779,22 @@ class EventKind(StrEnum):
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
     # 대응한다.
     #
-    # **`designation`은 일곱이고 전부 위치·채점기 점수로 고른 것이 아니다**(`oracle_log`가 목록을
-    # 든다) — 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
+    # **`designation`은 여덟이고 위치로 고른 것이 아니며 채점기 값은 후보 자기 `vul` 응답의 종료
+    # 코드 하나(`vul_crash`)만 읽는다**(`oracle_log`가 목록을 든다 · ⏵ 2026-10-14 이슈 #637) —
+    # 후보(`vul` 제출이 성공한 PoC)가 하나뿐이라 고를 것이 없었거나(`sole_candidate`),
     # 후보는 여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 사슬의 어느 단계가
-    # 갈랐다(`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
-    # 하네스가 만든 값의 전순서다). 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면
-    # 지정하지 않는다(`status=none` ·
-    # `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고 판정이 있는 것이
-    # 아니다.
+    # 갈랐다(`vul_crash`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` —
+    # 응답 코드 계단(크래시 < 모름 < 크래시 아님) 뒤로는 하네스가 만든 값의 전순서다).
+    # 등급·`confidence`·Critic 판정 중 모르는 값이 있는 후보가 있으면 지정하지 않는다
+    # (`status=none` · `reason`이 `grade_unknown`, `runner._designate_final`). 이 이벤트가 있다고
+    # 판정이 있는 것이 아니다.
+    #
+    # ⚠ **`designation`·`subject_id`·`poc_sha256`·`poc_bytes`는 응답 코드에 일부 달렸다**(⏵
+    # 2026-10-14 이슈 #637) — 첫 계단이 후보 자기 `vul` 응답 종료 코드라서, 위에서 「서버가 돌려준
+    # 값은 trace에 안 싣는다」고 한 재현성 기준(Fake 경로 계약)에 이 네 필드가 간접으로 걸린다.
+    # 같은 입력에서 vul 코드는 `run_container` 직접 호출 실측에서 갈렸고(`vm.mmap_rnd_bits` 32 ·
+    # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
+    # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
@@ -789,6 +832,17 @@ class EventKind(StrEnum):
     # `retrieval.run`이 낸다 — 설명은 예산을 미리 떼어 담지만(코드 자리를 굶기지 않게 최대 절반)
     # 그 상한을 넘는 긴 설명은 잘린다. **조용히 빠지지 않게** 남긴다(§0) — `kept`·`total`은 줄 수다.
     VULN_DESCRIPTION_TRUNCATED = "vuln_description_truncated"
+    # `search`(캡슐 최초 조립)의 예산 절단이 내용을 갈랐다 (#663). `retrieval.run`이 낸다 —
+    # `ContextCapsule.cuts`(`CapsuleCuts`)가 비어 있지 않을 때만이고 **이벤트 부재 = 안 잘렸다**
+    # (`retrieval_truncated`·`scout_slice_trimmed`와 같은 읽기). ⚠ 이 이벤트가 생긴 뒤 run에서만
+    # 그렇다 - 그전 run의 부재는 「안 쟀다」다(캡슐의 `cuts=None`과 같다).
+    # `retrieval_truncated`(청크 개수 `MAX_CHUNKS`)와 다른 질문이다.
+    # `subject_id`는 캡슐이고 같은 캡슐이 Retriever 캐시에서 다시 돌려지면 `run()`이 또 부르므로
+    # **`subject_id`로 센다**(행 수가 아니다). 필드: `level` · `dropped_sections`(쉼표로 이음 - 예산
+    # break로 못 만든 kind, **상한**) · `graph_stopped` · `graph_skipped`(그래프 섹션에서 못 담은
+    # 항목 수, **하한** - break 뒤 섹션은 시도 안 해 안 센다) · `related_skipped`(선별됐는데
+    # `related`에 안 든 조각 수). 확장이 붙인 섹션은 반영 안 한다.
+    CAPSULE_CUT = "capsule_cut"
     # 모델이 쓴 발급값(ID·`run_id`·`artifact_id`·초기 `state`·`missing_evidence`)이 하네스
     # 발급값과 **달라서 덮었다** (이슈 #279). 내는 곳은 `RunContext.stamp_issued` 하나다 —
     # Scout·Auditor 출력 1건당 최대 1행이고 **이벤트 부재 = 모델이 발급값을 그대로 썼다**
@@ -843,7 +897,8 @@ class EventKind(StrEnum):
     # 「제거율 — Tool」의 분자(`repro_failed`)에도 분모에도 안 든다.
     # `reason`: `poc_runs_in_the_pov_loop`(신호가 `poc`를 가리키는데 이 노드는 `poc`를
     # 안 돌린다) · `tool_produced_no_measurement`(`build`·`asan`이 `ok=False` - 컴파일·링크가
-    # 안 됐거나, 대상이 안 떴거나, 떴다가 시간 초과로 끊겼다(`124`). 원인 Evidence의
+    # 안 됐거나, 대상이 안 떴거나, 떴다가 시간 초과로 끊겼거나(`124`), 실행 전에 거절됐다
+    # (`ContainerToolRunner._fail`). 원인 Evidence의
     # `exit_code`·`error`를 싣는다 - 종료 코드별로 가르는 것이 run 경고다).
     # `tool`은 신호가 고른 도구다. **이벤트 부재 = 8단계가 재현을 시도했다**(8단계에 간 run에서).
     REPRO_NOT_MEASURED = "repro_not_measured"
