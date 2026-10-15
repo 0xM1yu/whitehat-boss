@@ -4518,6 +4518,11 @@ def test_the_omission_marker_matches_the_runner_helper() -> None:
     assert scout._OMITTED == runner._OMITTED
 
 
+def test_the_source_head_width_matches_the_runner_helper() -> None:
+    """함수 머리로 보는 앞 줄 수도 러너 `_trim_entry` 쪽과 같은 폭이다(복사했다)."""
+    assert scout._SOURCE_HEAD_LINES == runner._AUDITOR_ENTRY_HEAD_LINES
+
+
 def test_a_body_that_cannot_fit_goes_as_head_entry_and_close_with_fit_false(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
