@@ -122,7 +122,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 > v3가 켠 두 입력 변경은 v4가 그대로 물려받는다:
 > Auditor 최초 읽기의 넓은 SOURCE와, 중간 gen PoC를 vul 다리에 낸 원시 종료 코드 되먹임이다.
 > 되먹임은 `run --oracle-submit`일 때만 켜진다(꺼져 있으면 모든 gen이 `oracle_vul=unavailable`을 받는다).
-> 모델이 submit한 PoC만 최종 지정 후보이고(⏵ 2026-10-15: 판정을 받은 submit이 없는 Finding - 제출이 끝내 실패했거나 건너뛴 것 포함 - 의 크래시 응답 중간 gen은 대체 후보로 구제된다) fix 다리는 지정 뒤 한 번이다. **실모델 입력 토큰은 잰 값이 있다** —
+> 모델이 submit한 PoC만 최종 지정 후보이고(⏵ 2026-10-15: 응답을 받은 submit이 없는 Finding - 제출이 끝내 실패했거나 건너뛴 것 포함 - 의 크래시 응답 중간 gen은 대체 후보로 구제된다) fix 다리는 지정 뒤 한 번이다. **실모델 입력 토큰은 잰 값이 있다** —
 > v3 prefix로 호출당 60,446~61,018(서버가 센 값, 한 finding의 네 호출 · n=1 · v4 prefix는 아직 안 쟀다,
 > [2026-10-06 프로브](docs/experiments/harness/2026-10-06-pov-seat-probe-vastai.md)의 「호출당 입력」 행). ⚠ **전형값이
 > 아니다** - 그 프로브는 `tool_runner: fake`라 도구 출력 꼬리가 없었고, 같은 run의 다른 finding hop0은 6,572토큰으로
