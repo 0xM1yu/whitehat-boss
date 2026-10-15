@@ -128,6 +128,7 @@ def schema_for(
     ⏵ 2026-10-10 — v12=`AuditorProcedureAuditAlwaysAction`(이슈 #578)이 넷째다.
     ⏵ 2026-10-11 — pov도 갈린다: v2~v4=`PovAction`, v5=`PovActionNamed`(이슈 #549).
     ⏵ 2026-10-13 — v6도 `PovActionNamed`다. ⏵ 2026-10-14 — v7도 그렇다.
+    ⏵ 2026-10-15 — v8도 그렇다(서빙 판).
     노드가 프롬프트 meta가 선언한 것을
     요청하므로(`nodes/scout.py`·`nodes/auditor.py`) bench도 같은 것을 재야 **운영 grammar**를 재는
     것이 된다 — 그 자리에서 `ROLE_SPEC`의 스키마는 캡슐 레벨 전용이 된다.

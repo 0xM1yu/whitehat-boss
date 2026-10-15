@@ -84,7 +84,7 @@ class Role(StrEnum):
     # `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`을 강제한다.
     SINGLE = "single"
     # 8단계 PoV — Auditor Finding에서 PoC를 만드는 모델-주도 툴 루프(매 홉 `PovAction` ·
-    # v5와 서빙 판 v6·v7은 형제 `PovActionNamed`).
+    # v5~v8은 형제 `PovActionNamed`이고 서빙 판은 v8).
     # SINGLE 주석의 함정이 그대로다: `config.PROMPTED_ROLES`·`bench.ROLE_SPEC`에 함께 넣지
     # 않으면 harness check·bench가 죽고, `prompts/pov/`도 같은 커밋에 있어야 test_config가 산다.
     POV = "pov"
@@ -139,7 +139,7 @@ def _verdict_words(text: str) -> list[str]:
 # `Verdict.from_text`가 읽는 **전체 문자열 단독 동의어**. 문장 속 부분 문자열이 아니라
 # verdict 필드 전체가 정확히 이것일 때만 매핑한다(위 docstring). 애매한 것(예: `"not safe"`)은
 # 넣지 않는다 — 미해석(`None`)으로 두고 `need_evidence`로 보내는 편이 오분류보다 안전하다.
-# ⏵ 2026-10-11 — 그 보류도 이제 8단계 추가 풀에 든다(uphold·미경유 뒤, 이슈 #604).
+# ⏵ 2026-10-11 — 그 보류도 이제 8단계 추가 풀에 든다(uphold·미경유·판정 호출 실패 뒤, 이슈 #604).
 #
 # ⚠ **CWE 이름을 넣지 않는다** (#182 재리뷰 M-3). `use-after-free`가 여기 있었는데 그것은
 # 판정이 아니라 약점 종류이고, Scout이 겨냥하는 CWE 계열(415/416 · 119/125/787/190 ·
@@ -552,6 +552,14 @@ class ReasonCode(StrEnum):
     # 이쪽은 띄우지를 못한 것이라 장비 파일(`config/serving/<device>.yaml`)과 교대 명령의 로그를
     # 본다.
     MODEL_SWAP_FAILED = "model_swap_failed"
+    # 1단계 색인(index)이 실패해(`graph` Evidence `ok=False` - 시간 초과 124·OOM 137·컨테이너 기동
+    # 125·실행 불가 127 등) **실서빙 모델을 부르기 전에** 멈춘 run (2026-10-15). 심볼 인덱스 없이
+    # 4단계로 가면 전 타깃이 파일 단위 폴백으로 돌고 GRAPH 근거를 잃어 E2 위가 불가능한데 GPU 시간은
+    # 그대로 쓴다. `run --allow-missing-index`가 이 정지를 풀고(경고만 남긴다) 풀었다는 사실은
+    # trace `index_stop_lifted`에 남는다. 위 사유들과 가르는 것은 대응이다 - 이쪽은 서버가
+    # 아니라 **인덱서 도구**(이미지·마운트·시간 상한)를 본다. 모델 호출 0건에서 서므로 `run`의
+    # 종료 코드는 `_NORMAL_STOPS` 밖이라 3이다.
+    INDEX_UNAVAILABLE = "index_unavailable"
     TOOL_POLICY_VIOLATION = "tool_policy_violation"
     CAPSULE_EXPANSION_EXHAUSTED = "capsule_expansion_exhausted"
     # Queue 규칙 (architecture.md §3)
@@ -562,13 +570,14 @@ class ReasonCode(StrEnum):
     # ⚠ **범위는 `_analyze`(1~8단계)다** — `_analyze`가 정상으로 끝난 뒤 후처리(GPU 경고·게이트
     # 재등급·리포트 렌더·`finish_run`)에서 **처음** 나는 예외는 이 사유를 못 받고 매니페스트도 안
     # 남는다. `_analyze`에서 난 뒤에는 후처리를 건너뛰므로 2차 예외가 원 예외를 덮지 않는다.
-    # 위 다섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
-    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`)는 **예상한** 형이고 이것은 그 밖 전부다.
+    # 위 여섯 사유(`BUDGET_EXHAUSTED`·`MODEL_SWAP_FAILED`·`MODEL_GATEWAY_UNAVAILABLE`·
+    # `CONSECUTIVE_TARGET_FAILURES`·`SCHEMA_PARSE_FAILED`·`INDEX_UNAVAILABLE`)는 **예상한** 형이고
+    # 이것은 그 밖 전부다.
     # 기존 27개 중 맞는 것이 **없어서** 새로 만들었다 — `MODEL_GATEWAY_UNAVAILABLE`로 적으면
     # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
     # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로
     # 산출물은 남지만 run은 실패다: `RunResult`가 안 나와 `run`은 트레이스백(종료 코드 1)으로
-    # 끝난다. 위 다섯 중 예산 소진은 정상 종료(0)이고 나머지 넷은 `RunResult`로 돌아와 종료 코드
+    # 끝난다. 위 여섯 중 예산 소진은 정상 종료(0)이고 나머지 다섯은 `RunResult`로 돌아와 종료 코드
     # 3이다(#533) — 종료 코드가 0인 정지 사유는 사용자 상한 둘(`USER_STOP_REQUESTED`·`DRY_RUN`)과
     # 예산 소진뿐이다.
     UNFORESEEN_FAILURE = "unforeseen_failure"

@@ -47,7 +47,7 @@ def test_the_serving_combination_passes_every_source_option_check() -> None:
     config = load_config("harness_pool")
     seats = ("auditor", "critic", "pov")
     versions = {role: config.model_for(role).prompt_template_version for role in seats}
-    assert versions == {"auditor": "v17", "critic": "v8", "pov": "v7"}, "전제 - 서빙 조합"
+    assert versions == {"auditor": "v17", "critic": "v8", "pov": "v8"}, "전제 - 서빙 조합"
     on = config.thresholds.auditor_source_options_on()
     assert {MARKER, CONTEXT} <= set(on), "전제 - 두 옵션이 켜져 있다"
     assert cli._undescribed_source_options(config) == []
@@ -141,9 +141,10 @@ def _declaring(role: str) -> list[str]:
     )
 
 
-def test_only_critic_v8_and_pov_v7_declare_and_they_declare_exactly_the_relayed_pair() -> None:
-    assert _declaring("critic") == ["v8"] and _declaring("pov") == ["v7"]
-    for role, version in (("critic", "v8"), ("pov", "v7")):
+def test_only_critic_v8_and_pov_v7_v8_declare_and_they_declare_exactly_the_relayed_pair() -> None:
+    # ⏵ 2026-10-15 - PoV v8(= v7 + Hop budget 한 줄)도 같은 선언을 물려받았다
+    assert _declaring("critic") == ["v8"] and _declaring("pov") == ["v7", "v8"]
+    for role, version in (("critic", "v8"), ("pov", "v7"), ("pov", "v8")):
         assert load_prompt(Role(role), version).source_options == RELAYED_SOURCE_OPTIONS
 
 
@@ -152,6 +153,7 @@ def test_only_critic_v8_and_pov_v7_declare_and_they_declare_exactly_the_relayed_
     [
         ("critic", "v8", ("input-context functions", "+N more write windows not shown")),
         ("pov", "v7", ("functions the slicer picked", "+N more write windows not shown")),
+        ("pov", "v8", ("functions the slicer picked", "+N more write windows not shown")),
     ],
 )
 def test_a_declaring_prefix_really_describes_both_blocks(
