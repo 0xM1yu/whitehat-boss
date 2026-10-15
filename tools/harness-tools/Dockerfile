@@ -50,10 +50,15 @@ RUN pip3 install --no-cache-dir "semgrep==${SEMGREP_VERSION}"
 
 # 공개 룰셋 중 C만 가져온다. 저장소 전체를 config로 주면 다른 언어의 룰까지 로드되어
 # 스캔이 느려지고, 무엇이 신호를 만들었는지도 흐려진다.
+# C 룰을 C++ 파일에도 건다(#689) — 공개 룰셋에는 C++ 디렉터리가 없고 `languages: [c]`면
+# `.cc`·`.cpp`·`.hpp`를 아예 안 연다. 형식이 바뀌어 치환이 안 먹으면 빌드를 멈춘다(조용히 C만 남지 않게).
 RUN git clone --filter=blob:none https://github.com/semgrep/semgrep-rules /tmp/semgrep-rules \
  && git -C /tmp/semgrep-rules checkout "${SEMGREP_RULES_COMMIT}" \
  && mkdir -p /opt/semgrep-rules \
  && cp -r /tmp/semgrep-rules/c /opt/semgrep-rules/c \
+ && find /opt/semgrep-rules/c -name '*.yaml' -exec sed -i 's/languages: \[c\]/languages: [c, cpp]/' {} + \
+ && ! grep -rqE 'languages: \[c\]' /opt/semgrep-rules/c \
+ && grep -rq 'languages: \[c, cpp\]' /opt/semgrep-rules/c \
  && git -C /tmp/semgrep-rules rev-parse HEAD > /opt/semgrep-rules/COMMIT \
  && rm -rf /tmp/semgrep-rules
 
