@@ -212,12 +212,13 @@ def _record_unknown_refs(
     ID 갈래만으로도 참이라 이 경로는 그대로다. 그래서 게이트가 못 보는 ID 하나로도
     `rebut`이 「근거 있는 반박」이
     되어 `gate.normalize`를 비껴가고 F-6 `queued`로 간다.
-    ⏵ 2026-10-15 (ADR 0015 개정) - **v8 이상은 아니다.** 그 판(`AXIS_ONLY_GROUNDING_VERSIONS`)은
-    ID 갈래가 없어 ID-only `rebut`이 `rebut_ids_only`로 정규화된다. 위 문단은 v6·v7의 서술이다.
     홉 관측이 `probe` Evidence의
     `evidence_id`를 Critic에 보이게 한 뒤로 그런 ID를 인용할 길이 생겼다(#600 H2ⓐ · 이슈 #419의
     「E4 경계」). 거르기는 설계 판단이라 여기서 하지 않고 **사후에 셀 수 있게** 수만 남긴다.
     `evidences`는 러너가 이 Finding에 넘긴 게이트 입력(`state.evidences[finding_id]`)이다.
+    ⏵ 2026-10-15 (ADR 0015 개정) - 위 문단은 v6·v7의 서술이다. **v8 이상은 아니다.** 그 판
+    (`AXIS_ONLY_GROUNDING_VERSIONS`)은 ID 갈래가 없어 ID-only `rebut`이 `rebut_ids_only`로
+    정규화된다.
     """
     if not decision.evidence_refs:
         return

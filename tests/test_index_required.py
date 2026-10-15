@@ -67,7 +67,7 @@ def test_a_served_run_stops_before_any_model_when_the_index_fails(
     assert cli._exit_for(result.stop_reason) == 3
 
 
-def test_the_override_flag_goes_on_with_a_warning_and_the_manifest_says_so(
+def test_the_override_flag_goes_on_with_a_warning_and_the_trace_says_so(
     tmp_path: Path, failing_index: None
 ) -> None:
     config = swap_rig._config()
