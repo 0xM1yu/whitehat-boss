@@ -761,6 +761,9 @@ class EventKind(StrEnum):
     # (`designatable=True`)가 둘 다 낸다(같은 바이트면 같은 해시로 두 번 나온다). `fix` 다리는
     # 안 돈다. `subject_id`는 finding이고 `leg`(`vul`)·`designatable`·`task_id`·
     # `poc_sha256`·`poc_bytes`를 싣는다. 소요 시간은 최상위 `wall_ms`다(도커 왕복이 들어 있다).
+    # ⚠ `wall_ms`는 재시도와 429 대기까지 품는다(`model_call.wall_ms`와 같은 축 -
+    # `config/budgets.yaml`의 `model_call.wall_ms` 서술) - 네트워크 시간은 `retry_wait_s`를 빼서
+    # 읽는다.
     #
     # ⚠ **판정 값이 없다.** 종료 코드·`success`·`poc_id`·`cached`는 서버가 돌려준 값이라 trace가
     # 아니라 사이드카 `{run_dir}/oracle/verdict.json`에 있다 — 그 값들은 장비·서버 상태에 따라
@@ -768,6 +771,18 @@ class EventKind(StrEnum):
     # 이벤트들을 `any(success)`로 묶을 값이 없다. **점수는 후보 N건의 any-of가 아니라
     # `oracle_final` 하나다.** (⏵ 2026-10-14 — 다만 어느 후보가 `oracle_final`로 지정되는지가
     # 후보 자기 응답 종료 코드의 계단에 일부 달렸다: 아래 `ORACLE_FINAL` 주석.)
+    #
+    # ⏵ 2026-10-15 — **모델이 submit한 PoC의 제출(`designatable=True`)만** 선택 필드 둘을 싣는다.
+    # 평범한 한 번 제출은 둘 다 없다(키 집합이 옛 run과 같다):
+    #  - `submit_calls` - `submit_vul` 호출 수. 2이면 일시 실패(429·5xx·연결/타임아웃) 뒤 한 번
+    #    다시 냈다(`oracle_log.vul_retry_wait_s`). `oracle_failed`에도 실린다(재시도까지 실패).
+    #    2일 때는 첫 호출의 실패도 `first_error`(예외 클래스)·`first_error_status`(HTTP 상태나
+    #    `null`)·`retry_wait_s`(재시도 전 대기 초)로 싣는다 - `error`는 마지막 호출의 것이다.
+    #  - `reused_intermediate` - 참이면 재제출이 실패해(그 실패가 같은 finding의
+    #    `oracle_failed` 행이다) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**을 이
+    #    후보의 제출로 이어받았다. 이 행의 `task_id`는 그 앞선 제출의 것이고 서버에 새 제출은
+    #    없었다. 새 승격이 아니다 - 모델이 submit한 바이트다(ADR 0013 결정 1).
+    # 이 이벤트가 몇 건인가로 제출 수를 세지 않는다 - 이어받은 행은 호출이 아니다.
     ORACLE_SUBMITTED = "oracle_submitted"
     # 채점기 호출이 예외로 끝난 기록 (#386) — `vul` 제출 하나가 실패했거나(`leg=vul`)
     # 중간 gen의 판정 조회가 실패했거나(`leg=query_vul`) 0바이트 PoC를 안 냈다
@@ -775,6 +790,9 @@ class EventKind(StrEnum):
     # run을 멈추지 않는다. `poc_sha256`·`poc_bytes`·`error`(예외 클래스 이름)를 싣는다.
     # `error_detail`(URL·OS 로케일 문구)은 사이드카에만 있다. 최종 단계의 실패는 이 이벤트가 아니라
     # `oracle_final`의 `status=failed`다.
+    # ⏵ 2026-10-15 — `leg=vul`·`designatable=True`이고 재시도까지 했으면 `submit_calls=2`를 싣는다
+    # (`error`는 마지막 호출의 것). 같은 finding의 앞선 중간 제출을 이어받았으면 바로 뒤에
+    # `reused_intermediate`인 `oracle_submitted`가 따라온다.
     ORACLE_FAILED = "oracle_failed"
     # **이 run의 채점 결과 — 채점기가 배선되고 8단계가 끝까지 돈 run에 정확히 1건이다.** 지정한
     # 후보 하나에 `fix` 다리와 판정 조회를 돌린 결과이고, 저자 FAQ의 「최종 제출 하나」 점수에
@@ -796,6 +814,12 @@ class EventKind(StrEnum):
     # 같은 입력에서 vul 코드는 `run_container` 직접 호출 실측에서 갈렸고(`vm.mmap_rnd_bits` 32 ·
     # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
     # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
+    #
+    # ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·응답 없음·429) 뒤 한 번 더 불렸을 때만(그 밖의 4xx는
+    # 안 부른다) `finalize_calls`(2)와 첫 호출의 실패 `first_error`·`first_error_status`·
+    # `retry_wait_s`(5xx·응답 없음은 0, 429는 한도 창을 기다린 초)를 더 싣는다. 한 번에 된 run·지정
+    # 후보가 없는 run은 키 집합이 같다. 어댑터 docstring은 `/submit-fix`에 레이트리미트가 없다고
+    # 적어(소스 판독) 429는 안 올 수도 있다. 최상위 `wall_ms`는 재시도와 그 대기를 품는다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —
