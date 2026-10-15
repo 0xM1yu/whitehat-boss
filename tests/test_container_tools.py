@@ -511,6 +511,7 @@ def test_clang_tidy_puts_compile_args_after_the_double_dash() -> None:
     tail = argv[argv.index("--") :]
 
     assert "-std=gnu17" in tail
+    assert ["-x", "c"] == tail[tail.index("-x") : tail.index("-x") + 2]
     assert "-I" in tail
     assert "/src/a.c" not in tail, "소스는 `--` 앞에 온다"
 
@@ -557,7 +558,7 @@ def test_gdb_plan_compiles_then_runs_a_noninteractive_debugger() -> None:
     assert len(commands) == 2
     compile_argv, debug_argv = commands[0].argv, commands[1].argv
     assert compile_argv[:4] == ["clang", "-g", "-O0", "-fno-omit-frame-pointer"]
-    assert compile_argv[-3:] == ["-o", "/work/gdb.bin", "/src/a.c"]
+    assert compile_argv[-5:] == ["-o", "/work/gdb.bin", "-x", "c", "/src/a.c"]
     assert debug_argv == [
         "gdb",
         "--nx",
@@ -2244,3 +2245,103 @@ def test_headers_and_unparsed_spellings_are_not_compiled_or_indexed(
 
     assert indexed == {"a.c", "b.cc", "c.cpp", "d.hpp", "e.h", "f.inc"}
     assert compiled == {"a.c", "b.cc", "c.cpp", "i.cxx", "j.CPP", "m.c++", "n.cp"}
+
+
+# --- 로그 머리가 무엇을 읽혔는지 말한다 (목록 파일 · 인덱서 미전달) ---------------------------
+
+
+def _sources_tree(tmp_path: Path, names: list[str]) -> Path:
+    root = tmp_path / "tree"
+    root.mkdir(exist_ok=True)
+    for name in names:
+        (root / name).write_text("int f(void) { return 0; }\n", encoding="utf-8")
+    return root
+
+
+def test_the_index_log_binds_its_digest_to_the_listing(tmp_path: Path, spy: _Spy) -> None:
+    """목록은 명령줄에 안 실린다 - 로그에 목록의 항목 수와 sha가 없으면 같은 명령줄에 파일만 다른 두
+    run이 같은 `digest`를 낸다."""
+    root = _sources_tree(tmp_path, ["a.c", "b.c", "c.h"])
+    runner = _runner(tmp_path, root=root)
+    args = ToolArgs(argv=["index"], workdir=".")
+
+    first = runner.run("index", args, SANDBOX)
+    listing = (scratch_dir(tmp_path, RUN_ID, INDEX_TOOL) / INDEX_LIST_FILE).read_bytes()
+    log = _log_of(tmp_path, first)
+    (root / "b.c").rename(root / "z.c")  # 이름만 바뀌고 명령줄은 그대로다
+    second = runner.run("index", args, SANDBOX)
+
+    digest = hashlib.sha256(listing).hexdigest()
+    expected = f"# scratch file {INDEX_LIST_FILE}: 3 entries sha256:{digest}"
+    assert expected in log.splitlines()
+    assert first.digest != second.digest
+
+
+def test_the_index_log_counts_sources_it_withheld_from_the_indexer(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """SOURCE로 읽혔지만 인덱서 문법 표에 없어 안 보낸 파일은 확장자별 개수로 남는다."""
+    root = _sources_tree(
+        tmp_path, ["a.c", "b.h", "c.hh", "d.hh", "e.cxx", "f.CPP", "g.py"]
+    )
+
+    evidence = _runner(tmp_path, root=root).run(
+        "index", ToolArgs(argv=["index"], workdir="."), SANDBOX
+    )
+
+    assert "# 인덱서 미전달: .hh×2 .CPP×1 .cxx×1 .py×1" in _log_of(tmp_path, evidence).splitlines()
+
+
+def test_the_withheld_line_is_absent_when_everything_was_sent_or_for_other_tools(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    root = _sources_tree(tmp_path, ["a.c", "b.h"])
+    runner = _runner(tmp_path, root=root)
+    index = runner.run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
+    (root / "c.hh").write_text("x\n", encoding="utf-8")
+    build = runner.run("build", ToolArgs(argv=["build"], workdir="."), SANDBOX)
+
+    assert "미전달" not in _log_of(tmp_path, index)
+    assert "미전달" not in _log_of(tmp_path, build)  # 인덱서 전용 줄이다
+
+
+@pytest.mark.parametrize("tool", ["build", "clang-tidy", "asan", "gdb"])
+@pytest.mark.parametrize(
+    ("source", "language"),
+    [("/src/a.c", "c"), ("/src/a.Cxx", "c++"), ("/src/a.C", "c++"), ("/src/a.Cc", "c++")],
+)
+def test_every_clang_command_names_the_language_before_the_sources(
+    tool: str, source: str, language: str
+) -> None:
+    """clang의 확장자 표는 대소문자를 가린다 - 표에 없는 철자(`.Cxx`)는 링커 입력으로 읽혀
+    컴파일 없이 exit 0이 날 수 있다. 방언을 확장자에 맡기지 않고 `-x`로 박는다."""
+    argv = plan(tool, target="/src", compile_sources=[source], cwd="/src")[0].argv
+
+    at = argv.index("-x")
+    assert argv[at + 1] == language
+    if tool == "clang-tidy":
+        # 소스는 `--` 앞이고 컴파일 인자는 뒤다 - clang-tidy가 소스 뒤에 그 인자를 붙여 컴파일한다.
+        assert at > argv.index("--")
+    else:
+        assert at < argv.index(source)
+
+
+def test_an_unwritable_index_listing_is_failed_evidence_and_starts_no_process(
+    tmp_path: Path, spy: _Spy, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """목록 파일을 못 쓰면 예외로 run을 세우지 않는다 - 실행하지 않고 `ok=False`로 남긴다."""
+
+    def broken(scratch: Path, files: object) -> None:
+        raise OSError(errno.ENOSPC, "No space left on device", "/host/secret/dir/index-files.txt")
+
+    monkeypatch.setattr(container_tools, "_write_scratch_files", broken)
+
+    evidence = _runner(tmp_path, root=_sources_tree(tmp_path, ["a.c"])).run(
+        "index", ToolArgs(argv=["index"], workdir="."), SANDBOX
+    )
+
+    assert evidence.ok is False
+    assert evidence.exit_code == 2
+    assert "입력 파일" in evidence.error
+    assert "/host/secret" not in evidence.error
+    assert spy.calls == []
