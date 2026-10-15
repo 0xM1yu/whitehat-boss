@@ -565,6 +565,8 @@ class Slicer(SlicingStages):
         # #377 (b): repo-relative files whose candidates are sliced first (--priority-files) --
         # inside each case under the default `ba`, ahead of the whole rest under `ab`.
         self.priority_files: set[str] | None = None
+        # Which flag(s) built that set, for the stderr warning only (not in the contract).
+        self.priority_source = "--priority-files"
         # --skip-candidates: candidate keys this process does not query (not part of the contract).
         self.skip_keys: frozenset[str] = frozenset()
         # --priority-case-a: that list also steers WHICH Case A methods exist (candidates_a_query),
@@ -1251,9 +1253,11 @@ def main(argv: list[str] | None = None) -> int:
             cli.error(f"--description is not a file: {args.description}")
         try:
             raw = args.description.read_bytes()
-            tokens = description_tokens(raw.decode("utf-8-sig"))
-        except (OSError, UnicodeError) as exc:
+        except OSError as exc:
             cli.error(f"--description unreadable: {exc}")
+        # Prose, not bytes that matter: a stray Latin-1 byte must not stop the run (the runner's
+        # read_description does the same). The sha256 below is of the raw bytes.
+        tokens = description_tokens(raw.decode("utf-8-sig", errors="replace"))
         description_sha256 = hashlib.sha256(raw).hexdigest()
         priority = (priority or set()) | matching_files(tokens, args.repo)
     if args.priority_case_a and not priority:
@@ -1366,6 +1370,10 @@ def main(argv: list[str] | None = None) -> int:
         **({"description_sha256": description_sha256} if description_sha256 else {}),
     }
     job.priority_files = priority
+    job.priority_source = " + ".join(
+        flag for flag, given in (("--priority-files", args.priority_files),
+                                 ("--description", args.description)) if given
+    ) or job.priority_source
     job.skip_keys = skip
     job.priority_case_a = args.priority_case_a
     job.import_include_root = args.import_include_root

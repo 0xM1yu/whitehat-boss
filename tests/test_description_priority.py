@@ -23,12 +23,18 @@ def test_the_arvo_1065_description_yields_its_identifiers() -> None:
     assert description_match.description_tokens(None) == frozenset()
 
 
-def test_rank_is_symbol_over_file_over_nothing() -> None:
+def test_rank_is_exact_over_part_over_file_over_nothing() -> None:
     rank = description_match.description_rank
     assert rank(TOKENS, "posix/other.c", "file_regexec") == 2  # `_` 조각 regexec
     assert rank(TOKENS, "posix/other.cc", "Matcher::regexec") == 2  # C++ 한정 이름의 `::` 조각
     assert rank(TOKENS, "posix/regex.c", "unrelated") == 1  # 파일 이름만
-    assert rank(TOKENS, "posix/regex.c", "pmatch") == 2  # 둘 다면 심볼이 이긴다
+    assert rank(TOKENS, "posix/other.c", "regexec") == 3  # 심볼 전체 이름 일치
+    assert rank(TOKENS, "posix/regex.c", "pmatch") == 3  # 둘 다면 심볼이 이긴다
+    # 반대 방향: 설명이 `file_regexec`를 통째로 쓰고 심볼은 `regexec`다 — 조각이라 2, 3이 아니다
+    whole = description_match.description_tokens("crash in file_regexec today")
+    assert rank(whole, "posix/other.c", "regexec") == 2
+    assert rank(whole, "posix/other.c", "file_regexec") == 3
+    assert rank(whole, "posix/regexec.c", "helper") == 1  # 파일도 그 조각으로
     assert rank(TOKENS, "posix/other.c", "regexe") == 0  # 부분 문자열은 일치가 아니다
     assert rank(TOKENS, "REGEXEC.C", None) == 1  # 대소문자 무시, 심볼 없음(폴백)
     assert rank(frozenset(), "regex.c", "regexec") == 0  # 설명 없음
@@ -42,6 +48,9 @@ def test_the_slicer_and_the_runner_agree_on_tokens() -> None:
     for text in samples:
         theirs = description_match.description_tokens(text)
         assert slicer_description.description_tokens(text) == theirs
+        assert slicer_description.expand(theirs) == description_match._expand(theirs)
+    assert "regexec" in slicer_description.expand(frozenset({"file_regexec", "return_value"}))
+    assert "return" not in slicer_description.expand(frozenset({"return_value"}))  # 불용어 조각
 
 
 def test_the_slicer_picks_repo_files_by_name_without_reading_them(tmp_path) -> None:
@@ -51,6 +60,9 @@ def test_the_slicer_picks_repo_files_by_name_without_reading_them(tmp_path) -> N
         path.write_text("int x;\n", encoding="utf-8")
     assert slicer_description.matching_files(TOKENS, tmp_path) == {"regex.c", "sub/regexec.h"}
     assert slicer_description.matching_files(frozenset(), tmp_path) == set()
+    # 설명이 `file_regexec`를 통째로 써도 `regexec.h`가 닿는다
+    whole = slicer_description.description_tokens("crash in file_regexec")
+    assert slicer_description.matching_files(whole, tmp_path) == {"sub/regexec.h"}
 
 
 # --- 러너: `_order_and_cut` ---
@@ -110,15 +122,26 @@ def test_a_description_match_survives_the_cut_that_path_order_would_make(
 
     ctx = _ctx(ARVO_1065, 2)
     plan, state = _plan_slices(monkeypatch, ctx, _ENTRIES)
-    # 심볼 일치(2) m.c가 파일 일치(1) regex.c 앞이고, 둘 다 경로순 a.c를 밀어낸다.
+    # 심볼 조각 일치(2) m.c가 파일 일치(1) regex.c 앞이고, 둘 다 경로순 a.c를 밀어낸다.
     assert [t.location.file for t in plan.targets] == ["m.c", "regex.c"]
     assert state.deferred == 2
     ((_, fields),) = ctx.trace.events[:1]
-    assert (fields["desc_symbol_matches"], fields["desc_file_matches"]) == (1, 1)
+    assert fields["desc_exact_matches"] == 0
+    assert (fields["desc_part_matches"], fields["desc_file_matches"]) == (1, 1)
     assert fields["desc_matches_deferred"] == 0
 
 
-def test_a_description_that_matches_nothing_is_the_same_order_byte_for_byte(
+def test_matches_cut_by_candidate_max_are_counted_as_deferred(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx = _ctx(ARVO_1065, 1)
+    plan, _ = _plan_slices(monkeypatch, ctx, _ENTRIES)
+    assert [t.location.file for t in plan.targets] == ["m.c"]
+    ((_, fields),) = ctx.trace.events[:1]
+    assert fields["desc_matches_deferred"] == 1  # regex.c(파일 일치)가 컷 밖
+
+
+def test_a_description_that_matches_nothing_keeps_the_same_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def order(description: str | None) -> list[tuple]:
@@ -197,5 +220,6 @@ def test_the_symbol_index_path_ranks_by_the_run_description(tmp_path) -> None:  
         vuln_description=ARVO_1065,
     )
     plan = _plan(trace_path)
-    assert (plan["desc_symbol_matches"], plan["desc_file_matches"]) == (1, 0)
+    assert (plan["desc_exact_matches"], plan["desc_part_matches"]) == (0, 1)
+    assert plan["desc_file_matches"] == 0
     assert plan["desc_matches_deferred"] == 0
