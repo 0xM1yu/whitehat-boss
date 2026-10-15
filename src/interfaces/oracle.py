@@ -107,13 +107,13 @@ class Oracle(Protocol):
     읽었다」가 조용히 「미제출」과 같아지지 않는다.
 
     ⏵ 2026-10-15 — **러너가 일시 실패 뒤에 같은 호출을 한 번 다시 한다**: 모델이 `submit`한
-    PoC의 `submit_vul`(429·5xx·연결/타임아웃)과 `finalize`(5xx·연결/타임아웃). 구현은 두 호출을
+    PoC의 `submit_vul`과 `finalize`(둘 다 429·5xx·연결/타임아웃). 구현은 두 호출을
     **다시
     불러도 안전하게** 만들어야 하고(어댑터는 서버 캐시가 그것을 받친다), 실패 예외에 HTTP 상태를
     `status`로 싣고(HTTP 응답이 없으면 `None`) 연결·타임아웃 실패에는 `transient=True`를 달아야
     한다. 일시 실패는 `status >= 500` 또는 `transient`다 - `status`가 `None`이어도 `transient`가
     없으면(응답 형 어긋남 같은 결정적 실패) 다시 부르지 않고, 둘 다 없는 예외도 마찬가지다
-    (`oracle_log.is_transient`).
+    (`oracle_log.is_transient`) - 429는 `status`로 따로 가른다(`oracle_log.vul_retry_wait_s`).
 
     ⚠ 다시 부른 호출의 `VulSubmission.cached`·`OracleOutcome.fix_cached`는 **러너가 `None`으로
     덮는다** - 구현이 재시도 직전에 읽은 장부에는 같은 run의 첫 호출이 쓴 행이 보일 수 있어, 옛
