@@ -577,7 +577,7 @@ class ReasonCode(StrEnum):
     # 「서버가 죽었다」는 거짓 진단이 장부에 남고, 그 run을 보는 사람이 서버 로그를 뒤진다.
     # ⚠ 이 사유가 붙은 run은 **예외가 올라간 run이다** — 러너가 매니페스트를 쓴 뒤 다시 던지므로
     # 산출물은 남지만 run은 실패다: `RunResult`가 안 나와 `run`은 트레이스백(종료 코드 1)으로
-    # 끝난다. 위 다섯 중 예산 소진은 정상 종료(0)이고 나머지 넷은 `RunResult`로 돌아와 종료 코드
+    # 끝난다. 위 여섯 중 예산 소진은 정상 종료(0)이고 나머지 다섯은 `RunResult`로 돌아와 종료 코드
     # 3이다(#533) — 종료 코드가 0인 정지 사유는 사용자 상한 둘(`USER_STOP_REQUESTED`·`DRY_RUN`)과
     # 예산 소진뿐이다.
     UNFORESEEN_FAILURE = "unforeseen_failure"

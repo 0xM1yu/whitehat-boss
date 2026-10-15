@@ -464,7 +464,8 @@ def test_axis_from_text_strips_surrounding_whitespace_only(text: str) -> None:
 
 
 def test_decision_grounding_is_ids_or_a_fully_valid_axis_list() -> None:
-    """`is_grounded` = `bool(evidence_refs)` 또는 (축이 비어 있지 않고 전부 어휘 안)."""
+    """`is_grounded` = `bool(evidence_refs)` 또는 (축이 비어 있지 않고 전부 어휘 안) - v6·v7 기본.
+    v8 이상은 앞 항이 없다(`tests/test_gate.py`)."""
 
     def decision(axes: list[str], refs: list[str]) -> Decision:
         return Decision(

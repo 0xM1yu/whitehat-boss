@@ -1131,7 +1131,7 @@ def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> De
         ),
     ],
 )
-def test_the_extra_pov_pool_excludes_what_the_critic_set_aside_or_dropped(
+def test_the_extra_pov_pool_excludes_what_the_critic_set_aside(
     ctx: RunContext,
     finding_state: FindingState,
     verdict: Verdict | None,

@@ -638,8 +638,9 @@ class Thresholds(HarnessModel):
     # 8단계에서 `validated` **밖의** Finding 중 PoV를 더 시도할 수 **상한**. `0`이면 종전
     # 동작이다 — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다. 이 값을 올리면 그 밖에서도
     # 상위 몇 건을 더 시도한다(이슈 #386 ①의 후속).
-    # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박으로 판정한 것과 판정 호출이
-    # 실패해 버려진 것은 뺀다(반박된 Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`).
+    # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박으로 판정한 것만 뺀다(반박된
+    # Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`). ⏵ 2026-10-15 — 판정 호출이
+    # 실패해 버려진 것은 이제 든다(ADR 0015 결정 4 ⏵).
     # ⏵ 2026-10-11 — 보류(`need_evidence`)는 들고 정렬·지정에서 뒤다(이슈 #604).
     # 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
