@@ -151,8 +151,9 @@ import os
 import re
 import shutil
 import subprocess
+from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -186,6 +187,27 @@ SEMGREP_CONFIGS = ("/opt/semgrep-rules/c", "/opt/semgrep-rules/harness")
 # `index_output_path()` 하나다 — `adapters/index_graph.py`가 읽는다(이슈 #63).
 _INDEXER = "/opt/indexer.py"
 INDEX_FILE = "index.json"
+
+# 인덱서에 넘길 파일 목록. **명령줄에 안 싣고 scratch에 쓴다** - 호스트의 docker 명령줄이 파일
+# 수에 비례해 커지면 Windows `CreateProcess`의 상한(32,767자)에 걸린다: 소스 1,200개(37,274자)
+# 프로브가 `[WinError 206]`으로 죽었고(S20 Phase 15 감사가 이 Windows 호스트에서 낸 프로브 -
+# run ID 없음, 다시 재지 않았다), 그 `OSError`는 `ok=False`·exit 127이 되어 **인덱스 없이
+# run이 조용히 이어졌다.** 목록은 NUL로 구분한 경로들이다(공백·개행이 든 이름도 안 깨진다).
+#
+# 풀어 넘기는 일은 컨테이너 안에서 일어난다. `sh`가 아니라 `python3 -c`인 것은 이미지가 이미
+# `python3 /opt/indexer.py`로 도는 곳이라 새 전제가 없고, `xargs`는 목록이 길면 인덱서를 **여러
+# 번** 나눠 부르는데 인덱서는 한 번에 전체를 봐야 해서다(`index.json`이 호출마다 덮인다).
+# `os.execvp`라 인덱서의 종료 코드·stdout·stderr가 그대로 컨테이너의 것이 된다. 코드에 백슬래시·
+# 큰따옴표가 없다(`bytes(1)` = NUL) - Windows 명령줄 인용을 거쳐도 안 변한다.
+# 인자: `<목록 파일> <실행할 인자들...>` - 앞 인자 뒤에 목록의 경로가 이어 붙는다.
+#
+# 한계: 컨테이너 안 `execve`의 인자 상한(리눅스 기본 약 2MB)이다 - 경로 길이 60자 기준 수만 개.
+INDEX_LIST_FILE = "index-files.txt"
+_INDEX_LAUNCHER = (
+    "import os,sys;"
+    "fs=open(sys.argv[1],'rb').read().split(bytes(1));"
+    "os.execvp('python3',['python3',*sys.argv[2:],*map(os.fsdecode,filter(None,fs))])"
+)
 
 # 이미지에 구워 넣은 비대화형 gdb 명령 파일. pwndbg 같은 UI 확장을 기본 경로에 싣지 않는다.
 _GDB_SCRIPT = "/opt/gdb.batch"
@@ -228,12 +250,19 @@ UNENFORCED: dict[str, tuple[str, ...]] = {
 
 # 컴파일 대상으로 넘길 확장자. 헤더·파이썬은 clang에 직접 주지 않는다.
 #
+# **비교는 소문자로 내려서 한다**(`.CPP`·`.C`도 잡힌다) - `preprocess.classify`가 같은 방식이다.
+# 한쪽만 대소문자를 가리면 분류는 SOURCE인데 도구는 그 파일을 안 받는다(`_suffix`).
+# ⚠ `.C`(대문자)는 C++ 소스이고 소문자로 내리면 `.c`다 - 언어 판정은 `_is_cxx`가 원문 철자를 본다.
+#
+# C++의 다른 철자(`.cxx`·`.c++`·`.cp`)는 clang이 C++로 아는 확장자다. 헤더(`.hpp`·`.hh`·`.hxx`)와
+# `.tcc`는 `.h`와 같이 여기에 없다.
+#
 # **아래 `_INDEX_SUFFIXES`와 일부러 갈라져 있다. 합치면 build가 깨진다.**
 # `.inc`는 `#include`로 펼쳐지는 함수 본문 조각이라 **단독 컴파일이 되지 않는다.**
 # clang 계열(build·clang-tidy·asan·gdb)은 `target.c`만 주면 전처리가 `.inc`를 끌어오므로
 # 직접 줄 이유가 없고, 직접 주면 컴파일이 실패해 `ok=False`가 된다 —
 # **일어나지 않은 실패가 신호로 기록된다.**
-_COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
+_COMPILE_SUFFIXES = (".c", ".cc", ".cpp", ".cxx", ".c++", ".cp")
 
 # `_COMPILE_SUFFIXES` 중 C++인 것. 나머지가 C다.
 #
@@ -242,7 +271,7 @@ _COMPILE_SUFFIXES = (".c", ".cc", ".cpp")
 # 판정에서 빠지면 C++ 파일이 C 방언을 받아 clang이 거부한다 — 2026-08-25 실측
 # (`run_20260825_0001`)의 `invalid argument '-std=gnu17' not allowed with 'C++'` 5건이
 # 정확히 그것이다.
-_CXX_SUFFIXES = (".cc", ".cpp")
+_CXX_SUFFIXES = (".cc", ".cpp", ".cxx", ".c++", ".cp")
 
 # 인덱서(`index`)에만 넘길 확장자. tree-sitter는 **전처리를 하지 않아서** 갈라진다 —
 # `clang -fsyntax-only`를 쓰던 시절에는 전처리가 `#include`를 펼쳐 `.inc`를 자동으로
@@ -250,9 +279,17 @@ _CXX_SUFFIXES = (".cc", ".cpp")
 # 17KB를 못 본다. 그리고 **에러가 아니므로 "그 파일에 함수가 없다"와 구별되지 않는다.**
 #
 # **여기 있는 확장자는 전부 `tools/harness-tools/indexer.py`의 `_GRAMMARS`에도 있어야
-# 한다**(반대는 아니다 — `_GRAMMARS`는 아직 안 보내는 `.hpp`도 안다). 그 스크립트는
+# 한다**(`tests/test_indexer.py`가 부분집합을 문다). 그 스크립트는
 # 이미지 안에서 독립 실행되고 `src/`를 import 하지 않아 목록이 양쪽에 따로 존재한다 —
 # **어긋나면 예외가 아니라 `skipped`에 이름만 남고 조용히 빈 그래프가 나온다.**
+#
+# ⏵ **이 목록은 더 이상 `_COMPILE_SUFFIXES`를 포함하지 않는다.** 컴파일 쪽에 `.cxx`·`.c++`·`.cp`가
+# 들어왔는데 인덱서 문법 표(`_GRAMMARS`)에는 없고, 그 스크립트는 이미지 `harness-tools:v3`에 sha로
+# 핀되어 있어 못 고친다. 그래서 **인덱서가 파싱하는 확장자만 직접 적는다** - 보내 봐야 `skipped`에
+# 이름만 남는다. 같은 이유로 `.hpp`는 보내고(`_GRAMMARS`에 있다) `.hh`·`.hxx`는 안 보낸다.
+# ⚠ **인덱서는 대소문자를 가린다**(`path.suffix not in _GRAMMARS`) - `.CPP`·`.H`는 컴파일 대상이지만
+# 인덱스에는 안 들어간다. 대소문자·나머지 C++ 철자를 인덱스에 넣으려면 인덱서와 이미지를 올려야 한다
+# (`_BAKED_INDEXER_SHA256`).
 #
 # **`.h`도 보낸다(#63, index-v2).** 매크로·타입 정의의 대부분과 헤더 `static inline` 함수가
 # 거기 있어서, 안 보내면 NE resolver가 쓸 조회 표가 비고 슬라이스가 헤더 함수에 걸칠 때
@@ -261,10 +298,15 @@ _CXX_SUFFIXES = (".cc", ".cpp")
 # `[]`)을 내고, 프로세스 경계를 넘는 확장자 목록이 하나 더 생긴다. 헤더는 여전히 clang에
 # 직접 주지 않는다 — 단독 컴파일 대상이 아니다(`_COMPILE_SUFFIXES`).
 #
+# ⚠ `tools/harness-tools/indexer.py` ~212줄의 주석(*"`.hpp`는 알지만 아직 넘어오지 않는다"*)은
+# **낡았다** - 지금은 이 목록이 `.hpp`를 보낸다. 그 파일은 이미지 sha 핀
+# (`_BAKED_INDEXER_SHA256`)이라 주석 한 줄도 못 고친다 - 이 줄이 정정이다.
+# 인덱서가 안 받는 SOURCE는 로그 머리의 `# 인덱서 미전달: …`이 센다.
+#
 # ⚠ **대상 트리 밖의 헤더는 여전히 안 온다** — 인덱서는 `sources(workdir)`(대상 트리)만 받는다.
 # 평가 표본의 `build_context/generated_headers`(설정 매크로)는 슬라이서만 `-I`로 본다
 # (`slicer_compile.py`의 generated_headers).
-_INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc", ".h")
+_INDEX_SUFFIXES = (".c", ".cc", ".cpp", ".inc", ".h", ".hpp")
 
 # 컴파일 방언. **clang을 쓰는 모든 도구가 같은 값을 쓴다 — 단 그 규칙은 언어 안에서만
 # 성립한다.**
@@ -289,6 +331,13 @@ _INDEX_SUFFIXES = (*_COMPILE_SUFFIXES, ".inc", ".h")
 # 방언이 다르고 `compile_commands.json`이 있으면 그쪽을 따라야 한다 — 그 시점에
 # budgets/config로 옮긴다. **`_include_args()`도 같은 범주다**(이슈 #74).
 _STD_ARGS = {"c": "-std=gnu17", "c++": "-std=gnu++17"}
+
+# 언어를 명시하는 `-x`. **clang이 확장자 표로 언어를 고르게 두지 않는다.** 그 표는 대소문자를 가려
+# `.Cxx`·`.Cc`처럼 표에 없는 철자는 컴파일 입력이 아니라 링커 입력으로 읽힐 수 있고, 그러면 컴파일
+# 없이 exit 0이 나와 가짜 build 성공이 된다(검토에서 지적, clang 동작은 미실측).
+# `_by_language`가 이미 소스를 언어별로 가르므로 그룹마다 `-x <언어>`를 소스 목록 앞에 둔다.
+# `_STD_ARGS`와 같은 축이다.
+_X_ARGS = {"c": ["-x", "c"], "c++": ["-x", "c++"]}
 
 # semgrep이 예외로 죽었는지 보는 표지. `--json`이 stdout만 바꾸므로 크래시 흔적은
 # 여전히 stderr에 남는다(이번 진단을 가능하게 한 것도 그 stderr다).
@@ -636,6 +685,11 @@ class Command:
     cwd: str
     image: str | None = None
     needs_input: bool = False
+    # 이 명령이 돌기 전에 scratch에 쓸 파일: (파일 이름, 바이트). 명령줄에 못 싣는 큰 입력용이다
+    # (`INDEX_LIST_FILE`). 컨테이너 안에서는 `{SCRATCH}/<이름>`이다.
+    scratch_files: tuple[tuple[str, bytes], ...] = ()
+    # 이 명령 앞에 로그 머리로 남길 줄(`# …`). 명령줄에 안 보이는 사실(인덱서가 안 받은 소스)용이다.
+    notes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -751,7 +805,8 @@ def plan(
             Command(
                 [
                     "clang-tidy", "--quiet", "--warnings-as-errors=*",
-                    *sources_, "--", _STD_ARGS[language], *_include_args(cwd),
+                    *sources_, "--", *_X_ARGS[language], _STD_ARGS[language],
+                    *_include_args(cwd),
                 ],
                 cwd=cwd,
             )
@@ -762,13 +817,19 @@ def plan(
         # 결과는 scratch에 쓴다 — 대상 마운트는 읽기 전용이다. `--root`는 JSON에 담길
         # 경로를 마운트 기준 상대경로로 만들기 위한 것이고, 절대경로를 남기면 실행마다
         # 값이 달라져 재현성이 깨진다.
+        #
+        # ⏵ 소스 경로는 명령줄이 아니라 `INDEX_LIST_FILE`로 간다(그 상수 주석). 로그 머리의 `$ …`
+        # 줄에는 그래서 파일 이름들이 안 나오고 목록 파일 경로가 나온다 - 목록 자체는 호스트
+        # scratch(`{artifacts_root}/{run_id}/scratch/index/index-files.txt`)에 남는다.
+        listing = chr(0).join(compile_sources).encode("utf-8", "surrogateescape")
         return [
             Command(
                 [
-                    "python3", _INDEXER, "--out", f"{SCRATCH}/{INDEX_FILE}",
-                    "--root", MOUNT, *compile_sources,
+                    "python3", "-c", _INDEX_LAUNCHER, f"{SCRATCH}/{INDEX_LIST_FILE}",
+                    _INDEXER, "--out", f"{SCRATCH}/{INDEX_FILE}", "--root", MOUNT,
                 ],
                 cwd=cwd,
+                scratch_files=((INDEX_LIST_FILE, listing),),
             )
         ]
     if tool == "build":
@@ -779,7 +840,7 @@ def plan(
             Command(
                 [
                     "clang", "-c", "-g", "-O1",
-                    _STD_ARGS[language], *_include_args(cwd), *sources_,
+                    _STD_ARGS[language], *_include_args(cwd), *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             )
@@ -803,7 +864,7 @@ def plan(
                 [
                     "clang", "-fsanitize=address,undefined", "-fno-omit-frame-pointer",
                     "-g", "-O1", _STD_ARGS[language], *_include_args(cwd),
-                    "-o", binary, *sources_,
+                    "-o", binary, *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             ),
@@ -826,7 +887,8 @@ def plan(
             Command(
                 [
                     "clang", "-g", "-O0", "-fno-omit-frame-pointer",
-                    _STD_ARGS[language], *_include_args(cwd), "-o", binary, *sources_,
+                    _STD_ARGS[language], *_include_args(cwd), "-o", binary,
+                    *_X_ARGS[language], *sources_,
                 ],
                 cwd=SCRATCH,
             ),
@@ -1514,18 +1576,20 @@ class ContainerToolRunner:
         # 리터럴이 아니라 상수를 본다. 갈리면 인덱서가 조용히 `_COMPILE_SUFFIXES`를 받아
         # `.inc`가 빠지고, #66이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고
         # 17KB를 보지 않았다)가 그대로 재현된다.
-        suffixes = _INDEX_SUFFIXES if tool == INDEX_TOOL else _COMPILE_SUFFIXES
-        return plan(
+        candidates = sources(resolved)
+        commands = plan(
             tool,
             target=_in_container(self.root, resolved),
             compile_sources=[
-                _in_container(self.root, path)
-                for path in sources(resolved)
-                if path.suffix in suffixes
+                _in_container(self.root, path) for path in candidates if _wanted(tool, path)
             ],
             cwd=_in_container(self.root, resolved if resolved.is_dir() else resolved.parent),
             poc_target=self.poc_target,
         )
+        withheld = _withheld_note(tool, candidates)
+        if withheld is None:
+            return commands
+        return [replace(command, notes=(withheld,)) for command in commands]
 
     def _execute(
         self,
@@ -1560,6 +1624,19 @@ class ContainerToolRunner:
         steps: list[Step] = []
         for index, command in enumerate(commands):
             name = f"harness-{self.run_id}-{self._name_tag}-{evidence_id}-{index}"
+            # 명령줄에 못 싣는 입력(인덱서 파일 목록)을 컨테이너가 보는 scratch에 쓴다. 호스트
+            # 경로는 오류 문구에 안 싣는다 - `Evidence.error`는 관측으로 모델에 간다.
+            try:
+                _write_scratch_files(scratch, command.scratch_files)
+            except OSError as exc:
+                reason = exc.strerror or type(exc).__name__
+                return self._fail(
+                    evidence_id, tool, kind, args, 2, f"입력 파일을 scratch에 쓰지 못했다: {reason}"
+                )
+            # 로그 머리가 무엇을 읽혔는지 말한다 - 목록 파일은 명령줄에 안 실려서 이 줄이 없으면
+            # `digest`가 목록과 이어지지 않는다(같은 명령줄에 목록만 다른 두 run이 구별되지 않는다).
+            sections.extend(command.notes)
+            sections.extend(_scratch_file_line(name, data) for name, data in command.scratch_files)
             # `container_argv`는 입력을 받는 명령에 경로가 없으면 던진다(ADR 0014). 그것은
             # **배선 결함**이지 샌드박스 부재가 아니므로 `ToolRunner` 계약대로 Evidence로 낸다 —
             # 예외를 던지는 것은 Evidence조차 만들 수 없는 경우뿐이다.
@@ -1812,6 +1889,63 @@ def _include_args(cwd: str) -> list[str]:
     return [flag for directory in directories for flag in ("-I", directory)]
 
 
+def _write_scratch_files(scratch: Path, files: tuple[tuple[str, bytes], ...]) -> None:
+    """`write_input`과 같은 규칙으로 쓴다 - 있던 항목은 `unlink`하고 `xb`(`O_EXCL`)로 새로 만든다.
+
+    scratch는 RW 마운트라 말단 심링크를 따라가면 마운트 밖 파일을 덮는다(`write_input` docstring).
+    이름은 호출부(`plan`)가 정한 상수이고 입력에서 오지 않는다.
+    """
+    for name, data in files:
+        path = scratch / name
+        path.unlink(missing_ok=True)
+        with open(path, "xb") as handle:
+            handle.write(data)
+
+
+def _scratch_file_line(name: str, data: bytes) -> str:
+    """scratch에 쓴 목록 파일을 로그에 묶는 줄. 항목은 NUL로 가른다(`INDEX_LIST_FILE`)."""
+    entries = data.count(bytes(1)) + 1 if data else 0
+    return f"# scratch file {name}: {entries} entries sha256:{hashlib.sha256(data).hexdigest()}"
+
+
+def _withheld_note(tool: str, candidates: list[Path]) -> str | None:
+    """인덱서가 안 받은 소스를 확장자별로 센 줄. 없으면 `None`.
+
+    분류(`sources`)는 SOURCE로 읽었지만 `_INDEX_SUFFIXES`에 없어 보내지 않은 파일이다(`.hh`·`.cxx`·
+    `.CPP`…). 세지 않으면 그 파일들은 인덱스에서 이유도 개수도 없이 빠진다. 철자는 원문 그대로 센다.
+    """
+    if tool != INDEX_TOOL:
+        return None
+    counts = Counter(path.suffix for path in candidates if not _wanted(tool, path))
+    if not counts:
+        return None
+    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return "# 인덱서 미전달: " + " ".join(f"{suffix}×{count}" for suffix, count in ranked)
+
+
+def _wanted(tool: str, path: Path) -> bool:
+    """이 도구에 이 파일을 넘기는가. 인덱서는 **원문 철자**로, clang 계열은 소문자로 내려 가린다.
+
+    인덱서는 `path.suffix not in _GRAMMARS`로 대소문자를 가려 `.CPP`를 `skipped`로 버린다 -
+    그런 파일은 보내지 않는다(보내 봐야 이름만 남는다). clang 계열은 `.CPP`·`.C`를 컴파일 대상으로
+    받는다. 리터럴이 아니라 상수를 본다 - 갈리면 인덱서가 조용히 `_COMPILE_SUFFIXES`를 받아 `.inc`가
+    빠지고, #66이 기록한 실패(28바이트짜리 `#include` 한 줄만 분석하고 17KB를 보지 않았다)가
+    그대로 재현된다.
+    """
+    if tool == INDEX_TOOL:
+        return path.suffix in _INDEX_SUFFIXES
+    return path.suffix.lower() in _COMPILE_SUFFIXES
+
+
+def _is_cxx(source: str) -> bool:
+    """C++ 소스인가. 소문자로 내려 보되 **`.C`(대문자)만은 C++**이다.
+
+    내리면 `.c`가 되어 C 방언(`-std=gnu17`)을 받고 clang이 거부한다.
+    """
+    suffix = Path(source).suffix
+    return suffix.lower() in _CXX_SUFFIXES or suffix == ".C"
+
+
 def _by_language(compile_sources: list[str]) -> list[tuple[str, list[str]]]:
     """소스를 언어별로 가른다. 순서는 C 먼저, C++ 다음으로 고정한다(재현성).
 
@@ -1826,7 +1960,7 @@ def _by_language(compile_sources: list[str]) -> list[tuple[str, list[str]]]:
     """
     groups: dict[str, list[str]] = {"c": [], "c++": []}
     for source in compile_sources:
-        groups["c++" if source.endswith(_CXX_SUFFIXES) else "c"].append(source)
+        groups["c++" if _is_cxx(source) else "c"].append(source)
     return [(language, sources_) for language, sources_ in groups.items() if sources_]
 
 
