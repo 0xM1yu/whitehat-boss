@@ -77,6 +77,23 @@ def test_the_constant_pattern_reads_the_real_script() -> None:
     assert _CONST.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
 
 
+# 감시자 마감 기본값. 2026-10-12 run이 10시간 마감에 8단계 중간에서 끊겨(5단계 5h47m · 8단계 3h44m)
+# 24로 올렸다 - 여유를 둔 값이지 측정이 아니다. bash 없이 텍스트로 읽으므로 이 장비에서도 돈다.
+_GUARD_DEFAULT = re.compile(r'^MAX_HOURS="\$\{MAX_HOURS:-(\d+)\}"$', re.M)
+_GUARD_EXAMPLE = re.compile(r"MAX_HOURS=(\d+) setsid nohup bash tools/serve/guard\.sh")
+
+
+def test_the_guard_deadline_default_and_the_documented_command_agree_on_24() -> None:
+    guard = (ROOT / GUARD).read_text("utf-8")
+    portability = (ROOT / "docs/portability.md").read_text("utf-8")
+
+    assert _GUARD_DEFAULT.findall(guard) == ["24"]
+    assert _GUARD_EXAMPLE.findall(guard) == ["24"], "guard.sh 머리의 기동 예시"
+    assert _GUARD_EXAMPLE.findall(portability) == ["24"], "docs/portability.md의 기동 예시"
+    # 음성: 환경 변수 기본값을 든 다른 줄은 이 검출기에 안 걸린다.
+    assert _GUARD_DEFAULT.search('MIN_AVAIL_GIB="${MIN_AVAIL_GIB:-12}"') is None
+
+
 # 교대 순서 — 4 Scout → 5 Auditor → 7 Critic → 8 PoV(ADR 0009 「2026-09-29 제안」 절 3 · PoV 배선).
 _STAGE_ROLES = (
     ("scout_memory", "scout_boundary", "scout_injection"),
