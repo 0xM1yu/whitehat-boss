@@ -12,7 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
-from src.orchestrator.oracle_log import STATUS_NOT_REACHED
+from src.orchestrator.oracle_log import STATUS_NOT_REACHED, STATUS_SCORED
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import FindingState, PathStepKind
@@ -160,7 +160,7 @@ class Report:
         if final.get("poc_sha256"):
             parts.append(f"PoC sha256 {final['poc_sha256']}")
         pointer = ""
-        if final.get("status") == "scored":
+        if final.get("status") == STATUS_SCORED:
             ref = final.get("record_ref")
             pointer = f" (판정 값은 {ref})" if ref else " (판정 파일 없음)"
         return ["### 최종 PoC (채점기)", "", " · ".join(parts) + pointer, ""]
