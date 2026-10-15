@@ -336,7 +336,7 @@ def test_finalize_does_not_retry_a_4xx(ctx, status) -> None:  # noqa: ANN001, F8
     final = state.oracle_ledger.final
     assert final.status == oracle_log.STATUS_FAILED and final.calls == 1
     assert len(oracle.final_calls) == 1
-    assert _final_data(scripted)["finalize_calls"] == 1
+    assert "finalize_calls" not in _final_data(scripted)
     assert "finalize_calls" not in state.oracle_ledger.record()["final"]
     assert FIRST_KEYS.isdisjoint(state.oracle_ledger.record()["final"])
     assert FIRST_KEYS.isdisjoint(_final_data(scripted))
@@ -349,7 +349,7 @@ def test_a_final_with_no_candidate_has_no_finalize_call_count(ctx) -> None:  # n
     scripted.oracle = FakeOracle()
     runner._finalize_oracle(scripted, state)
 
-    assert _final_data(scripted)["finalize_calls"] is None
+    assert "finalize_calls" not in _final_data(scripted)
 
 
 # --- 일시 실패의 정의 - 결정적 실패는 `status=None`이어도 다시 부르지 않는다 ---------------------
@@ -421,6 +421,31 @@ def test_a_single_finalize_call_keeps_the_cache_claim(ctx) -> None:  # noqa: F81
     warnings = " ".join(ledger.warnings())
     assert "fix 다리는 이전 판정의 캐시다" in warnings
     assert "재시도한 호출이라" not in warnings
+
+
+def test_the_reused_and_rate_limited_warnings_say_what_happened(ctx) -> None:  # noqa: F811
+    oracle = ReadingOracle(
+        codes=(139, 0), vul_exit_code=139, vul_errors={2: _http(429), 3: _http(429)}
+    )
+
+    _, state = _run(ctx, oracle, [])
+
+    warnings = " ".join(state.oracle_ledger.warnings())
+    assert "그중 1건은 채점기 레이트리미트(HTTP 429)다" in warnings
+    assert "모델이 submit한 PoC의 제출은 한 번 기다려 다시 낸 뒤에도 429면 여기 센다" in warnings
+    assert "최종 후보 1건은 지정 가능 재제출이 실패해" in warnings
+    assert "앞선 중간 제출(같은 바이트)을 이어받았다" in warnings
+
+
+def test_a_retried_vul_submission_warns_that_its_cache_flag_is_unknown(ctx) -> None:  # noqa: F811
+    # 앞선 중간 제출이 없으니 이 바이트의 첫 제출이 재시도한 호출이다 - `cached`를 못 가린다.
+    scripted, state, finding = _twin_setup(ctx, FakeOracle(vul_errors={0: _http(503)}))
+
+    _submit(scripted, state, finding, b"A", designatable=True)
+    runner._finalize_oracle(scripted, state)
+
+    warnings = " ".join(state.oracle_ledger.warnings())
+    assert "vul 다리는 재시도한 호출이라" in warnings
 
 
 # --- 장부 - 이어받은 행은 서버 호출이 아니다 ----------------------------------------------
