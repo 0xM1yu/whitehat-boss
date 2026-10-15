@@ -812,7 +812,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 아홉이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다 · ⏵ 2026-10-15 — `submitted_over_rescued`가 그 바로 뒤에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 전순서가
   갈랐다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓿′제출된 후보 → 구제된 중간 gen(⏵ 2026-10-15) ⓪Critic 판정
-  (uphold → 미경유 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  (uphold → 미경유·판정 호출 실패 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
