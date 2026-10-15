@@ -80,7 +80,7 @@
 | D21 | ~~토큰 계상이 실서빙 실측보다 1.8배 과소다~~ (서빙 로컬 카운터는 `approx`지만 묶는 자리가 모두 여유 · 실 토크나이저 PR #31은 ATOM 증명뿐 · 미실측 병기 · 캡슐 예산은 그 여유 밖) | 닫힘 | [본문](open-questions/D/D21.md) |
 | D22 | **`callers`가 사실 블록 최상위 키로 고정돼 있어 안 본 것을 "0건"으로 말한다** | 열림 | [본문](open-questions/D/D22.md) |
 | D23 | ~~`Evidence.location`을 semgrep 첫 히트만 채운다(#248) — 신호 1건당 Evidence·clang-tidy 위치가 남았다~~ (등급 영향 0 · 잔여는 순서 해상도뿐 · 위치 불일치는 #563) | 닫힘 | [본문](open-questions/D/D23.md) |
-| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 256은 정한 값) | 닫힘 | [본문](open-questions/D/D24.md) |
+| D24 | ~~후보 1건당 토큰·시간을 한 번도 재지 않아~~ 2026-08-23부터 쟀다 — ~~`candidate_max`에 근거가 없는 것은 그대로~~ (닫힘 · 실서빙 Auditor로 쟀다 · 정한 값 — 10-15 8로 낮춤) | 닫힘 | [본문](open-questions/D/D24.md) |
 | D25 | ~~`queue_maxsize`를 소비하는 코드가 후보 경로에 없다~~ | 닫힘 | [본문](open-questions/D/D25.md) |
 | D26 | ~~6단계 통과 조건(E2 = `path ∧ graph ∧ unblocked`)과 8단계 진입 조건(`repro_spec`)이 서로를 배제한다~~ | 닫힘 | [본문](open-questions/D/D26.md) |
 | D27 | ~~장부 `cached_tokens`가 실서빙과 Fake에서 역전돼 있다~~ (실서빙 프로필에 Fake 좌석 없음 · 서빙 장부가 서버 적중과 같은 방향 · 정량 대조 미실측) | 닫힘 | [본문](open-questions/D/D27.md) |
@@ -146,16 +146,16 @@
 | D88 | ~~러너가 HTTP 400을 전부 크기 거절로 읽는다~~ (문구로 가르고 비크기 400은 첫 건 정지 · 성공 0 백스톱으로 해소) | 닫힘 | [본문](open-questions/D/D88.md) |
 | D89 | ~~슬라이스에 참조 `#define` 상수값이 없어 Scout가 오버플로류를 판정 불가~~ (전제 소멸 — Auditor 입력이 정의 블록을 싣는다 · v4 Scout 요청의 전달과 오버플로류 miss는 미측정) | 닫힘 | [본문](open-questions/D/D89.md) |
 | D90 | ~~Case A 후보 상한이 `method.id` 순서로 잘려 강한 앵커의 GT 함수가 굶는다~~ (정렬 #324 · 서빙 대상 Case A 196 ≪ 상한 4000 · cap 상향은 실험팀 · 서빙 잔여는 열린 #467) | 닫힘 | [본문](open-questions/D/D90.md) |
-| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (recall 측정은 실험팀 범위 · 하위부류 효과 미실측 · 도구 결함·서빙 miss는 열린 #467·#377) | 닫힘 | [본문](open-questions/D/D91.md) |
+| D91 | ~~앵커 패턴이 프레임워크 싱크·free 래퍼·복합대입·프로젝트 리더를 못 잡아 GT를 놓친다~~ (recall 측정은 실험팀 범위 · 하위부류 효과 미실측 · 서빙 miss는 열린 #467 · #377은 10-15 닫힘) | 닫힘 | [본문](open-questions/D/D91.md) |
 | D92 | **gdb ToolRunner의 근거 종류·실행 판정·ptrace 권한을 정한다** | 열림 | [본문](open-questions/D/D92.md) |
 | D93 | **hybrid 검색의 후보 풀이 저장소 앞쪽 400조각이라 큰 저장소에서 대상 근처 코드가 후보에 안 든다** | 닫힘 | [본문](open-questions/D/D93.md) |
 | D94 | ~~Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다~~ (level-3 recall 손실은 실험팀 범위 · main_26·27 미실측 · 서빙 miss는 열린 #467) | 닫힘 | [본문](open-questions/D/D94.md) |
 | D95 | ~~Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수가 빠진다~~ (닫힘 · 옵션 넷이 서빙에서 켜졌다 · 남은 s500 전후 재측정은 FT 데이터 쪽) | 닫힘 | [본문](open-questions/D/D95.md) |
 | D96 | ~~슬라이스 일부가 Scout 입력 몫보다 커서 Scout가 받을 수 없다 (Case B 역추적 꼬리)~~ (하네스 트림 #375 가동 · 서빙 트림 0건 · 슬라이서 몫은 실험팀) | 닫힘 | [본문](open-questions/D/D96.md) |
-| D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
+| D97 | ~~벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다~~ ((b) 우선순위 구현 · 효과 미실측) | 닫힘 | [본문](open-questions/D/D97.md) |
 | D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
-| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97, D96은 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
+| D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97·D96, 둘 다 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |
 | D101 | **로더가 슬라이스의 `analysis`를 버리고 `degraded`는 Scout에만 실어, 절단·역추적 경계 신호가 Auditor 입력에 안 닿는다** | 열림 | [본문](open-questions/D/D101.md) |
 | D102 | ~~`auditor_definitions`가 본문의 모든 식별자로 정의를 조회해 다른 파일 정의를 끌어온다~~ (닫힘 · #444가 조회 키를 고쳤다 · 오탐 4건·타 저장소 재생은 미실측 · 정의 오염 잔여는 추적 없음) | 닫힘 | [본문](open-questions/D/D102.md) |
 | D103 | **인덱스 조회가 비제품 코드를 경로 이름으로만 가른다 -> include로 닿는 정의로 좁혀야 한다** | 부분 | [본문](open-questions/D/D103.md) |

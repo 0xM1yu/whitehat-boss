@@ -32,6 +32,7 @@ from slicer_candidates import CASE_RANK, DEFAULT_CASE_ORDER
 from slicer_checkpoint import Checkpoint, digest
 from slicer_claims import ClaimQueue
 from slicer_compile import generated_header_dirs, resolve_compilation_database
+from slicer_description import description_tokens, matching_files
 from slicer_errors import QueryError  # re-exported: callers and tests use slicer.QueryError
 from slicer_export import export_sources
 from slicer_pipeline import SlicingStages
@@ -564,6 +565,8 @@ class Slicer(SlicingStages):
         # #377 (b): repo-relative files whose candidates are sliced first (--priority-files) --
         # inside each case under the default `ba`, ahead of the whole rest under `ab`.
         self.priority_files: set[str] | None = None
+        # Which flag(s) built that set, for the stderr warning only (not in the contract).
+        self.priority_source = "--priority-files"
         # --skip-candidates: candidate keys this process does not query (not part of the contract).
         self.skip_keys: frozenset[str] = frozenset()
         # --priority-case-a: that list also steers WHICH Case A methods exist (candidates_a_query),
@@ -1022,13 +1025,23 @@ def parser() -> argparse.ArgumentParser:
         "their case under the default --case-order ba (a listed Case A still runs after every "
         "Case B), ahead of all unlisted candidates under ab",
     )
+    # #377 (b): the task description (CyberGym description.txt) picks files for the same
+    # priority set. Order only, like --priority-files; never turns on --priority-case-a.
+    result.add_argument(
+        "--description", type=Path, help="one text file, the task description: repo C/C++ files "
+        "whose name without extension is an identifier (4+ characters) in it are added to the "
+        "--priority-files set (union). Matches nothing -> the order is the same as without it. "
+        "Part of the run contract (settings.description_sha256); shards and --resume pass the "
+        "same file",
+    )
     # Unlike --priority-files alone this is not order only: it changes which Case A candidates
     # exist, so it is part of the run contract (settings.priority_case_a).
     result.add_argument(
-        "--priority-case-a", action="store_true", help="with --priority-files: the list also "
-        "steers Case A discovery -- a method defined in a listed file is ranked ahead of the "
-        "rest before CASE_A_CANDIDATE_CAP and skips CASE_A_CALL_LIMIT (it still needs a body and "
-        "a parameter). Changes WHICH Case A candidates exist, not only their order",
+        "--priority-case-a", action="store_true", help="with --priority-files or --description: "
+        "the priority set (their union) also steers Case A discovery -- a method defined in a "
+        "listed file is ranked ahead of the rest before CASE_A_CANDIDATE_CAP and skips "
+        "CASE_A_CALL_LIMIT (it still needs a body and a parameter). Changes WHICH Case A "
+        "candidates exist, not only their order",
     )
     # Which case is sliced first; the default is `ba`, Case B first. The candidate set and every
     # candidate_key stay the same, but ids are numbered after the sort: ids, slices[] order,
@@ -1213,6 +1226,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.priority_files and args.export_only:
         # Export reads the order the checkpoint was bound with; a list here would change nothing.
         cli.error("--priority-files has no effect with --export-only")
+    if args.description and args.export_only:
+        cli.error("--description has no effect with --export-only")
     if args.skip_candidates and (args.export_only or args.prepare_only):
         cli.error("--skip-candidates has no effect with --export-only or --prepare-only")
     skip = frozenset()
@@ -1221,8 +1236,8 @@ def main(argv: list[str] | None = None) -> int:
             skip = read_skip_keys(args.skip_candidates)
         except (OSError, UnicodeError) as exc:
             cli.error(f"--skip-candidates unreadable: {exc}")
-    if args.priority_case_a and not args.priority_files:
-        cli.error("--priority-case-a needs --priority-files")
+    if args.priority_case_a and not (args.priority_files or args.description):
+        cli.error("--priority-case-a needs --priority-files or --description")
     if args.import_include_root and args.compile_commands:
         # The database carries each file's real include paths, and the pair was not measured.
         cli.error("--import-include-root cannot be combined with --compile-commands")
@@ -1232,10 +1247,24 @@ def main(argv: list[str] | None = None) -> int:
             priority = read_priority_files(args.priority_files, args.repo)
         except (OSError, UnicodeError) as exc:
             cli.error(f"--priority-files unreadable: {exc}")
-        if args.priority_case_a and not priority:
-            # A list of notes and blank lines: discovery would be the default one while the result
-            # says it was steered (settings.priority_case_a is true).
-            cli.error("--priority-case-a needs a --priority-files that names a file")
+    description_sha256 = None
+    if args.description:
+        if not args.description.is_file():
+            cli.error(f"--description is not a file: {args.description}")
+        try:
+            raw = args.description.read_bytes()
+        except OSError as exc:
+            cli.error(f"--description unreadable: {exc}")
+        # Prose, not bytes that matter: a stray Latin-1 byte must not stop the run (the runner's
+        # read_description does the same). The sha256 below is of the raw bytes.
+        tokens = description_tokens(raw.decode("utf-8-sig", errors="replace"))
+        description_sha256 = hashlib.sha256(raw).hexdigest()
+        priority = (priority or set()) | matching_files(tokens, args.repo)
+    if args.priority_case_a and not priority:
+        # A list of notes and blank lines, or a description that names no file: discovery would be
+        # the default one while the result says it was steered (settings.priority_case_a is true).
+        cli.error("--priority-case-a needs a --priority-files that names a file "
+                  "(or a --description that matches one)")
     if args.cpg and (not args.checkpoint or not args.resume or args.export_only):
         # The shard must start from the prepared checkpoint: its discovery is what makes every
         # shard slice the same candidate list, and the run contract checks it is the same repo.
@@ -1336,8 +1365,15 @@ def main(argv: list[str] | None = None) -> int:
         # settings are the same as before the flag. (Its run_signature is not: code_hashes covers
         # slicer*.py, and this file changed.)
         **({"cases": args.cases} if args.cases != "AB" else {}),
+        # Same for --description: the files it picked are already in priority_files, this pins the
+        # text, so a shard or a resume given another description (or none) is refused.
+        **({"description_sha256": description_sha256} if description_sha256 else {}),
     }
     job.priority_files = priority
+    job.priority_source = " + ".join(
+        flag for flag, given in (("--priority-files", args.priority_files),
+                                 ("--description", args.description)) if given
+    ) or job.priority_source
     job.skip_keys = skip
     job.priority_case_a = args.priority_case_a
     job.import_include_root = args.import_include_root
