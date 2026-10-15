@@ -40,14 +40,19 @@
 command: [bash, tools/serve/swap-remote.sh]
 
 servers:
-  # --- 4단계 Scout 쌍 — 같이 뜬다(한 번에 하나씩 기동). util 합 0.90 = Auditor가 뜬 값 ---
+  # --- 4단계 Scout — 서버 하나다 ---
   # KV는 계산값이다: util × 95.01 − 가중치+non-torch(2026-09-24 ATOM 실측) − 활성 3.76 GiB(vast Auditor 실측 —
-  # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV. 두 번째 기동은 첫 서버가 잡고 남은 자리에서 자기 몫을 잡는다.
-  seccoderx-8b:
-    # 0.35 × 95.01 = 33.25 − 16.05 − 3.76 ≈ 13.4 GiB → 144 KiB/토큰이면 ≈98k 토큰 = 창의 2.4배.
-    # 준비 상한 400 s = ATOM 132 s × 3(참고 — vast 미실측, 첫 기동은 16.4 GB 다운로드가 더 붙는다).
-    # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 콜드 155 s(상한 400 안) · 따뜻한 31·26·25(n=3). 위 「vast 미실측」은 낡았다.
-    util: 0.35
+  # 더 큰 모델의 값이라 상한으로 뺐다) ÷ 토큰당 KV.
+  # ⏵ 2026-10-14 — `scout_boundary`가 `qwen3-14b`로 옮겨 쌍이 하나가 됐다(`seccoderx-8b`는 로스터에서
+  #   내려왔다 — PROJECT-CONTEXT.md §1). 그 전에는 둘이 같이 떠서 util 합이 0.90이었다(0.35 + 0.55).
+  #   남은 0.35는 어디에도 안 줬다 — 단독 기동의 KV를 다시 재지 않았으므로 올릴 근거가 없다(CLAUDE.md §0).
+  #   그 키의 기동 실측(콜드 155 s · 따뜻한 31·26·25)은 2026-10-11 보고서 §2에 남아 있다.
+  #   앵커 `&vllm_env`를 선언하는 자리도 그 키에서 아래 `qwen3-14b`로 옮겼다.
+  qwen3-14b:
+    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창의 3.2배. memory·boundary·injection
+    # 세 역할이 이 한 서버를 쓴다(⏵ 2026-10-15 — 「두 역할이 써서 쌍 중 큰 몫」이었다. 0.55는 쌍이던 때의 몫 그대로다). 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
+    # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 따뜻한 25·30·30·30 s(n=4). 위 「vast 미실측」은 낡았다.
+    util: 0.55
     max_num_seqs: 8
     max_model_len: 40960
     extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
@@ -58,20 +63,7 @@ servers:
       NCCL_SOCKET_IFNAME: lo
       GLOO_SOCKET_IFNAME: lo
     probe: chat
-    # 2026-10-11 콜드 155 s(n=1 · 내려받기 포함)로 상한 400 안 — 선취 효과는 이 좌석에서 분리 불가(`tools/serve/prefetch-weights.sh` · #571).
-    ready_timeout_s: 400
-
-  qwen3-14b:
-    # 0.55 × 95.01 = 52.26 − 28.27 − 3.76 ≈ 20.2 GiB → 160 KiB/토큰이면 ≈133k 토큰 = 창의 3.2배. memory·injection
-    # 두 역할이 이 한 서버를 써서 쌍 중 큰 몫을 준다. 준비 상한 550 s ≈ ATOM 181 s × 3(참고 — vast 미실측).
-    # ⏵ 2026-10-12 — vast 실측(같은 보고서 §2): 따뜻한 25·30·30·30 s(n=4). 위 「vast 미실측」은 낡았다.
-    util: 0.55
-    max_num_seqs: 8
-    max_model_len: 40960
-    extra_args: [--enforce-eager, --enable-prompt-tokens-details, --reasoning-parser, deepseek_r1]
-    env: *vllm_env
-    probe: chat
-    # 선취 전제는 같다(`tools/serve/prefetch-weights.sh`) — 콜드 기동이 이 상한을 넘는지는 미실측이다(#571 · 2026-10-11 KST
+    # 이 상한은 가중치를 미리 받아 둔 기동을 전제한다(`tools/serve/prefetch-weights.sh` — 아래 `qwen3.8-27b` 행의 같은 주석) — 콜드 기동이 이 상한을 넘는지는 미실측이다(#571 · 2026-10-11 KST
     # `swap.log`엔 따뜻한 25·30 s뿐이고 이 좌석의 콜드 교대는 끊겨 ready 줄이 없다). 콜드 실측은 qwen3-14b `run_20261010_0001` 하나(n=1)다 —
     # 원격 로그 `qwen3-14b.run_20261010_0001.20261010T175755Z.log`(저장소 밖 · 로컬 회수본)의 :25 가중치 내려받기 261.476 s ·
     # :41 모델 로딩 총 270.037 s(내려받기 포함 — 순수 가중치 읽기는 :40의 6.58 s). ⏵ 2026-10-12 — 「로드 270 s」는 오기였다(총시간).

@@ -153,7 +153,11 @@ def test_without_loop_the_ssh_argv_is_the_old_one_plus_the_two_keepalive_options
 ) -> None:
     done = _run(tmp_path, TUNNEL)
     assert done.returncode == 255, done.stderr  # exec — ssh의 종료 코드가 그대로 나온다
-    ports = (8000, 8001, 8002, 8003, 8006)
+    # ⏵ 2026-10-14 — 한 칸씩 당겨졌다(그 전 8000 8001 8002 8003 8006). `scout_boundary`가
+    # `qwen3-14b`로 옮겨 Scout 서버가 둘에서 하나가 되었다 — PROJECT-CONTEXT.md §1.
+    # 이 셋은 `tools/serve/vast-tunnel.sh`의 `PORTS`를 손으로 비추고,
+    # `tests/test_remote_swap.py`가 그 목록과 registry 포트의 일치를 따로 잠근다.
+    ports = (8000, 8001, 8002, 8005)
     forwards = [x for p in ports for x in ("-L", f"127.0.0.1:{p}:127.0.0.1:{p}")]
     old = [
         "-N",
