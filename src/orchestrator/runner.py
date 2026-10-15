@@ -2341,8 +2341,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
 
 def _call_submit_vul(
     ctx: RunContext, poc: bytes, *, retry: bool
-) -> tuple[VulSubmission | None, Exception | None, int]:
-    """`submit_vul` 호출 - `(제출 결과, 마지막 실패, 호출 수)`. 둘 중 하나만 값이 있다.
+) -> tuple[VulSubmission | None, Exception | None, int, oracle_log.FirstFailure | None]:
+    """`submit_vul` 호출 - `(제출 결과, 마지막 실패, 호출 수, 첫 실패)`. 앞의 둘 중 하나만 값이 있고
+    첫 실패는 다시 불렀을 때(호출 수 2)만 있다 - 마지막 실패만 남으면 처음 원인이 사라진다.
 
     `retry`면(모델이 `submit`한 PoC의 제출) 일시 실패 뒤에 **한 번** 다시 부른다
     (`oracle_log.vul_retry_wait_s` - 429는 한도 창을 `ctx.sleep`으로 기다린 뒤, 5xx·연결/타임아웃
@@ -2356,15 +2357,19 @@ def _call_submit_vul(
     캐시(#385)」로 적힌다. 모르는 값은 모른다고 적는다(CLAUDE.md §0).
     """
     calls = 0
+    first: oracle_log.FirstFailure | None = None
     while True:
         calls += 1
         try:
             submission = ctx.oracle.submit_vul(poc)
-            return (submission if calls == 1 else replace(submission, cached=None)), None, calls
+            if calls > 1:
+                submission = replace(submission, cached=None)
+            return submission, None, calls, first
         except Exception as exc:  # 저장소 밖 서비스 - 호출부가 사유를 남긴다.
             wait = oracle_log.vul_retry_wait_s(exc) if retry and calls == 1 else None
             if wait is None:
-                return None, exc, calls
+                return None, exc, calls, first
+            first = oracle_log.first_failure(exc, wait)
             if wait:
                 ctx.sleep(wait)
 
@@ -2375,6 +2380,8 @@ def _submit_path_fields(attempt: oracle_log.VulAttempt) -> dict[str, TraceValue]
     fields: dict[str, TraceValue] = {}
     if attempt.submit_calls > 1:
         fields["submit_calls"] = attempt.submit_calls
+    if attempt.first_failure is not None:
+        fields |= attempt.first_failure.fields()
     if attempt.reused_intermediate:
         fields["reused_intermediate"] = True
     return fields
@@ -2455,7 +2462,7 @@ def _submit_vul_to_oracle(
             )
             state.oracle_ledger.add_attempt(attempt)
             return "oracle_vul=unavailable"
-        submission, failure, calls = _call_submit_vul(ctx, poc, retry=designatable)
+        submission, failure, calls, first = _call_submit_vul(ctx, poc, retry=designatable)
         if failure is not None:  # 저장소 밖 서비스 — 사유를 남기고 run은 계속한다.
             attempt = oracle_log.vul_failed(
                 finding.finding_id,
@@ -2464,6 +2471,7 @@ def _submit_vul_to_oracle(
                 max(0, ctx.monotonic_ms() - started),
                 designatable=designatable,
                 submit_calls=calls,
+                first_failure=first,
             )
             ctx.trace.emit(
                 EventKind.ORACLE_FAILED,
@@ -2490,7 +2498,11 @@ def _submit_vul_to_oracle(
             if earlier is not None:
                 state.oracle_ledger.add_attempt(attempt)
                 attempt = oracle_log.vul_reused(
-                    finding.finding_id, earlier, attempt.wall_ms, submit_calls=calls
+                    finding.finding_id,
+                    earlier,
+                    attempt.wall_ms,
+                    submit_calls=calls,
+                    first_failure=first,
                 )
                 ctx.trace.emit(
                     EventKind.ORACLE_SUBMITTED,
@@ -2537,6 +2549,7 @@ def _submit_vul_to_oracle(
                 max(0, ctx.monotonic_ms() - started),
                 designatable=designatable,
                 submit_calls=calls,
+                first_failure=first,
                 observation_exit_code=exit_code,
                 observation_error=(
                     oracle_log.OBSERVATION_NO_VERDICT
@@ -2887,6 +2900,7 @@ def _score(
     assert picked.poc is not None and picked.submission is not None
     started = ctx.monotonic_ms()
     calls = 0
+    first: oracle_log.FirstFailure | None = None
     while True:
         calls += 1
         try:
@@ -2899,6 +2913,7 @@ def _score(
             # 서버가 같은 `(agent_id, task_id, sha256)`의 제출을 캐시하고 판정 행은 신원으로 고른다
             # (어댑터 모듈 docstring). 4xx(429 포함)는 다시 내도 같은 답이라 바로 실패다.
             if calls == 1 and oracle_log.is_transient(exc):
+                first = oracle_log.first_failure(exc, 0.0)  # 기다리지 않고 바로 다시 부른다
                 continue
             return oracle_log.FinalAttempt(
                 status=oracle_log.STATUS_FAILED,
@@ -2908,6 +2923,7 @@ def _score(
                 error=type(exc).__name__,
                 error_detail=oracle_log.clip_error(exc),
                 calls=calls,
+                first_failure=first,
             )
         return oracle_log.FinalAttempt(
             status=oracle_log.STATUS_SCORED,
@@ -2916,6 +2932,7 @@ def _score(
             attempt=picked,
             outcome=outcome,
             calls=calls,
+            first_failure=first,
         )
 
 
@@ -2998,6 +3015,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
             error=final.error,
             # 지정한 후보가 없으면 `finalize`를 안 불렀다(`None`). 키 집합은 `status`와 무관하다.
             finalize_calls=final.calls,
+            # 호출 수가 2일 때만 첫 호출의 실패를 싣는다 - 한 번에 된 run과 키 집합이 같다.
+            **({} if final.first_failure is None else final.first_failure.fields()),
             record_ref=ledger.record_ref,
         )
 
