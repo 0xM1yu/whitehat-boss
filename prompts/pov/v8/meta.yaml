@@ -10,6 +10,8 @@
 #    구제는 **같은 응답 코드 계단 안에서** 제출된 후보보다 아래이고(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다 -
 #    `runner._designation_key`) **기대지 말라**고 적었다. 「크래시」는 prefix가 이미 정한 코드 순서의 첫 묶음이다(0·71·300·타임아웃·환경 코드는 아니다).
 # ⏵ 2026-10-15 리뷰 - 처음 판은 「제출된 후보보다 항상 아래」라 적어 거짓이었다(계단이 먼저다). v8은 어느 run에도 안 쓰여 같은 판 안에서 고쳤고 sha를 다시 적었다.
+# ⏵ 2026-10-15 (사용자 승인) - 하네스 쪽 「submit 없음」이 넓어졌다: 제출이 끝내 실패했거나 0바이트라 건너뛴 submit도 구제를 막지 않는다(`OracleLedger.rescued`). prefix 문장은
+#    「submit 없이 끝난 Finding」을 말하므로 여전히 참이고(좁게 참이다) 안 고쳤다 - 이 주석은 요청 바이트가 아니라 sha 핀 밖이다.
 # prefix의 나머지와 body는 v7과 바이트 동일이다 - 홉 줄·봉투·도구·DEF 규칙·source_options 선언은 안 바꿨다.
 # `hop_header: true`·`output_schema: PovActionNamed`는 v7과 같다.
 # 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다 - 없으면 `oracle_vul` 줄·출력 꼬리·`last_gen_*`이 **조용히 사라진다**

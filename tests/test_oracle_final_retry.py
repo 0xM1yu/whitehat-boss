@@ -219,15 +219,20 @@ def test_a_4xx_is_not_retried_and_still_falls_back_to_the_earlier_submission(ctx
 
 def test_without_an_earlier_submission_a_4xx_ends_in_no_candidate_and_no_retry(ctx) -> None:  # noqa: F811
     # 호출 0(중간 A)도 실패하면 이어받을 앞선 성공 제출이 없다.
+    # ⏵ 2026-10-15 (사용자 승인) - 끝내 실패한 `submit`은 제출자가 아니라서, 그 Finding의 성공한
+    # 크래시 중간 gen B(호출 1 · 139)가 구제돼 지정된다. 제출된 후보(`candidates`)는 여전히 0건이다.
     oracle = ReadingOracle(
         codes=(139, 0), vul_exit_code=139, vul_errors={0: _http(400), 2: _http(400)}
     )
 
     _, state = _run(ctx, oracle)
 
-    assert state.oracle_ledger.candidates == []
+    ledger = state.oracle_ledger
+    assert ledger.candidates == []
     assert len(oracle.vul_calls) == 3
-    assert state.oracle_ledger.final.reason == oracle_log.REASON_ALL_VUL_FAILED
+    assert [a.poc for a in ledger.rescued] == [b"A" * 9]
+    assert ledger.final.status == oracle_log.STATUS_SCORED and ledger.final.reason is None
+    assert oracle_log.was_rescued(ledger.final.attempt, ledger.attempts)
 
 
 def test_without_an_earlier_submission_a_transient_failure_retries_once_then_gives_up(

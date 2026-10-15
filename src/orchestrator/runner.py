@@ -2308,7 +2308,9 @@ def _run_pov(ctx: RunContext, state: _Accumulator, finding: Finding) -> None:
     ⏵ 2026-10-15 (ADR 0013 결정 1 개정) — `submit` 없이 끝난 Finding(위 사유와 `GATEWAY_ERROR`·
     `CONTEXT_OVERFLOW`·예산 중단 전부)의 그 중간 gen 중 **자기 `vul` 응답 코드가 크래시 계단인
     것**은 `OracleLedger.rescued`로 지정 풀에 든다 — 이 함수는 새 제출을 하지 않고
-    `_designate_final`이 장부에서 계산한다. `submit`한 Finding은 구제가 없다.
+    `_designate_final`이 장부에서 계산한다. 채점기 판정을 받은 `submit`이 있는 Finding은 구제가 없다
+    (⏵ 2026-10-15 사용자 승인 - 제출이 끝내 실패했거나 0바이트라 건너뛴 `submit`은 판정이 없어
+    「`submit` 없음」으로 센다).
     그 전에는 이 함수가 루프 반환값을 **버렸고**,
     바이트가 채점기로 갈 길이 없었다(`pov_poc/NNNN.poc`은 사람이 회수하는 파일이었다, #386 ①).
     """
@@ -2875,6 +2877,8 @@ def _designate_final(
     재시도되고, 그래도 실패하면 같은 finding이 앞서 같은 바이트를 중간 gen으로 성공시켰을 때 그
     제출을 이어받아 후보가 된다(`_submit_vul_to_oracle`). 지정은 그 후보를 다른 후보와 똑같이 본다 -
     읽는 응답 코드는 이어받은 제출의 것이고, 그 finding은 제출자라 구제 대상이 아니다.
+    ⏵ 2026-10-15 (사용자 승인) - 이어받지 못하고 끝내 실패한 `submit`(또는 0바이트라 건너뛴 것)의
+    finding은 제출자가 아니다: 그 finding의 크래시 계단 중간 gen은 구제된다.
 
     ⏵ **2026-10-11 — 위 「읽는 것을 제한한다」는 하네스 코드를 묶는 제약이다.** 어느 gen이
     후보가 되는지는 모델의 `submit`이 정하고(`poc_sha256`으로 앞선 gen을 지명하거나, 안 적으면
