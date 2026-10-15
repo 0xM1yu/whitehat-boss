@@ -34,6 +34,7 @@ def test_rank_is_exact_over_part_over_file_over_nothing() -> None:
     whole = description_match.description_tokens("crash in file_regexec today")
     assert rank(whole, "posix/other.c", "regexec") == 2
     assert rank(whole, "posix/other.c", "file_regexec") == 3
+    assert rank(whole, "posix/other.c", "file_open") == 0  # 확장 조각 `file`은 심볼 조각과 안 겨룸
     assert rank(whole, "posix/regexec.c", "helper") == 1  # 파일도 그 조각으로
     assert rank(TOKENS, "posix/other.c", "regexe") == 0  # 부분 문자열은 일치가 아니다
     assert rank(TOKENS, "REGEXEC.C", None) == 1  # 대소문자 무시, 심볼 없음(폴백)
@@ -44,13 +45,20 @@ def test_the_slicer_and_the_runner_agree_on_tokens() -> None:
     """`src`는 슬라이서를 import하지 않아 규칙이 두 벌이다 — 같은 토큰을 내야 한다."""
     assert slicer_description.STOPWORDS == description_match.STOPWORDS
     assert slicer_description.MIN_TOKEN == description_match.MIN_TOKEN
-    samples = (ARVO_1065, "", "ndpi_search_tcp() leaks; see Foo::bar and x86_64 [A_B]", "한글 only")
+    samples = (
+        ARVO_1065,
+        "",
+        "ndpi_search_tcp() leaks; see Foo::bar and x86_64 [A_B]",
+        "한글 only",
+        "return_value leaks in file_regexec",  # 불용어 조각 `return`은 둘 다 뺀다
+    )
     for text in samples:
         theirs = description_match.description_tokens(text)
         assert slicer_description.description_tokens(text) == theirs
         assert slicer_description.expand(theirs) == description_match._expand(theirs)
     assert "regexec" in slicer_description.expand(frozenset({"file_regexec", "return_value"}))
     assert "return" not in slicer_description.expand(frozenset({"return_value"}))  # 불용어 조각
+    assert "return" not in description_match._expand(frozenset({"return_value"}))
 
 
 def test_the_slicer_picks_repo_files_by_name_without_reading_them(tmp_path) -> None:

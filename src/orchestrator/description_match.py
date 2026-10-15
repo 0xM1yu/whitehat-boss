@@ -7,7 +7,7 @@
 """
 
 import re
-from functools import cache
+from functools import lru_cache
 from pathlib import PurePosixPath
 
 _IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -27,7 +27,7 @@ def description_tokens(text: str | None) -> frozenset[str]:
     return frozenset(t for t in found if len(t) >= MIN_TOKEN and t not in STOPWORDS)
 
 
-@cache
+@lru_cache(maxsize=8)
 def _expand(tokens: frozenset[str]) -> frozenset[str]:
     """토큰에 그 `_` 조각(4자 이상·불용어 아님)을 더한다 — 설명이 `file_regexec`를 통째로 써도
     `regexec`가 닿는다. 슬라이서의 `expand`와 같다."""
@@ -36,8 +36,12 @@ def _expand(tokens: frozenset[str]) -> frozenset[str]:
 
 
 def description_rank(tokens: frozenset[str], file: str, symbol: str | None) -> int:
-    """3 = 심볼 이름 전체가 설명의 토큰 · 2 = 심볼의 `_`·`::` 조각이 토큰(또는 그 조각) ·
-    1 = 파일 이름(확장자 뺀)이 토큰(또는 그 조각) · 0 = 없음. 클수록 앞선다."""
+    """3 = 심볼 이름 전체가 설명의 토큰 · 2 = 심볼의 `_`·`::` 조각이 설명의 (원) 토큰이거나 심볼
+    전체 이름이 토큰의 `_` 조각 · 1 = 파일 이름(확장자 뺀)이 토큰 또는 그 조각 · 0 = 없음.
+
+    **확장(토큰의 `_` 조각)은 「심볼 전체 이름」과 파일 이름에만 쓴다.** 심볼의 조각과는 원 토큰만
+    비교한다 — 설명의 `file_regexec`에서 나온 조각 `file`이 `file_open`을 2로 만들면 안 된다.
+    클수록 앞선다."""
     if not tokens:
         return 0
     wide = _expand(tokens)
@@ -46,6 +50,6 @@ def description_rank(tokens: frozenset[str], file: str, symbol: str | None) -> i
         if name in tokens:
             return 3
         # 토큰은 이미 4자 이상이라 조각 길이를 따로 보지 않는다. `::`는 C++ 한정 이름(`Foo::bar`).
-        if any(piece in wide for piece in re.split(r"_|::", name)):
+        if name in wide or any(piece in tokens for piece in re.split(r"_|::", name)):
             return 2
     return 1 if PurePosixPath(file.replace("\\", "/")).stem.lower() in wide else 0
