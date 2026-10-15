@@ -1638,6 +1638,120 @@ def test_priority_case_a_is_refused_with_a_list_that_names_no_file(repo, tmp_pat
     assert not out.exists()  # refused before any run state was written
 
 
+# #377 (b) / D97 -- --description: the task description names files for the same priority set.
+
+
+def description_file(tmp_path, text="A crash in main when parsing."):
+    path = tmp_path / "description.txt"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_description_prioritizes_the_file_it_names(monkeypatch, two_file_repo, tmp_path):
+    text = "A crash in main when parsing."
+    database = tmp_path / "state.db"
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--checkpoint", str(database), "--description", str(description_file(tmp_path, text)),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["matched_files"] == ["main.c"]
+    assert result["settings"]["priority_files"] == {"count": 1, "sha256": digest(["main.c"])}
+    assert result["settings"]["description_sha256"] == hashlib.sha256(text.encode()).hexdigest()
+    # order only: --priority-case-a is not turned on by the description
+    assert result["settings"]["priority_case_a"] is False
+    assert case_a_query(transport) == queries.candidates_a_query()
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["main.c", "a.c"]
+
+
+def test_description_is_united_with_priority_files(monkeypatch, two_file_repo, tmp_path):
+    listing = tmp_path / "priority.txt"
+    listing.write_text("a.c\n", encoding="utf-8")
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--priority-files", str(listing), "--description", str(description_file(tmp_path)),
+    )
+    assert code == 0, result.get("error")
+    assert result["settings"]["priority_files"] == {"count": 2, "sha256": digest(["a.c", "main.c"])}
+
+
+def test_a_description_that_names_no_file_leaves_the_order_alone(
+    monkeypatch, two_file_repo, tmp_path, capsys
+):
+    database = tmp_path / "state.db"
+    code, result, _ = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(), "--checkpoint", str(database),
+        "--description", str(description_file(tmp_path, "Something unrelated overflows.")),
+    )
+    assert code == 0, result.get("error")
+    assert result["priority"]["matched_files"] == [] and result["priority"]["files"] == 0
+    assert "matched no candidate" in result["measurement_notes"]["priority_files"]
+    assert "matched no candidate" in capsys.readouterr().err
+    with Checkpoint(database, resume=True) as store:
+        files = [c["entry"]["file"] for c in store.get("candidates")]
+    assert files == ["a.c", "main.c"]
+
+
+def test_without_a_description_the_settings_have_no_description_key(
+    monkeypatch, two_file_repo, tmp_path
+):
+    _, result, _ = run_cli(monkeypatch, two_file_repo, tmp_path, two_file_payloads())
+    assert "description_sha256" not in result["settings"]
+
+
+def test_description_must_be_one_readable_file(repo, tmp_path, capsys):
+    base = ["--repo", str(repo), "--out", str(tmp_path / "s.json")]
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--description", str(tmp_path)])
+    assert "--description is not a file" in capsys.readouterr().err
+    with pytest.raises(SystemExit):
+        slicer.main([*base, "--checkpoint", str(tmp_path / "state.db"), "--export-only",
+                     "--description", str(description_file(tmp_path))])
+
+
+def test_priority_case_a_accepts_a_description_that_matches_a_file(
+    monkeypatch, two_file_repo, tmp_path, capsys
+):
+    code, result, transport = run_cli(
+        monkeypatch, two_file_repo, tmp_path, two_file_payloads(),
+        "--description", str(description_file(tmp_path)), "--priority-case-a",
+    )
+    assert code == 0, result.get("error")
+    assert case_a_query(transport) == queries.candidates_a_query(
+        ["main.c"], two_file_repo.resolve().as_posix()
+    )
+    assert result["settings"]["priority_case_a"] is True
+    # a description that matches nothing steers nothing, so the flag is refused like an empty list
+    with pytest.raises(SystemExit):
+        slicer.main([
+            "--repo", str(two_file_repo), "--out", str(tmp_path / "s2.json"),
+            "--description", str(description_file(tmp_path, "Nothing named here.")),
+            "--priority-case-a",
+        ])
+    assert "or a --description that matches one" in capsys.readouterr().err
+
+
+def test_shards_with_and_without_a_description_are_not_merged(
+    monkeypatch, two_file_repo, tmp_path
+):
+    databases = []
+    for index, extra in enumerate(([], ["--description"])):
+        folder = tmp_path / f"shard{index}"
+        folder.mkdir()
+        databases.append(folder / "state.db")
+        if extra:
+            extra.append(str(description_file(folder)))
+        code, result, _ = run_cli(
+            monkeypatch, two_file_repo, folder, two_file_payloads(),
+            "--checkpoint", str(databases[-1]), "--shard", f"{index}/2", *extra,
+        )
+        assert code == 2, result.get("error")
+    with pytest.raises(ValueError, match="Shard mismatch on run_contract"):
+        merge_shards(tmp_path / "merged.db", databases)
+
+
 def test_resuming_without_the_priority_case_a_flag_is_a_contract_mismatch(
     monkeypatch, two_file_repo, tmp_path
 ):

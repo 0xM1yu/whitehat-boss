@@ -152,7 +152,7 @@
 | D94 | ~~Case A의 호출 1회 필터가 메모리를 쓰는(hot) 함수까지 버린다~~ (level-3 recall 손실은 실험팀 범위 · main_26·27 미실측 · 서빙 miss는 열린 #467) | 닫힘 | [본문](open-questions/D/D94.md) |
 | D95 | ~~Auditor 입력이 슬라이스가 지나간 함수만 붙여 판단에 필요한 옆 함수가 빠진다~~ (닫힘 · 옵션 넷이 서빙에서 켜졌다 · 남은 s500 전후 재측정은 FT 데이터 쪽) | 닫힘 | [본문](open-questions/D/D95.md) |
 | D96 | ~~슬라이스 일부가 Scout 입력 몫보다 커서 Scout가 받을 수 없다 (Case B 역추적 꼬리)~~ (하네스 트림 #375 가동 · 서빙 트림 0건 · 슬라이서 몫은 실험팀) | 닫힘 | [본문](open-questions/D/D96.md) |
-| D97 | **벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다 (시간·상한 아래 recall)** | 열림 | [본문](open-questions/D/D97.md) |
+| D97 | ~~벤치마크가 CyberGym Level 1인데 슬라이싱이 과제 설명을 안 쓴다~~ ((b) 우선순위 구현 · 효과 미실측) | 닫힘 | [본문](open-questions/D/D97.md) |
 | D98 | ~~Level 1은 재현 방법을 안 줘 Auditor가 repro_spec을 못 채우고 8단계가 아예 안 돈다~~ (합성 명세로 8단계가 돎 · validated 경유는 미실측 #612) | 닫힘 | [본문](open-questions/D/D98.md) |
 | D99 | **Auditor가 동적 분석 도구를 못 불러 취약 여부를 코드만으로 판정한다 — CoT SFT 궤적에 동적 근거가 없다** (⏵ 2026-10-04 「못 불러」는 낡았다 — `probe` 배선됨 · 남은 것은 본문) | 열림 | [본문](open-questions/D/D99.md) |
 | D100 | ~~후보 정렬이 비싼 Case A를 먼저 돌려, 정답 sink의 Case B가 wall 안에 못 잘리고 degraded로 남는다~~ (기본 `ba` = case 먼저로 해소 — 남은 처리량 한계는 D97, D96은 닫힘) | 닫힘 | [본문](open-questions/D/D100.md) |

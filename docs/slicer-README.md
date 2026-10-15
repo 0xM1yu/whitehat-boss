@@ -10,7 +10,7 @@ Python 3.11+ 표준 라이브러리만 사용하는 독립 C/C++ 슬라이서다
 [slicer_source.py](../tools/slicer/slicer_source.py), [slicer_pipeline.py](../tools/slicer/slicer_pipeline.py),
 [slicer_checkpoint.py](../tools/slicer/slicer_checkpoint.py), [slicer_export.py](../tools/slicer/slicer_export.py),
 [slicer_library.py](../tools/slicer/slicer_library.py), [slicer_compile.py](../tools/slicer/slicer_compile.py),
-[slicer_errors.py](../tools/slicer/slicer_errors.py), [slicer_claims.py](../tools/slicer/slicer_claims.py)를 함께 배포한다 — `tools/slicer/` 디렉터리째다. 서로를 이름으로 import(`import slicer_queries`)하고 실행 파일의
+[slicer_errors.py](../tools/slicer/slicer_errors.py), [slicer_claims.py](../tools/slicer/slicer_claims.py), [slicer_description.py](../tools/slicer/slicer_description.py)를 함께 배포한다 — `tools/slicer/` 디렉터리째다. 서로를 이름으로 import(`import slicer_queries`)하고 실행 파일의
 디렉터리가 import 경로 첫 칸이라서다. `tools/merge_slicer_shards.py`는 `tools/slicer/`를 자기 옆에서 찾고
 `tools/slice_sharded.py`는 저장소 레이아웃 그대로를 전제한다.
 후보별 질의(flows·context·backward)의 로직은 inventory 뒤에 **서버 세션당 한 번** 함수로 정의하고,
@@ -206,7 +206,7 @@ v1과 분석 의미 및 필드가 다르므로 `slice_version`은 `slice-v2`다.
 | `joern_version`, `joern_engine_config`, `server` | 실제 버전 명령, 엔진 설정, JVM 버전·프로세스·기동시각·heap 최대 바이트 |
 | `run_signature` | 원본 파일 bytes SHA-256 목록·절대경로·배포 코드 해시·설정·Joern 버전·계약 버전의 해시 |
 | `candidate_manifest` | 모든 후보의 ID·case·entry·정확한 selector·선정 이유·인자·anchor를 후보 키로 조회 |
-| `priority` | `--priority-files`를 줬을 때만. 목록 파일 수·후보가 있는 파일 수·1층 후보 수(우선 층의 크기 — 기본 `ba`에서는 앞에서 센 길이가 아니라 개수, 아래 「케이스 순서」)·전체 후보 수, 그리고 맞은/안 맞은 파일 이름(`matched_files`·`unmatched_files`, 각 최대 50개 — 사후 감사용). 아래 「우선 파일」 |
+| `priority` | `--priority-files`나 `--description`을 줬을 때만. 목록 파일 수·후보가 있는 파일 수·1층 후보 수(우선 층의 크기 — 기본 `ba`에서는 앞에서 센 길이가 아니라 개수, 아래 「케이스 순서」)·전체 후보 수, 그리고 맞은/안 맞은 파일 이름(`matched_files`·`unmatched_files`, 각 최대 50개 — 사후 감사용). 아래 「우선 파일」 |
 | `slices` | 완료한 후보를 클러스터링한 결과. 실패한 미완성 후보는 넣지 않음. ⚠ **`partial`과 `[]`의 조합은 두 가지를 담는다** — (가) CPG는 만들어졌고 슬라이스가 0건, (나) CPG 준비 중 StackOverflowError 로 **CPG 자체가 없다**. `status` 문자열만으로는 안 갈린다. **가르는 것은 `joern_engine_config`다** — (나)는 `null`이다(후보 카운터도 `null`). 비교표에 넣을지 정하는 쪽은 `status != "failed"` 가 아니라 그것을 본다 |
 | `shard` | `--shard I/N` 조각일 때만 `{index, count}`. 있으면 전체 결과가 아니다 — 아래 「한 repo를 샤드로 나누기」 |
 | `prepare_only` | `--prepare-only` 결과일 때만 `true`. 슬라이스 없음 -> 하네스 `run --slices`가 거부 |
@@ -485,11 +485,13 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   둘 다 순서를 따르므로 실패 없이 끝까지 돈 run에서만 목록 유무와 무관하게 같은 슬라이스. **상한이 걸린 표본(끊김·poison)에서
   켠/끈 run을 비교하면 「차이 없음」이 아니라 「표본이 다름」이다** -> 비교하지 않는다
 - **하네스(Scout)까지는 안 간다** -> 출력 `slices[]`는 **후보 ID 순**이고 우선 순서를 담지 않는다(아래 「우선 순서를
-  읽을 곳」). 러너는 `(-signal_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
+  읽을 곳」). 러너는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
   **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
   ([D97](open-questions/D/D97.md)의 선택지 (b))
+  - ⏵ 2026-10-15 D97 -> 러너는 이 목록을 여전히 안 읽는다(위 문장은 목록에 대해 참). 대신 러너 `_order_and_cut`이 **과제 설명**을 직접
+    읽는 정렬 항 `-desc_rank`를 받았다 -> 키는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`. 아래 「`--description`」
 - 우선 순서를 읽을 곳 -> 체크포인트의 `candidates` 목록(병합 체크포인트도 그대로)과, 후보 발견을 **스스로 한** run
   (`--export-only`도 `--cpg`도 아닌 run)의 `candidate_manifest` 삽입 순서. 이 순서는 `--case-order ba`면 우선 층 먼저가 아니라
   **케이스 먼저의 처리 순서**다 -> 아래 「케이스 순서」. ⚠ **발견 기록을 체크포인트에서 되읽은 결과의
@@ -517,7 +519,29 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
 - ⚠ 목록이 틀리면 정답 후보가 뒤로 밀린다 -> lwan 한 표본에서 첫 GT 슬라이스 171 -> 297초, 느린 장비에서는 900초 예산에
   GT 슬라이스 4 -> 1(**[D97](open-questions/D/D97.md) 관측 3**에서 온 수 · 2026-10-02 vast · run ID 없음 · 원자료 저장소 밖 · 여기서 재측정 안 함)
 
-⏵ **`--priority-case-a`**(`--priority-files`와 같이만 · 기본 꺼짐) -> 우선 파일 목록이 Case A **발견**도 이끈다. 위 목록이
+⏵ **`--description`**(D97 · #377 (b)) -> `--description <description.txt>`는 과제 설명 한 파일을 읽어 **우선 파일 집합**을 만든다.
+`--priority-files`와 같은 집합·같은 `prioritize()`를 타므로 위 우선 파일의 모든 성질(순서만 바꿈 · `--case-order` 의존 · 끊긴 표본 비교 금지)이 그대로다
+- 하는 일 -> 설명에서 식별자(`[A-Za-z_][A-Za-z0-9_]*`, 4자 이상, 소문자, 영어 기능어 몇 개 제외)를 뽑고, 저장소의 C/C++ 파일 중
+  **확장자 뗀 이름이 그 식별자와 같은 것**을 우선 파일로 더한다. 파일 이름만 보고 내용은 안 읽는다(심링크 안 따라감, `.git` 제외). `--priority-files`와
+  같이 주면 합집합이다. **디렉터리는 거부**한다(파일 하나만)
+- 하지 않는 일 -> `--priority-case-a`를 **자동으로 켜지 않는다**(후보 집합을 바꾸는 옵션이라). 함께 쓰려면 `--description d.txt --priority-case-a`로 직접 준다
+  -> 설명이 파일을 하나도 못 맞히면 빈 목록과 같이 거부한다. 심볼(함수 이름) 일치는 **슬라이서에 없다** — 러너 쪽 `-desc_rank`만 본다(아래)
+- 설명이 틀리거나 아무것도 안 맞으면 -> 우선 목록이 비어 `--priority-files`가 빈 목록일 때와 같다(stderr 한 줄 + `measurement_notes.priority_files`, 순서는 기본 그대로)
+- 실행 계약이다 -> `settings.description_sha256`(설명 파일 바이트의 sha256, 안 줬으면 키가 없다)과, 고른 파일이 든 `settings.priority_files`.
+  샤드·재개가 같은 `--description`을 안 주면 `Checkpoint mismatch: run_contract`/`Shard mismatch on run_contract`. `slice_sharded.py`는 `--` 뒤 인자를
+  준비·샤드에 모두 넘긴다. 손으로 `--resume --cpg`를 돌릴 때는 준비 때와 같은 파일을 다시 준다
+- 정답 자료 -> 입력은 설명 파일 하나다. `patch.diff`·`error.txt`에서 만든 설명을 주면 정답 누출이다(위 「목록의 출처」)
+- 러너 쪽 -> `run --description-file`로 이미 캡슐에 가는 같은 설명(`vuln_description`)을 `runner._order_and_cut`이 읽는다. 신호가 같은 후보 사이에서 심볼 이름
+  (이름 또는 `_`로 나눈 조각이 토큰 = 2) > 파일 이름(1) > 없음(0) 순으로 `candidate_max`(256) 컷에 먼저 든다. **후보는 줄이지 않는다.**
+  `target_plan` 이벤트의 `desc_symbol_matches`·`desc_file_matches`·`desc_matches_deferred`가 그 수를 남긴다. 토큰 규칙은 `src/orchestrator/description_match.py`와
+  이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
+- ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
+
+```bash
+python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkpoint /work/state.db   --description /work/task/description.txt
+```
+
+⏵ **`--priority-case-a`**(`--priority-files`나 `--description`과 같이만 · 기본 꺼짐) -> 우선 파일 목록이 Case A **발견**도 이끈다. 위 목록이
 처리 순서만 바꾸는 것과 달리 **어느 후보가 있는가**가 바뀐다
 - 하는 일 -> 목록의 파일에 정의된 메서드를 (가) `CASE_A_CANDIDATE_CAP` 앞에서 다른 것보다 먼저 뽑고(`api` 정렬이 목록 파일 ->
   write-context(hot) -> 나머지, 층 안은 CPG 순회 순서) (나) `CASE_A_CALL_LIMIT` 검사를 면제한다. 매개변수가 있고 본문이 있어야
@@ -532,8 +556,8 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   이어 붙인다(`joined_literal`)
 - 꺼짐이면(기본) 발견 질의가 이 옵션이 들어오기 전의 글자, 곧 본문 필터 커밋(`fef289e`)의 `candidates_a_query()`와 **바이트
   동일**하다(2026-10-04, 두 트리에서 질의를 불러 sha256 대조). main `176b492`의 질의와는 같지 않다 — 그 질의에는 본문 필터 줄(위 「본문이
-  있는 함수만 후보다」)이 없다. 목록 없이 주면 거부한다(`--priority-case-a needs
-  --priority-files`). 목록에 경로가 하나도 없어도(주석·빈 줄뿐) 거부한다 — 안 그러면 발견은 기본 글자인데 `settings.priority_case_a`는
+  있는 함수만 후보다」)이 없다. 목록(`--description`도 된다)
+  없이 주면 거부한다(`--priority-case-a needs --priority-files or --description`). 목록에 경로가 하나도 없어도(주석·빈 줄뿐) 거부한다 — 안 그러면 발견은 기본 글자인데 `settings.priority_case_a`는
   켜진 것으로 기록된다
 - 실행 계약이다 -> `settings.priority_case_a`. 샤드·재개가 같은 값을 안 주면 `Checkpoint mismatch: run_contract (differs in:
   settings.priority_case_a)`. `--cpg` 샤드는 준비 실행의 발견을 그대로 쓰므로 거기서는 효과가 없지만, 계약 때문에 `--priority-files`처럼
