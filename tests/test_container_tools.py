@@ -13,6 +13,7 @@ import importlib.util
 import json
 import shutil
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from src.adapters import container_tools
 from src.adapters.container_tools import (
     DEFAULT_IMAGE,
     INDEX_FILE,
+    INDEX_LIST_FILE,
     INDEX_TOOL,
     Command,
     ContainerToolRunner,
@@ -1186,6 +1188,12 @@ def test_clang_tools_never_receive_an_include_fragment(
     assert "/src/session_core.inc" not in argv
 
 
+def _index_list(tmp_path: Path) -> list[str]:
+    """인덱서에 넘긴 파일 목록 - 호스트 scratch에 남은 `INDEX_LIST_FILE`을 NUL로 쪼갠다."""
+    raw = (scratch_dir(tmp_path, RUN_ID, INDEX_TOOL) / INDEX_LIST_FILE).read_bytes()
+    return [name.decode("utf-8", "surrogateescape") for name in raw.split(bytes(1)) if name]
+
+
 def test_indexer_does_receive_the_include_fragment(
     tmp_path: Path, include_target: Path, spy: _Spy
 ) -> None:
@@ -1195,10 +1203,12 @@ def test_indexer_does_receive_the_include_fragment(
         "index", ToolArgs(argv=["index"], workdir="."), SANDBOX
     )
 
-    argv = spy.calls[0]
+    # 소스 경로는 명령줄이 아니라 목록 파일로 간다(`INDEX_LIST_FILE`).
+    listed = _index_list(tmp_path)
 
-    assert "/src/target.c" in argv
-    assert "/src/session_core.inc" in argv
+    assert "/src/target.c" in listed
+    assert "/src/session_core.inc" in listed
+    assert "/src/session_core.inc" not in spy.calls[0]
 
 
 def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _Spy) -> None:
@@ -1218,11 +1228,11 @@ def test_indexer_receives_headers_but_clang_tools_do_not(tmp_path: Path, spy: _S
     runner = _runner(tmp_path, root=root)
 
     runner.run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
-    index_argv = spy.calls[-1]
+    index_list = _index_list(tmp_path)
     runner.run("build", ToolArgs(argv=["build"], workdir="."), SANDBOX)
     build_argv = spy.calls[-1]
 
-    assert "/src/api.h" in index_argv
+    assert "/src/api.h" in index_list
     assert "/src/api.h" not in build_argv
     assert "/src/api.c" in build_argv
 
@@ -2091,3 +2101,146 @@ def test_compile_reason_folds_unicode_line_separators() -> None:
         assert "bad injected line" in reason, repr(separator)
         assert len(reason.splitlines()) == 1, repr(separator)
         assert separator not in reason
+
+
+# --- 인덱서 명령줄은 파일 수에 비례해 자라지 않는다 (Windows CreateProcess 32,767자) ---------
+
+_MANY = 5_000
+
+
+def _many_sources() -> list[str]:
+    return [f"/src/module_{i % 50:02d}/subdir/file_{i:05d}.c" for i in range(_MANY)]
+
+
+def test_index_command_line_does_not_carry_the_file_names() -> None:
+    """소스 1,200개(37,274자)로 `[WinError 206]`이 났다 - 명령줄에 이름이 없어야 개수와 무관하다.
+
+    `plan()`이 낸 인자 길이는 파일 수와 무관하고, 모든 경로는 `scratch_files`의 목록에 들어 있다.
+    """
+    sources = _many_sources()
+
+    (command,) = plan("index", target="/src", compile_sources=sources, cwd="/src")
+    ((name, listing),) = command.scratch_files
+
+    assert sum(len(arg) + 1 for arg in command.argv) < 1_000
+    assert not any(arg.startswith("/src/module_") for arg in command.argv)
+    assert name == INDEX_LIST_FILE
+    assert listing.decode("utf-8").split(chr(0)) == sources
+    assert f"/work/{INDEX_LIST_FILE}" in command.argv  # 컨테이너가 읽는 경로
+
+
+def test_the_docker_command_line_for_5000_sources_stays_short(tmp_path: Path, spy: _Spy) -> None:
+    """어댑터 경로 전체: 호스트가 실제로 띄우는 docker argv와 scratch의 목록 파일."""
+    root = tmp_path / "big"
+    for i in range(_MANY):
+        directory = root / f"module_{i % 50:02d}"
+        directory.mkdir(parents=True, exist_ok=True)
+        (directory / f"file_{i:05d}.c").write_text("int f(void) { return 0; }\n", encoding="utf-8")
+
+    _runner(tmp_path, root=root).run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
+
+    docker_argv = spy.calls[0]
+    assert len(" ".join(docker_argv)) < 2_000  # Windows 한도(32,767자)의 1/16 아래
+    listed = _index_list(tmp_path)
+    assert len(listed) == _MANY and len(set(listed)) == _MANY
+    assert all(item.startswith("/src/module_") and item.endswith(".c") for item in listed)
+    # 출력 경로·루트는 그대로다 - 읽는 쪽(`index_output_path`)이 같은 파일을 본다.
+    assert docker_argv[docker_argv.index("--out") + 1] == f"/work/{INDEX_FILE}"
+    assert docker_argv[docker_argv.index("--root") + 1] == "/src"
+
+
+def test_the_container_side_launcher_runs_the_indexer_once_with_every_listed_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """컨테이너 안에서 목록을 푸는 코드(`_INDEX_LAUNCHER`) - `execvp`를 가로채 넘어간 인자를 본다.
+
+    xargs처럼 쪼개 부르면 `index.json`이 호출마다 덮이므로 **한 번, 전부** 넘어가야 한다.
+    공백·비ASCII 이름도 그대로여야 한다(NUL 구분).
+    """
+    names = [*_many_sources(), "/src/with space/a b.c", "/src/한글/파일.cc"]
+    listing = tmp_path / "list"
+    listing.write_bytes(chr(0).join(names).encode("utf-8"))
+    calls: list[tuple[str, list[str]]] = []
+    monkeypatch.setattr(container_tools.os, "execvp", lambda f, a: calls.append((f, list(a))))
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["-c", str(listing), "/opt/indexer.py", "--out", "/work/index.json", "--root", "/src"],
+    )
+
+    exec(container_tools._INDEX_LAUNCHER, {})  # noqa: S102 - 이 모듈이 만든 상수다
+
+    assert calls == [
+        (
+            "python3",
+            ["python3", "/opt/indexer.py", "--out", "/work/index.json", "--root", "/src", *names],
+        )
+    ]
+
+
+def test_the_launcher_has_no_characters_windows_quoting_can_change() -> None:
+    """백슬래시·큰따옴표가 있으면 docker.exe로 가는 명령줄 인용에서 코드가 달라질 수 있다."""
+    assert "\\" not in container_tools._INDEX_LAUNCHER
+    assert '"' not in container_tools._INDEX_LAUNCHER
+
+
+# --- C++ 확장자: 분류·인덱스·컴파일 목록이 같은 말을 한다 ---------------------------------
+
+
+def test_compile_list_is_c_plus_the_cxx_list() -> None:
+    """컴파일 대상 중 C++이 아닌 것은 `.c` 하나다. 새 철자를 한쪽에만 넣으면 여기서 죽는다."""
+    assert set(container_tools._COMPILE_SUFFIXES) - set(container_tools._CXX_SUFFIXES) == {".c"}
+
+
+@pytest.mark.parametrize("suffix", [".cxx", ".c++", ".cp", ".CPP", ".Cxx", ".C", ".CC"])
+def test_every_cxx_spelling_gets_the_cxx_dialect(suffix: str) -> None:
+    """`.C`(대문자)는 C++이다 - 소문자로 내리면 `.c`가 되어 C 방언을 받는다."""
+    source = f"/src/a{suffix}"
+
+    (command,) = plan("build", target="/src", compile_sources=[source], cwd="/src")
+
+    assert "-std=gnu++17" in command.argv and source in command.argv
+
+
+@pytest.mark.parametrize("suffix", [".c", ".cxx", ".c++", ".cp", ".CPP", ".C", ".Cc"])
+def test_compile_plan_matches_suffixes_case_insensitively(
+    suffix: str, tmp_path: Path, spy: _Spy
+) -> None:
+    root = tmp_path / "t"
+    root.mkdir()
+    (root / f"a{suffix}").write_text("int f(void) { return 0; }\n", encoding="utf-8")
+
+    _runner(tmp_path, root=root).run("build", ToolArgs(argv=["build"], workdir="."), SANDBOX)
+
+    assert f"/src/a{suffix}" in spy.calls[0]
+
+
+def test_headers_and_unparsed_spellings_are_not_compiled_or_indexed(
+    tmp_path: Path, spy: _Spy
+) -> None:
+    """clang에는 헤더가 안 가고, 인덱서에는 **자기 문법 표에 있는 철자만** 간다.
+
+    인덱서는 대소문자를 가려 `.CPP`를 `skipped`로 버리고 `.hh`·`.hxx`·`.cxx`는 문법 표에 없다.
+    이미지의 인덱서는 sha로 핀되어 있어 바꾸지 못하므로 보내지 않는다(`_INDEX_SUFFIXES`).
+    """
+    root = tmp_path / "mix"
+    root.mkdir()
+    for name in (
+        "a.c", "b.cc", "c.cpp", "d.hpp", "e.h", "f.inc", "g.hh", "h.hxx", "i.cxx", "j.CPP",
+        "k.HPP", "l.tcc", "m.c++", "n.cp",
+    ):
+        (root / name).write_text("int f(void) { return 0; }\n", encoding="utf-8")
+    runner = _runner(tmp_path, root=root)
+
+    runner.run("index", ToolArgs(argv=["index"], workdir="."), SANDBOX)
+    indexed = {item.removeprefix("/src/") for item in _index_list(tmp_path)}
+    runner.run("build", ToolArgs(argv=["build"], workdir="."), SANDBOX)
+    compiled = {
+        arg.removeprefix("/src/")
+        for call in spy.calls[1:]
+        for arg in call
+        if arg.startswith("/src/")
+    }
+
+    assert indexed == {"a.c", "b.cc", "c.cpp", "d.hpp", "e.h", "f.inc"}
+    assert compiled == {"a.c", "b.cc", "c.cpp", "i.cxx", "j.CPP", "m.c++", "n.cp"}
