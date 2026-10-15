@@ -494,11 +494,26 @@ def _ask_model(
     elif template.input == "source":
         target = enclosing_scope(ctx.symbols_for(slice.entry.file), slice.entry)
         # 창 폴백은 심볼이 없다 — 슬라이스가 든 심볼(`capsule.target`)의 이름을 쓴다.
-        if target.symbol is None:
+        window = target.symbol is None
+        if window:
             target = target.model_copy(update={"symbol": capsule.target.symbol})
         source = ctx.read_source(target)
         first = target.line_start or 1
         shown_lines = tuple((target.file, first + i) for i in range(len(source.splitlines())))
+        if window:
+            # 요청 바이트는 그대로다(서빙 v4 payload · §4 규칙 1) - FACTS.target의 `symbol`은 이
+            # 창의 이름이 아니고 `line_end`는 EOF를 넘을 수 있다. 그 사실은 trace에만 남긴다.
+            ctx.trace.emit(
+                EventKind.SCOUT_WINDOW_FALLBACK,
+                stage=Stage.SCOUT,
+                subject_kind="candidate",
+                subject_id=candidate_id,
+                role=role.value,
+                labeled_symbol=target.symbol or "",
+                line_start=first,
+                line_end=target.line_end or 0,
+                shown_end=first + len(shown_lines) - 1,
+            )
     else:
         source = ctx.read_slice(slice.slice_id)
     slice_input = slice is not None and template.input == "slice"
