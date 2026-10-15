@@ -1,8 +1,10 @@
 """`tools/cybergym_task.py` — 네트워크 없이(HTTP를 가짜로 바꾼다)."""
 
 import hashlib
+import http.client
 import io
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -31,6 +33,7 @@ class FakeHF:
         self.contents = {"repo-vul.tar.gz": b"TARBALL" * 100, "description.txt": b"a bug"}
         self.prefix = f"data/{family}/{number}"
         self.requested: list[str] = []
+        self.no_lfs: set[str] = set()  # 트리에서 `lfs` 키를 뺄 파일
         self.served: dict[str, bytes] = {}  # 파일 URL → 실제로 내줄 바이트(기본은 contents)
         self.tree_url = (
             f"https://huggingface.co/api/datasets/sunblaze-ucb/cybergym/tree/{REV}/{self.prefix}"
@@ -52,6 +55,9 @@ class FakeHF:
             }
             for n in sorted(names)
         ]
+        for entry in entries:
+            if entry["path"].rsplit("/", 1)[-1] in self.no_lfs:
+                del entry["lfs"]
         return json.dumps(entries).encode()
 
     def __call__(self, url: str):
@@ -171,6 +177,7 @@ def test_oss_fuzz_family_path(monkeypatch, tmp_path):
         "oss-fuzz-latest:1",
         "arvo:1/../x",
         " arvo:1",
+        "arvo:1065\n",
     ],
 )
 def test_bad_task_id_is_rejected_without_requests(hf, tmp_path, task):
@@ -206,10 +213,102 @@ def test_transient_error_is_retried_but_404_is_not(hf, tmp_path, monkeypatch):
     assert len(calls) == 1
 
 
+VUL = "repo-vul.tar.gz"
+
+
+def test_oversize_response_fails_on_first_attempt(hf, tmp_path, capsys):
+    url = f"{hf.file_base}/{VUL}"
+    hf.served[url] = hf.contents[VUL] + b"X" * (
+        tool._CHUNK + 5
+    )  # 청크 하나를 넘겨 읽는 도중 끊긴다
+    out = tmp_path / "t"
+    assert run("arvo:1065", "--out", out) == 1
+    assert hf.requested.count(url) == 1  # 결정적 실패라 다시 걸지 않는다
+    assert list(out.iterdir()) == []
+    assert "넘었다" in capsys.readouterr().err
+
+
+def test_same_size_wrong_bytes_is_not_retried(hf, tmp_path):
+    url = f"{hf.file_base}/{VUL}"
+    hf.served[url] = b"X" * len(hf.contents[VUL])
+    assert run("arvo:1065", "--out", tmp_path / "t") == 1
+    assert hf.requested.count(url) == 1
+
+
+def test_second_file_failing_leaves_the_first_out_of_out(hf, tmp_path):
+    hf.served[f"{hf.file_base}/description.txt"] = b"X" * len(hf.contents["description.txt"])
+    out = tmp_path / "t"
+    assert run("arvo:1065", "--out", out) == 1
+    assert list(out.iterdir()) == []  # 첫 파일(repo-vul)은 검증을 통과했지만 옮기지 않았다
+
+
+def test_rerun_with_other_server_is_rejected(hf, tmp_path, capsys):
+    out = tmp_path / "t"
+    assert run("arvo:1065", "--out", out) == 0
+    first = (out / "submit.sh").read_bytes()
+    assert run("arvo:1065", "--out", out, "--server", "http://10.0.0.5:8666") == 2
+    assert "--force-submit" in capsys.readouterr().err
+    assert (out / "submit.sh").read_bytes() == first
+    assert run("arvo:1065", "--out", out, "--server", "http://10.0.0.5:8666", "--force-submit") == 0
+    assert read_submit_metadata(out).server == "http://10.0.0.5:8666"
+
+
+def test_entry_without_lfs_is_refused_with_the_cause(hf, tmp_path, capsys):
+    hf.no_lfs = {"description.txt"}
+    assert run("arvo:1065", "--out", tmp_path / "t") == 1
+    err = capsys.readouterr().err
+    assert "LFS가 아니라 sha256 검증값이 없다" in err and "description.txt" in err
+    assert hf.file_requests() == []
+
+
+def test_unusable_out_is_an_input_problem(hf, tmp_path):
+    blocker = tmp_path / "file"
+    blocker.write_text("x")
+    assert run("arvo:1065", "--out", blocker / "sub") == 2  # 부모가 파일이다
+    assert run("arvo:1065", "--out", blocker) == 2
+
+
+def test_leftover_part_dir_is_named_as_deletable(hf, tmp_path, capsys):
+    out = tmp_path / "t"
+    (out / ".part-abc").mkdir(parents=True)
+    assert run("arvo:1065", "--out", out) == 2
+    err = capsys.readouterr().err
+    assert ".part-" in err and "지워도 된다" in err
+
+
+class _BrokenBody:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def read(self, n=-1):
+        raise http.client.IncompleteRead(b"par", 10)
+
+
+@pytest.mark.parametrize("failures, code", [(1, 0), (tool.ATTEMPTS, 1)])
+def test_incomplete_read_is_transient(hf, tmp_path, monkeypatch, failures, code):
+    real, left = tool._open, [failures]
+
+    def flaky(url):
+        if url.endswith(VUL) and left[0] > 0:
+            left[0] -= 1
+            return _BrokenBody()
+        return real(url)
+
+    monkeypatch.setattr(tool, "_open", flaky)
+    assert run("arvo:1065", "--out", tmp_path / "t") == code
+    assert left[0] == 0
+
+
 def test_script_runs_by_path_from_another_cwd(tmp_path):
     # #616 — 경로 실행은 sys.path[0]이 tools/라 `src` import가 깨졌다.
+    # PYTHONPATH를 빼야 editable 설치·PYTHONPATH가 있는 환경에서도 이 성질을 문다.
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
     done = subprocess.run(
         [sys.executable, str(ROOT / "tools" / "cybergym_task.py"), "--help"],
+        env=env,
         cwd=tmp_path,
         capture_output=True,
         text=True,
