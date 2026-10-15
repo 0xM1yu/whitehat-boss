@@ -315,16 +315,17 @@ def test_summary_says_when_intermediate_feedback_was_used(ctx):  # noqa: ANN001,
 
 def test_warning_counts_candidates_not_submissions():
     sub = VulSubmission(TASK_ID, "id", 77)
+    no_crash = VulSubmission(TASK_ID, "id", 0)  # 크래시 아님 - 구제 풀에 안 든다
     ledger = oracle_log.OracleLedger(wired=True)
     for name in ("a", "b"):
-        ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), sub, 1, designatable=False))
+        ledger.add_attempt(oracle_log.vul_ok("f", name.encode(), no_crash, 1, designatable=False))
     for name in ("c", "d"):
         ledger.add_attempt(oracle_log.vul_ok(name, name.encode(), sub, 1, designatable=True))
     ledger.set_final(oracle_log.FinalAttempt(
         status=oracle_log.STATUS_NONE, reason=oracle_log.REASON_GRADE_UNKNOWN,
     ))
     text = next(w for w in ledger.warnings() if "후보" in w)
-    assert "후보가 2건" in text and "4건" not in text
+    assert "풀(제출 성공 + 구제)이 2건" in text and "4건" not in text
 
 
 def test_empty_poc_is_not_a_failed_vul_submission(ctx):  # noqa: ANN001, F811
