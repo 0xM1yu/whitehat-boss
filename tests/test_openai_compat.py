@@ -787,6 +787,21 @@ def test_every_retry_leaves_a_warning_line(
     assert len(lines) == 2 and "ConnectionResetError" in lines[0]
 
 
+def test_the_warning_names_the_real_cause_of_a_wrapped_refusal(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """거절은 `URLError`로 감싸져 온다 - 경고는 풀린 `ConnectionRefusedError`를 적는다."""
+    _no_metrics(monkeypatch)
+    refused = urllib.error.URLError(ConnectionRefusedError(111, "refused"))
+    _fail_then_answer(monkeypatch, [refused])
+
+    with caplog.at_level("WARNING", logger="src.adapters.openai_compat"):
+        _client().complete(role=Role.SCOUT, prompt=PROMPT, schema=Tiny)
+
+    (line,) = [r.getMessage() for r in caplog.records if "연결 단절" in r.getMessage()]
+    assert "ConnectionRefusedError" in line and "URLError" not in line
+
+
 @pytest.mark.parametrize(
     "error",
     [

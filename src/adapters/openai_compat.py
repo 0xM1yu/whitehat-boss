@@ -47,7 +47,8 @@ _log = logging.getLogger(__name__)
 _RECONNECT_WAITS_S = (5, 10, 20, 30, 60, 60)
 # 이것들만 재시도한다. `ConnectionRefusedError`는 요청이 서버에 안 닿았다(토큰 없음). 리셋·중단·
 # `RemoteDisconnected`는 응답을 읽는 도중(서버가 생성하던 중)에도 나서 서버가 토큰을 만들었을 수
-# 있고 그 소비는 장부에 안 잡힌다(과소 계상). `HTTPError`(상태 있음)·`TimeoutError`
+# 있다 - 그 토큰은 장부에 안 잡히고(과소 계상) 실패한 왕복 시간은 `gpu_ms`에 든다(대기만 뺀다).
+# `HTTPError`(상태 있음)·`TimeoutError`
 # (`generating` 판정)·디코드 오류·그 밖 `OSError`는 재시도하지 않는다.
 _CONNECTION_DROPS = (
     ConnectionRefusedError,
@@ -58,14 +59,17 @@ _CONNECTION_DROPS = (
 )
 
 
+def _root_cause(exc: ModelGatewayError) -> object:
+    """`_post`가 올린 오류의 원인 - `URLError`면 그 `reason`을 푼다(`HTTPError`는 풀지 않는다)."""
+    cause = exc.__cause__
+    if isinstance(cause, urllib.error.URLError) and not isinstance(cause, urllib.error.HTTPError):
+        return cause.reason
+    return cause
+
+
 def _is_connection_drop(exc: ModelGatewayError) -> bool:
     """`_post`가 올린 오류의 원인이 연결 단절인가 — 직접이든 `URLError.reason`이든."""
-    cause = exc.__cause__
-    if isinstance(cause, urllib.error.HTTPError):
-        return False
-    if isinstance(cause, urllib.error.URLError):
-        cause = cause.reason
-    return isinstance(cause, _CONNECTION_DROPS)
+    return isinstance(_root_cause(exc), _CONNECTION_DROPS)
 
 
 @dataclass(frozen=True)
@@ -457,8 +461,9 @@ class OpenAICompatModelClient:
         """`_post`에 연결 단절 재시도를 건다 - 터널 순단 한 번에 run을 잃지 않으려는 것이다.
 
         스키마 재시도(`retries`)는 안 센다. 연결 거절은 서버가 요청을 못 받았지만 리셋·중단은 생성
-        도중에도 나서, 버려진 그 생성의 토큰·GPU는 장부에 안 잡힌다(과소 계상). 횟수·잔 시간은
-        `waited`에 쌓아 `complete()`가 `gpu_ms`에서 빼고 `AttemptRecord`로 trace까지 싣는다.
+        도중에도 나서, 서버가 만든 토큰은 장부에 안 잡힌다(과소 계상). 실패한 왕복 시간은 `gpu_ms`에
+        들고 대기 시간만 뺀다 - 횟수·잔 시간은 `waited`에 쌓아 `complete()`가 빼고 `AttemptRecord`로
+        trace까지 싣는다.
         마지막 오류가 단절이었으면 같은 `ModelGatewayError`에 횟수를 붙여 올린다.
         """
         for tried, wait in enumerate((*_RECONNECT_WAITS_S, None)):
@@ -468,7 +473,7 @@ class OpenAICompatModelClient:
                 if wait is not None and _is_connection_drop(exc):
                     _log.warning(
                         "%s 연결 단절(%s) - %s초 뒤 재시도 %d/%d",
-                        self.endpoint, type(exc.__cause__).__name__, wait, tried + 1,
+                        self.endpoint, type(_root_cause(exc)).__name__, wait, tried + 1,
                         len(_RECONNECT_WAITS_S),
                     )
                     slept = time.monotonic()

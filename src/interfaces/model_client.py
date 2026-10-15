@@ -343,7 +343,8 @@ class AttemptRecord(HarnessModel):
     reasoning_field: ReasoningField | None = None
     # 이 시도의 요청이 연결 단절로 다시 나간 횟수와 그동안 잔 시간(초) - 어댑터가 재시도를 안에서
     # 삼켜 한 건으로 내지 않게 trace까지 싣는다(`model_call.attempt_reconnects`·
-    # `attempt_reconnect_wait_s`). `0`은 재시도가 없었다는 뜻이고 Fake는 늘 `0`이다.
+    # `attempt_reconnect_wait_s`). `0`은 재시도가 없었다는 뜻이다. 기본 Fake는 `attempt_log`를
+    # 안 싣고(trace의 두 키 `null`) 대본(`scripted_attempts`)을 줄 때만 `0`이다.
     reconnects: int = Field(default=0, ge=0)
     reconnect_wait_s: float = Field(default=0.0, ge=0)
 
