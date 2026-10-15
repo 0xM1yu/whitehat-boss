@@ -770,9 +770,9 @@ class EventKind(StrEnum):
     #
     # ⏵ 2026-10-15 — **모델이 submit한 PoC의 제출(`designatable=True`)만** 선택 필드 둘을 싣는다.
     # 평범한 한 번 제출은 둘 다 없다(키 집합이 옛 run과 같다):
-    #  - `submit_calls` - `submit_vul` 호출 수. 2이면 일시 실패(429·5xx·응답 없음) 뒤 한 번
+    #  - `submit_calls` - `submit_vul` 호출 수. 2이면 일시 실패(429·5xx·연결/타임아웃) 뒤 한 번
     #    다시 냈다(`oracle_log.vul_retry_wait_s`). `oracle_failed`에도 실린다(재시도까지 실패).
-    #  - `reused_intermediate` - 참이면 재제출이 끝내 실패해(그 실패가 같은 finding의
+    #  - `reused_intermediate` - 참이면 재제출이 실패해(그 실패가 같은 finding의
     #    `oracle_failed` 행이다) **같은 finding이 앞서 성공시킨 같은 sha256의 중간 제출**을 이
     #    후보의 제출로 이어받았다. 이 행의 `task_id`는 그 앞선 제출의 것이고 서버에 새 제출은
     #    없었다. 새 승격이 아니다 - 모델이 submit한 바이트다(ADR 0013 결정 1).

@@ -351,7 +351,8 @@ class RunRecord(UtcModel):
     # `{vul_submitted, vul_failed, final, final_reason, record}` - 여기에 **0이 아닐 때만**
     # `vul_intermediate`(중간 gen 시도 수)·`vul_candidates`(최종 후보 수 - `vul_intermediate`가
     # 있으면 0이어도 있다)·
-    # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)가
+    # `vul_observation_failed`(중간 gen 판정 조회 실패·빈 답)·`vul_empty_poc`(0바이트라 안 낸 수)·
+    # `vul_reused`(재제출이 실패해 앞선 중간 제출을 이어받은 후보 수 - `vul_submitted`에 안 든다)가
     # 붙는다.
     # `final`은 `scored`(판정을 받았다) · `failed`(지정했는데 판정을 못 읽었다) ·
     # `none`(지정된 후보가 없었다 — 후보가 없었거나 후보가 둘 이상인데 그중 등급·
