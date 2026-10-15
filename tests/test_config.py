@@ -1525,14 +1525,14 @@ def test_a_role_cap_one_below_the_window_still_loads(tmp_path: Path) -> None:
 def test_the_global_cap_is_checked_for_roles_that_do_not_override_it(tmp_path: Path) -> None:
     """역할별 선언이 없는 역할은 전역 `output_max`가 실효 상한이다 — 그 값도 같은 대조를 받는다.
 
-    `harness_pool`의 Scout 셋은 역할값이 없고 창 40,960 모델(`qwen3-14b` 하나 —
-    ⏵ 2026-10-14 전에는 `qwen3-14b`·`seccoderx-8b` 둘)에 앉는다.
+    `harness_pool`의 Scout 셋은 역할값이 없고 창이 늘어난 `qwen3-14b`(YaRN 131,072) 하나에 앉는다
+    (⏵ 2026-10-14 전에는 `qwen3-14b`·`seccoderx-8b` 둘이었다).
     """
     _copy_config(
         tmp_path,
         profile="harness_pool",
         profile_patch={},
-        thresholds_patch={"output_max": 40960},
+        thresholds_patch={"output_max": 131072},
     )
 
     with pytest.raises(ConfigError, match=r"scout_memory\(qwen3-14b\)"):

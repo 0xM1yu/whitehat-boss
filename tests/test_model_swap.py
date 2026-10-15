@@ -316,7 +316,7 @@ def test_a_window_other_than_the_context_limit_stops_the_swap(tmp_path: Path) ->
     """
     body = "print(json.dumps({'ok': True}))"
 
-    with pytest.raises(ModelSwapError, match=r"qwen3-14b.*16384.*40960") as caught:
+    with pytest.raises(ModelSwapError, match=r"qwen3-14b.*16384.*131072") as caught:
         _swap(_command(tmp_path, body), _probe({"qwen3-14b": 16384}))(("qwen3-14b",))
 
     assert caught.value.report == {"ok": True}
