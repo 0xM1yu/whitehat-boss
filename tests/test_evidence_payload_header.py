@@ -132,7 +132,9 @@ def _sample_tree(tmp_path: Path, files: int) -> Path:
 def _real_evidences(tmp_path: Path, recorder: _Spy) -> tuple[Evidence, ...]:
     """실제 `ContainerToolRunner`로 네 도구의 로그를 쓴다.
 
-    인덱서 명령줄은 대상의 소스를 전부 나열하므로 소스 수가 그 줄의 길이를 정한다 — 40개다.
+    머리줄의 길이는 소스 수가 아니라 바인드 인자의 호스트 경로(`_SAMPLE_ROOT`)가 정한다 — 인덱서
+    명령줄은 이제 소스 이름을 싣지 않고 목록 파일 경로만 든다(`INDEX_LIST_FILE`). 소스 40개는 표본
+    트리를 실제 모양으로 두기 위한 것이다.
     """
     runner = _runner(tmp_path, root=_sample_tree(tmp_path, 40))
     evidences = []
