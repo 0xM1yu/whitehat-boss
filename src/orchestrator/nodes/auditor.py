@@ -1273,7 +1273,9 @@ def _lookup(
     )
     try:
         resolution = ctx.resolve_requests(query)
-    except (OSError, ValueError) as exc:
+    # `KeyError`·`TypeError`는 인덱스 레코드가 깨진 경우다(`line_start`·`file` 없음 - 리졸버가
+    # 레코드를 그대로 읽는다). 보조 정보 실패라 후보도 run도 세우지 않는다.
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         name = type(exc).__name__
         return {"lookup_error": name}, (
             f"## Retrieved context (hop {next_hop})\n\n"
