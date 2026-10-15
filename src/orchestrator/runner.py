@@ -1847,6 +1847,8 @@ def _oracle_final_summary(trace: TraceWriter) -> dict[str, str | None] | None:
                 "status": str(data.get("status")),
                 "designation": _opt_str(data.get("designation")),
                 "reason": _opt_str(data.get("reason")),
+                # `failed`는 `reason`이 비고 예외 클래스 이름이 `error`에 있다.
+                "error": _opt_str(data.get("error")),
                 "subject": event.subject_id,
                 "poc_sha256": _opt_str(data.get("poc_sha256")),
             }

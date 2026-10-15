@@ -867,7 +867,7 @@ class EventKind(StrEnum):
     SCOUT_SYMBOL_STAMPED = "scout_symbol_stamped"
     # Scout `source` 선언의 SOURCE가 **심볼 범위가 아니라 entry ±창**으로 폴백했다
     # (`entry_scope.enclosing_scope`가 entry 줄을 품는 심볼을 못 찾았다). 내는 곳은
-    # `nodes/scout._hop0`이고 폴백한 호출마다 1행이다. 이때 요청의 `FACTS.target`은
+    # `nodes/scout._ask_model`이고 폴백한 호출마다 1행이다. 이때 요청의 `FACTS.target`은
     # `{symbol: 슬라이스가 든 심볼의 이름, line_start: l-창, line_end: l+창}`이라 `symbol`은 그
     # 범위의 이름이 아니고 `line_end`는 파일 끝을 넘을 수 있다. **요청 바이트는 안 바꿨다**(서빙 v4
     # 요청 payload - `docs/agent-contracts.md` §4 규칙 1) - 이 이벤트가 그 사실을 남기는 유일한

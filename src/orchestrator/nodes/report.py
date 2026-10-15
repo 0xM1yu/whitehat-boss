@@ -131,9 +131,9 @@ class Report:
     # 「미측정」이 아니라 「집계 실패」로 찍는다.
     trace_aggregate_failures: dict[str, str] | None = None
     # 채점기를 붙인 run의 최종 PoC 한 줄(`oracle_final` 이벤트의 요약) - 러너가 trace에서 뽑아
-    # 넘긴다. 키: `status`·`designation`·`reason`·`subject`(finding_id)·`poc_sha256`. `None`이면
-    # 채점기가 안 돌았거나 8단계의 최종 단계에 못 닿았다 - 줄을 안 낸다(`none`/`failed`는 줄을
-    # 내고 사유를 적는다).
+    # 넘긴다. 키: `status`·`designation`·`reason`·`error`·`subject`(finding_id)·`poc_sha256`.
+    # `None`이면 채점기가 안 돌았거나 8단계의 최종 단계에 못 닿았다 - 줄을 안 낸다
+    # (`none`/`failed`는 줄을 내고 사유를 적는다).
     oracle_final: dict[str, str | None] | None = None
 
     def _oracle_lines(self) -> list[str]:
@@ -144,8 +144,9 @@ class Report:
         parts = [f"상태 {final.get('status')}"]
         if final.get("designation"):
             parts.append(f"지정 근거 {final['designation']}")
-        if final.get("reason"):
-            parts.append(f"사유 {final['reason']}")
+        why = final.get("reason") or final.get("error")
+        if why:
+            parts.append(f"사유 {why}")
         subject = final.get("subject")
         if subject:
             folded = self.merged_into.get(subject)
@@ -153,12 +154,8 @@ class Report:
             parts.append(f"대상 Finding {where}")
         if final.get("poc_sha256"):
             parts.append(f"PoC sha256 {final['poc_sha256']}")
-        return [
-            "### 최종 PoC (채점기)",
-            "",
-            " · ".join(parts) + " (판정 값은 oracle/verdict.json)",
-            "",
-        ]
+        pointer = " (판정 값은 oracle/verdict.json)" if final.get("status") == "scored" else ""
+        return ["### 최종 PoC (채점기)", "", " · ".join(parts) + pointer, ""]
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
