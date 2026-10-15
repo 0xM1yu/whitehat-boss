@@ -205,9 +205,10 @@ def _trial(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="gpt-oss-20b structured output 통제 실험")
     parser.add_argument("--label", required=True, help="이 서버 기동 조건의 이름. 팔을 가른다")
-    # 2026-09-24 포트 재배치로 gpt-oss-20b는 8003이다(`config/models.yaml`의 endpoint). 이 도구로 돈
+    # 포트 재배치로 gpt-oss-20b는 8002다(`config/models.yaml`의 endpoint — 2026-09-24에 8003이었고
+    # ⏵ 2026-10-14 Scout가 한 서버가 되며 한 칸 내려왔다). 이 도구로 돈
     # 2026-09-11 보고서의 팔들은 8006에서 떴다 — 그 기록을 다시 돌릴 때는 `--endpoint`로 넘긴다.
-    parser.add_argument("--endpoint", default="http://127.0.0.1:8003/v1")
+    parser.add_argument("--endpoint", default="http://127.0.0.1:8002/v1")
     parser.add_argument("--model", default="gpt-oss-20b")
     parser.add_argument("--schema", default="report33", choices=sorted(SCHEMAS))
     parser.add_argument("--trials", type=int, default=5)
