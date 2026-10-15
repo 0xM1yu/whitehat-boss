@@ -91,7 +91,7 @@ def test_a_complete_serving_file_is_accepted() -> None:
         {
             "command": ["bash", "tools/serve/x.sh"],
             "servers": {
-                "seccoderx-8b": {
+                "qwen3-14b": {
                     "util": 0.3,
                     "max_num_seqs": 8,
                     "max_model_len": 40960,
@@ -105,7 +105,7 @@ def test_a_complete_serving_file_is_accepted() -> None:
     )
 
     assert serving.command == ("bash", "tools/serve/x.sh")
-    row = serving.servers["seccoderx-8b"]
+    row = serving.servers["qwen3-14b"]
     assert (row.util, row.max_num_seqs, row.max_model_len, row.probe) == (0.3, 8, 40960, "chat")
     assert row.extra_args == ("--enable-prompt-tokens-details",)
     assert row.env == {"VLLM_X": "1"}
@@ -207,15 +207,15 @@ def test_a_missing_row_for_a_swapped_model_is_named() -> None:
     """교대가 올릴 모델에 행이 없으면 **그 키를 대고** 멈춘다 — run 도중이 아니라 시작 전이다."""
     config = _swap_pool()
     rows = _rows(config)
-    rows.pop("seccoderx-8b")
+    rows.pop("qwen3-14b")
 
-    with pytest.raises(ConfigError, match="seccoderx-8b"):
+    with pytest.raises(ConfigError, match="qwen3-14b"):
         check_serving(config, ServingConfig.model_validate({"command": ["x"], "servers": rows}))
 
 
 def test_a_row_for_a_model_the_registry_does_not_have_is_rejected() -> None:
     config = _swap_pool()
-    rows = {**_rows(config), "qwen9-999b": _rows(config)["seccoderx-8b"]}
+    rows = {**_rows(config), "qwen9-999b": _rows(config)["qwen3-14b"]}
 
     with pytest.raises(ConfigError, match="qwen9-999b"):
         check_serving(config, ServingConfig.model_validate({"command": ["x"], "servers": rows}))
@@ -230,9 +230,9 @@ def test_a_window_other_than_the_context_limit_is_rejected() -> None:
     """
     config = _swap_pool()
     rows = _rows(config)
-    rows["seccoderx-8b"] = {**rows["seccoderx-8b"], "max_model_len": 16384}
+    rows["qwen3-14b"] = {**rows["qwen3-14b"], "max_model_len": 16384}
 
-    with pytest.raises(ConfigError, match=r"seccoderx-8b.*16384.*40960"):
+    with pytest.raises(ConfigError, match=r"qwen3-14b.*16384.*131072"):
         check_serving(config, ServingConfig.model_validate({"command": ["x"], "servers": rows}))
 
 
@@ -381,7 +381,7 @@ def test_a_swap_run_refuses_a_device_file_that_disagrees_with_the_registry(
     """파일이 있어도 교차 검사가 틀리면 막는다 — 창을 작게 적은 파일이 run에 닿으면 안 된다."""
     config = _swap_pool()
     rows = _rows(config)
-    rows["seccoderx-8b"] = {**rows["seccoderx-8b"], "max_model_len": 16384}
+    rows["qwen3-14b"] = {**rows["qwen3-14b"], "max_model_len": 16384}
     _write(tmp_path, "rig", {"command": ["x"], "servers": rows})
     _use(monkeypatch, config, tmp_path)
 
@@ -453,7 +453,7 @@ def test_doctor_errors_on_a_missing_or_disagreeing_device_file(
     그 run은 시작하지 않으므로 ERROR다."""
     config = _swap_pool()
     rows = _rows(config)
-    rows.pop("seccoderx-8b")
+    rows.pop("qwen3-14b")
     _write(tmp_path, "short", {"command": ["x"], "servers": rows})
 
     for device in ("nowhere", "short"):
@@ -559,7 +559,7 @@ def test_build_deps_refuses_a_device_file_that_disagrees_with_the_registry(
 ) -> None:
     """factory는 CLI 밖에서도 불린다 — 틀린 장비 파일로 교대 어댑터를 만들지 않는다."""
     _device_with_recorder(monkeypatch, tmp_path)
-    row = _rows(_swap_pool())["seccoderx-8b"]
+    row = _rows(_swap_pool())["qwen3-14b"]
     _write(tmp_path, "rig", {"command": ["x"], "servers": {"qwen9-999b": row}})
 
     with pytest.raises(ConfigError, match="qwen9-999b"):
