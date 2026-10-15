@@ -342,7 +342,9 @@ def test_the_cut_list_stays_in_key_order() -> None:
 
 def test_the_reserve_cannot_exceed_the_cut() -> None:
     items = [_t("a.c", 2, 0), _t("b.c", 0, 2, "x"), _t("c.c", 0, 3, "y")]
-    targets, deferred, _ = runner._cut_with_reserve(sorted(items, key=runner._cut_key), 1, 5)
+    targets, deferred, _, _ = runner._cut_with_reserve(
+        sorted(items, key=runner._cut_key), 1, 5
+    )
     assert _files(targets) == ["c.c"]
     assert len(deferred) == 2
 
@@ -386,3 +388,36 @@ def test_the_symbol_index_path_reserves_a_description_match(tmp_path) -> None:  
     cut = [e["data"] for e in _of(events, "target_skipped")]
     skipped = [d for d in cut if d["reason"] == "over_candidate_max"]
     assert [(d["symbol"], d["signal_rank"], d["desc_rank"]) for d in skipped] == [("quiet", 0, 0)]
+
+
+def test_reserved_slots_go_to_distinct_functions() -> None:
+    """슬라이스 둘이 같은 함수(entry)를 가리켜도 예약 두 자리를 다 먹지 않는다."""
+    twin_a = _t("m.c", 0, 2, "fn")
+    twin_b = _t("m.c", 0, 2, "fn")  # 같은 (file, symbol) - 다른 슬라이스라고 보면 된다
+    other = _t("n.c", 0, 2, "other")
+    items = [_t(f"s{i}.c", 2, 0) for i in range(1, 9)] + [twin_a, twin_b, other]
+    ctx, plan, _ = _cut(items, 8, 2)
+    assert _files(plan.targets) == [f"s{i}.c" for i in range(1, 7)] + ["m.c", "n.c"]
+    assert any(t is twin_a for t in plan.targets)  # 첫째가 예약을 받는다
+    assert not any(t is twin_b for t in plan.targets)  # 둘째는 자리가 없다
+    assert ctx.trace.events[0][1]["desc_reserve_filled"] == 2
+    # 나머지 경로로는 들어갈 수 있다 - 신호 후보가 자리를 안 채우면 둘째도 든다.
+    _, plan, _ = _cut([twin_a, twin_b, other], 3, 2)
+    assert len(plan.targets) == 3
+
+
+@pytest.mark.parametrize(
+    ("items", "limit", "reserve", "filled", "promoted"),
+    [
+        (_rehearsal(), 8, 2, 1, 1),  # 예약이 들였다
+        ([_t("a.c", 2, 0), _t("b.c", 1, 3, "x"), _t("c.c", 0, 0)], 2, 2, 1, 0),  # 이미 앞 순위
+        ([_t(f"s{i}.c", 2, 0) for i in (3, 1, 2)], 2, 2, 0, 0),  # 설명 일치 없음
+        (_rehearsal(), 8, 0, 0, 0),  # 예약 0
+    ],
+)
+def test_desc_reserve_filled_counts_the_pick_and_desc_reserved_counts_the_effect(
+    items: list[runner._Target], limit: int, reserve: int, filled: int, promoted: int
+) -> None:
+    ctx, _, _ = _cut(items, limit, reserve)
+    plan_event = ctx.trace.events[0][1]
+    assert (plan_event["desc_reserve_filled"], plan_event["desc_reserved"]) == (filled, promoted)
