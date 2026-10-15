@@ -31,6 +31,7 @@ from src.orchestrator import runner
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor, critic
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
+from src.schemas.decision import AXIS_ONLY_GROUNDING_VERSIONS
 from src.schemas.enums import Role
 from src.schemas.need_evidence import Resolution
 from tests import test_nodes
@@ -296,6 +297,21 @@ def test_the_serving_critic_seat_selects_v8_and_the_doctor_has_nothing_to_say(pr
     assert cli._check_prompt_version(config, "critic", version) == [], (
         "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
     )
+
+
+def test_every_critic_version_from_v8_on_grounds_a_rebut_by_its_axis_only() -> None:
+    """ADR 0015 ⏵ 2026-10-15 - `Decision.ungrounded_reason`은 이 이름 집합으로 판을 가른다(meta 선언
+    대신 - `prompts/`를 안 건드렸다). 판이 늘 때 집합을 잊으면 새 판에서 ID-only `rebut`이
+    **조용히** 근거가 된다 - 디스크의 v8 이상 디렉터리가 전부 집합에 드는지 문다. 집합의 모든
+    값은 실재하는 내용 인식 판이어야 한다(오타 방지)."""
+    on_disk = {
+        p.name
+        for p in (PROMPTS_DIR / "critic").iterdir()
+        if p.is_dir() and p.name[1:].isdecimal() and int(p.name[1:]) >= 8
+    }
+
+    assert on_disk and on_disk <= AXIS_ONLY_GROUNDING_VERSIONS
+    assert AXIS_ONLY_GROUNDING_VERSIONS <= critic._CONTENT_AWARE_VERSIONS
 
 
 def test_no_critic_version_newer_than_the_served_one_is_on_disk() -> None:

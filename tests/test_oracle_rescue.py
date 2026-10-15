@@ -348,18 +348,19 @@ def test_the_new_chain_name_sits_right_after_the_vul_tier() -> None:
 # --- 중단된 run: 풀에 구제된 행만 있어도 최종 지정은 간다 ----
 
 
-@pytest.mark.parametrize("stop", ["budget", "gateway"])
+@pytest.mark.parametrize("stop", ["budget", "gateway", "other_exception"])
 def test_a_stop_after_a_crashing_intermediate_gen_still_designates_the_rescued_one(
     ctx, monkeypatch, stop  # noqa: ANN001, F811
 ) -> None:
-    """`validated` 대상이 크래시 중간 gen(139)을 장부에 남기고 다음 홉에서 예산·게이트웨이로 끊겨도
-    구제된 그 행으로 최종 지정이 한 번 돌고(`fix` 다리 한 번), 원 예외는 그대로 올라온다. 후보
-    (`candidates`)만 보던 조건에서는 `not_reached`로 남았다."""
-    original = (
-        BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100)
-        if stop == "budget"
-        else ModelGatewayError("down", status=None)
-    )
+    """`validated` 대상이 크래시 중간 gen(139)을 장부에 남기고 다음 홉에서 예산·게이트웨이 또는
+    계약 밖 예외로 끊겨도 구제된 그 행으로 최종 지정이 한 번 돌고(`fix` 다리 한 번), 원 예외는
+    그대로 올라온다. 후보(`candidates`)만 보던 조건에서는 `not_reached`로 남았다. 계약 밖 예외
+    갈래는 조건을 「`pool`이면서 예산·게이트웨이」로 좁히는 변이를 잡는다."""
+    original: Exception = {
+        "budget": BudgetExhausted(int(Stage.VALIDATE), "input_tokens", 200, 100),
+        "gateway": ModelGatewayError("down", status=None),
+        "other_exception": RuntimeError("계약 밖 예외"),
+    }[stop]
     state, validated, _extra = _validated_and_one_extra(ctx)
     ctx.oracle = oracle = FakeOracle()
     sub = VulSubmission(TASK_ID, "a" * 32, 139)

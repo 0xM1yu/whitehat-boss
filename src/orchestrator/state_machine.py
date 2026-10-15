@@ -85,12 +85,18 @@ R-2의 사유는 `finish_run()`이 정하지 않고 **호출자가 넘긴다.** 
 | `model_gateway_unavailable` | `ModelGatewayError` — 후보 하나의 답이 아닌 것(아래 문단) |
 | `consecutive_target_failures` | `_TooManyDrops` — 서버는 답하는데 후보가 계속 죽는다 |
 | `schema_parse_failed` | `SchemaParseError`가 가드 없는 경로에서 올라옴 |
+| `index_unavailable` | `_IndexUnavailable` - 1단계 색인 실패 + 실서빙 모델에 닿는 run (아래 문단) |
 | `unforeseen_failure` | **그 밖 전부** — `_analyze`의 예상 밖 예외(최후 방어선이 다시 던진다) |
 
 `model_gateway_unavailable`은 「서버가 죽었다」보다 넓다. `ModelGatewayError` 중 **후보 하나의 답이
 아닌 것 전부**(`runner._is_droppable`이 거짓인 것)다 — 상태 코드 없음(연결 끊김·타임아웃·비-JSON·
 비-UTF-8·모양이 다른 200)·5xx·`400·413·422` 밖의 4xx(401·404·429 등). 이들을 **같은 사유 코드로**
 적고, 무엇이었는지는 trace의 `model_call.error_detail`이 가른다.
+
+`index_unavailable`(⏵ 2026-10-15)은 **모델을 한 번도 부르기 전에** 서는 정지다. 1단계 색인(`graph`
+Evidence)이 `ok=False`이고 run이 실서빙 모델 단계(`stop_at() >= SCOUT` · `served_models()` 비지
+않음)에 닿을 때 `stopped_after=1`로 적는다. Fake뿐인 프로필과 Scout 전에 서는 run은 안 선다. `run
+--allow-missing-index`가 풀면 이 사유는 안 쓰이고 경고와 trace `index_stop_lifted`만 남는다.
 
 앞의 셋(`budget_exhausted`·`user_stop_requested`·`dry_run`)을 하나로 묶지 않는 이유는
 evaluation.md가 중단 사유를 조건 간 비교 지표로 쓰기 때문이다. 묶으면 예산을 0.03%만 쓴 run이

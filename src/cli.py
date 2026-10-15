@@ -21,13 +21,17 @@ ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 �
 | 0 | 정상. `run`은 완주·`--stop-after`·`--dry-run`·예산 소진이다. 후보·Finding 0건도 0이다 |
 | 1 | `doctor` ERROR · `bench --apply` 실패 · 트레이스백으로 죽음(①) |
 | 2 | 입력·설정 거부 — 모델을 부르기 전에 멈췄다. `preflight`도 어긋난 선결조건(ERROR)에 2다 |
-| 3 | `run`이 장애로 중단됐다 — 교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패 |
+| 3 | `run`이 장애로 중단됐다 — 교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패·색인 실패 |
 | 128+N | TERM(143)·HUP(129)로 끝났다 — 매니페스트는 안 남는다(②) |
 
 - **0은 점수가 났다는 뜻이 아니다.** 채점을 켠 run은 매니페스트 `oracle.final`(`scored`·`failed`·
   `none`·`not_reached`)을 본다. **0은 비교표 적격도 아니다** — 낮은 `--stop-after`·`--dry-run`·예산
   소진은 `stopped_after`가 차서 `RunRecord.is_complete`가 거짓이고, 기록이 불완전한 run도 빠진다
   (`docs/evaluation.md` §6).
+- **3에는 색인 실패가 든다**(⏵ 2026-10-15). 1단계 색인(`graph` Evidence)이 `ok=False`이고 run이
+  실서빙 모델 단계에 닿으면 모델을 부르기 전에 `index_unavailable`로 선다. `--allow-missing-index`가
+  풀면 경고가 남고 trace `index_stop_lifted`(`index_missing_allowed=true`)가 찍힌다. Fake뿐인
+  프로필과 Scout 전에 서는 run은 무관하다.
 - **2에는 프롬프트 배선 어긋남이 든다**(⏵ 2026-10-13, #600 H3). `run`은 `doctor`와 같은 검사
   (`_check_prompts`)의 ERROR — 프롬프트 로드 실패 · 내용 인식 집합 밖의 판 — 에 모델을 부르기 전에
   2로 선다. 그 run이 닿는 단계의 역할만 본다. WARN은 막지 않고, `--dry-run`(3단계에서 섬)은 일부러
@@ -43,7 +47,7 @@ ssh·TCP·`docker run`으로 선결조건을 보므로 `doctor`에 못 두고 �
 
 ⚠ **3은 프로그램마다 따로다 — 이 표의 3은 다른 도구의 3과 같은 사건이 아니다.** `src.cli`에서 3은
 `EXIT_RUN_FAULT` 하나뿐이다. `tools/monitor.py`의 3은 DEAD(매니페스트 없이 heartbeat가 낡음)·
-CRASHED(예상 밖 예외 — 이 표에서는 1)이고, 위 장애 넷으로 멈춘 run을 `monitor`는 0으로 읽는다.
+CRASHED(예상 밖 예외 — 이 표에서는 1)이고, 위 장애 다섯으로 멈춘 run을 `monitor`는 0으로 읽는다.
 `tools/oracle_canary.py`(weak_pass)·`tools/slice_sharded.py`(후보 미완)·`tools/serve/swap.sh`(서버
 기동·내림 실패)의 3도 각자의 사건이다. 운영 스크립트가 두 3을 한 사건으로 읽지 않는다.
 """
@@ -1611,8 +1615,8 @@ def _terminate_as_exit() -> Iterator[None]:
 # `run`이 장애로 중단됐을 때의 종료 코드. 1(트레이스백)·2(입력 거부)와 안 겹치고 `src.cli`에서
 # 3은 이것뿐이다. ⚠ **다른 도구의 3과 같은 뜻이 아니다** — 종료 코드는 프로그램마다 따로이고
 # 모집단이 서로소다: `tools/monitor.py`의 3은 DEAD·CRASHED(예상 밖 예외 — `run`은 그것을 1로 낸다)
-# 이고, `run`이 3으로 내는 장애 넷(교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패)을
-# `monitor`는 0으로 읽는다. 모듈 docstring 표 아래 경고가 나머지 도구를 든다.
+# 이고, `run`이 3으로 내는 장애 다섯(교대 실패·게이트웨이 장애·연속 폐기·스키마 파싱 실패·색인
+# 실패)을 `monitor`는 0으로 읽는다. 모듈 docstring 표 아래 경고가 나머지 도구를 든다.
 EXIT_RUN_FAULT = 3
 # 정상 종료로 읽는 사유 — **허용목록이다.** 새 사유가 생기면 기본이 비-0이다(조용한 0이 #533이다).
 # 예산 소진은 러너 docstring이 정상적인 종료 경로라 적고, 나머지 둘은 사용자가 정한 상한이다.
@@ -1808,6 +1812,7 @@ def run(args: argparse.Namespace) -> int:
         slices_path=args.slices,
         vuln_description=description,
         keep_responses=tuple(args.keep_responses),
+        allow_missing_index=args.allow_missing_index,
         started_at=started_at,
     )
     # **모델을 한 번도 안 부르는 run은 막지 않는다.** 게이트의 근거가 "비용을 쓰기 전에"라
@@ -2334,6 +2339,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run에서는 prompts/가 없어 조용히 무효다",
     )
     run_cmd.add_argument("--dry-run", action="store_true")
+    run_cmd.add_argument(
+        "--allow-missing-index",
+        action="store_true",
+        help="1단계 색인이 실패해도 실서빙 모델 단계로 간다. 기본은 모델을 부르기 전에 멈춘다"
+        "(index_unavailable, exit 3 - GPU 시간을 쓰고도 GRAPH 근거 없이 E2 위로 못 오르는 run을 "
+        "막는다). 풀면 경고가 남고 trace index_stop_lifted(index_missing_allowed=true)가 "
+        "찍힌다. Fake뿐인 프로필·Scout 전에 서는 run은 무관하다",
+    )
     run_cmd.add_argument("--format", choices=("md", "sarif"), default="md")
     run_cmd.add_argument("--kb-snapshot", default=DEFAULT_KB_SNAPSHOT)
 
