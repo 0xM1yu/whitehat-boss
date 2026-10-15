@@ -811,10 +811,10 @@ class EventKind(StrEnum):
     # docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md :34·:35), 서버 응답
     # 경로의 비율은 미실측이다(`oracle_log` 모듈 docstring).
     #
-    # ⏵ 2026-10-15 — `finalize_calls`는 `finalize` 호출 수다: 1이면 한 번, 2이면 일시 실패(5xx·응답
-    # 없음) 뒤 한 번 더 불렀다(4xx는 안 부른다). 지정한 후보가 없으면(`status=none`) `null`이다 -
-    # 키 집합은 `status`와 무관하게 같다. 2일 때만 첫 호출의 실패를 `first_error`·
-    # `first_error_status`·`retry_wait_s`(finalize는 기다리지 않아 0)로 더 싣는다.
+    # ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·응답 없음) 뒤 한 번 더 불렸을 때만(4xx는 안 부른다)
+    # `finalize_calls`(2)와 첫 호출의 실패 `first_error`·`first_error_status`·`retry_wait_s`
+    # (finalize는 기다리지 않아 0)를 더 싣는다. 한 번에 된 run·지정 후보가 없는 run은 키 집합이
+    # 같다.
     #
     # `status`가 첫째 사실이다: `scored`(판정을 받았다 — 값은 `record_ref`의 사이드카) ·
     # `failed`(지정했는데 `finalize`가 예외로 끝났다 — `error`) · `none`(지정된 후보가 없었다 —

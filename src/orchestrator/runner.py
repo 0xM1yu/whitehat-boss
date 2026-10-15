@@ -2951,8 +2951,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 
     ⏵ 2026-10-15 — `finalize`가 일시 실패(5xx·연결/타임아웃)로 끝나면 **한 번** 다시 부른다
     (`_score`).
-    4xx(429 포함)는 다시 안 부른다. 호출 수는 trace `oracle_final`의 `finalize_calls`(지정 못 했으면
-    `null`)와 사이드카 `final.finalize_calls`(2일 때만)가 싣는다. 재시도가 안전한 근거는 서버가
+    4xx(429 포함)는 다시 안 부른다. 호출 수는 trace `oracle_final`·사이드카 `final`의
+    `finalize_calls`(2일 때만)가 싣는다. 재시도가 안전한 근거는 서버가
     제출을 캐시하고 판정 행을 신원으로 고르는 것이다(어댑터 모듈 docstring - 소스 판독이다).
     ⚠ 이 경로를 실서버로 잰 run은 0건이다.
 
@@ -3013,9 +3013,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
             poc_bytes=None if picked is None else picked.poc_bytes,
             task_id=None if final.outcome is None else final.outcome.task_id,
             error=final.error,
-            # 지정한 후보가 없으면 `finalize`를 안 불렀다(`None`). 키 집합은 `status`와 무관하다.
-            finalize_calls=final.calls,
-            # 호출 수가 2일 때만 첫 호출의 실패를 싣는다 - 한 번에 된 run과 키 집합이 같다.
+            # 호출 수가 2일 때만 호출 수와 첫 실패를 싣는다 - 한 번에 된 run과 키 집합이 같다.
+            **({} if final.calls is None or final.calls <= 1 else {"finalize_calls": final.calls}),
             **({} if final.first_failure is None else final.first_failure.fields()),
             record_ref=ledger.record_ref,
         )
