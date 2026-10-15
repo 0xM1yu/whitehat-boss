@@ -104,6 +104,12 @@ class Oracle(Protocol):
     구현은 서버 호출을 책임진다. 예외는 삼키지 않는다 — 올려 보내고 러너가 추가형 계약대로 흡수해
     기록한다(`runner._submit_vul_to_oracle`·`_finalize_oracle`). 그래야 「제출했는데 판정을 못
     읽었다」가 조용히 「미제출」과 같아지지 않는다.
+
+    ⏵ 2026-10-15 — **러너가 일시 실패 뒤에 같은 호출을 한 번 다시 한다**: 모델이 `submit`한
+    PoC의 `submit_vul`(429·5xx·응답 없음)과 `finalize`(5xx·응답 없음). 구현은 두 호출을 **다시
+    불러도 안전하게** 만들어야 하고(어댑터는 서버 캐시가 그것을 받친다), 실패 예외에 HTTP 상태를
+    `status`로 실어야 한다(HTTP 응답이 없으면 `None`). `status` 속성이 없는 예외는 일시 실패로
+    읽지 않아 다시 부르지 않는다(`oracle_log.is_transient`).
     """
 
     def submit_vul(self, poc: bytes) -> VulSubmission:
