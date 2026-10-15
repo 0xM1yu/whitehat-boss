@@ -488,7 +488,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   읽을 곳」). 러너는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`로 **다시 정렬**해
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
-  **미측정**). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
+  **미측정** — ⏵ 2026-10-15 `candidate_max`를 256에서 **8**로 낮춰서 220조각급 run이면 컷이 실제로 문다). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
   ([D97](open-questions/D/D97.md)의 선택지 (b))
   - ⏵ 2026-10-15 D97 -> 러너는 이 목록을 여전히 안 읽는다(위 문장은 목록에 대해 참). 대신 러너 `_order_and_cut`이 **과제 설명**을 직접
     읽는 정렬 항 `-desc_rank`를 받았다 -> 키는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`. 아래 「`--description`」

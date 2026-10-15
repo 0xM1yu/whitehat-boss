@@ -65,7 +65,8 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 심볼이 다른 파일의 히트보다 먼저 잘린다.
 이 동작을 받아들였다(#257 2).
 **신호가 같으면 과제 설명이 다음 열쇠다(#377 (b)).** 신호가 없는 CyberGym Level 1에서는 정렬이
-곧 파일 경로 사전순이라 `candidate_max`에 어느 256개가 사는지가 설명과 무관했다. 설명이 부른
+곧 파일 경로 사전순이라 `candidate_max`(256이던 때 256개, 2026-10-15에 8)에 어느 후보가 사는지가
+설명과 무관했다. 설명이 부른
 심볼(`desc_rank` 3 전체 이름 · 2 조각·확장 일치)·파일(1)을 신호 뒤, 경로 앞에 둔다 — 후보는 줄이지
 않고 순서만 바꾼다(`description_match.py`). 효과는 미실측.
 `--slices` run에서는 더 좁다: 슬라이스 target의 `Location`은 `line_start`=entry 줄이고
@@ -4108,7 +4109,8 @@ def _plan_slice_targets(
     순위는 entry 줄로 매긴다(`_symbol_signal_rank`) — 히트가 entry 줄에 걸리면 2, 같은
     artifact의 다른 줄이면 1이다.
     ponytail: entry 한 줄만 본다 — 슬라이스 줄(`SliceRef.lines`)에 든 히트로 매기지 않는다.
-    `candidate_max`가 슬라이스를 실제로 자르는 run이 오면 그 줄로 매긴다.
+    `candidate_max`가 슬라이스를 실제로 자르는 run이 왔다(2026-10-15 256 → 8) — 아직 그 줄로 안
+    매겼고, 첫 run의 `target_plan`(신호 수·`desc_*`)을 본 뒤 정한다.
     """
     by_path = {artifact.path: artifact for artifact in artifacts}
     tokens = description_tokens(ctx.vuln_description)
