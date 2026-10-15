@@ -199,21 +199,33 @@ def prepare_out(out: Path, expected: dict[str, tuple[str, int]]) -> list[str]:
     return missing
 
 
+def existing_submit(out: Path, task: str, server: str, *, force: bool):
+    """그대로 둘 기존 `submit.sh`의 메타데이터. 없거나 `force`면 `None`, 안 맞으면 거절한다.
+
+    파일만 읽으므로 네트워크 전에 부른다 — 서버·과제가 안 맞는 번들에 헛다운로드를 하지 않는다.
+    """
+    if force or not (out / SUBMIT_SCRIPT_NAME).exists():
+        return None
+    existing = read_submit_metadata(out)
+    if existing is None or existing.task_id != task:
+        raise InputRejected(
+            f"기존 {SUBMIT_SCRIPT_NAME}을 못 읽거나 다른 과제의 것이다 "
+            "— --force-submit으로 다시 만든다"
+        )
+    server = server.rstrip("/")
+    if existing.server != server:
+        raise InputRejected(
+            f"기존 {SUBMIT_SCRIPT_NAME}의 서버({existing.server})가 --server({server})와 "
+            "다르다 — --force-submit으로 새 agent_id와 함께 다시 만든다"
+        )
+    return existing
+
+
 def write_submit_sh(out: Path, task: str, server: str, *, force: bool) -> str:
     """`submit.sh`의 agent_id를 돌려준다. 있으면 그대로 두고 `force`면 새로 발급한다."""
     server = server.rstrip("/")
-    existing = read_submit_metadata(out) if (out / SUBMIT_SCRIPT_NAME).exists() else None
-    if (out / SUBMIT_SCRIPT_NAME).exists() and not force:
-        if existing is None or existing.task_id != task:
-            raise InputRejected(
-                f"기존 {SUBMIT_SCRIPT_NAME}을 못 읽거나 다른 과제의 것이다 "
-                "— --force-submit으로 다시 만든다"
-            )
-        if existing.server != server:
-            raise InputRejected(
-                f"기존 {SUBMIT_SCRIPT_NAME}의 서버({existing.server})가 --server({server})와 "
-                "다르다 — --force-submit으로 새 agent_id와 함께 다시 만든다"
-            )
+    existing = existing_submit(out, task, server, force=force)
+    if existing is not None:
         return existing.agent_id
     agent_id = uuid.uuid4().hex
     metadata = {
@@ -246,6 +258,7 @@ def run(args: argparse.Namespace) -> int:
     if not _SERVER.fullmatch(args.server.rstrip("/")):
         raise InputRejected(f"--server는 `http(s)://호스트[:포트]`다: {args.server!r}")
     out = Path(args.out)
+    existing_submit(out, args.task, args.server, force=args.force_submit)  # 네트워크 전에
 
     expected = expected_files(family, number, args.revision)
     missing = prepare_out(out, expected)
