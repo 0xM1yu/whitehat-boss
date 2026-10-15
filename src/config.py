@@ -671,6 +671,11 @@ class Thresholds(HarnessModel):
     # 한 run이 4단계에 올릴 target 수 상한 (W2). 초과분은 폐기하지 않고 사유와 함께
     # 기록한다 — 근거와 그 한계는 `config/budgets.yaml`에 적었다.
     candidate_max: int = Field(gt=0)
+    # `candidate_max` 컷에서 과제 설명이 심볼 이름을 부른 후보(`desc_rank` ≥ 2) 앞 N개에
+    # 보장하는 자리 수 (#377 (b) 후속 — `runner._cut_with_reserve`). 신호 후보가 컷을 다 채워도
+    # 설명과 맞는 후보가 잘리지 않게 한다. 0이면 예약이 없다 — 종전 컷과 같다(필드 기본).
+    # 값은 `config/budgets.yaml`이 든다.
+    candidate_desc_reserve: int = Field(default=0, ge=0)
     # agent-contracts.md §1의 token_budget.retries. 이 값을 올리면 시도 수 `attempts`가 늘어
     # "스키마 파싱 실패율"(evaluation.md §5.1)의 분자·분모가 함께 커지므로 조건 간 비교에서
     # 고정되어야 한다 — 어댑터 기본값으로 두지 않는다(#83).
@@ -938,6 +943,15 @@ class Thresholds(HarnessModel):
         return tuple(key for key in AUDITOR_SOURCE_OPTIONS if getattr(self, key))
 
     @model_validator(mode="after")
+    def _reserve_fits_the_cut(self) -> "Thresholds":
+        if self.candidate_desc_reserve > self.candidate_max:
+            raise ValueError(
+                f"candidate_desc_reserve({self.candidate_desc_reserve})가 "
+                f"candidate_max({self.candidate_max})보다 크다 — 예약은 컷 안의 자리다"
+            )
+        return self
+
+    @model_validator(mode="after")
     def _role_caps_name_real_roles(self) -> "Thresholds":
         unknown = sorted(set(self.output_max_by_role) - set(PROMPTED_ROLES))
         if unknown:
@@ -1005,9 +1019,10 @@ class Thresholds(HarnessModel):
         # 저장소 기본은 이제 켜짐(`budgets.yaml` 16)이라 이 키는 켠 run의 manifest에 보인다.
         # ⚠ 설정이 양수여도 Fake 좌석이 면제로 한 방으로 돌면 안 도는 값이라 러너가 이 키를 뺀다
         # (`runner._recorded_thresholds`).
-        # `auditor_source_gate`도 같다.
+        # `auditor_source_gate`·`candidate_desc_reserve`도 같다(0 = 예약 없음 = 종전 컷).
         for key in (
-            *AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_tool_hops", "auditor_source_gate"
+            *AUDITOR_SOURCE_OPTIONS, "scout_slice_trim", "auditor_tool_hops", "auditor_source_gate",
+            "candidate_desc_reserve",
         ):
             if not dumped[key]:
                 dumped.pop(key)
