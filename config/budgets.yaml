@@ -390,7 +390,7 @@ thresholds:
   # 사용자 결정(예약 2 승인). council 원 발언: Skeptic 예약 2자리 · Critic 예약 2~3자리(어렵다면 rank ≥ 2 승격) ·
   # Pragmatist rank ≥ 2 승격(예약 안 함) · Architect(진행자) 통째 교체 → 셋의 반대로 예약으로 바꿨다.
   # 계기는 GPU 없는 리허설(arvo:1065 실번들, `dev_docker`)이다 — 신호 후보 8개가 컷을 다 채워 설명과 맞는 후보가
-  # 잘렸다. 「Level 1은 정적 신호가 없다」는 #377 (b)의 전제가 거짓이다. 수치의 원천은
+  # 잘렸다. 「Level 1은 정적 신호가 없다」는 #377 (b)의 전제가 arvo:1065 번들에서 거짓이었다(n=1). 수치의 원천은
   # `docs/experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md`다.
   # **2는 고른 값이지 측정이 아니다.** 참고한 분포는 이슈 #377 본문 관측 2의 CyberGym 1,503과제다(설명이 고친
   # 함수 이름을 부르는 비율 16.4%, 고친 파일·hunk 식별자 ≥ 61.3% — `docs/open-questions/` 아래 #377 본문). 근거가

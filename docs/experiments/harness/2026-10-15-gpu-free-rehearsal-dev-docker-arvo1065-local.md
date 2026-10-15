@@ -16,7 +16,7 @@
 
 | 항목 | 값 | 비고 |
 | --- | --- | --- |
-| 실험 종료 시각 | `2026-10-15 18:47 KST` (`09:47 UTC`) | 세 run 중 마지막(C)의 trace 끝 시각 |
+| 실험 종료 시각 | `2026-10-15 18:47 KST` (`09:47 UTC`) | 기록한 run(A·B·C) 중 마지막(C)의 trace 끝 시각 |
 | 실제 서빙 모델 | **없음** — 전 역할 Fake | 프로필 `dev_docker`(모델 전부 Fake · 도구는 실제 Docker 이미지) |
 | `repo_commit` | A·B `e4e5269f83d278935a405b27e2d0ef2048bf6182` · C `58bf0fd6ceac2581378bb4c8d541902c8f66f370` · 셋 다 `repo_dirty` false | A·B는 PR #685 머지(main). C는 이 PR의 예약 구현 최종 코드(이 보고서를 넣은 커밋보다 앞) |
 | `run_id` | A·B·C 모두 `run_20261015_0001` — 각각 다른 `--artifacts-root`(서로 다른 run이다) | 번호가 같은 것은 artifacts-root마다 번호를 새로 세기 때문이다 |
