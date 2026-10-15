@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from src.orchestrator.context import RunContext
+from src.orchestrator.oracle_log import STATUS_NOT_REACHED
 from src.orchestrator.stages import Stage
 from src.orchestrator.trace import EventKind
 from src.schemas.enums import FindingState, PathStepKind
@@ -130,6 +131,39 @@ class Report:
     # 위 셋 중 집계가 던져 `None`이 된 키 → 사유(`RunRecord.trace_aggregate_failures`). 그 키의 줄은
     # 「미측정」이 아니라 「집계 실패」로 찍는다.
     trace_aggregate_failures: dict[str, str] | None = None
+    # 채점기를 붙인 run의 최종 PoC 한 줄(`oracle_final` 이벤트의 요약) - 러너가 trace에서 뽑아
+    # 넘긴다. 키: `status`·`designation`·`reason`·`error`·`subject`(finding_id)·`poc_sha256`·
+    # `record_ref`(사이드카의 run_dir 상대 경로, 못 썼으면 `None`).
+    # `None`이면 채점기를 안 붙인 run이라 줄을 안 낸다. 붙였는데 최종 단계에 못 닿았으면 러너가
+    # `{"status": "not_reached"}`를 넘긴다(사이드카의 `final`과 같은 판정). `none`/`failed`는 줄을
+    # 내고 사유를 적는다.
+    oracle_final: dict[str, str | None] | None = None
+
+    def _oracle_lines(self) -> list[str]:
+        """최종 PoC 줄. 판정 값은 trace 밖 사이드카가 든다 - 여기서 지어내지 않는다."""
+        final = self.oracle_final
+        if final is None:
+            return []
+        if final.get("status") == STATUS_NOT_REACHED:
+            return ["### 최종 PoC (채점기)", "", "채점기: 최종 단계 미도달", ""]
+        parts = [f"상태 {final.get('status')}"]
+        if final.get("designation"):
+            parts.append(f"지정 근거 {final['designation']}")
+        why = final.get("reason") or final.get("error")
+        if why:
+            parts.append(f"사유 {why}")
+        subject = final.get("subject")
+        if subject:
+            folded = self.merged_into.get(subject)
+            where = f"{subject} (중복 제거로 대표 {folded}에 합쳐짐)" if folded else subject
+            parts.append(f"대상 Finding {where}")
+        if final.get("poc_sha256"):
+            parts.append(f"PoC sha256 {final['poc_sha256']}")
+        pointer = ""
+        if final.get("status") == "scored":
+            ref = final.get("record_ref")
+            pointer = f" (판정 값은 {ref})" if ref else " (판정 파일 없음)"
+        return ["### 최종 PoC (채점기)", "", " · ".join(parts) + pointer, ""]
 
     def _grade_of(self, finding: Finding) -> str | None:
         """이 Finding의 등급. `grades`에 없으면 `None`("등급 없음")이다 — "E0"이 아니다."""
@@ -273,6 +307,7 @@ class Report:
                 f"(상한 {self.critic_top_n} · 목록은 trace의 `critic_skipped`)",
                 "",
             ]
+        lines += self._oracle_lines()
         lines += self._aggregate_lines()
         for state in _STATE_ORDER:
             group = [f for f in self.findings if f.state is state]
@@ -362,6 +397,7 @@ def run(
     schema_recovered_calls: dict[str, int] | None = None,
     pov_inspect_max_run: dict[str, int] | None = None,
     trace_aggregate_failures: dict[str, str] | None = None,
+    oracle_final: dict[str, str | None] | None = None,
 ) -> Report:
     """중복을 제거하고 리포트 객체를 만든다. 상태는 바꾸지 않는다.
 
@@ -419,6 +455,7 @@ def run(
         schema_recovered_calls=schema_recovered_calls,
         pov_inspect_max_run=pov_inspect_max_run,
         trace_aggregate_failures=trace_aggregate_failures,
+        oracle_final=dict(oracle_final) if oracle_final else None,
     )
 
 
