@@ -258,7 +258,7 @@ class ModelEntry(HarnessModel):
     # ⏵ 2026-10-08 — 「ATOM 실측 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 ·
     #   docs/portability.md §6). 아래 ⏵대로 값은 실측 전에 계산값으로 들어갔다.
     # ⏵ 2026-09-26 — Auditor(`qwen3.8-27b`)가 처음으로 셋을 선언했다 — `sampling`(모델 카드의
-    #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 팀
+    #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 @danielcho02
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
     # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·

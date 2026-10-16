@@ -541,7 +541,7 @@ class RunContext:
         # 만들었는지(evaluation.md §2.3 조건 비교의 기반)인데, 모델은 자기 model 이름도
         # prompt_version도 모른다. 그런데 `produced_by`가 Finding·Decision의 필수 필드라
         # 실서빙에서는 모델이 아무 값이나 채워 넣었다 — Fake는 하네스가 채우는데(fake_model)
-        # 그 비대칭이 결함이었다(팀 지적). 여기서 덮어 실서빙도 Fake와 같아진다.
+        # 그 비대칭이 결함이었다(@0xM1yu 지적). 여기서 덮어 실서빙도 Fake와 같아진다.
         #
         # `produced_by`가 있는 스키마(Finding·Decision)만 덮는다. `model`은 `result.model`을
         # 쓴다 — fallback이 동작하면 요청 모델과 다를 수 있고 그것이 실제로 응답한 모델이다

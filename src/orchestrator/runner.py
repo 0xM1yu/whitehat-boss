@@ -1454,7 +1454,7 @@ def _require_index(
     색인 실패(`graph` Evidence `ok=False` - 시간 초과 124 · OOM 137 · 컨테이너 기동 125 · 실행 불가
     127)를 안 보고 4단계로 가면 심볼 인덱스 없이 파일 단위 폴백으로 돌고 전 타깃이 GRAPH 근거를
     잃는다(`gate.py` 「E2의 GRAPH」) - GPU 시간은 그대로 쓰고 결과는 등급 상한이 낮은 run이다.
-    ⏵ 2026-10-15 (팀 승인) - 전에는 `graph`를 `ok`와 무관하게 `_plan_targets`에 넘겼다.
+    ⏵ 2026-10-15 (@danielcho02 승인) - 전에는 `graph`를 `ok`와 무관하게 `_plan_targets`에 넘겼다.
 
     **닿는다**의 기준은 `cli.run`의 실서빙 게이트와 같다: `last >= Stage.SCOUT`이고
     `served_models()`가 비지 않았다. Fake뿐인 프로필(`dev_*`)과 Scout 전에 서는 run(`--dry-run` -
@@ -1630,7 +1630,7 @@ def _analyze(
                 # `_finalize_oracle`을 건너뛰어 그 PoC의 `fix` 다리·판정 조회를 잃고
                 # `oracle.final`이 `not_reached`가 된다. 「낸 PoC」는 `_designate_final`이 읽는
                 # `pool`(submit했고 vul 제출이 성공한 시도 + 구제된 중간 gen — ⏵ 2026-10-15)이다.
-                # ⏵ 2026-10-15 (팀 승인) — **예외 종류를 가리지 않는다.** 전엔
+                # ⏵ 2026-10-15 (@danielcho02 승인) — **예외 종류를 가리지 않는다.** 전엔
                 # `BudgetExhausted`·`ModelGatewayError`만 받아서, 앞 대상이 이미 낸 PoC가 있어도
                 # k번째 Finding의 예상 밖 예외(버그 한 줄)가 최종 지정을 통째로 버렸다.
                 # `Exception`까지고 `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 아니다 —
@@ -1709,7 +1709,7 @@ def _pov_targets(
     `state.critic_failed_ids`) — 판정이 없으니 Critic을 안 거친 것과
     같다(`_verdict_ranks_by_finding`의 계단 1). 「Critic이 아니라고 했다」가 아니라 「Critic이 못
     봤다」라서다.
-    ⏵ 2026-10-15 - 전엔 이것도 반박처럼 뺐다(팀 승인). 풀 필터는 반박에만 선다. 그 밖에
+    ⏵ 2026-10-15 - 전엔 이것도 반박처럼 뺐다(@danielcho02 승인). 풀 필터는 반박에만 선다. 그 밖에
     **든다:** Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2),
     재현 명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의
     `critic_upheld`). 판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
@@ -1793,7 +1793,7 @@ def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
     정렬·지정에서 뒤로 간다(`_verdict_ranks_by_finding`). 판정 실패는 판정이 없어 **Critic을 안 거친
     Finding과 같은 계단(1)** 이다 — 「Critic이 아니라고 했다」가 아니라 「Critic이 못 봤다」.
 
-    ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). ⏵ 2026-10-15 — 전엔 판정 호출 실패도 뺐다(팀
+    ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). ⏵ 2026-10-15 — 전엔 판정 호출 실패도 뺐다(@danielcho02
     승인 - 스키마 파싱 실패·크기 거절로 판정을 못 받았다고 PoV 기회까지 잃을 이유가 없다).
     `critic_failed` trace·경고는 그대로다.
 
@@ -2939,7 +2939,7 @@ def _designation_key(
     판독에서 나온 계산상의 구멍이다**: 앞 판은 Finding A의 `submit`된 gen이 크래시 코드를 받았어도
     Finding B의 코드 0인 gen이 Critic 계단·등급·`confidence`에서 앞서면 B가 최종이 될 수 있었다.
     **그 분기에 닿은 실 run은 0건이다** — 10-08·10-11·10-12 run은 전부 `final: none`이었고 10-12의
-    PoC는 전부 코드 0이었다. 발생 비율은 미실측이다. 결정은 council → 팀 승인(2026-10-14).
+    PoC는 전부 코드 0이었다. 발생 비율은 미실측이다. 결정은 council → @danielcho02 승인(2026-10-14).
     ⓿이 Critic 계단보다 **앞**이라 **계단이 뒤인 PoC가 앞인 PoC를 이긴다**(보류·크래시 >
     uphold·코드 0) — 의도한 것이다. 한 코드 계단 안에서는 ⓪~④가 개정 전 그대로 정한다
     (구제가 없는 run에서 같은 코드 계단이면 키가 개정 전과 같은 순서를 낸다). **모름(`None` ·
@@ -3019,7 +3019,7 @@ def _designate_final(
     ② 남은 동점은 거부가 아니라 **사슬의 다음 단계**로 넘긴다. 사슬의 끝(PoC 해시)이 전순서라
     `grade_tie`가 닿지 않는 분기가 되어 **사유 상수째 지웠다**(`oracle_log`).
 
-    ⏵ **2026-10-15 — 풀이 넓어졌다**(ADR 0013 결정 1 개정, council → 팀 승인). 후보 풀은 모델이
+    ⏵ **2026-10-15 — 풀이 넓어졌다**(ADR 0013 결정 1 개정, council → @danielcho02 승인). 후보 풀은 모델이
     `submit`한 후보(`ledger.candidates`)에 **구제된 중간 gen**(`ledger.rescued` — `submit` 없이 끝난
     Finding의 중간 gen 중 자기 `vul` 응답 코드가 크래시 계단인 것)을 더한 `ledger.pool`이다. 같은
     응답 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`).
@@ -3049,7 +3049,7 @@ def _designate_final(
     닿지 않는다**: 서버가 300을 응답에서 0으로 덮는다(#384). 방어적으로만 모름에 둔다.
 
     ⏵ **2026-10-14 — 「채점기 값을 안 읽는다」(2026-10-03 · ADR 0013 결정 2)를 이 한 코드만큼
-    개정했다**(이슈 #637, council → 팀 승인). **동기는 관측이 아니라 코드 판독에서 나온 계산상의
+    개정했다**(이슈 #637, council → @danielcho02 승인). **동기는 관측이 아니라 코드 판독에서 나온 계산상의
     구멍이다**(`_designation_key` docstring): 앞 판은 자기 응답 코드를 든 후보끼리의 비교에서도
     그 코드를 못 봤다. 그런 run은 **관측 0건**이다. 이 개정이 하는 것은 **모델이 이미 `submit`한
     후보들 사이에서 그 코드로 고르는 것**이다 — 후보를 채점기에 새로 묻는 것은 아니다: 새 제출·새
@@ -4418,7 +4418,7 @@ class _StageOutOfOrder(RuntimeError):
     ⚠ **`assert`를 안 쓴다.** `origin/main`의 `src/`에 `assert`가 0건이고, 이 저장소가
     불변식을 알리는 방식은 전용 예외다(`ConfigError`·`PromptError`·`BenchApplyError`·
     `_TooManyDrops`). 그리고 `assert`는 `python -O`에서 사라져 값이 노드 깊숙이 흘러
-    불명확한 `TypeError`가 된다(팀 리뷰 #161-4).
+    불명확한 `TypeError`가 된다(@sumin0218 리뷰 #161-4).
     """
 
 
@@ -5983,7 +5983,7 @@ TriageStep = Callable[[RunContext, "_InFlight", "_Accumulator"], bool]
 #
 # **표를 통해서만 부른다.** 특수분기를 하나라도 두면 그 항목이 죽는다 — 표는 권위 있어
 # 보이는데 아무도 그 칸을 안 읽으므로, 단계를 재배열하거나 앞에 하나 끼울 때 표는
-# 맞아 보이는데 엉뚱한 함수가 돈다. 재현으로 크기를 쟀다(팀 리뷰 #161-1): SCOUT↔
+# 맞아 보이는데 엉뚱한 함수가 돈다. 재현으로 크기를 쟀다(@sumin0218 리뷰 #161-1): SCOUT↔
 # AUDITOR 콜러블을 맞바꾸면 64건이 실패하는데, 예전 코드에서 RETRIEVAL 항목을 엉뚱한
 # 함수로 바꿔도 **104건 전부 통과했다.** `tests/test_pipeline_e2e.py`의
 # `test_every_triage_step_takes_the_same_arguments`가 그 균일성을 고정한다.

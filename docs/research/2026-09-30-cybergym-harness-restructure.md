@@ -29,7 +29,7 @@
 > 「`poc` 갈래를 만드는 주체가 없다」는 **부분만 낡았다** — `PovAction`→`assemble_poc`이 PoC 바이트를 만들지만 그 바이트가 도구 입력으로 아직 안 들어간다(`STATUS.md` §PoV 「남은 것」 · `container_tools.py`의 그 주석은 `:473`으로 옮겨 그대로 있다).
 > ② **「`git grep cybergym -- src/` 0건」** → 8개 파일 10줄이다(`src/cli.py`·`config.py`·`orchestrator/context.py`·`orchestrator/nodes/retrieval.py`·`orchestrator/runner.py`·`orchestrator/task_loader.py`·`schemas/enums.py`·`schemas/pov.py`).
 > 최초는 `de47057`(2026-09-30 04:19 KST), 과제 로더 `task_loader.py`는 `f58e244`(2026-09-30 13:10 KST)다. **제출 어댑터(`/submit-vul` 클라이언트)는 지금도 `src/`에 없다**(`submit.sh`는 `task_loader.py:4`의 docstring에만 나온다).
-> ③ **「ADR 0012의 Phase 7에 CyberGym이 없다」** → `docs/decisions/0012-harness-canon-v2.md:196`이 `5990dff`(2026-09-30 14:32 KST)부터 「검증 벤치마크 = CyberGym Level 1」을 적는다(팀 결정 2026-09-30 — 원천 링크는 저장소에 없다고 그 줄이 스스로 적는다).
+> ③ **「ADR 0012의 Phase 7에 CyberGym이 없다」** → `docs/decisions/0012-harness-canon-v2.md:196`이 `5990dff`(2026-09-30 14:32 KST)부터 「검증 벤치마크 = CyberGym Level 1」을 적는다(@danielcho02 결정 2026-09-30 — 원천 링크는 저장소에 없다고 그 줄이 스스로 적는다).
 > ④ **「PR #327(gdb) — 이 브랜치」** → `5cf5c20`(2026-10-01 03:29 KST)으로 main에 머지됐다.
 > ⑤ **「모델이 도구를 반복 호출하는 루프는 없다 · 모델은 도구를 직접 못 부른다」** → **PoV에 한해** 낡았다 — 매 홉 PoV 모델이 `PovAction`(`gen`·`inspect`·`submit`)을 내고 러너가 실행해 관측을 되먹인다(`_run_pov_hops`).
 > tool-calling API가 아니라 `PovAction` JSON 스키마 출력이다(`prompts/pov/v2/meta.yaml`의 `output_schema`). `PovAction.tool`은 `d85ea62` 기준 `asan`·`build`·`poc`이었고, **#380 머지(`a696f85`, 2026-10-03)로 `gdb`가 더해졌다**(`src/schemas/pov.py:185`) — 단 배선된 v2 프롬프트는 gdb를 안내하지 않는다. Scout·Auditor·Critic은 서술 그대로다.
