@@ -674,6 +674,7 @@ class Thresholds(HarnessModel):
     # `candidate_max` 컷에서 과제 설명이 심볼 이름을 부른 후보(`desc_rank` ≥ 2) 앞 N개에
     # 보장하는 자리 수 (#377 (b) 후속 — `runner._cut_with_reserve`). 신호 후보가 컷을 다 채워도
     # 설명과 맞는 후보가 잘리지 않게 한다. 0이면 예약이 없다 — 종전 컷과 같다(필드 기본).
+    # 슬라이스 target은 걸친 함수 이름으로도 매겨진다(`runner._slice_desc_rank`, #693).
     # 값은 `config/budgets.yaml`이 든다.
     candidate_desc_reserve: int = Field(default=0, ge=0)
     # agent-contracts.md §1의 token_budget.retries. 이 값을 올리면 시도 수 `attempts`가 늘어

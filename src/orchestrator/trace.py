@@ -366,6 +366,10 @@ class EventKind(StrEnum):
     # `desc_reserve_filled`는 예약 몫으로 **고른** 수다 — 이미 키 순서로 들었을 것도 센다
     # (`desc_reserved` ≤ 이 값 ≤ `candidate_desc_reserve`). 예약 자리는 서로 다른
     # `(file, symbol)`에만 쓴다.
+    # ⏵ 2026-10-16 (#693) — `desc_spanned_matches`(entry가 아니라 슬라이스가 **걸친 함수** 이름으로
+    # `desc_rank`가 매겨진 target 수)와 `desc_unindexed_slices`(순위가 아직 오를 수 있었는데 걸친
+    # 줄의 파일에 색인이 없어 그 줄의 함수를 못 본 슬라이스 수 — 0이 아니면 예약이 덜 봤다)를
+    # 싣는다. 예약의 `(file, symbol)`은 설명과 맞은 함수다(걸친 함수로 매겨졌으면 그 함수).
     TARGET_PLAN = "target_plan"
     # 4단계에 올리지 못한 target 하나 (W2). `reason`이 사유다.
     #
@@ -396,7 +400,9 @@ class EventKind(StrEnum):
     #
     # - `over_candidate_max` — `_plan_targets`가 **팬아웃 전에** 낸다. **대상 단위.**
     #   (⏵ 2026-10-15 `signal_rank`·`desc_rank`를 싣는다 — 잘린 대상이 어느 순위로 졌는지. 시도 단위
-    #   사유도 그 대상의 같은 값을 싣는다. `target_planned`와 같은 값이다.)
+    #   사유도 그 대상의 같은 값을 싣는다. `target_planned`와 같은 값이다. ⏵ 2026-10-16 #693 걸친
+    #   함수가 `desc_rank`를 냈으면 그 이름 `desc_symbol`·파일 `desc_symbol_file`도 — 없으면 키를 안
+    #   만든다.)
     # - `gateway_error`·`schema_error` — `_drop`이 `(target, 자리)` **시도마다** 낸다.
     #
     # 그래서 `count(target_skipped)`는 **두 단위의 혼합**이고 target 수도 시도 수도 아니다.
@@ -438,6 +444,9 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-15 — `signal_rank`·`desc_rank`(`target_skipped`와 같은 값)와 `desc_reserved`를
     # 싣는다. `desc_reserved`는 설명 일치 예약이 **없었다면 컷에 잘렸을** 대상일 때만 참이다
     # (`target_plan.desc_reserved`와 같은 정의 — 예약 몫 전체가 아니다).
+    # ⏵ 2026-10-16 (#693) — 걸친 함수가 `desc_rank`를 냈으면 그 이름·파일을 `desc_symbol`·
+    # `desc_symbol_file`로 싣는다(`target_skipped`와 같은 규칙 — entry가 냈거나 일치가 없으면
+    # 키가 없다).
     TARGET_PLANNED = "target_planned"
     CRITIC_SKIPPED = "critic_skipped"
     # 7단계에 **들어갔다가** critic 호출이 실패해 그 Finding만 버렸다 (해소).
