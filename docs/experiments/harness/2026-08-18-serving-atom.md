@@ -7,7 +7,7 @@
 > 그 외 본문은 고치지 않았다. 서식(메타 표, §11~15)은 [TEMPLATE.md](../TEMPLATE.md)에 맞춰
 > 2026-08-19에 정리했고, 그 과정에서 주장은 바꾸지 않았다.
 
-**작성**: 팀 (서빙 · 컨테이너 · GPU 회계)
+**작성**: @danielcho02 (서빙 · 컨테이너 · GPU 회계)
 **실험 기간**: 2026-08-17 저녁 ~ 2026-08-18 새벽
 **대상 장비**: GIGABYTE AI TOP ATOM (NVIDIA DGX Spark 계열, GB10 Grace Blackwell)
 **전제 조건**: TCP 예외 승인 및 Docker 데몬 접근 확보 이후

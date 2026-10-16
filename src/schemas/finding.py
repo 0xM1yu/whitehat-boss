@@ -349,7 +349,7 @@ class Finding(HarnessModel):
     audit: SkipJsonSchema[AuditBlock | AuditBlockWithNoSignal | None] = Field(
         default=None, union_mode="left_to_right"
     )
-    # 트리거 가능성의 명시적 상태 (팀 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
+    # 트리거 가능성의 명시적 상태 (@Yunse4l 요청, 2026-08-28). 프롬프트가 `rca_draft`·`confidence`의
     # 모순(예: `not_vulnerable`인데 "취약"이라 서술)을 줄이려 이 상태를 **먼저** 확정하는데, 그
     # 값이 산출물에 안 남아 "모델이 실제로 그 상태로 판정했는지"를 사후에 못 봤다. Auditor가
     # 내는 값: `triggerable` · `guarded` · `no_reach` · `reachability_unknown` · `no_signal`.

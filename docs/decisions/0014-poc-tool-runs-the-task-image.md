@@ -1,6 +1,6 @@
 # 0014. `poc` 도구는 우리가 빌드한 바이너리가 아니라 과제의 `-vul` 이미지를 돌린다
 
-- 상태: **제안** — 승인은 팀
+- 상태: **제안** — 승인은 @danielcho02
 - 일자: 2026-10-09
 - 관련: 이슈 [#513](https://github.com/0xM1yu/whitehat-boss/issues/513) ·
   [#507](https://github.com/0xM1yu/whitehat-boss/issues/507) ·

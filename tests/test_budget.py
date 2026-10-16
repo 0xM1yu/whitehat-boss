@@ -362,7 +362,7 @@ def _bogus_decision() -> Decision:
 
 class _BogusProducedByStub:
     """`produced_by`에 **틀린 값**을 넣은 산출물을 낸다 — 실서빙 모델이 자기 role·model을
-    모른 채 그 필수 필드를 채우는 상황(팀 지적)을 세운다."""
+    모른 채 그 필수 필드를 채우는 상황(@Yunse4l 지적)을 세운다."""
 
     def __init__(self, value) -> None:  # noqa: ANN001
         self._value = value
@@ -375,7 +375,7 @@ class _BogusProducedByStub:
     "make_value", [_bogus_finding, _bogus_decision], ids=["finding", "decision"]
 )
 def test_call_model_stamps_produced_by_over_the_model_value(make_value) -> None:  # noqa: ANN001
-    """실서빙 모델이 `produced_by`에 아무 값이나 넣어도 하네스가 진실로 덮는다 (팀 요청).
+    """실서빙 모델이 `produced_by`에 아무 값이나 넣어도 하네스가 진실로 덮는다 (@Yunse4l 요청).
 
     Fake는 이미 맞게 채우므로, 모델이 **틀린** `produced_by`(role=SCOUT·model=wrong)를 낸
     경우를 세워 override를 본다. `model`은 `ModelResult.model`(실제 응답 모델)을 써야 한다.
