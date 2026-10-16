@@ -2,163 +2,172 @@
 
 # whitehat-boss
 
-**소형 LLM 여러 개를 역할별로 조합해 C/C++ 취약점을 찾아내는 Multi-Agent 하네스**
+**A multi-agent harness that pairs small, role-specialized LLMs to find C/C++ vulnerabilities**
 
 ![python](https://img.shields.io/badge/python-3.11.4%2B-3776AB?logo=python&logoColor=white)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![benchmark](https://img.shields.io/badge/benchmark-CyberGym%20Level%201-8A2BE2)
 ![status](https://img.shields.io/badge/status-research-orange)
-![docs](https://img.shields.io/badge/docs-한국어-lightgrey)
+![docs](https://img.shields.io/badge/docs-Korean-lightgrey)
 
-[빠른 시작](#빠른-시작-gpu-없이) · [파이프라인](#파이프라인) · [실제 과제 돌리기](#실제-과제-돌리기) · [상태와 한계](#상태와-한계) · [문서](#문서)
+**English** · [한국어](README.ko.md)
+
+[Quick start](#quick-start-no-gpu) · [Pipeline](#pipeline) · [Running a real task](#running-a-real-task) · [Status and limitations](#status-and-limitations) · [Docs](#docs)
 
 </div>
 
 ---
 
-C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 크래시 입력 PoC를 만들어 채점기에 제출하는
-데까지를 자동화하는 하네스다. 큰 단일 모델 하나에 맡기지 않고, 역할이 다른 소형 LLM을 파이프라인
-단계마다 바꿔 세운다. 분석에 넣을 코드 조각은 모델을 쓰지 않는 Joern 슬라이서가 미리 만든다.
+whitehat-boss automates the path from C/C++ source to a submitted proof of concept: it looks for memory
+vulnerabilities, checks the evidence, builds a crashing input (PoC), and submits it to a grader. Instead of
+handing everything to one large model, it puts a different small LLM in each pipeline stage. The code
+fragments the models analyze are prepared ahead of time by a Joern slicer that uses no model at all.
 
-평가는 [CyberGym](https://github.com/sunblaze-ucb/cybergym) 벤치마크로 한다. 실제 오픈소스 프로젝트의
-알려진 취약점을 재현하는 과제 모음이다.
+It is evaluated on [CyberGym](https://github.com/sunblaze-ucb/cybergym), a set of tasks that reproduce known
+vulnerabilities in real open-source projects.
 
 > [!NOTE]
-> 아직 유효한 점수를 낸 적은 없다 — [상태와 한계](#상태와-한계)를 먼저 본다. 문서와 CLI 출력은 한국어다.
+> It has not produced a valid score yet — read [Status and limitations](#status-and-limitations) first.
+> Everything outside the README (`docs/`, code comments, CLI output) is in Korean.
 
-## 한눈에 보기
+## At a glance
 
 ```mermaid
 flowchart LR
-    SRC["소스 코드"] --> SCOUT
-    SLICE["슬라이스<br/>(Joern · 무모델)"] --> SCOUT
-    SCOUT["Scout<br/>후보 추리기"] --> AUDITOR["Auditor<br/>근거 모으기"]
-    AUDITOR --> GATE{"근거 게이트<br/>E0–E3"}
-    GATE --> CRITIC["Critic<br/>반박"]
-    CRITIC --> POV["PoV<br/>PoC 만들기"]
-    POV --> ORACLE[("채점기<br/>oracle")]
+    SRC["Source code"] --> SCOUT
+    SLICE["Slices<br/>(Joern · no model)"] --> SCOUT
+    SCOUT["Scout<br/>pick candidates"] --> AUDITOR["Auditor<br/>gather evidence"]
+    AUDITOR --> GATE{"Evidence gate<br/>E0–E3"}
+    GATE --> CRITIC["Critic<br/>rebut"]
+    CRITIC --> POV["PoV<br/>build a PoC"]
+    POV --> ORACLE[("Grader<br/>oracle")]
 ```
 
-| 역할 | 하는 일 |
+| Role | What it does |
 | --- | --- |
-| **Scout** | 소스에서 취약해 보이는 지점을 후보로 추린다 |
-| **Auditor** | 후보 코드를 읽고 취약점인지 근거를 모아 Finding을 낸다 |
-| **Critic** | 다른 계열 모델로 그 Finding을 반박한다. 반박을 버텨야 등급이 오른다 |
-| **PoV** | 살아남은 Finding에서 크래시 입력 PoC를 만들어 채점기에 제출한다 |
-| **슬라이서** | 하네스 밖에서 미리 돌아 분석할 코드 조각 `slices.json`을 만든다 — [규칙](docs/slicer-README.md) |
+| **Scout** | Narrows the source down to spots that look vulnerable |
+| **Auditor** | Reads the candidate code and gathers evidence for a Finding |
+| **Critic** | Tries to rebut the Finding with a model from a different family. A Finding only moves up if it survives |
+| **PoV** | Builds a crashing input from surviving Findings and submits it to the grader |
+| **Slicer** | Runs outside the harness beforehand and writes the code fragments to analyze, `slices.json` — [rules](docs/slicer-README.md) |
 
-실측과 설계의 단일 출처는 코드와 `config/`다. 문서는 그 요약이다. 규약은 [CLAUDE.md](CLAUDE.md)를 본다.
+The code and `config/` are the single source of truth for both measurements and design; the docs summarize
+them. Project conventions are in [CLAUDE.md](CLAUDE.md).
 
-## 파이프라인
+## Pipeline
 
-입력은 소스 디렉터리(`--target`)나 CyberGym 과제 번들(`--task-dir`)이다. 펌웨어 이미지 추출은
-아직 없다([architecture.md](docs/architecture.md) §3). 0단계부터 9단계까지 순서대로 돈다.
-각 단계는 순수 함수와 스키마로 되어 있고, 상태기계가 실행 순서와 체크포인트를 관리한다.
+The input is a source directory (`--target`) or a CyberGym task bundle (`--task-dir`). Firmware image
+extraction does not exist yet ([architecture.md](docs/architecture.md) §3). Stages 0 through 9 run in order.
+Each stage is a pure function with a schema, and a state machine manages execution order and checkpoints.
 
-| 단계 | 이름 | 하는 일 | 산출물 |
+| Stage | Name | What it does | Output |
 | --- | --- | --- | --- |
-| 0 | 전처리 | 파일 타입을 분류하고 파일마다 해시를 부여한다 | Artifact 목록 |
-| 1 | 인덱싱 | tree-sitter로 심볼과 호출 그래프를 뽑는다. 오프라인 Joern 슬라이서가 후보 코드 조각을 만든다 | 코드 인덱스, `slices.json` |
-| 2 | 신호 수집 | Semgrep, clang-tidy, 빌드 프로브, 새니타이저 로그로 정적 신호를 모은다 | Evidence 목록 |
-| 3 | 검색 | 넓게 수집한 뒤 임베딩과 리랭커로 재선별한다. 실서빙 기본값은 꺼짐이다 | ContextCapsule |
-| 4 | Scout | 취약 후보를 추리고 위험 카테고리를 매긴다 | Candidate 목록 |
-| 5 | Auditor | source에서 sink까지의 흐름, 메모리 수명, 경계 조건을 분석하고 근거 초안을 쓴다 | Finding 초안 |
-| 6 | 근거 게이트 | 결정론 규칙으로 근거 등급을 매긴다. 애매한 경우에도 모델을 부르지 않는다 | 승격, 보류, 폐기 |
-| 7 | Critic | 다른 계열 모델이 reachability, aliasing, guard를 들어 반박한다 | 반박 또는 지지 |
-| 8 | 도구 검증 | Docker 안에서 빌드, 새니타이저, PoC를 실행하고 채점기에 제출한다 | 실행 로그 |
-| 9 | 리포트 | 규칙 기반으로 중복을 제거하고 리포트를 만든다 | 리포트 |
+| 0 | Preprocess | Classifies file types and hashes every file | Artifact list |
+| 1 | Index | Extracts symbols and the call graph with tree-sitter. The offline Joern slicer produces candidate code fragments | Code index, `slices.json` |
+| 2 | Signals | Collects static signals from Semgrep, clang-tidy, a build probe, and sanitizer logs | Evidence list |
+| 3 | Retrieval | Collects broadly, then re-ranks with an embedding model and a reranker. Off by default in real serving | ContextCapsule |
+| 4 | Scout | Picks vulnerability candidates and assigns a risk category | Candidate list |
+| 5 | Auditor | Analyzes source-to-sink flow, memory lifetime, and boundary conditions, and drafts the evidence | Finding draft |
+| 6 | Evidence gate | Grades the evidence with deterministic rules. It does not call a model, even in ambiguous cases | Promote, hold, or drop |
+| 7 | Critic | A model from a different family rebuts using reachability, aliasing, and guards | Rebuttal or support |
+| 8 | Tool verification | Builds, runs sanitizers, runs the PoC inside Docker, and submits to the grader | Execution logs |
+| 9 | Report | Deduplicates by rule and writes the report | Report |
 
-### 근거 등급
+### Evidence grades
 
-Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다. 등급 E0부터 E4까지 있고 그에 따라
-상태가 바뀐다.
+A Finding moves up only on accumulated evidence, never on a score a model gave it. There are five grades,
+E0 to E4, and each one maps to a state.
 
-| 등급 | 뜻 | 상태 |
+| Grade | Meaning | State |
 | --- | --- | --- |
-| E0 | 근거가 부족하다 | `queued` |
-| E1 | 정적 신호나 위치 근거가 있다 | `hypothesized` |
-| E2 | source와 sink 경로가 있고 그래프 근거가 있으며 막는 미해결 근거가 없다 | Critic 대상 |
-| E3 | E2를 만족하고 Critic 반박을 버티며 재현 명세가 있다 | `validated` |
-| E4 | 도구 실행 로그가 있고 종료 코드가 0이 아니다. 대용 지표이지 재현 확정이 아니다 | `proven` — 최종 판정은 채점기가 한다 |
+| E0 | Not enough evidence | `queued` |
+| E1 | There is a static signal or location evidence | `hypothesized` |
+| E2 | There is a source-to-sink path, graph evidence, and no blocking unresolved evidence | Goes to the Critic |
+| E3 | Meets E2, survives the Critic's rebuttal, and has a reproduction spec | `validated` |
+| E4 | A tool execution log exists and the exit code is non-zero. A proxy, not a confirmed reproduction | `proven` — the grader makes the final call |
 
-## 핵심 설계
+## Design principles
 
-- **단계 단위 교대 서빙.** 역할별 소형 모델을 GPU 하나에 다 올리지 않고, 단계가 바뀔 때
-  서버를 끄고 다음 모델을 켠다.
-- **근거로만 승격한다.** 모델 점수가 아니라 게이트와 Critic과 도구 결과가 Finding을 올린다.
-- **실측과 추정을 섞지 않는다.** `benchmark: 0`과 `checksum: 0`은 빈 값이 아니라 아직 안 쟀다는 표시다.
-- **모델 없는 슬라이서가 입력을 미리 만든다.** 슬라이싱에는 모델도 GPU도 쓰지 않는다. 다만 Joern
-  데이터플로는 같은 입력에도 다른 경로를 고를 수 있어, 다시 돌린 결과가 늘 같지는 않다
-  ([slicer-README.md](docs/slicer-README.md) 「한 repo를 샤드로 나누기」 절).
-- **프로필로 Fake와 실서빙을 바꾼다.** `dev_fake`는 모든 역할이 Fake라 GPU 없이 끝까지 돈다.
-- **호출을 분리해 기록한다.** 모델 호출 `model_call`과 검색 호출 `retrieval_call`을 trace에 따로 남긴다.
+- **Stage-by-stage model swapping.** Rather than fitting every role's model on one GPU, the server is shut
+  down and the next model started when the stage changes.
+- **Promotion only on evidence.** The gate, the Critic, and tool results promote a Finding — not a model's score.
+- **Measured and estimated values are never mixed.** `benchmark: 0` and `checksum: 0` are not empty values;
+  they mean "not measured yet".
+- **A model-free slicer prepares the input.** Slicing uses neither a model nor a GPU. Joern's data flow can
+  still pick different paths for the same input, so a re-run does not always give the same result
+  ([slicer-README.md](docs/slicer-README.md), section 「한 repo를 샤드로 나누기」).
+- **Profiles switch between Fake and real serving.** `dev_fake` makes every role a Fake, so it runs end to
+  end without a GPU.
+- **Calls are logged separately.** Model calls (`model_call`) and retrieval calls (`retrieval_call`) get
+  their own trace records.
 
-## 저장소 구조
+## Repository layout
 
-| 경로 | 내용 |
+| Path | Contents |
 | --- | --- |
-| `src/` | 오케스트레이터, CLI, 어댑터, 상태기계 |
-| `config/` | 모델 레지스트리, 프로필, 예산, 장비별 서빙 설정 |
-| `tools/slicer/` | 오프라인 Joern 슬라이서. 표준 라이브러리만 쓴다 |
-| `prompts/` | 역할별 프롬프트 |
-| `eval/` | 데이터 누출 검사 유틸과 CyberGym 과제 받기 안내. 데이터셋 자체는 들어 있지 않다 |
-| `docs/` | 아키텍처, 결정 ADR, 결함 D와 R, 실험 기록, 조사 |
+| `src/` | Orchestrator, CLI, adapters, state machine |
+| `config/` | Model registry, profiles, budgets, per-device serving settings |
+| `tools/slicer/` | The offline Joern slicer. Standard library only |
+| `prompts/` | Per-role prompts |
+| `eval/` | Data-leakage checks and instructions for fetching CyberGym tasks. No dataset is included |
+| `docs/` | Architecture, decisions (ADRs), defects (D) and risks (R), run reports, research |
 
-## 요구 사항
+## Requirements
 
-| 무엇 | 언제 필요한가 |
+| What | When |
 | --- | --- |
-| **Python 3.11.4 이상** | 항상 — `pip install -r requirements.txt` |
-| **Docker** | 도구 실행과 채점 |
-| **Joern 4.0.x · JDK 21** | 슬라이싱을 할 때만 |
-| **GPU · vLLM** | 역할 모델을 실제로 서빙할 때만 |
+| **Python 3.11.4+** | Always — `pip install -r requirements.txt` |
+| **Docker** | Running tools and grading |
+| **Joern 4.0.x · JDK 21** | Only for slicing |
+| **GPU · vLLM** | Only for actually serving the role models |
 
-## 빠른 시작: GPU 없이
+## Quick start (no GPU)
 
-`dev_fake` 프로필은 모든 역할을 Fake로 두어 GPU 없이 0단계부터 9단계까지 배관을 끝까지
-돌려 본다. 모델이 Fake라 결과는 역량 측정이 아니다.
+The `dev_fake` profile makes every role a Fake so the plumbing runs from stage 0 to stage 9 without a GPU.
+Since the models are Fakes, the result measures nothing about capability.
 
 ```bash
 pip install -r requirements.txt
 
-# 환경 점검
+# Check the environment
 python -m src.cli doctor --profile dev_fake
 
-# 과제 번들을 받는다. 이 저장소는 CyberGym 데이터를 담지 않는다 — HF에서 직접 받는다
+# Fetch a task bundle. This repository ships no CyberGym data — it is fetched directly from Hugging Face
 python tools/cybergym_task.py arvo:1065 --out eval/datasets/arvo-1065
 
-# 그 번들로 한 번 완주시킨다. --task-work-dir는 번들을 풀 빈 디렉터리다
+# Run once end to end on that bundle. --task-work-dir is an empty directory to unpack the bundle into
 python -m src.cli run --profile dev_fake \
   --task-dir eval/datasets/arvo-1065 --task-work-dir path/to/empty-dir
 ```
 
-테스트:
+Tests:
 
 ```bash
 python -m pytest -q
 ```
 
-## 실제 과제 돌리기
+## Running a real task
 
-도구 이미지, 슬라이싱, 모델 서빙, 채점 준비, 실행 다섯 단계다.
+Five steps: tool image, slicing, model serving, grading setup, and the run.
 
 <details>
-<summary><b>1) 도구 이미지</b> — 2·8단계 도구가 이 안에서 돈다</summary>
+<summary><b>1) Tool image</b> — the stage 2 and stage 8 tools run inside it</summary>
 
 ```bash
-# semgrep · clang-tidy · 빌드 · gdb 등
+# semgrep · clang-tidy · build · gdb, etc.
 docker build -t harness-tools:v3 tools/harness-tools/
 ```
 
-룰셋 고정과 Slurm 클러스터용 Singularity 이관은 [tools/README.md](tools/README.md)를 본다.
+Pinning the rule set and moving the image to a Slurm cluster with Singularity are covered in
+[tools/README.md](tools/README.md).
 
 </details>
 
 <details>
-<summary><b>2) 슬라이싱</b> — 번들을 푼 디렉터리를 <code>--repo</code>로 준다</summary>
+<summary><b>2) Slicing</b> — pass the unpacked bundle directory as <code>--repo</code></summary>
 
-`--repo`에는 `src-vul/`이 아니라 그 부모(번들을 푼 디렉터리)를 준다. run이 슬라이스 경로를 그
-디렉터리 기준으로 찾는다.
+Pass the parent of `src-vul/` (the directory the bundle was unpacked into), not `src-vul/` itself. The run
+resolves slice paths relative to that directory.
 
 ```bash
 mkdir -p /work/task && tar -xzf eval/datasets/arvo-1065/repo-vul.tar.gz -C /work/task
@@ -172,35 +181,36 @@ python tools/slicer/slicer.py --repo /work/task \
 </details>
 
 <details>
-<summary><b>3) 모델 서빙</b> — 역할 모델을 vLLM으로 띄운다</summary>
+<summary><b>3) Model serving</b> — start the role models with vLLM</summary>
 
-모델과 기동 인자는 `config/models.yaml`과 `config/serving/<device>.yaml`에 있다. `--device` 값은 그
-파일 이름이다(`atom` · `vastai` · `vastai-remote`).
+Models and launch arguments are in `config/models.yaml` and `config/serving/<device>.yaml`. The `--device`
+value is that file's name (`atom` · `vastai` · `vastai-remote`).
 
 </details>
 
 <details>
-<summary><b>4) 채점 준비</b> — 카나리 보고서와 채점 서버 키</summary>
+<summary><b>4) Grading setup</b> — a canary report and the grading server key</summary>
 
-채점기(CyberGym 저자 서버)는 조작자가 따로 띄운다. 그 장비가 sanitizer를 제대로 돌리는지 카나리로
-재 두고, 그 보고서가 없거나 pass가 아니면 run이 제출 전에 거부한다. 채점기 왕복은
-[2026-10-02 보고서](docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md)를 본다.
+The operator starts the grader (the CyberGym authors' server) separately. Measure with the canary that the
+machine runs sanitizers correctly; if that report is missing or not a pass, the run refuses before
+submitting anything. For the grader round trip see the
+[2026-10-02 report](docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md).
 
 ```bash
 python tools/oracle_canary.py arvo:1065 --out canary.json
-export CYBERGYM_API_KEY=<채점 서버 키>
+export CYBERGYM_API_KEY=<grading server key>
 ```
 
 </details>
 
 <details open>
-<summary><b>5) 실행</b> — 실서빙 프로필로 채점기까지</summary>
+<summary><b>5) Run</b> — a real-serving profile all the way to the grader</summary>
 
-실서빙 프로필은 `--condition` 없이 시작하지 않는다.
+Real-serving profiles refuse to start without `--condition`.
 
 ```bash
 python -m src.cli run --profile harness_pool --device vastai-remote \
-  --condition <조건 라벨> \
+  --condition <condition label> \
   --task-dir eval/datasets/arvo-1065 --task-work-dir /work/run-empty \
   --slices slices.json \
   --oracle-submit --oracle-server http://127.0.0.1:8666 --oracle-canary canary.json
@@ -208,47 +218,50 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 
 </details>
 
-서브커맨드는 `doctor`, `preflight`, `estimate`, `run`, `bench`, `gc` 다. 각 명령의 플래그는
-`python -m src.cli <명령> -h` 로 본다.
+The subcommands are `doctor`, `preflight`, `estimate`, `run`, `bench`, and `gc`. See each one's flags with
+`python -m src.cli <command> -h`.
 
-## 상태와 한계
+## Status and limitations
 
 > [!WARNING]
-> **유효한 점수는 아직 없다.** 채점기가 최종 PoC로 집계한 것이 아직 없다.
+> **There is no valid score yet.** The grader has not yet counted any final PoC.
 
-- [2026-10-08 run](docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)에서는
-  6바이트 PoC가 취약 빌드를 크래시했지만(`vul_exit_code 77`) 하네스가 그것을 최종 PoC로 지정하지 않아
-  점수가 0이었다([#549](https://github.com/0xM1yu/whitehat-boss/issues/549)).
-- [2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md)은 PoC 4건을
-  제출했으나 4건 모두 `vul_exit_code 0`이었다(§5).
-- 가장 최근 [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)은
-  5단계에서 비정상 종료했다. run 기록 전체는 [docs/experiments/](docs/experiments/README.md)에 있다.
-- **모델 레지스트리의 `benchmark`는 전부 0(미실측)이고, 실모델 6개 중 3개는 `checksum`도
-  자리표시자(0)다**(2026-10-17 `config/models.yaml` 기준). 모델 선정 근거는 실험팀 내부 자료이고
-  이 저장소의 실측이 아니다.
-- **펌웨어 입력은 아직 없다.** 바이너리·펌웨어 분석 경로는 설계에만 있다.
+- In the [2026-10-08 run](docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md),
+  a 6-byte PoC crashed the vulnerable build (`vul_exit_code 77`), but the harness never designated it as the
+  final PoC, so the score was 0 ([#549](https://github.com/0xM1yu/whitehat-boss/issues/549)).
+- The [2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) submitted
+  4 PoCs; all 4 had `vul_exit_code 0` (§5).
+- The most recent [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)
+  terminated abnormally at stage 5. All run reports are in [docs/experiments/](docs/experiments/README.md).
+- **Every `benchmark` in the model registry is 0 (not measured), and 3 of the 6 real models also have a
+  placeholder `checksum` (0)** (as of 2026-10-17, `config/models.yaml`). The models were chosen from the
+  experiment team's internal material, not from measurements in this repository.
+- **There is no firmware input yet.** Binary and firmware analysis exist only in the design.
 
 > [!CAUTION]
-> **이 도구는 크래시 입력을 만든다.** 허가받은 대상에만 쓴다 — [SECURITY.md](SECURITY.md).
+> **This tool produces crashing inputs.** Use it only on targets you are authorized to test — see
+> [SECURITY.md](SECURITY.md).
 
-## 문서
+## Docs
 
-| 알고 싶은 것 | 문서 |
+The documents below are in Korean.
+
+| To learn about | Document |
 | --- | --- |
-| 전체 구조, 단계별 책임, 근거 등급 | [docs/architecture.md](docs/architecture.md) |
-| 역할별 실행 계약과 프롬프트 규약 | [docs/agent-contracts.md](docs/agent-contracts.md) |
-| 지표 정의와 조건 간 비교 규칙 | [docs/evaluation.md](docs/evaluation.md) |
-| 슬라이서 분석 규칙 Case A와 Case B | [docs/slicer-README.md](docs/slicer-README.md) |
-| 되돌리기 어려운 결정 ADR | [docs/decisions/](docs/decisions/) |
-| 미해결 결함과 리스크 | [docs/open-questions.md](docs/open-questions.md) |
-| 하네스를 돌린 run 기록 | [docs/experiments/](docs/experiments/README.md) |
+| Overall structure, per-stage responsibilities, evidence grades | [docs/architecture.md](docs/architecture.md) |
+| Per-role execution contracts and prompt conventions | [docs/agent-contracts.md](docs/agent-contracts.md) |
+| Metric definitions and rules for comparing conditions | [docs/evaluation.md](docs/evaluation.md) |
+| Slicer analysis rules, Case A and Case B | [docs/slicer-README.md](docs/slicer-README.md) |
+| Hard-to-reverse decisions (ADRs) | [docs/decisions/](docs/decisions/) |
+| Open defects and risks | [docs/open-questions.md](docs/open-questions.md) |
+| Reports of harness runs | [docs/experiments/](docs/experiments/README.md) |
 
-## 팀
+## Team
 
-[WhiteHat School](https://www.whsedu.kr/) 4기 2차 프로젝트 — **Team 화햇대장**.
-팀 구성은 [팀 소개](https://github.com/whitehatboss4/whitehatboss4)에 있다.
+Built as the second project of the 4th cohort of [WhiteHat School](https://www.whsedu.kr/) by
+**Team 화햇대장**. The team roster is on the [team page](https://github.com/whitehatboss4/whitehatboss4).
 
-## 라이선스
+## License
 
-[MIT](LICENSE). 평가 데이터셋인 CyberGym 과제와 정답은 이 저장소에 넣지 않는다. 과제는 Hugging Face에서
-직접 받는다([eval/cybergym/README.md](eval/cybergym/README.md)).
+[MIT](LICENSE). The CyberGym tasks and answers used for evaluation are not included in this repository;
+fetch the tasks directly from Hugging Face ([eval/cybergym/README.md](eval/cybergym/README.md)).
