@@ -2104,6 +2104,127 @@ def test_compile_reason_folds_unicode_line_separators() -> None:
         assert separator not in reason
 
 
+# --- #698: 같은 run에서 컴파일러 오류로 이미 잰 컴파일 명령은 다시 돌리지 않는다 ------------------
+# 결정: council 2026-10-16 (#698) — 실측 `run_20261015_0001`에서 probe `build`
+# 둘(`ev_0080`·`ev_0082`)이
+# 2단계 `ev_0004`와 clang argv가 바이트 같았고, probe `asan`(`ev_0083`)은 같은 파일·`-std`·`-I`였다.
+
+
+def _compile_spy(monkeypatch: pytest.MonkeyPatch, returncode: int, stderr: str) -> _Spy:
+    monkeypatch.setattr(container_tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    recorder = _Spy(returncode=returncode, stderr=stderr)
+    monkeypatch.setattr(container_tools.subprocess, "run", recorder)
+    return recorder
+
+
+def _build(runner: ContainerToolRunner, tool: str, workdir: str) -> Evidence:
+    return runner.run(tool, ToolArgs(argv=[tool], workdir=workdir), SANDBOX)
+
+
+def test_a_compile_command_that_already_failed_with_compiler_errors_is_not_run_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = _compile_spy(monkeypatch, 1, _CLANG_STDERR)
+    runner = _runner(tmp_path)
+
+    first = _build(runner, "build", "parser.c")
+    second = _build(runner, "build", "parser.c")
+
+    assert len(spy.calls) == 1, "같은 컴파일 명령을 다시 띄웠다"
+    assert (second.ok, second.exit_code) == (False, first.exit_code)
+    assert first.evidence_id in second.error, "어느 측정의 결과인지 안 밝혔다"
+    assert "2건" in second.error and "unknown type name 'uint8_t'" in second.error
+    assert "/src/" not in second.error, "경로는 관측으로 새면 안 된다"
+
+
+@pytest.mark.parametrize("tool", ["asan", "gdb"])
+def test_asan_and_gdb_after_a_build_failure_on_the_same_file_are_not_run(
+    tool: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`-O`·`-g`·`-c`·`-o`·`-fsanitize`·`-fno-omit-frame-pointer`만 다르고 `-std`·`-I`·`-x`·소스가
+    같다 (실측 `ev_0083`)."""
+    spy = _compile_spy(monkeypatch, 1, _CLANG_STDERR)
+    runner = _runner(tmp_path)
+
+    first = _build(runner, "build", "parser.c")
+    evidence = _build(runner, tool, "parser.c")
+
+    assert len(spy.calls) == 1, f"{tool}가 같은 앞단 컴파일을 다시 띄웠다"
+    assert evidence.ok is False and first.evidence_id in evidence.error
+    assert "-fsanitize" in evidence.error, "무엇이 다른 명령인지 안 밝혔다"
+
+
+def test_a_different_file_is_still_compiled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실측 2단계는 파일 26개를 하나씩 쟀다 — 한 파일의 실패로 다른 파일을 단정하지 않는다."""
+    spy = _compile_spy(monkeypatch, 1, _CLANG_STDERR)
+    runner = _runner(tmp_path)
+
+    _build(runner, "build", "parser.c")
+    _build(runner, "build", "util.c")
+
+    assert len(spy.calls) == 2
+
+
+@pytest.mark.parametrize(
+    ("returncode", "stderr"),
+    [
+        (125, "docker: Error response from daemon: conflict.\n"),  # 기동 실패 — 컴파일러 문구 없음
+        (0, ""),  # 성공
+    ],
+)
+def test_only_a_measured_compiler_error_is_remembered(
+    returncode: int, stderr: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = _compile_spy(monkeypatch, returncode, stderr)
+    runner = _runner(tmp_path)
+
+    _build(runner, "build", "parser.c")
+    _build(runner, "build", "parser.c")
+
+    assert len(spy.calls) == 2
+
+
+def test_a_mixed_language_build_reruns_the_passing_part_and_stops_at_the_failed_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """루프가 첫 실패에서 멈추므로 앞 명령은 그대로 돌아야 결과가 실제 재실행과 같다 —
+    2단계 workdir는 디렉터리일 수 있다(`signals.run(workdir=".")`)."""
+    root = tmp_path / "target"
+    root.mkdir()
+    (root / "a.c").write_text("int a;\n", encoding="utf-8")
+    (root / "b.cc").write_text("int b;\n", encoding="utf-8")
+    monkeypatch.setattr(container_tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    calls: list[list[str]] = []
+
+    def _run(argv, **kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(argv))
+        failed = "-std=gnu++17" in argv
+        return subprocess.CompletedProcess(argv, int(failed), "", _CLANG_STDERR if failed else "")
+
+    monkeypatch.setattr(container_tools.subprocess, "run", _run)
+    runner = _runner(tmp_path / "art", root=root)
+
+    first = _build(runner, "build", ".")
+    second = _build(runner, "build", ".")
+
+    assert len(calls) == 3, "C는 다시 돌고 C++은 안 돌아야 한다"
+    assert "-std=gnu17" in calls[2]
+    assert second.ok is False and first.evidence_id in second.error
+
+
+def test_another_run_does_not_inherit_the_memo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spy = _compile_spy(monkeypatch, 1, _CLANG_STDERR)
+
+    _build(_runner(tmp_path / "a"), "build", "parser.c")
+    _build(_runner(tmp_path / "b"), "build", "parser.c")
+
+    assert len(spy.calls) == 2
+
+
 # --- 인덱서 명령줄은 파일 수에 비례해 자라지 않는다 (Windows CreateProcess 32,767자) ---------
 
 _MANY = 5_000

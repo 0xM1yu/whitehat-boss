@@ -1,0 +1,31 @@
+# 2026-10-16 — v9를 잇는 새 판(이슈 #698). 바뀐 것은 **prefix의 「도구가 항상 넷」 서술 다섯 군데**다.
+# 이슈 #698로 노드가 2단계에서 `build`가 컴파일러 오류를 낸 타깃의 요청 스키마 `tool` enum에서 `build`·`asan`·`gdb`를 뺀다
+# (`signals.withheld_tools` · `signals.without_tools` · hop0 본문 끝 하네스 노트가 「the harness does not offer build, asan or gdb
+# ... (the tool field does not accept them)」라고 쓴다). v9의 다음 문장들은 그때 거짓이거나 오도가 된다:
+#   - `inspect` 항목의 「`tool` is one of `poc` / `asan` / `gdb` / `build`」 - 그 타깃에는 `poc`만 남을 수 있다.
+#   - 「The four tools split into two groups」 - 제시되는 도구가 넷이 아닐 수 있다.
+#   - DEF-SUBMIT 마지막 항목 · 「Hop budget」 `remaining=0` 항목의 「emit another action such as `inspect(build)`」 - `build`가
+#     enum에 없을 수 있다.
+#   - 「When stuck」의 「If you are unsure the target builds at all, use `inspect(build)`」 - 같은 이유이고, 그 타깃은 2단계가
+#     이미 컴파일러 오류를 보고했다.
+# v10은 그 다섯 문장만 「`tool` 필드가 받는 값」으로 고쳤다. 편집 밖은 v9와 바이트 동일이다(`tests/test_pov_prompt_v10.py`가 편집
+# 목록으로 바이트 등식을 묻는다). body·봉투(`PovActionNamed`)·`hop_header`·`source_options` 선언은 v9와 같다. 이슈 #698 번호는
+# prefix에 넣지 않았다(모델이 읽는 입력이다).
+# 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다 - 없으면 `oracle_vul` 줄·출력 꼬리·`last_gen_*`·**하네스 노트**가
+#    **조용히 사라진다**(`tests/test_pov_loop.py`의 `test_every_pov_prompt_version_but_v2_gets_the_wide_inputs`가 문다).
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `9c51df1d2bb33f219f859e42a9bb3b2c7abfadc5f3eae8064748c5ac4507dd6e`
+#   body.md   sha256 `962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443`
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 이 문장 고침이 모델의 도구 선택(예: `build` 재요청 빈도)을 바꾸는지는 **미실측**이다.
+# 도구를 enum에서 빼는 것은 노드 몫이고 이 판은 그 사실을 서술만 한다. v9 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: pov
+version: v10
+output_schema: PovActionNamed
+hop_header: true
+description: >-
+  PoV v9에서 「도구가 항상 넷이고 `inspect(build)`를 쓸 수 있다」는 서술 다섯 군데만 고친 판입니다. 2단계가 `build` 컴파일러 오류를 잰 타깃에서는
+  요청 스키마의 `tool` enum에서 `build`·`asan`·`gdb`가 빠지므로(이슈 #698), 「`tool` 필드가 받는 값」 기준으로 다시 썼습니다.
+  봉투·홉 줄·나머지 규칙·body는 v9와 같습니다. 이 판으로 돈 run이 0건이라 효과는 미실측입니다.
+# 2026-10-16 - 이 판이 서술하는 Auditor `SOURCE` 옵션 둘의 선언(PR #676 가드). v9와 같다 - prefix 「How to reach the vulnerable path」 머리
+# 문단을 안 바꿨다. `cli._undescribed_relayed_options`가 run·doctor에서 이 선언을 읽는다. 이 선언은 meta 한 줄이라 위 sha 핀에 안 든다.
+source_options: [auditor_write_window_marker, auditor_input_context]

@@ -8,8 +8,8 @@ v9는 그 줄만 일반화했다. 묶는 것은 넷이다.
 1. **v8은 한 글자도 안 바뀌었다** - prefix·body sha256(`tests/test_pov_v8.py`의 값과 같다).
 2. **v9 = v8 + 이 편집 하나** - body는 v8과 바이트 동일, prefix는 그 한 줄만 다르다.
 3. **v9 prefix에 과제 ID·run 날짜가 없다** - 판정 규칙(`77`은 제외 코드가 아니다)은 남는다.
-4. **배선** - `_WIDE_INPUT_VERSIONS` · 서빙 좌석 · doctor · 중계 옵션 선언은 v8과 같고, v9보다
-   새 판이 디스크에 없다.
+4. **배선** - `_WIDE_INPUT_VERSIONS` · 봉투 · 중계 옵션 선언은 v8과 같다. ⏵ 2026-10-16 서빙 좌석·
+   doctor·「디스크의 최신 판」 핀은 v10으로 옮겼다(`tests/test_pov_prompt_v10.py`).
 
 ⚠ 철자·구조 핀이다 - 그 줄을 빼는 것이 모델이 `77`을 읽는 방식을 바꾸는지는 미측정이다.
 """
@@ -20,8 +20,6 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
-from src.config import load_config
 from src.orchestrator.nodes import pov
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.schemas.enums import Role
@@ -137,20 +135,6 @@ def test_v9_gets_the_same_wide_inputs_as_v8(ctx) -> None:  # noqa: ANN001, F811
     assert v9.prefix != v8.prefix and v9.prompt_version == "v9"
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_pov_seat_selects_v9_and_the_doctor_has_nothing_to_say(profile: str) -> None:
-    config = load_config(profile)
-    version = config.model_for("pov").prompt_template_version
-
-    assert version == "v9"
-    assert cli._check_prompt_version(config, "pov", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-    assert cli._undescribed_relayed_options(config) == [], "서빙 조합이 중계 옵션 가드를 통과한다"
-
-
-def test_no_pov_version_newer_than_the_served_one_is_on_disk() -> None:
-    numbers = sorted(
-        int(p.name[1:]) for p in (PROMPTS_DIR / "pov").iterdir() if p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 9
+# ⏵ 2026-10-16 - 서빙 좌석이 v10으로 올라갔다(이슈 #698). 「서빙 좌석이 v9를 고른다」·
+# 「v9보다 새 판이 디스크에 없다」 핀은 `tests/test_pov_prompt_v10.py`로 옮겼다
+# (v9 파일은 그대로다 - 위 sha 핀).

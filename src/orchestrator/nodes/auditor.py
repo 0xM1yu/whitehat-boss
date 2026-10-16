@@ -110,14 +110,20 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   `tests/test_container_tools.py::test_no_executed_container_command_receives_the_input_today`가
   고정한다). 이 노드가 싣는다고 그 셋의 관측이 `spec`의 함수가 되지는 않는다. 이 절을 고친 PR은
   **노드**만 바꿨고 컨테이너 러너는 안 건드렸다.
-- ⏵ **2026-10-13 (이슈 #507) — 컴파일 기반 도구는 hop0 본문이 미리 알린다, 거절하지 않는다.**
+- ⏵ **2026-10-13 (이슈 #507) — 컴파일 기반 도구는 hop0 본문이 미리 알린다.** 노드는 모델이 고른
+  도구를 거절하지 않는다.
   2단계 `build`·`clang-tidy`가 컴파일러 오류로 실패했으면(`ctx.compile_failures[workdir]` —
   `signals.run`이 `with_signal()`이 거르기 전에 남긴다) **루프 판**의 hop0 본문 끝에 하네스 노트가
-  붙는다 (`signals.compile_note`: 도구마다 측정한 건수·첫 오류, `build`가 실패했을 때만
-  「`build`·`asan`·`gdb`는 같은 컴파일 명령」). 실패가 없으면 `None`이라 본문이 종전과 같다. 한 방
-  판에는 안 붙는다 — 도구를 고르는 자리가 없다. 모델이 그 뒤에도 `probe build`를 고르면 종전대로
-  돈다. hop0 `auditor_hop` 이벤트가 `compile_note`·`compile_note_tools`를 싣는다(노트를 안
-  붙였으면 키가 없다).
+  붙는다(`signals.compile_note`: 도구마다 측정한 건수·첫 오류). 실패가 없으면 `None`이라 본문이
+  종전과 같다. 한 방 판에는 안 붙는다 — 도구를 고르는 자리가 없다.
+  ⏵ **2026-10-16 (#698) — 고를 수 없게 하는 것은 요청 스키마다.** 그 파일의 2단계 `build`가 컴파일러
+  오류를 냈으면 요청 스키마의 `tool` enum에서 `build`·`asan`·`gdb`가, `clang-tidy`가 냈으면
+  `clang-tidy`가 빠진다(`signals.withheld_tools`·`without_tools`) — 서버가 strict를 집행하는 한
+  모델이 고를 수 없고, 집행하지 않아도 하위 봉투 검증이 거절한다(그 홉은 파싱 실패). 컨테이너
+  어댑터도 이 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않고 그 2단계 실패를 돌려준다
+  (`container_tools.ContainerToolRunner._execute`). 노트 문구도 그 사실을 적는다.
+  hop0 `auditor_hop` 이벤트가 `compile_note`·`compile_note_tools`를 싣는다(노트를 안 붙였으면 키가
+  없다).
 """
 
 import hashlib
@@ -157,6 +163,7 @@ from src.schemas.auditor import (
     AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
     AuditorProcedureProbeInputAction,
+    AuditorProcedureProbeInputDiscriminatedAction,
     AuditProcedure,
     AuditProcedureNullableCwe,
 )
@@ -203,12 +210,16 @@ OUTPUT_SCHEMA = Finding
 # `AuditProcedureAuditAlways`를 싣는다 — `audit`가 어느 상태에서도 null이 아니다(이슈 #578).
 # ⏵ 2026-10-13 — 다섯째 `AuditorProcedureProbeInputAction`(v15)은 넷째의 서브클래스다 — 최종 답은
 # 같고 `probe`의 `spec` 설명만 다시 썼다(그 판이 `spec` 바이트를 `poc`에 싣는다 · 이슈 #419).
+# ⏵ 2026-10-16 — 여섯째 `AuditorProcedureProbeInputDiscriminatedAction`(v18)은 다섯째의 서브클래스다
+# — 검증기·최종 답은 같고 디코더가 받는 JSON 스키마만 `action`·`trigger_status`별 판별 합이다(이슈
+# #602).
 _LoopEnvelope = (
     AuditorAction
     | AuditorProcedureAction
     | AuditorProcedureNullableCweAction
     | AuditorProcedureAuditAlwaysAction
     | AuditorProcedureProbeInputAction
+    | AuditorProcedureProbeInputDiscriminatedAction
 )
 _LOOP_ENVELOPES: tuple[type[_LoopEnvelope], ...] = (
     AuditorAction,
@@ -216,6 +227,7 @@ _LOOP_ENVELOPES: tuple[type[_LoopEnvelope], ...] = (
     AuditorProcedureNullableCweAction,
     AuditorProcedureAuditAlwaysAction,
     AuditorProcedureProbeInputAction,
+    AuditorProcedureProbeInputDiscriminatedAction,
 )
 # 홉 하나가 든 값 — 루프 봉투(⏵ 2026-10-09부터 셋)는 `action`·`requests`·`tool`·`spec`을 공유하므로
 # (`schemas/auditor.py`의 공통 베이스) 조사 쪽 함수(`_observe`·`_lookup`·`_probe`·`_emit_hop`·
@@ -285,10 +297,13 @@ _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 # v17(2026-10-14 · S20 Phase 14)은 v16에 슬라이스 상태(`FACTS.slice_state`)의 서술과 「배너 없으면
 # 첫 블록 하나」 문장의 정정을 더한 판이다 - 위 구절은 v16과 바이트 동일이다
 # (`tests/test_auditor_v17.py`가 차이를 prefix 두 군데로 묶는다).
+# v18(2026-10-16 · #698)은 v17의 「Harness note (stage 2)」 문단 두 문장만 고친 판이다 - 위 구절은
+# v17과
+# 바이트 동일이다(`tests/test_auditor_v18.py`).
 _CONTENT_AWARE_VERSIONS = frozenset(
     {
         "v3", "v4", "v4_t1", "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15",
-        "v16", "v17",
+        "v16", "v17", "v18",
     }
 )
 
@@ -352,7 +367,8 @@ CALLERS_SECTION = "callers"
 # ⏵ 2026-10-13 서빙 판 v15의 prefix는 v14 + 계약 문장 여섯이라 더 길다 — 글자 수는 안 쟀고 user
 # 턴(body)은 v14와 바이트 동일이다 · ⏵ 2026-10-14 서빙 판 v16은 v15에 prefix 다섯 군데를 더했고
 # 글자 수는 안 쟀다 · ⏵ 2026-10-14 서빙 판 v17은 v16에 prefix 두 군데를 더해
-# `len(load_prompt(...).prefix)`가 64,339자에서 67,312자가 됐다 - 토큰은 안 쟀다) ↔ v4 13,405자라
+# `len(load_prompt(...).prefix)`가 64,339자에서 67,312자가 됐다 · ⏵ 2026-10-16 v18은
+# 67,670자(재서 센 값) - 토큰은 안 쟀다) ↔ v4 13,405자라
 # hop0가 이보다 크다. 미실측)을 더하면 225,569로 28,961토큰 넘는다(계산값 — v4 기준이다. hop0가
 # 클수록 넘는 폭도 커진다).
 # 비 3.28이면 한 번이 4,574토큰이라 16홉 합 73,184(hop0까지 102,017)로 안에 든다(계산값). ⚠ 3.28은
@@ -626,7 +642,8 @@ def _ask_model(
                 capsule=capsule,
                 prompt=prompt,
                 workdir=workdir,
-                schema=envelope,
+                # #698 — 2단계가 컴파일러 오류를 잰 도구는 모든 홉의 요청 스키마에서 뺀다
+                schema=signals.without_tools(envelope, signals.withheld_tools(failures)),
                 observations=observations,
                 hop0_note=signals.compile_note_trace(failures) if note is not None else None,
             )
@@ -823,8 +840,8 @@ def _render_hop0(
             evidence_bodies=bodies,
             evidence_locations=aware,
             # `facts_source: false` 판(v13·v14 · 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14
-            # v16·v17도)은 FACTS에 `source` 사본을 안 싣는다 — 원문은 아래 산문 `source` 하나로
-            # 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
+            # v16·v17 · 2026-10-16 v18도)은 FACTS에 `source` 사본을 안 싣는다 — 원문은 아래 산문
+            # `source` 하나로 간다. 판의 meta가 정하고 노드는 이름 목록을 안 든다.
             include_source=template.facts_source,
             callers=caller_names(capsule),
             slice_state=slice_state,
