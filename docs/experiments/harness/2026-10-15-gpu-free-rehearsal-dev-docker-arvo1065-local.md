@@ -107,6 +107,6 @@ build·clang-tidy의 실패는 이슈 #507(이 번들이 우리 clang으로 컴�
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
 | 모델 품질·점수 | 전 역할 Fake | 실서빙 run(vast) |
-| 슬라이스 경로(`--slices`)의 컷 | 이 리허설은 심볼 색인 경로다 | 실 슬라이스 산출물로 `target_plan`의 `desc_reserved`·`desc_reserve_filled`·`signal_artifacts`를 본다 |
+| 슬라이스 경로(`--slices`)의 컷 | 이 리허설은 심볼 색인 경로다 | 실 슬라이스 산출물로 `target_plan`의 `desc_reserved`·`desc_reserve_filled`·`signal_artifacts`를 본다. ⏵ 2026-10-16 실서빙 `run_20261015_0001`에서 봤다 — 그 run의 trace `target_plan`이 `desc_reserve_filled` 0 · `desc_*_matches` 셋 다 0(실측 · 슬라이스 경로가 entry 이름으로만 매겨 166조각 전부 0 · 이슈 #693). 고친 규칙의 값은 계산값뿐이다([D97](../../open-questions/D/D97.md)의 셋째 ⏵) |
 | 예약 효과가 점수로 이어지는지 | 점수가 없다 | 같은 과제에서 예약 0 ↔ 2 짝 run |
 | 이 기록의 재현 | 산출물이 없다 | `dev_docker` 프로필 · 번들 arvo:1065 · 이미지 `harness-tools:v3`로 A·C를 다시 돌려 `target_plan`을 비교한다 |

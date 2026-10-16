@@ -44,3 +44,11 @@ tree-sitter-cpp>=0.23
 # (docs/experiments/2026-08-26-pipeline-zlib542-remeasure-atom.md §근거 로그). 그보다 낮은
 # 것을 CI가 잡으면 실서빙과 다른 것을 검증하게 된다.
 tokenizers>=0.22
+
+# 디코더 JSON 스키마 검증(#602 · `tests/test_auditor_v18_envelope.py`). Auditor v18 봉투가 디코더에 보내는
+# 판별 합 스키마가 관측된 실패 모양을 거절하고 정상 답은 받는지를 **스키마 자체로** 잰다 — 하네스 런타임은
+# import하지 않아 `pyproject.toml`에는 넣지 않는다(위 tree-sitter와 같은 자리). importorskip으로 두면 CI가
+# 조용히 건너뛰어 그 판정이 한 줄도 안 선다. `Draft202012Validator`를 쓴다. 전이 의존: attrs ·
+# jsonschema-specifications · referencing · rpds-py. ⚠ xgrammar(문법 집행 · `tests/test_check_decoder_schemas.py`)는
+# torch를 하드 의존으로 끌고 와 여기 두지 않는다 — 그 테스트만 importorskip이고 서빙 박스의 doctor가 돈다.
+jsonschema>=4.18
