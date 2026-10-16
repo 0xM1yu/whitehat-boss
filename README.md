@@ -2,11 +2,14 @@
 
 > 소형 LLM 여러 개를 역할별로 조합해 C/C++ 취약점을 찾아내는 Multi-Agent 하네스
 
-![python](https://img.shields.io/badge/python-3.11%2B-blue)
+![python](https://img.shields.io/badge/python-3.11.4%2B-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 
-C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 실제로 크래시를 내는 PoC까지 만들어
-채점기에 제출하는 자동화 하네스다. 큰 단일 모델 하나에 맡기지 않고, 역할이 다른 소형 LLM을
+문서와 CLI 출력은 한국어다.
+
+C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 크래시 입력 PoC를 만들어 채점기에
+제출하는 데까지를 자동화하는 하네스다. 아직 유효한 점수를 낸 적은 없다 — 아래 [상태와 한계](#상태와-한계).
+큰 단일 모델 하나에 맡기지 않고, 역할이 다른 소형 LLM을
 파이프라인 단계마다 바꿔 세운다. 분석에 넣을 코드 조각은 모델을 쓰지 않는 Joern 슬라이서가
 미리 만든다. 평가는 CyberGym 벤치마크로 한다. CyberGym은 실제 오픈소스 프로젝트의 알려진
 취약점을 재현하는 과제 모음이다.
@@ -32,7 +35,8 @@ C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 실제
 
 ## 파이프라인
 
-입력은 소스 repo, 펌웨어 이미지, 또는 크래시 번들이다. 0단계부터 9단계까지 순서대로 돈다.
+입력은 소스 디렉터리(`--target`)나 CyberGym 과제 번들(`--task-dir`)이다. 펌웨어 이미지 추출은
+아직 없다([architecture.md](docs/architecture.md) §3). 0단계부터 9단계까지 순서대로 돈다.
 각 단계는 순수 함수와 스키마로 되어 있고, 상태기계가 실행 순서와 체크포인트를 관리한다.
 
 | 단계 | 이름 | 하는 일 | 산출물 |
@@ -43,7 +47,7 @@ C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 실제
 | 3 | 검색 | 넓게 수집한 뒤 임베딩과 리랭커로 재선별한다. 실서빙 기본값은 꺼짐이다 | ContextCapsule |
 | 4 | Scout | 취약 후보를 추리고 위험 카테고리를 매긴다 | Candidate 목록 |
 | 5 | Auditor | source에서 sink까지의 흐름, 메모리 수명, 경계 조건을 분석하고 근거 초안을 쓴다 | Finding 초안 |
-| 6 | 근거 게이트 | 결정론 규칙으로 근거 등급을 매긴다. 애매할 때만 모델을 부른다 | 승격, 보류, 폐기 |
+| 6 | 근거 게이트 | 결정론 규칙으로 근거 등급을 매긴다. 애매한 경우에도 모델을 부르지 않는다 | 승격, 보류, 폐기 |
 | 7 | Critic | 다른 계열 모델이 reachability, aliasing, guard를 들어 반박한다 | 반박 또는 지지 |
 | 8 | 도구 검증 | Docker 안에서 빌드, 새니타이저, PoC를 실행하고 채점기에 제출한다 | 실행 로그 |
 | 9 | 리포트 | 규칙 기반으로 중복을 제거하고 리포트를 만든다 | 리포트 |
@@ -59,7 +63,7 @@ Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다
 | E1 | 정적 신호나 위치 근거가 있다 | hypothesized |
 | E2 | source와 sink 경로가 있고 그래프 근거가 있으며 막는 미해결 근거가 없다 | Critic 대상 |
 | E3 | E2를 만족하고 Critic 반박을 버티며 재현 명세가 있다 | validated |
-| E4 | 도구가 비정상 종료로 재현했다 | proven. 최종 판정은 채점기가 한다 |
+| E4 | 도구 실행 로그가 있고 종료 코드가 0이 아니다. 대용 지표이지 재현 확정이 아니다 | proven. 최종 판정은 채점기가 한다 |
 
 ## 핵심 설계
 
@@ -67,7 +71,9 @@ Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다
   서버를 끄고 다음 모델을 켠다.
 - **근거로만 승격한다.** 모델 점수가 아니라 게이트와 Critic과 도구 결과가 Finding을 올린다.
 - **실측과 추정을 섞지 않는다.** `benchmark: 0`과 `checksum: 0`은 빈 값이 아니라 아직 안 쟀다는 표시다.
-- **모델 없는 슬라이서가 입력을 미리 만든다.** 그래서 같은 코드면 같은 결과가 나온다.
+- **모델 없는 슬라이서가 입력을 미리 만든다.** 슬라이싱에는 모델도 GPU도 쓰지 않는다. 다만 Joern
+  데이터플로는 같은 입력에도 다른 경로를 고를 수 있어, 다시 돌린 결과가 늘 같지는 않다
+  ([slicer-README.md](docs/slicer-README.md) 「한 repo를 샤드로 나누기」 절).
 - **프로필로 Fake와 실서빙을 바꾼다.** `dev_fake`는 모든 역할이 Fake라 GPU 없이 끝까지 돈다.
 - **호출을 분리해 기록한다.** 모델 호출 `model_call`과 검색 호출 `retrieval_call`을 trace에 따로 남긴다.
 
@@ -92,7 +98,7 @@ Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다
 ## 빠른 시작: GPU 없이
 
 `dev_fake` 프로필은 모든 역할을 Fake로 두어 GPU 없이 0단계부터 9단계까지 배관을 끝까지
-돌려 본다.
+돌려 본다. 모델이 Fake라 결과는 역량 측정이 아니다.
 
 ```bash
 pip install -r requirements.txt
@@ -100,9 +106,12 @@ pip install -r requirements.txt
 # 환경 점검
 python -m src.cli doctor --profile dev_fake
 
-# 과제 번들로 한 번 완주시킨다. 번들은 repo-vul.tar.gz 와 description.txt 를 담는다
+# 과제 번들을 받는다. 이 저장소는 CyberGym 데이터를 담지 않는다 — HF에서 직접 받는다
+python tools/cybergym_task.py arvo:1065 --out eval/datasets/arvo-1065
+
+# 그 번들로 한 번 완주시킨다. --task-work-dir는 번들을 풀 빈 디렉터리다
 python -m src.cli run --profile dev_fake \
-  --task-dir path/to/task --unpack-dir path/to/empty-dir
+  --task-dir eval/datasets/arvo-1065 --task-work-dir path/to/empty-dir
 ```
 
 테스트:
@@ -113,28 +122,55 @@ python -m pytest -q
 
 ## 실제 과제 돌리기
 
-슬라이싱, 모델 서빙, 실행 세 단계다.
+도구 이미지, 슬라이싱, 모델 서빙, 채점 준비, 실행 다섯 단계다.
 
 ```bash
-# 1) 슬라이싱. Joern 서버를 띄우고 오프라인 슬라이서를 돌린다
+# 1) 도구 이미지. 2·8단계 도구(semgrep · clang-tidy · 빌드 · gdb 등)가 이 안에서 돈다
+docker build -t harness-tools:v3 tools/harness-tools/
+
+# 2) 슬라이싱. 번들을 푼 디렉터리(src-vul/의 부모)를 --repo로 준다 —
+#    run이 슬라이스 경로를 그 디렉터리 기준으로 찾는다
+mkdir -p /work/task && tar -xzf eval/datasets/arvo-1065/repo-vul.tar.gz -C /work/task
 ./joern-cli/joern -J-Xmx16g --server --server-host 127.0.0.1 --server-port 16242 &
-python tools/slicer/slicer.py --repo path/to/repo-vul \
+python tools/slicer/slicer.py --repo /work/task \
   --joern-endpoint http://127.0.0.1:16242 \
   --joern-version-command ./joern-cli/joern \
   --out slices.json
 
-# 2) 역할 모델을 vLLM으로 서빙한다. 모델과 기동 인자는 config/models.yaml 와
+# 3) 역할 모델을 vLLM으로 서빙한다. 모델과 기동 인자는 config/models.yaml 와
 #    config/serving/<device>.yaml 에 있다
 
-# 3) 실서빙 프로필로 채점기까지 돌린다
+# 4) 채점 준비. 채점기(CyberGym 저자 서버)는 조작자가 따로 띄운다. 그 장비가 sanitizer를
+#    제대로 돌리는지 카나리로 재 두고, 그 보고서가 없거나 pass가 아니면 run이 제출 전에 거부한다
+python tools/oracle_canary.py arvo:1065 --out canary.json
+export CYBERGYM_API_KEY=<채점 서버 키>
+
+# 5) 실서빙 프로필로 채점기까지 돌린다. 실서빙 프로필은 --condition 없이 시작하지 않는다
 python -m src.cli run --profile harness_pool --device <device-label> \
-  --task-dir path/to/task --unpack-dir path/to/empty-dir \
+  --condition <조건 라벨> \
+  --task-dir eval/datasets/arvo-1065 --task-work-dir /work/run-empty \
   --slices slices.json \
-  --oracle-submit --oracle-server http://127.0.0.1:8666 --canary canary.json
+  --oracle-submit --oracle-server http://127.0.0.1:8666 --oracle-canary canary.json
 ```
+
+이미지 빌드의 룰셋 고정과 Slurm 클러스터용 Singularity 이관은 [tools/README.md](tools/README.md),
+채점기 왕복은 [2026-10-02 보고서](docs/experiments/harness/2026-10-02-cybergym-oracle-roundtrip-win11wsl.md)를 본다.
 
 서브커맨드는 `doctor`, `preflight`, `estimate`, `run`, `bench`, `gc` 다. 각 명령의 플래그는
 `python -m src.cli <명령> -h` 로 본다.
+
+## 상태와 한계
+
+- **유효한 점수는 아직 없다.** 실서빙 run의 채점기 점수는 지금까지 0이다
+  ([2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) §5 — PoC 4건 제출,
+  4건 모두 `vul_exit_code 0`). 가장 최근
+  [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)은 5단계에서
+  비정상 종료했다. run 기록 전체는 [docs/experiments/](docs/experiments/README.md)에 있다.
+- **모델 레지스트리의 `benchmark`는 전부 0(미실측)이고, 실모델 6개 중 3개는 `checksum`도
+  자리표시자(0)다**(2026-10-17 `config/models.yaml` 기준). 모델 선정 근거는 실험팀 내부 자료이고
+  이 저장소의 실측이 아니다.
+- **펌웨어 입력은 아직 없다.** 바이너리·펌웨어 분석 경로는 설계에만 있다.
+- **이 도구는 크래시 입력을 만든다.** 허가받은 대상에만 쓴다 — [SECURITY.md](SECURITY.md).
 
 ## 문서
 
