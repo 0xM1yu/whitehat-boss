@@ -1,6 +1,6 @@
 # PRD: 소형 Open-Weight LLM 앙상블 기반 취약점 연구 Multi-Agent Orchestration
 
-- 팀명: 팀 워크스페이스 (WHITEHAT SCHOOL 4th)
+- 팀명: 화햇대장 (WHITEHAT SCHOOL 4th)
 - 문서 버전: v1.0 (초안)
 - 작성일: 2026-08-05
 

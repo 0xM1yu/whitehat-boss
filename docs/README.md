@@ -2,7 +2,7 @@
 
 소형 Open-Weight LLM 앙상블 기반 취약점 연구 Multi-Agent Orchestration 프로젝트의 실행 문서 모음.
 
-- 팀: 팀 워크스페이스 (WHITEHAT SCHOOL 4기)
+- 팀: 화햇대장 (WHITEHAT SCHOOL 4기)
 - 원본 문서(같은 폴더): [prd.md](prd.md), [Multi-Agent Vulnerability Harness.md](Multi-Agent%20Vulnerability%20Harness.md), 킥오프 발표자료 PDF(28p, 이미지 스캔본 — 텍스트 레이어 없음)
 
 ## 문서 지도
