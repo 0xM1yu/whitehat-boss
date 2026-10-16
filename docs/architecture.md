@@ -96,7 +96,10 @@ graph LR
 >   둘 다 순서만 바꾼다 — [D97](open-questions/D/D97.md). ⏵ 같은 날 — 컷은 그 키 앞 `candidate_max`개가 **전부가 아니다**: 신호 후보 8개가
 >   컷을 다 채워 설명과 맞는 후보가 잘린 리허설을 보고([기록](experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md)),
 >   `desc_rank` ≥ 2인 후보 앞 `thresholds.candidate_desc_reserve`개(2)를 신호와 무관하게
->   컷에 넣는다(`runner._cut_with_reserve`). 남긴 목록은 다시 키 순서다. 효과 미실측.)
+>   컷에 넣는다(`runner._cut_with_reserve`). 남긴 목록은 다시 키 순서다. 효과 미실측.
+>   ⏵ 2026-10-16 #693 — 슬라이스 타깃은 entry 이름만이 아니라 슬라이스가 **걸친 함수** 이름으로도 `desc_rank`를 매긴다(최댓값).
+>   entry만 보던 동안 실서빙 run_20261015_0001의 trace `target_plan`이 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches` 셋 다 0이었다(실측 · 166조각) — 예약이 한 일이 없었다.
+>   실서빙 `run_20261015_0001`(commit `856528d`)의 `slices.json` 166조각과 그 run의 `index.json`으로 다시 계산하면 1조각(`slice_0524` — entry `funcs.c:file_vprintf`, 걸친 `funcs.c:file_regexec`)이 2가 된다(계산값 · run 아님 · n=1 · 산출물은 저장소 밖 handoff).)
 > - **3단계 — 쓰임이 열려 있다**(결정 3, 2026-09-26 대면 논의). ADR 0012가 그 논의 전에 정해 두는
 >   것은 둘이다 — need_evidence는 결정론적 심볼 resolver가 풀고(결정 2), canonical 프로필은 합의 전까지
 >   `retriever: hybrid`를 쓰지 않는다. ~~canonical 프로필은 아직 없다(Phase 6).~~ (⏵ 2026-09-24 — 생겼다:
