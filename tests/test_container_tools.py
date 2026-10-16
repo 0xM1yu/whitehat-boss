@@ -2225,6 +2225,76 @@ def test_another_run_does_not_inherit_the_memo(
     assert len(spy.calls) == 2
 
 
+# clang이 링크 단계에서 실패할 때의 꼴(PR #699 리뷰 P2) — `harness-tools:v3`의 clang 14.0.0에
+# asan argv(`-fsanitize=address,undefined … -o`)로 미정의 함수를 링크시켜 받은 stderr
+# 그대로다(2026-10-16). ld의 줄에는 `file:line:col: error:`가 없고, 드라이버가 끝에
+# `clang: error:`를 붙인다.
+_CLANG_LINK_STDERR = (
+    "/usr/bin/ld: /work/link-814e58.o: in function `main':\n"
+    "link.c:(.text+0x5): undefined reference to `helper'\n"
+    "clang: error: linker command failed with exit code 1 (use -v to see invocation)\n"
+)
+
+
+@pytest.mark.parametrize("later", ["build", "gdb"])
+def test_a_link_failure_is_not_remembered_for_the_compile_command(
+    later: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """asan·gdb의 첫 clang은 링크까지 한다 — 링크 실패는 앞단 컴파일의 측정이 아니다.
+
+    `_compile_key`가 `-c`·`-o`를 빼므로 링크하지 않는 build와 키가 같다(PR #699 리뷰 P2 재현:
+    build 성공 → asan 링크 실패 → build가 실행 없이 실패로 대체됐다).
+    """
+    monkeypatch.setattr(container_tools.shutil, "which", lambda name: f"/usr/bin/{name}")
+    calls: list[list[str]] = []
+
+    def _run(argv, **kwargs):  # noqa: ANN001, ANN202
+        calls.append(list(argv))
+        failed = "-fsanitize=address,undefined" in argv
+        return subprocess.CompletedProcess(
+            argv, int(failed), "", _CLANG_LINK_STDERR if failed else ""
+        )
+
+    monkeypatch.setattr(container_tools.subprocess, "run", _run)
+    runner = _runner(tmp_path)
+
+    _build(runner, "build", "parser.c")
+    linked = _build(runner, "asan", "parser.c")
+    after = _build(runner, later, "parser.c")
+
+    assert linked.ok is False
+    assert len(calls) > 2, f"링크 실패 뒤의 {later}가 실행되지 않았다"
+    assert linked.evidence_id not in (after.error or ""), "링크 실패를 컴파일 실패로 돌려줬다"
+
+
+@pytest.mark.parametrize(
+    ("stderr", "front_end"),
+    [
+        (_CLANG_STDERR, True),
+        # 같은 이미지·같은 날 build argv로 받은 그대로(`_include_args` docstring 실측의 헤더)
+        (
+            "/w/front.c:1:10: fatal error: 'zutil.h' file not found\n"
+            '#include "zutil.h"\n'
+            "         ^~~~~~~~~\n"
+            "1 error generated.\n",
+            True,
+        ),
+        (_CLANG_LINK_STDERR, False),  # GNU ld + 드라이버
+        (
+            "ld.lld: error: undefined symbol: helper\n"
+            ">>> referenced by parser.c:40 (/src/file/src/parser.c:40)\n"
+            "clang: error: linker command failed with exit code 1 (use -v to see invocation)\n",
+            False,
+        ),
+        ("clang: error: no such file or directory: 'parser.c'\n", False),  # 드라이버
+    ],
+)
+def test_only_front_end_errors_count_as_a_compile_measurement(
+    stderr: str, front_end: bool
+) -> None:
+    assert bool(container_tools._FRONT_END_ERROR.search(stderr)) is front_end
+
+
 # --- 인덱서 명령줄은 파일 수에 비례해 자라지 않는다 (Windows CreateProcess 32,767자) ---------
 
 _MANY = 5_000

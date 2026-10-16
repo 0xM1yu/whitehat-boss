@@ -120,8 +120,9 @@ hop0 user 턴(SOURCE·FACTS)은 `history` 맨 앞으로 **다시 실린다** —
   오류를 냈으면 요청 스키마의 `tool` enum에서 `build`·`asan`·`gdb`가, `clang-tidy`가 냈으면
   `clang-tidy`가 빠진다(`signals.withheld_tools`·`without_tools`) — 서버가 strict를 집행하는 한
   모델이 고를 수 없고, 집행하지 않아도 하위 봉투 검증이 거절한다(그 홉은 파싱 실패). 컨테이너
-  어댑터도 이 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않고 그 2단계 실패를 돌려준다
-  (`container_tools.ContainerToolRunner._execute`). 노트 문구도 그 사실을 적는다.
+  어댑터도 이 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않고
+  그 2단계 실패를 돌려준다(`container_tools.ContainerToolRunner._execute`). 노트 문구도 그
+  사실을 적는다.
   hop0 `auditor_hop` 이벤트가 `compile_note`·`compile_note_tools`를 싣는다(노트를 안 붙였으면 키가
   없다).
 """
