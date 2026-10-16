@@ -792,8 +792,9 @@ def _require(active: bool, pr: str, what: str) -> None:
     # ⏵ 2026-10-14 - v16은 v15의 그 문장들을 그대로 물려받았다(`tests/test_auditor_v16.py`가 차이를
     # prefix 다섯 군데로 바이트 등식으로 묶는다) - 서빙 판이 v16이어도 그 창은 그대로 열려 있다.
     # v17도 v16에서 prefix 두 군데만 고쳤고(`tests/test_auditor_v17.py`가 바이트 등식으로 문다)
-    # 그 문장들은 안 건드렸다.
-    if _SERVED_AUDITOR_VERSION in ("v15", "v16", "v17"):
+    # 그 문장들은 안 건드렸다. ⏵ 2026-10-16 v18은 v17에서 하네스 노트 문단 두 문장만 고쳤다(#698 ·
+    # `tests/test_auditor_v18.py`) - 이 창이 묻는 의존 PR 문장은 그대로다.
+    if _SERVED_AUDITOR_VERSION in ("v15", "v16", "v17", "v18"):
         pytest.fail(
             f"{pr}가 아직 main에 없는데 `config/models.yaml`의 Auditor 좌석이 이미 "
             f"{_SERVED_AUDITOR_VERSION}다 — "
@@ -1003,7 +1004,9 @@ _TIDY_ERRORS = _compile_failure(
 @pytest.mark.parametrize(
     ("failures", "expected"),
     [
-        ((_BUILD_ERRORS, _TIDY_ERRORS), "use the same compile command"),
+        # ⏵ 2026-10-16 (#698) — 노트 문구가 예측(「같은 오류가 예상된다」)에서 하네스 동작으로
+        # 바뀌었다.
+        ((_BUILD_ERRORS, _TIDY_ERRORS), "does not offer build, asan or gdb"),
         ((_BUILD_NO_TEXT, _TIDY_ERRORS), "build failed without compiler error text"),
         ((_TIDY_ERRORS,), "build was not observed to fail with compiler errors"),
     ],
@@ -1039,7 +1042,7 @@ def test_pr_648_the_hop0_note_refuses_no_tool_and_its_variants_are_the_ones_the_
 
     hop0 = scripted.prompts[0][1].body
     assert heading in hop0 and expected in hop0
-    if "use the same compile command" in expected:
+    if "does not offer build" in expected:
         assert "poc does not use this compile command" in hop0
     observation = scripted.prompts[1][1].body
     assert observation.startswith("## Tool observation (hop 1)") and "tool=build " in observation
