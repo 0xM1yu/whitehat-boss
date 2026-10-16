@@ -464,7 +464,7 @@ def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: 
 
 
 def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
-    """대학 학생이 Slurm에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
+    """외부 사용자가 Slurm에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
 
     `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않는다 — 이
     필드가 없으면 두 run이 기록만으로는 완전히 같아 보인다.
