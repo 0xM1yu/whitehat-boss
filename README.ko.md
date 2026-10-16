@@ -1,14 +1,13 @@
 <div align="center">
 
-# whitehat-boss
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <img alt="whitehat-boss — Scout → Auditor → Gate → Critic → PoV → Oracle" src="docs/assets/banner-light.svg" width="100%">
+</picture>
 
-**소형 LLM 여러 개를 역할별로 조합해 C/C++ 취약점을 찾아내는 Multi-Agent 하네스**
+### 소형 LLM 여러 개를 역할별로 조합해 C/C++ 취약점을 찾아내는 Multi-Agent 하네스
 
-![python](https://img.shields.io/badge/python-3.11.4%2B-3776AB?logo=python&logoColor=white)
-![license](https://img.shields.io/badge/license-MIT-green)
-![benchmark](https://img.shields.io/badge/benchmark-CyberGym%20Level%201-8A2BE2)
-![status](https://img.shields.io/badge/status-research-orange)
-![docs](https://img.shields.io/badge/docs-한국어-lightgrey)
+<a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge"></a> <img alt="python" src="https://img.shields.io/badge/python-3.11.4%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"> <a href="https://github.com/sunblaze-ucb/cybergym"><img alt="benchmark" src="https://img.shields.io/badge/benchmark-CyberGym%20L1-8A2BE2?style=for-the-badge"></a> <img alt="status" src="https://img.shields.io/badge/status-research-f0883e?style=for-the-badge">
 
 [English](README.md) · **한국어**
 
@@ -30,24 +29,18 @@ C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 크래
 
 ## 한눈에 보기
 
-```mermaid
-flowchart LR
-    SRC["소스 코드"] --> SCOUT
-    SLICE["슬라이스<br/>(Joern · 무모델)"] --> SCOUT
-    SCOUT["Scout<br/>후보 추리기"] --> AUDITOR["Auditor<br/>근거 모으기"]
-    AUDITOR --> GATE{"근거 게이트<br/>E0–E3"}
-    GATE --> CRITIC["Critic<br/>반박"]
-    CRITIC --> POV["PoV<br/>PoC 만들기"]
-    POV --> ORACLE[("채점기<br/>oracle")]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-ko-dark.svg">
+  <img alt="파이프라인: Scout → Auditor → 게이트 → Critic → PoV → Oracle" src="docs/assets/pipeline-ko-light.svg" width="100%">
+</picture>
 
 | 역할 | 하는 일 |
 | --- | --- |
-| **Scout** | 소스에서 취약해 보이는 지점을 후보로 추린다 |
-| **Auditor** | 후보 코드를 읽고 취약점인지 근거를 모아 Finding을 낸다 |
-| **Critic** | 다른 계열 모델로 그 Finding을 반박한다. 반박을 버텨야 등급이 오른다 |
-| **PoV** | 살아남은 Finding에서 크래시 입력 PoC를 만들어 채점기에 제출한다 |
-| **슬라이서** | 하네스 밖에서 미리 돌아 분석할 코드 조각 `slices.json`을 만든다 — [규칙](docs/slicer-README.md) |
+| 🔭 **Scout** | 소스에서 취약해 보이는 지점을 후보로 추린다 |
+| 🔍 **Auditor** | 후보 코드를 읽고 취약점인지 근거를 모아 Finding을 낸다 |
+| ⚖️ **Critic** | 다른 계열 모델로 그 Finding을 반박한다. 반박을 버텨야 등급이 오른다 |
+| 💥 **PoV** | 살아남은 Finding에서 크래시 입력 PoC를 만들어 채점기에 제출한다 |
+| 🔪 **슬라이서** | 하네스 밖에서 미리 돌아 분석할 코드 조각 `slices.json`을 만든다 — [규칙](docs/slicer-README.md) |
 
 실측과 설계의 단일 출처는 코드와 `config/`다. 문서는 그 요약이다. 규약은 [CLAUDE.md](CLAUDE.md)를 본다.
 
@@ -85,15 +78,48 @@ Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다
 
 ## 핵심 설계
 
-- **단계 단위 교대 서빙.** 역할별 소형 모델을 GPU 하나에 다 올리지 않고, 단계가 바뀔 때
-  서버를 끄고 다음 모델을 켠다.
-- **근거로만 승격한다.** 모델 점수가 아니라 게이트와 Critic과 도구 결과가 Finding을 올린다.
-- **실측과 추정을 섞지 않는다.** `benchmark: 0`과 `checksum: 0`은 빈 값이 아니라 아직 안 쟀다는 표시다.
-- **모델 없는 슬라이서가 입력을 미리 만든다.** 슬라이싱에는 모델도 GPU도 쓰지 않는다. 다만 Joern
-  데이터플로는 같은 입력에도 다른 경로를 고를 수 있어, 다시 돌린 결과가 늘 같지는 않다
-  ([slicer-README.md](docs/slicer-README.md) 「한 repo를 샤드로 나누기」 절).
-- **프로필로 Fake와 실서빙을 바꾼다.** `dev_fake`는 모든 역할이 Fake라 GPU 없이 끝까지 돈다.
-- **호출을 분리해 기록한다.** 모델 호출 `model_call`과 검색 호출 `retrieval_call`을 trace에 따로 남긴다.
+<table>
+<tr>
+<td width="33%" valign="top">
+
+<b>🔁 단계 단위 교대 서빙</b><br>
+역할별 소형 모델을 GPU 하나에 다 올리지 않고, 단계가 바뀔 때 서버를 끄고 다음 모델을 켠다.
+
+</td>
+<td width="33%" valign="top">
+
+<b>🧾 근거로만 승격한다</b><br>
+모델 점수가 아니라 게이트와 Critic과 도구 결과가 Finding을 올린다.
+
+</td>
+<td width="33%" valign="top">
+
+<b>📏 실측 ≠ 추정</b><br>
+<code>benchmark: 0</code>과 <code>checksum: 0</code>은 빈 값이 아니라 아직 안 쟀다는 표시다.
+
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+
+<b>🔪 모델 없는 슬라이싱</b><br>
+슬라이싱에는 모델도 GPU도 쓰지 않는다. 다만 Joern 데이터플로는 같은 입력에도 다른 경로를 고를 수 있어, 다시 돌린 결과가 늘 같지는 않다(<a href="docs/slicer-README.md">slicer-README</a>).
+
+</td>
+<td width="33%" valign="top">
+
+<b>🧪 Fake ↔ 실서빙 프로필</b><br>
+<code>dev_fake</code>는 모든 역할이 Fake라 GPU 없이 끝까지 돈다.
+
+</td>
+<td width="33%" valign="top">
+
+<b>🗂️ 호출을 분리해 기록</b><br>
+모델 호출 <code>model_call</code>과 검색 호출 <code>retrieval_call</code>을 trace에 따로 남긴다.
+
+</td>
+</tr>
+</table>
 
 ## 저장소 구조
 
