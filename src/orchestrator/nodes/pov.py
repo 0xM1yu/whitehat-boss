@@ -1,6 +1,6 @@
 """8단계 PoV — Auditor가 세운 Finding에서 PoC를 만드는 모델-주도 툴 루프 노드 (Option C).
 
-매 홉 모델이 `PovAction`(v5~v9는 `PovActionNamed`이고 서빙 판은 v9) — gen/inspect/submit 하나를
+매 홉 모델이 `PovAction`(v5~v10은 `PovActionNamed`이고 서빙 판은 v10) — gen/inspect/submit 하나를
 낸다. `gen`은
 `PovSpec`을 실어 순수 함수 `assemble_poc`(러너)가 결정론적으로 바이트를 만들고, 그 PoC를 도구로
 대상에서 실행해 관측을 다음 홉으로 되먹인다(fork B-iii — 모델-작성 코드 실행 없음). 러너 8단계가
@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from src.interfaces.model_client import ChatTurn, Prompt
 from src.interfaces.tool_runner import INPUT_PLACEHOLDER, ToolArgs
 from src.orchestrator.context import RunContext
+from src.orchestrator.nodes import signals
 from src.orchestrator.nodes.sandbox import DEFAULT_SANDBOX
 from src.orchestrator.nodes.scout import describe_target
 from src.orchestrator.prompt_loader import PromptError, build_facts, load_prompt
@@ -29,7 +30,7 @@ from src.schemas.finding import Finding
 from src.schemas.pov import PovAction, PovActionNamed
 
 ROLE = Role.POV
-# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5~v9는
+# 이 역할의 구조화 출력 스키마 — v2~v4는 매 홉 `PovAction`이다(gen/inspect/submit; v5~v10은
 # `PovActionNamed` — 아래 ⏵). `_call_hop`이 판의 스키마를 요청하고, bench·계약 검사
 # (`NODE_OUTPUT_SCHEMAS`/`ROLE_SPEC`)는 이 값(`PovAction`)을 본다.
 OUTPUT_SCHEMA = PovAction
@@ -39,7 +40,8 @@ OUTPUT_SCHEMA = PovAction
 # 프롬프트 meta의 `output_schema` 선언이 정한다(`nodes/auditor.py`·`nodes/scout.py`의
 # `resolve_output_schema`와 같은 방식). 집합 밖 선언은 `PromptError`다. `OUTPUT_SCHEMA`는 v2~v4의
 # 값(`PovAction`)으로 남는다. ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언한다.
-# ⏵ 2026-10-14 — v7도 그렇다. ⏵ 2026-10-15 — v8도, v9(서빙 판)도 그렇다.
+# ⏵ 2026-10-14 — v7도 그렇다. ⏵ 2026-10-15 — v8도, v9도 그렇다.
+# ⏵ 2026-10-16 — v10(서빙 판)도 그렇다.
 ALLOWED_OUTPUT_SCHEMAS: tuple[type[PovAction], ...] = (PovAction, PovActionNamed)
 _SCHEMA_BY_NAME = {schema.__name__: schema for schema in ALLOWED_OUTPUT_SCHEMAS}
 
@@ -71,8 +73,8 @@ def resolve_output_schema(name: str) -> type[PovAction]:
 # ⚠ **`PovAction.tool`의 `gdb` enum은 이 게이트 밖이다** — 스키마 차원이라 v2에도 들어간다
 # (`src/schemas/pov.py`의 그 필드 주석이 이 한계를 적는다). 그래도 v2 prefix는 gdb를 안 광고하므로
 # 실제로 고르지는 않는다(`prompts/pov/<판>/prefix.md`의 `inspect` 줄이 모델이 볼 도구 목록이다).
-# v7: 2026-10-14 · v8·v9: 2026-10-15
-_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7", "v8", "v9"})
+# v7: 2026-10-14 · v8·v9: 2026-10-15 · v10: 2026-10-16
+_WIDE_INPUT_VERSIONS = frozenset({"v3", "v4", "v5", "v6", "v7", "v8", "v9", "v10"})
 
 # 실행 환경이 낸 종료 코드(타임아웃·컨테이너 실행 실패) — 대상에 대해 말하지 않는다. 이 값의 실행은
 # 반복 판정에 기억하지 않는다(#619). `container_tools`의 `_TIMEOUT_EXIT`·`_EXEC_FAILED`와 같다
@@ -153,6 +155,8 @@ class PovHop:
     prefix: str
     version: str
     history: tuple[ChatTurn, ...]
+    # 요청 스키마에서 뺀 도구 — hop0이 정하고 후속 홉이 그대로 쓴다(#698, `signals.withheld_tools`)
+    withheld: tuple[str, ...] = ()
 
 
 def open_hop(
@@ -164,6 +168,7 @@ def open_hop(
     fuzz_entrypoint: Mapping[str, object] | None = None,
     retry_note: str | None = None,
     compile_note: str | None = None,
+    withheld: tuple[str, ...] = (),
     hop: int = 0,
 ) -> PovHop:
     """hop0 — 사실 블록이 실린 첫 프롬프트로 `PovAction`을 받는다.
@@ -199,7 +204,7 @@ def open_hop(
         retry_note=retry_note,
         compile_note=compile_note,
     )
-    return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=hop)
+    return _call_hop(ctx, finding=finding, prompt=prompt, history=(), hop=hop, withheld=withheld)
 
 
 def continue_hop(ctx: RunContext, *, finding: Finding, prev: PovHop, followup: str) -> PovHop:
@@ -210,7 +215,8 @@ def continue_hop(ctx: RunContext, *, finding: Finding, prev: PovHop, followup: s
     """
     prompt = Prompt(prefix=prev.prefix, body=followup, prompt_version=prev.version)
     return _call_hop(
-        ctx, finding=finding, prompt=prompt, history=prev.history, hop=prev.hop + 1
+        ctx, finding=finding, prompt=prompt, history=prev.history, hop=prev.hop + 1,
+        withheld=prev.withheld,
     )
 
 
@@ -221,12 +227,15 @@ def _call_hop(
     prompt: Prompt,
     history: Sequence[ChatTurn],
     hop: int,
+    withheld: tuple[str, ...] = (),
 ) -> PovHop:
     """모델 호출 하나 — hop0·hop k 공통. 예외는 그대로 올린다(호출자가 흡수 여부를 정한다)."""
     result = ctx.call_model(
         role=ROLE,
         prompt=prompt,
-        schema=resolve_output_schema(load_prompt(ROLE, prompt.prompt_version).output_schema),
+        schema=signals.without_tools(
+            resolve_output_schema(load_prompt(ROLE, prompt.prompt_version).output_schema), withheld
+        ),
         stage=Stage.VALIDATE,
         subject_kind="finding",
         subject_id=finding.finding_id,
@@ -246,6 +255,7 @@ def _call_hop(
         prefix=prompt.prefix,
         version=prompt.prompt_version,
         history=new_history,
+        withheld=withheld,
     )
 
 
@@ -264,16 +274,23 @@ def run_tool(
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너의 `poc`는 그 바이트를 먹인다.** 과제 `-vul` 이미지의
     `/tmp/poc`로 바인드하므로 **그 도구의 관측은 PoC의 함수다**. ⚠ **나머지는 아니다** — fake는
     쓰고 지우며 대상 소스 존재만 보고 ok를 내고(`fake_tools._run_repro`), 컨테이너의
-    `asan`·`gdb`·`build`는 우리가 빌드한 대상을 돌려 그 관측이 PoC의 함수가 아니다(셋을
-    바꾸려면 대상
-    빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은 러너가
-    관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
+    `asan`·`gdb`·`build`는 우리가 빌드한 대상을 돌려 그 관측이 PoC의 함수가 아니다(셋을 바꾸려면
+    대상 빌드 규칙이 필요하고 그것이 기각된 A안이다 — 이슈 #507). 그 셋에서 PoC의 함수인 것은
+    러너가 관측에 싣는 입력의 크기·digest 줄뿐이다(`runner._pov_observation`). 원바이트는 trace에
     안 간다 — `call_tool`이 크기와 digest만 싣는다.
-    ⏵ **2026-10-13 (#507) — 대신 모델에게 알린다, 거절하지 않는다**: 2단계 `build`·`clang-tidy`가
-    컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)과, `build`가 실패했을 때만
-    「`build`·`asan`·`gdb`는 같은 컴파일 명령이라 같은 오류가 예상된다」를 하네스 노트로
-    싣는다(`open_hop(compile_note=)`). 이 함수는 그 뒤에도 요청받은 도구를 종전 그대로(argv 불변)
-    돌린다 — 실패 관측이 `compile_failure_reason`을 머리줄에 단다.
+
+    ⏵ **2026-10-13 (#507) — 모델에게 알린다, 이 노드는 요청받은 도구를 거절하지 않는다**:
+    2단계 `build`·`clang-tidy`가 컴파일 오류로 실패했으면 hop0 본문이 그 사실(건수·첫 오류)을
+    하네스 노트로 싣는다(`open_hop(compile_note=)`). 이 함수는 요청받은 도구를 argv 그대로 부르고,
+    실패 관측은 `compile_failure_reason`을 머리줄에 단다.
+
+    ⏵ **2026-10-16 (#698) — 컴파일러 오류를 잰 도구는 요청 스키마에서 뺀다**: 2단계 `build`가
+    컴파일러 오류를 냈으면 `open_hop(withheld=)`가 모든 홉의 `tool` enum에서 `build`·`asan`·`gdb`를
+    빼므로(`signals.withheld_tools`) 서버가 strict를 집행하는 한 모델은 그 셋을 고를 수
+    없다(집행하지 않아도 하위 봉투 검증이 거절한다 — 그 홉은 파싱 실패). 이 함수가 그 셋을 거절하는
+    것은 아니다. 또 컨테이너 어댑터는 이 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일 명령을
+    다시 띄우지 않고 그 측정(Evidence id·건수·첫 오류)을 돌려준다
+    (`ContainerToolRunner._execute`).
 
     이 함수는 파일을 안 쓴다(쓰는 것은 어댑터) — 조립된 바이트는 루프가 종단(`_pov_finish`)에
     닿으면 `_run_pov_hops`의 반환값과 종단 이벤트(`poc_bytes`·`poc_sha256`)로 남고, 그 종단에서
