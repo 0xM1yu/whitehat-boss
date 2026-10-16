@@ -7,11 +7,12 @@
 > 10-16 run(5단계에서 비정상 종료)과 달리 **오케스트레이터를 vast VM(RAM 98GB)에 올렸고, 16시간 27분 동안 메모리 문제는 없었다.**
 >
 > 판정 B(점수): **없음.** `poc_records` 0행. #695로 GT 슬라이스(`slice_0524`)가 컷에 들었지만, Auditor `SOURCE` 조립이 GT 함수를 상한 밖으로
-> 밀어(#702 → PR #703에서 수정) Auditor가 GT를 보지 못했다. 가장 유력했던 Finding 둘은 Critic이 판정 방향을 거꾸로 써서 빠졌고(§3 Critic),
+> 밀어(#702 → PR #703에서 수정) Auditor가 GT를 보지 못했다. Finding 8개 중 GT 함수(`file_regexec`)를 다룬 것은 0이다. 가장 유력했던 Finding 둘은
+> Critic `rebut`으로 빠졌다 — 하나는 모델이 근거와 반대로 판정했고, 하나는 Critic의 「Auditor 판단 반박」을 하네스가 「취약점 기각」으로 읽었다(§3 Critic · #706).
 > PoV는 GT를 겨냥했지만 `spec` 없는 `gen`만 냈다(#704).
 >
 > ⚠ **이 run은 수정 전 코드다.** `8e843c45` 기준이라, 이 run이 드러낸 결함 중 #698·#602(PR #699)와 #702(PR #703)는 이미 main에서 고쳐졌다.
-> 남은 것은 #704(PoV 스키마)와 Critic 판정 방향(§7)이다.
+> 남은 것은 #704(PoV 스키마) · #706(Critic `rebut` 방향) · PoV 대상 순위(§3 PoV)다.
 
 ## 메타
 
@@ -47,8 +48,8 @@
 | #695 효과 | ✅ 8번째 타깃이 `slice_0524`(`desc_symbol: file_regexec` · `desc_reserved: true`)로 바뀌었다. 1~7번은 10-16 run과 같다 [실측, trace `target_planned`] |
 | GT 분석 | 🔴 **안 됐다.** `slice_0524`의 Auditor `SOURCE`에 `file_regexec`·`softmagic.c`가 없었고(#702), Auditor 후보 셋 중 GT를 lookup한 것은 0이다 |
 | Auditor | 후보 13 · 호출 39 · Finding 8(triggerable 1) · **스키마 실패로 소실 5**(#602) · 컴파일 경로 probe 3/3 실패(#698) |
-| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘이 판정 방향을 거꾸로 썼다** — 근거는 「취약하다」인데 판정은 기각 |
-| PoV | 대상 1건(`find_0008`, 「취약하지 않다」로 굳은 Finding) · 3 hop 6시도 모두 `gen`에 `spec` 없음 → 운영자 중단(#704) |
+| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706) |
+| PoV | 대상 풀 5건 중 1순위 `find_0008`(「취약하지 않다」로 굳은 Finding)만 시도했다 [계산값, 코드] · 3 hop 6시도 모두 `gen`에 `spec` 없음 → 운영자 중단(#704) |
 | 판정 B — 점수 | **없음.** 채점기 제출 0 · `poc_records` 0행 [실측, `poc.db`] |
 
 ## 2. 실험 환경
@@ -132,16 +133,19 @@
 | 호출 | 6 · 출력 합 88,073 토큰 · 벽시계 합 0.52h. `find_0008` 1차가 32,768 · `length` 뒤 재시도 회복 [실측] |
 | 입력 몫 초과 | `find_0008` 프롬프트가 추정 113,587 토큰으로 입력 몫 98,304를 넘었다(`over_input_share: true` · 관측을 빼도 초과) [실측, trace `critic_hop_observations`] |
 
-🔴 **`rebut` 판정 방향 혼동 2건** [실측, `state.db` decision]
+🔴 **`rebut`인데 근거는 「취약하다」인 2건** [실측, `state.db` decision] — #706
 
-| decision | Finding | Auditor 결론 | Critic 근거(요지) | Critic 판정 | 하네스 처리 |
+| decision | Finding | Auditor 결론 | Critic 근거(요지) | Critic 판정(축) | 하네스 처리 |
 | --- | --- | --- | --- | --- | --- |
-| `dec_0001` | `find_0005` | triggerable | 「`m->factor`가 0이면 0 나누기가 발생한다. 0 검사 가드가 없고, 조작된 .mgc로 0을 넣을 수 있다」 → **취약하다** | `rebut` | queued |
-| `dec_0004` | `find_0002` | guarded | 「가드가 음수 `off`를 막지 못한다. `off=-1, len=1`이면 `siz`가 0으로 감싸 가드를 통과하고 음수 인덱스 OOB read가 난다」 → **취약하다** | `rebut` | queued |
+| `dec_0001` | `find_0005` | triggerable | 「`m->factor`가 0이면 0 나누기가 발생한다. 0 검사 가드가 없고, 조작된 .mgc로 0을 넣을 수 있다」 → **취약하다** | `rebut`(arithmetic) | queued |
+| `dec_0004` | `find_0002` | guarded | 「가드가 음수 `off`를 막지 못한다. `off=-1, len=1`이면 `siz`가 0으로 감싸 가드를 통과하고 음수 인덱스 OOB read가 난다」 → **취약하다** | `rebut`(guard) | queued |
+| `dec_0005` (대조) | `find_0010` | guarded | 「Auditor가 말한 경로가 없다 — `apprentice_unmap`은 `apprentice_load`를 부르지 않는다」 → 취약하지 않다 | `rebut`(reachability) | queued |
 
-- v8 정의(`prompts/critic/v8/prefix.md:13`)는 「SOURCE가 보여 주기에 약점이 Auditor가 판단한 대로 일어날 수 없다」면 `rebut`이다. `dec_0001`은 그 정의와 근거가 정면으로 어긋난다(모델의 판정 오류). 판정과 rationale의 일관성을 보는 장치는 없다.
-- `dec_0004`는 Auditor 결론이 「안전(guarded)」인 Finding이 `CLAIM`(제목·CWE)만 실려 「취약점 주장」으로 넘어간 경우다. Critic은 Auditor의 「안전」 판단을 반박하는 뜻으로 `rebut`을 썼고, 하네스는 그것을 「취약점 기각」으로 처리했다. **Auditor 결론의 방향(`trigger_status`)이 Critic 계약에 들어가지 않는다** [추정 — 코드 경로는 안 읽었다].
-- ADR 0015는 「근거 없는 `rebut`」을 다룬다. 이 두 건은 근거가 있는데 방향이 뒤집힌 경우라 그 결정 밖이다.
+- v8 정의(`prompts/critic/v8/prefix.md:13`)는 「SOURCE가 보여 주기에 약점이 Auditor가 판단한 대로 일어날 수 없다」면 `rebut`이다. `dec_0001`은 그 정의와 근거가 정면으로 어긋난다(**모델의 판정 오류**). 판정과 rationale의 일관성을 보는 장치는 없다.
+- `dec_0004`는 정의대로 쓴 `rebut`이다. Critic은 Auditor의 「안전(guarded)」 판단을 반박했다. 그런데 policy는 `rebut`을 Auditor 결론과 상관없이 `QUEUED`·`critic_rebutted`로 보낸다(`src/orchestrator/policy.py:187`) [코드 확인]. 그래서 **Critic이 취약하다고 한 Finding이 버려졌다.**
+- `dec_0005`가 대조군이다. 같은 `guarded`에 대한 `rebut`이지만 reachability 축이라 「취약하지 않다」가 맞다. **`rebut`의 뜻은 Auditor 결론과 반박 축을 함께 봐야 정해진다** — 극성만 뒤집으면 이 건이 틀린다.
+- Critic 프롬프트·입력에 `trigger_status`는 없다(`prompts/critic/v8` · `nodes/critic.py`에서 0건) [코드 확인].
+- ADR 0015는 「근거 없는 `rebut`」을 다룬다. 이 건들은 근거가 있는 `rebut`의 방향 문제라 그 결정 밖이다.
 
 ### PoV (8단계 · `feyospace-v1-small` · v9)
 
@@ -151,7 +155,8 @@
 | 1 | 4,045 · 18,593 | stop · stop | 1,077.6초 | 같음 |
 | 2 | 10,412 · 8,488 | stop · stop | 893.8초 | 같음 |
 
-- 대상은 `find_0008` 하나였다. queued가 아닌 Finding이 그것뿐이었다 — Auditor가 「취약하지 않다」고 했고 Critic이 그것을 `uphold`한 Finding이다. 선정 경로는 이 보고서에서 읽지 않았다.
+- **대상 선정** [계산값 — `8e843c45`의 `_pov_targets`를 `state.db`에 적용. 대상 목록을 남기는 trace 이벤트는 없다]: `VALIDATED`가 0건이라, 대상은 `pov_attempt_top_n: 8`이 붙이는 추가 풀뿐이었다. 추가 풀은 Critic `rebut` 셋(`find_0002`·`0005`·`0010`)을 뺀 5건이다. 정렬 키는 (Critic 판정 계단, −`confidence`, id)다(`_verdict_ranks_by_finding`: uphold 0 · 판정 없음 1 · `need_evidence` 2). 결과는 `find_0008`(uphold) → `find_0012` → `find_0013`(판정 없음) → `find_0004` → `find_0009`(`need_evidence`) 순이다. 첫 대상에서 run이 멈춰 나머지 넷은 돌지 않았다.
+- **이 순서는 Auditor 결론을 보지 않는다.** `find_0008`은 Auditor `no_signal`을 Critic이 `uphold`한 것, 즉 「취약하지 않다」에 둘이 동의한 Finding이다. 그런데 계단 0이라 맨 앞에 섰다. 풀에서 Auditor 결론이 취약 쪽에 가장 가까운 것은 `find_0004`(`reachability_unknown`)였다.
 - 응답 여섯은 모두 `{"action":"gen","rationale":"…","poc_sha256":null}`이다. **rationale은 여섯 모두 과제 설명의 regexec/pmatch MSan 경로를 겨냥했다**(XML 선언·regex magic 규칙). 빠진 것은 `spec`뿐이다 [실측, `prompts/007[0-2]_pov*_response*.txt`].
 - 원인은 스키마다 — `PovActionNamed`의 JSON 스키마는 `required: [action, rationale]`이고 판별 합이 아니라, 디코더가 `spec` 없는 `gen`을 허용한다. PR #699는 Auditor만 판별 합으로 바꿨다 → **#704**. 연속 파싱 실패 상한이 없어 17 hop까지 갈 수 있었다 → #613에 측정 코멘트.
 - 22:37Z 운영자가 run을 멈췄다. 남은 hop 14개를 이 평균으로 돌렸다면 약 4.1시간 · 약 $8.5였다(계산값).
@@ -174,10 +179,10 @@
 
 | 항목 | 왜 못 쟀는가 | 무엇을 하면 재는가 |
 | --- | --- | --- |
-| 점수(판정 B) | 제출 0건 | #704·Critic 방향 수정 뒤 재실행 |
+| 점수(판정 B) | 제출 0건 | #704·#706 수정 뒤 재실행. 다만 이 run의 Finding 중 GT를 다룬 것은 0이라, 같은 Finding으로는 점수가 나지 않는다 |
 | 9단계 보고 · manifest | 운영자 중단 | 완주 run |
 | PR #699(v18)·#703의 효과 | 이 run은 `8e843c45`(수정 전) | main으로 같은 과제 재실행 |
-| PoV 대상 선정 이유 | 코드를 읽지 않았다 | `runner.py` PoV 풀 조립 경로 확인 |
+| PoV 대상 목록 | trace에 대상 목록 이벤트가 없다. §3 PoV의 순서는 코드로 계산한 값이다 | 대상 목록을 trace에 남긴다 |
 | 오케스트레이터 메모리 시계열 | 세션 중 수동 `ps`만 했다(보존 안 함) | VM에 RSS 기록 루프 |
 | 디코더 스키마 게이트(PR #699의 미체크 항목) | 서빙 박스에서 돌리지 않았다 | 다음 박스에서 `tools/check_decoder_schemas.py harness_pool` |
 
@@ -192,13 +197,13 @@
 | 우선순위 | 항목 | 현황 |
 | --- | --- | --- |
 | 높음 | PoV 디코더 스키마를 판별 합으로 | 이슈 #704 (새로 올림) |
-| 높음 | Critic `rebut`의 판정 방향 — 근거와 판정 불일치 검사 · Auditor 결론(`trigger_status`)을 Critic 계약에 싣기 | **이슈 미등록** — 이 보고서 §3 Critic이 근거 |
-| 높음 | main(v18·#703 포함)으로 같은 과제 재실행 | 미착수 |
+| 높음 | Critic `rebut`의 뜻을 Auditor 결론·반박 축과 함께 읽기 | #706 (선택지만 적었다) |
+| 높음 | PoV 대상 순위에 Auditor 결론 반영 | §3 PoV가 근거 |
+| 높음 | main(v18·#703 포함)으로 같은 과제 재실행 | 미착수. PoV 스키마 판이 바뀌면 그 뒤 run의 8단계는 이 run과 바로 비교할 수 없다 |
 | 중간 | 연속 파싱 실패 상한 | #613 (측정 코멘트 추가) |
 | 중간 | 서빙 전 디코더 스키마 게이트를 runbook에 | PR #699 미체크 항목 |
-| 낮음 | PoV 대상이 「취약하지 않다」로 굳은 Finding이 되는 경로 | 미조사 |
 
-이 run에서 올리거나 갱신한 이슈: #698(신규 → PR #699로 닫힘) · #602(코멘트 → PR #699로 닫힘) · #702(신규·코멘트 → PR #703으로 닫힘) · #704(신규) · #613(코멘트).
+이 run에서 올리거나 갱신한 이슈: #698(신규 → PR #699로 닫힘) · #602(코멘트 → PR #699로 닫힘) · #702(신규·코멘트 → PR #703으로 닫힘) · #704(신규) · #706(신규) · #613(코멘트).
 
 ## 8. 정리 상태
 
