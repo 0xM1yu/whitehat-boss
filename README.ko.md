@@ -253,6 +253,7 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 | 되돌리기 어려운 결정 ADR | [docs/decisions/](docs/decisions/) |
 | 미해결 결함과 리스크 | [docs/open-questions.md](docs/open-questions.md) |
 | 하네스를 돌린 run 기록 | [docs/experiments/](docs/experiments/README.md) |
+| 기여 방법 | [CONTRIBUTING.ko.md](CONTRIBUTING.ko.md) |
 
 ## 팀
 

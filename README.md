@@ -260,6 +260,7 @@ The documents below are in Korean.
 | Hard-to-reverse decisions (ADRs) | [docs/decisions/](docs/decisions/) |
 | Open defects and risks | [docs/open-questions.md](docs/open-questions.md) |
 | Reports of harness runs | [docs/experiments/](docs/experiments/README.md) |
+| How to contribute (English) | [CONTRIBUTING.md](CONTRIBUTING.md) |
 
 ## Team
 
