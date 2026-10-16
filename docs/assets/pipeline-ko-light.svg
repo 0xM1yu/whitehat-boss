@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="290" viewBox="0 0 1280 290" role="img" aria-labelledby="t">
+<title id="t">Scout → Auditor → 게이트 → Critic → PoV → Oracle</title>
+<defs>
+<linearGradient id="bg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#f6f8fa"/></linearGradient>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#8c959f"/></marker>
+</defs>
+<rect width="1280" height="290" rx="16" fill="url(#bg)" stroke="#d1d9e0"/>
+<g font-family="ui-sans-serif, -apple-system, 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', Helvetica, Arial, sans-serif">
+<rect x="40" y="52" width="180" height="64" rx="12" fill="#f6f8fa" stroke="#d1d9e0" stroke-dasharray=""/>
+<text x="130" y="80" font-size="17" font-weight="600" fill="#1f2328" text-anchor="middle">소스 코드</text>
+<text x="130" y="101" font-size="13" fill="#59636e" text-anchor="middle">C/C++ 저장소</text>
+<path d="M220 84 C 245 84, 240 126.0, 266 126.0" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="40" y="152" width="180" height="64" rx="12" fill="#f6f8fa" stroke="#d1d9e0" stroke-dasharray="5 4"/>
+<text x="130" y="180" font-size="17" font-weight="600" fill="#1f2328" text-anchor="middle">슬라이스</text>
+<text x="130" y="201" font-size="13" fill="#59636e" text-anchor="middle">Joern · 모델 없음</text>
+<path d="M220 184 C 245 184, 240 126.0, 266 126.0" fill="none" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="270" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#0969da" stroke-opacity="0.9"/>
+<rect x="270" y="44" width="140" height="6" rx="3" fill="#0969da"/>
+<text x="286" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#0969da">4단계</text>
+<text x="286" y="112" font-size="21" font-weight="700" fill="#1f2328">Scout</text>
+<text x="286" y="148" font-size="14" fill="#59636e">취약해 보이는</text>
+<text x="286" y="169" font-size="14" fill="#59636e">지점을 추린다</text>
+<line x1="412" y1="126.0" x2="430" y2="126.0" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="432" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#8250df" stroke-opacity="0.9"/>
+<rect x="432" y="44" width="140" height="6" rx="3" fill="#8250df"/>
+<text x="448" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#8250df">5단계</text>
+<text x="448" y="112" font-size="21" font-weight="700" fill="#1f2328">Auditor</text>
+<text x="448" y="148" font-size="14" fill="#59636e">근거를 모아</text>
+<text x="448" y="169" font-size="14" fill="#59636e">Finding을 낸다</text>
+<line x1="574" y1="126.0" x2="592" y2="126.0" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="594" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#57606a" stroke-opacity="0.9"/>
+<rect x="594" y="44" width="140" height="6" rx="3" fill="#57606a"/>
+<text x="610" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#57606a">6단계</text>
+<text x="610" y="112" font-size="21" font-weight="700" fill="#1f2328">게이트</text>
+<text x="610" y="148" font-size="14" fill="#59636e">근거 등급 E0–E3</text>
+<text x="610" y="169" font-size="14" fill="#59636e">규칙으로 매긴다</text>
+<line x1="736" y1="126.0" x2="754" y2="126.0" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="756" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#cf222e" stroke-opacity="0.9"/>
+<rect x="756" y="44" width="140" height="6" rx="3" fill="#cf222e"/>
+<text x="772" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#cf222e">7단계</text>
+<text x="772" y="112" font-size="21" font-weight="700" fill="#1f2328">Critic</text>
+<text x="772" y="148" font-size="14" fill="#59636e">다른 계열 모델이</text>
+<text x="772" y="169" font-size="14" fill="#59636e">반박한다</text>
+<line x1="898" y1="126.0" x2="916" y2="126.0" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="918" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#9a6700" stroke-opacity="0.9"/>
+<rect x="918" y="44" width="140" height="6" rx="3" fill="#9a6700"/>
+<text x="934" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#9a6700">8단계</text>
+<text x="934" y="112" font-size="21" font-weight="700" fill="#1f2328">PoV</text>
+<text x="934" y="148" font-size="14" fill="#59636e">크래시 입력</text>
+<text x="934" y="169" font-size="14" fill="#59636e">PoC를 만든다</text>
+<line x1="1060" y1="126.0" x2="1078" y2="126.0" stroke="#8c959f" stroke-width="2" marker-end="url(#ar)"/>
+<rect x="1080" y="44" width="140" height="164" rx="14" fill="#ffffff" stroke="#1a7f37" stroke-opacity="0.9"/>
+<rect x="1080" y="44" width="140" height="6" rx="3" fill="#1a7f37"/>
+<text x="1096" y="80" font-size="12" font-weight="700" letter-spacing="1.2" fill="#1a7f37">채점</text>
+<text x="1096" y="112" font-size="21" font-weight="700" fill="#1f2328">Oracle</text>
+<text x="1096" y="148" font-size="14" fill="#59636e">CyberGym</text>
+<text x="1096" y="169" font-size="14" fill="#59636e">채점기가 판정한다</text>
+<text x="640.0" y="264" font-size="14" fill="#59636e" text-anchor="middle">0–3단계(전처리 · 인덱싱 · 신호 수집 · 검색)가 각 역할이 읽을 입력을 준비한다.</text>
+</g></svg>

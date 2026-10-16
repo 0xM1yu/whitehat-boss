@@ -1,14 +1,13 @@
 <div align="center">
 
-# whitehat-boss
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner-dark.svg">
+  <img alt="whitehat-boss — Scout → Auditor → Gate → Critic → PoV → Oracle" src="docs/assets/banner-light.svg" width="100%">
+</picture>
 
-**A multi-agent harness that pairs small, role-specialized LLMs to find C/C++ vulnerabilities**
+### A multi-agent harness that pairs small, role-specialized LLMs to find C/C++ vulnerabilities
 
-![python](https://img.shields.io/badge/python-3.11.4%2B-3776AB?logo=python&logoColor=white)
-![license](https://img.shields.io/badge/license-MIT-green)
-![benchmark](https://img.shields.io/badge/benchmark-CyberGym%20Level%201-8A2BE2)
-![status](https://img.shields.io/badge/status-research-orange)
-![docs](https://img.shields.io/badge/docs-Korean-lightgrey)
+<a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-MIT-2ea44f?style=for-the-badge"></a> <img alt="python" src="https://img.shields.io/badge/python-3.11.4%2B-3776AB?style=for-the-badge&logo=python&logoColor=white"> <a href="https://github.com/sunblaze-ucb/cybergym"><img alt="benchmark" src="https://img.shields.io/badge/benchmark-CyberGym%20L1-8A2BE2?style=for-the-badge"></a> <img alt="status" src="https://img.shields.io/badge/status-research-f0883e?style=for-the-badge">
 
 **English** · [한국어](README.ko.md)
 
@@ -32,24 +31,18 @@ vulnerabilities in real open-source projects.
 
 ## At a glance
 
-```mermaid
-flowchart LR
-    SRC["Source code"] --> SCOUT
-    SLICE["Slices<br/>(Joern · no model)"] --> SCOUT
-    SCOUT["Scout<br/>pick candidates"] --> AUDITOR["Auditor<br/>gather evidence"]
-    AUDITOR --> GATE{"Evidence gate<br/>E0–E3"}
-    GATE --> CRITIC["Critic<br/>rebut"]
-    CRITIC --> POV["PoV<br/>build a PoC"]
-    POV --> ORACLE[("Grader<br/>oracle")]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/pipeline-en-dark.svg">
+  <img alt="Pipeline: Scout → Auditor → Gate → Critic → PoV → Oracle" src="docs/assets/pipeline-en-light.svg" width="100%">
+</picture>
 
 | Role | What it does |
 | --- | --- |
-| **Scout** | Narrows the source down to spots that look vulnerable |
-| **Auditor** | Reads the candidate code and gathers evidence for a Finding |
-| **Critic** | Tries to rebut the Finding with a model from a different family. A Finding only moves up if it survives |
-| **PoV** | Builds a crashing input from surviving Findings and submits it to the grader |
-| **Slicer** | Runs outside the harness beforehand and writes the code fragments to analyze, `slices.json` — [rules](docs/slicer-README.md) |
+| 🔭 **Scout** | Narrows the source down to spots that look vulnerable |
+| 🔍 **Auditor** | Reads the candidate code and gathers evidence for a Finding |
+| ⚖️ **Critic** | Tries to rebut the Finding with a model from a different family. A Finding only moves up if it survives |
+| 💥 **PoV** | Builds a crashing input from surviving Findings and submits it to the grader |
+| 🔪 **Slicer** | Runs outside the harness beforehand and writes the code fragments to analyze, `slices.json` — [rules](docs/slicer-README.md) |
 
 The code and `config/` are the single source of truth for both measurements and design; the docs summarize
 them. Project conventions are in [CLAUDE.md](CLAUDE.md).
@@ -88,18 +81,48 @@ E0 to E4, and each one maps to a state.
 
 ## Design principles
 
-- **Stage-by-stage model swapping.** Rather than fitting every role's model on one GPU, the server is shut
-  down and the next model started when the stage changes.
-- **Promotion only on evidence.** The gate, the Critic, and tool results promote a Finding — not a model's score.
-- **Measured and estimated values are never mixed.** `benchmark: 0` and `checksum: 0` are not empty values;
-  they mean "not measured yet".
-- **A model-free slicer prepares the input.** Slicing uses neither a model nor a GPU. Joern's data flow can
-  still pick different paths for the same input, so a re-run does not always give the same result
-  ([slicer-README.md](docs/slicer-README.md), section 「한 repo를 샤드로 나누기」).
-- **Profiles switch between Fake and real serving.** `dev_fake` makes every role a Fake, so it runs end to
-  end without a GPU.
-- **Calls are logged separately.** Model calls (`model_call`) and retrieval calls (`retrieval_call`) get
-  their own trace records.
+<table>
+<tr>
+<td width="33%" valign="top">
+
+<b>🔁 Stage-by-stage swapping</b><br>
+Rather than fitting every role's model on one GPU, the server is shut down and the next model started when the stage changes.
+
+</td>
+<td width="33%" valign="top">
+
+<b>🧾 Promotion only on evidence</b><br>
+The gate, the Critic, and tool results promote a Finding — not a model's score.
+
+</td>
+<td width="33%" valign="top">
+
+<b>📏 Measured ≠ estimated</b><br>
+<code>benchmark: 0</code> and <code>checksum: 0</code> are not empty values; they mean “not measured yet”.
+
+</td>
+</tr>
+<tr>
+<td width="33%" valign="top">
+
+<b>🔪 Model-free slicing</b><br>
+Slicing uses neither a model nor a GPU. Joern's data flow can still pick different paths for the same input, so a re-run does not always match (<a href="docs/slicer-README.md">slicer-README</a>).
+
+</td>
+<td width="33%" valign="top">
+
+<b>🧪 Fake ↔ real profiles</b><br>
+<code>dev_fake</code> makes every role a Fake, so the whole pipeline runs end to end without a GPU.
+
+</td>
+<td width="33%" valign="top">
+
+<b>🗂️ Separate call logs</b><br>
+Model calls (<code>model_call</code>) and retrieval calls (<code>retrieval_call</code>) get their own trace records.
+
+</td>
+</tr>
+</table>
 
 ## Repository layout
 
