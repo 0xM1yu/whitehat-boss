@@ -483,7 +483,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    예측이 아니다: 2단계가 그 파일에서 컴파일러 오류를 잰 도구는 그 파일의 요청 스키마 `tool` enum에서 빠진다
    (`signals.withheld_tools`·`without_tools` · `build`면 `build`·`asan`·`gdb`, `clang-tidy`면 `clang-tidy`) — 모델이 고를 수
    없다(서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 노트 문구도 「그 파일에는 제시하지 않는다」로 바뀌었다(`signals.compile_note` — 노트와 enum이 같은 실패 집합에서
-   나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않는다
+   나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 컴파일러 앞단 오류(`파일:줄:열: error:`)로 이미 실패한 컴파일 명령을 다시 띄우지 않는다 — 링크 실패는 넣지 않는다
    (`ContainerToolRunner._execute` · ADR 0014 ⏵ 2026-10-16).
 
 4. **관측 형식.** 도구·조회 결과는 **다음 홉의 user 턴 본문**으로 온다. prefix(역할 지시·스키마 서술)와 hop0의
@@ -802,7 +802,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   예측이 아니다: 2단계가 그 파일에서 컴파일러 오류를 잰 도구는 그 파일의 요청 스키마 `tool` enum에서 빠진다
   (`signals.withheld_tools`·`without_tools` · `build`면 `build`·`asan`·`gdb`, `clang-tidy`면 `clang-tidy`) — 모델이 고를 수
   없다(서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 노트 문구도 「그 파일에는 제시하지 않는다」로 바뀌었다(`signals.compile_note` — 노트와 enum이 같은 실패 집합에서
-  나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않는다
+  나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 컴파일러 앞단 오류(`파일:줄:열: error:`)로 이미 실패한 컴파일 명령을 다시 띄우지 않는다 — 링크 실패는 넣지 않는다
   (`ContainerToolRunner._execute` · ADR 0014 ⏵ 2026-10-16).
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
