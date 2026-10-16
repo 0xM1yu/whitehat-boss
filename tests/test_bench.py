@@ -43,7 +43,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TARGET = FIXTURES / "target"
 MEASURED_AT = "2026-08-17T00:00:00Z"
 
-# 실측 원문 (2026-08-14, Seraph moana-u4 / vLLM 0.19.1 / Qwen3-0.6B).
+# 실측 원문 (2026-08-14, Seraph REDACTED-node / vLLM 0.19.1 / Qwen3-0.6B).
 # 파일명에 버전·장비를 박아 둔다 — ATOM 원문이 들어오면 두 번째 파일이 되고, 그때 이름이
 # 바뀌면 `test_bench_reads_only_names_that_exist_in_every_fixture`가 잡는다.
 # ⏵ 2026-10-08 — ATOM 원문은 2026-08-18에 받았으나(`2026-08-18-serving-atom.md` §3.5) 이 디렉터리에

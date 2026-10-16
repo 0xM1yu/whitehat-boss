@@ -79,7 +79,7 @@ Auditor 홉 관측(#600)은 재구성하지 않는다.
 1단계만 — 모델을 안 부른다. 재구성이 맞는지, 프롬프트가 실제로 얼마인지 먼저 본다:
 
     python tools/probe/critic_output_budget.py \
-        --state-db /srv/tenants/ext01/artifacts/run_20260912_0001/state.db \
+        --state-db /srv/tenants/user/artifacts/run_20260912_0001/state.db \
         --profile harness_pool --model-key gpt-oss-20b --dry-run \
         --out ~/probe_results/critic_budget_dryrun.json
 

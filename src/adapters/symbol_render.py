@@ -2,8 +2,8 @@
 §4.4.4(중복 제거)·§4.4.5(RETRIEVED/UNFILLED 렌더)를 코드로 옮긴다 (ADR 0012 결정 2·3).
 조회(`table()`)도 파일 읽기도 하지 않는다 — 값을 받아 문자열이나 판정을 돌려줄 뿐이다.
 
-명세 원천은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
-(https://app.notion.com/p/Scout-RAG-baseline-3e1bec1a15bc80fa9fb8e15540f5def7,
+명세 원천은 팀 Notion 「실험팀 › Scout RAG baseline」
+(
 2026-09-26 판독 — 2026-09-26 판독본과 바이트 대조 통과)이다. 이 모듈의 문자열은 그 원문을
 그대로 옮긴 것이고, 의역하지 않는다.
 

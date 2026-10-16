@@ -1,14 +1,14 @@
 # ATOM 검색 경로(Retrieval) 실서빙 실험 결과
 
 > **기록 성격**: 2026-08-18 시점의 관측 기록이다. 서식(메타 표, §6~7)은
-> [TEMPLATE.md](../TEMPLATE.md)에 맞춰 2026-08-19에 조민규가 정리했다.
+> [TEMPLATE.md](../TEMPLATE.md)에 맞춰 2026-08-19에 팀이 정리했다.
 >
-> **정정 이력**: 작성자(손수민)가 2026-08-19에 본문에서 두 주장을 직접 정정했다 —
+> **정정 이력**: 작성자(팀)가 2026-08-19에 본문에서 두 주장을 직접 정정했다 —
 > §1(실모델 파이프라인 "첫 완주" → **검색 경로를 포함한** 첫 완주. 전체 첫 완주는 서빙 쪽)과
 > §2.1(메모리 "34 GiB 커널 강제" → 34는 멘토 안내 **팀 목표**이고, 시스템 하드 한도는 cgroup
 > **`memory.max`=64 GiB**였다(2026-08-18 시점 — 8/31에 80으로 확장). 8/17엔 max도 34였다가 상향됐다). 근거는 [README.md](../README.md) 확정 #1·#4.
 
-**작성**: 손수민 (T4 Retrieval / 로컬 LLM 구축)
+**작성**: 팀 (T4 Retrieval / 로컬 LLM 구축)
 **실험 기간**: 2026-08-18 저녁
 **대상 장비**: GIGABYTE AI TOP ATOM (NVIDIA DGX Spark 계열, GB10 Grace Blackwell)
 **전제 조건**: TCP 예외 승인 이후 · vLLM 서빙 환경(venv-probe) 확보 이후
@@ -68,7 +68,7 @@
 | --------- | ----------------------------------------------------------------------------------------- |
 | GPU       | NVIDIA GB10 Grace Blackwell, sm_121, aarch64                                              |
 | 메모리    | 팀 목표 34 GiB(멘토 안내) / 하드 한도 cgroup `memory.max` 64 GiB (`memory.high` 58 · 값은 바뀜, 실행 시점에 읽음)                                                  |
-| vLLM      | 0.27.1 (`/srv/tenants/ext01/venv-probe`, Python 3.12)                                     |
+| vLLM      | 0.27.1 (`/srv/tenants/user/venv-probe`, Python 3.12)                                     |
 | 사용 모델 | Qwen3-0.6B, Qwen3-4B-Instruct-2507-FP8, **Qwen3-Embedding-0.6B**, **Qwen3-Reranker-0.6B** |
 
 ### 2.2 착수 전 정리한 sm_121 기동 조건

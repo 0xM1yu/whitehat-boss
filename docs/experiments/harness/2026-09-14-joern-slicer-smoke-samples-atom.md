@@ -16,7 +16,7 @@ PM이 같은 표본에 대해 공유한 슬라이스 수와 비교하려고, PR 
 | 항목 | 값 |
 | --- | --- |
 | 실험일 | 2026-09-14 KST |
-| 장비 | ATOM `aitopatom-d06a`, 계정 `ext01`, Linux aarch64 |
+| 장비 | ATOM `atom-host`, 계정 `user`, Linux aarch64 |
 | 코드 | PR #201 커밋 `c4acdd2ec542e047a78c9602e96be57b711c79f5`; `slicer.py` SHA-256 `80b26532f234a43078ac1d7ce988ade8a6b28f89441f524096ebdf81f7bd31a8`, `slicer_queries.py` `c24e0ca3c650e3b5a0c1a341b3ac1dbf25af7825825175f2f23879dcd3b635e7`, `slicer_source.py` `14829c8bec7a4b10a4cc842f0aa841f16059b8adb7de527a451f674e47e42c57` |
 | 입력 번들 | `repo_smoke_test_bundle.zip`, SHA-256 `512ab6933a78ad1973293ee27d8456137cc5ab6d17df16166c887d36e2aa3bf2` |
 | ATOM 입력 | `runner_samples/sample_XX/repo`만 업로드; private GT는 로컬에만 보존 |
@@ -26,7 +26,7 @@ PM이 같은 표본에 대해 공유한 슬라이스 수와 비교하려고, PR 
 | 질의 제한 | sample 01·02는 120초. sample 03은 import가 120초에 중단된 실패 원문을 보존한 뒤 600초로 재실행 |
 | 동시성 | 전용 Joern 서버에 슬라이서 클라이언트 하나씩 순차 실행 |
 | run_id | 없음. 하네스 run이 아닌 독립 슬라이서 스모크 |
-| 원문 기준 디렉터리 | ATOM `/srv/tenants/ext01/slicer-smoke-20260914-512ab693/` |
+| 원문 기준 디렉터리 | ATOM `/srv/tenants/user/slicer-smoke-20260914-512ab693/` |
 
 PM 공유값은 slice 01/02/03 = 71/28/167, ground-truth 파일 축소 줄 수 = 12/57/206이다.
 그 실행의 코드 버전, 후보 정의, flow cap, 클러스터링, 줄 수 계산법은 제공되지 않았다.

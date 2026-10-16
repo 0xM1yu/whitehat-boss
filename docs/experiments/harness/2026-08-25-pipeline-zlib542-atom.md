@@ -12,7 +12,7 @@
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98` (별칭 `qwen3-4b`, fp8). **근거**: `/v1/models`의 `root`가 그 스냅샷 경로를 가리킨다 — `models_20260825_125430.json`에 보존 |
 | `repo_commit` | `393b38e2d647cf830de0db859c6350ceac031d49` · dirty **False** (base `origin/feat/d21-budget-floor` = `f121b65`) |
 | `run_id` | `run_20260825_0001` |
-| run 산출물 경로·보존 | `/srv/tenants/ext01/artifacts/run_20260825_0001` — **보존.** 사본 `logs/raw_20260825_125430.tgz` (1,155,687 B) |
+| run 산출물 경로·보존 | `/srv/tenants/user/artifacts/run_20260825_0001` — **보존.** 사본 `logs/raw_20260825_125430.tgz` (1,155,687 B) |
 | `tool_runner` | 프로필 선언 `fake` / 실제 **`docker`** (`--tool-runner docker` 오버라이드, ADR 0005). **네 번째 사례다** |
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` · **종류: docker 29.x `RepoDigests`(= manifest list digest, `.Id`와 같은 값)** — portability.md §5 #4 |
@@ -56,7 +56,7 @@ D21의 계상배율 세 번째 점과, PR #28의 예산 축소가 실제로 무�
 | vLLM | 0.27.1 · attention backend **FLASH_ATTN** (flashinfer 미선택) |
 | KV cache | **17.88 GiB → 130,176 tokens** · 32,768 토큰 요청 기준 **최대 동시 3.97x** |
 | 프로필 | `single_gpu_12g` — **scout만 실서빙**, auditor·critic·retriever·embedding·reranker는 Fake |
-| 대상 | zlib (`/srv/tenants/ext01/targets/zlib`) |
+| 대상 | zlib (`/srv/tenants/user/targets/zlib`) |
 
 **갈리는 항목을 먼저 적는다** — 8/23 `run_20260823_0002`와 대조할 때:
 
@@ -84,7 +84,7 @@ D21의 계상배율 세 번째 점과, PR #28의 예산 축소가 실제로 무�
 
 | 항목 | 값 |
 | --- | --- |
-| 명령 | `python3 -m src.cli run --profile single_gpu_12g --device atom --tool-runner docker --artifacts-root /srv/tenants/ext01/artifacts --target /srv/tenants/ext01/targets/zlib` |
+| 명령 | `python3 -m src.cli run --profile single_gpu_12g --device atom --tool-runner docker --artifacts-root /srv/tenants/user/artifacts --target /srv/tenants/user/targets/zlib` |
 | `condition` | `B3prime@pipeline` (기본값) |
 | `seed` | 20260901 |
 | thresholds (박제값) | `scout_threshold 0.5 · critic_top_n 8 · candidate_max 1024 · schema_retries 1 · capsule light 4000 / expanded 18000 / focused 8000` |
@@ -440,11 +440,11 @@ top_p 0.95` 둘뿐이라 요청이 그 둘은 덮지만 **`top_k: 20`은 하네�
 
 ```bash
 # --- 서버 ---
-source /srv/tenants/ext01/venv-probe/bin/activate
+source /srv/tenants/user/venv-probe/bin/activate
 export CPATH="$HOME/pyhdr/usr/include/python3.12:$HOME/pyhdr/usr/include:${CPATH:-}"
 
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98
-SERVE_LOG=/srv/tenants/ext01/artifacts/logs/serve_20260825_125430.log
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98
+SERVE_LOG=/srv/tenants/user/artifacts/logs/serve_20260825_125430.log
 
 setsid nohup env \
   VLLM_USE_DEEP_GEMM=0 \
@@ -460,7 +460,7 @@ setsid nohup env \
 # `VLLM_ATTENTION_BACKEND`는 주지 않았다 — 이 run은 FLASH_ATTN이 선택돼 필요 없었다.
 
 # --- 코드 ---
-cd /srv/tenants/ext01/whitehat-boss
+cd /srv/tenants/user/whitehat-boss
 git checkout -B measure/candidate-max-542 origin/feat/d21-budget-floor
 # config/budgets.yaml: thresholds.candidate_max 256 → 1024 (측정 전용)
 git commit -am "chore(threshold): 측정 전용 — candidate_max 256 → 1024 (D24 입력)"
@@ -471,6 +471,6 @@ python3 -m src.cli run \
   --profile single_gpu_12g \
   --device atom \
   --tool-runner docker \
-  --artifacts-root /srv/tenants/ext01/artifacts \
-  --target /srv/tenants/ext01/targets/zlib
+  --artifacts-root /srv/tenants/user/artifacts \
+  --target /srv/tenants/user/targets/zlib
 ```

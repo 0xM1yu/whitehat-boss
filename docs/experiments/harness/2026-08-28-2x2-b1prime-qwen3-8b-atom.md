@@ -17,7 +17,7 @@
 | `repo_commit` | `eb0e30c8704caaa29236b48b28b81c9b9e2f7ab3` · `repo_dirty: true` |
 | `run_id` | `run_20260827_0005` — **UTC 기준이다.** KST 8/28 03:33 = UTC 8/27 18:33 |
 | `source_hash` | `sha256:d347359a3f00186daa65d1a0d77c7bd1dbf4f25712383e11eba612cbc4eb05d6` |
-| run 산출물 | `/srv/tenants/ext01/artifacts/run_20260827_0005` — **보존됨** |
+| run 산출물 | `/srv/tenants/user/artifacts/run_20260827_0005` — **보존됨** |
 | `tool_runner` | 선언 `docker` / 실제 `docker` |
 | `--device` | `atom` |
 | `tool_images` | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` (docker 이미지 config sha256) |
@@ -26,8 +26,8 @@
 | `seed` | `20260828` |
 | `sampling` | `temperature 0.2` · `top_p 0.95` |
 | `kb_snapshot` | `kb-none` (자리표시자) |
-| 서빙 서버 stdout | `/srv/tenants/ext01/artifacts/logs/20260828/serve_8b_032810.log` (성공분, 42,457 B) · `/srv/tenants/ext01/artifacts/logs/serve_qwen3-8b_20260828_024813.log` (실패분, 21,644 B) |
-| run stdout | `/srv/tenants/ext01/artifacts/logs/20260828/run_b1p_033343.log` (687 B) |
+| 서빙 서버 stdout | `/srv/tenants/user/artifacts/logs/20260828/serve_8b_032810.log` (성공분, 42,457 B) · `/srv/tenants/user/artifacts/logs/serve_qwen3-8b_20260828_024813.log` (실패분, 21,644 B) |
+| run stdout | `/srv/tenants/user/artifacts/logs/20260828/run_b1p_033343.log` (687 B) |
 
 ## 1. 요약
 
@@ -127,7 +127,7 @@ config를 파싱해 어댑터를 조립할 뿐 엔드포인트를 두드리지 �
 ### 조건
 
 8B 단독 · `0.25` · `--seed 20260828` · `--condition B1prime@2x2` · `--device atom` ·
-`--artifacts-root /srv/tenants/ext01/artifacts`.
+`--artifacts-root /srv/tenants/user/artifacts`.
 
 ### 결과
 
@@ -263,35 +263,35 @@ config를 파싱해 어댑터를 조립할 뿐 엔드포인트를 두드리지 �
 
 - 서빙 서버: **전부 종료됨** (`pgrep -af "vllm serve"` 매치 없음, 2026-08-28 확인)
 - 임시 설정·프로필: 원복 불필요 (오버레이 없음)
-- 저장소 변경: **없음.** 워크트리 `/srv/tenants/ext01/exp-2x2-20260828`은
+- 저장소 변경: **없음.** 워크트리 `/srv/tenants/user/exp-2x2-20260828`은
   `git status --porcelain` 빈 출력이고, 로그 2건은 `artifacts/logs/20260828/`로 이동됐다
 
 ## 12. 부록 — 재현 절차
 
 ```bash
 # --- 워크트리 (PR #36 eb0e30c) ---
-git worktree add /srv/tenants/ext01/exp-2x2-20260828 origin/feat/registry-foundation-granite
-cd /srv/tenants/ext01/exp-2x2-20260828
-source /srv/tenants/ext01/venv-probe/bin/activate
+git worktree add /srv/tenants/user/exp-2x2-20260828 origin/feat/registry-foundation-granite
+cd /srv/tenants/user/exp-2x2-20260828
+source /srv/tenants/user/venv-probe/bin/activate
 export CPATH="$HOME/pyhdr/usr/include/python3.12:$HOME/pyhdr/usr/include:${CPATH:-}"
 
 # --- 서버 (8B 단독, 0.25) ---
-SNAP8B=/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218
+SNAP8B=/srv/tenants/user/.cache/huggingface/hub/models--Qwen--Qwen3-8B/snapshots/b968826d9c46dd6066d109eabc6255188de91218
 setsid nohup env VLLM_HOST_IP=127.0.0.1 NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
   vllm serve "$SNAP8B" --served-model-name qwen3-8b-bf16 --host 127.0.0.1 --port 8001 \
   --gpu-memory-utilization 0.25 --max-model-len 32768 --enable-prefix-caching \
   --structured-outputs-config '{"backend":"xgrammar","disable_any_whitespace":true}' \
   --generation-config vllm --default-chat-template-kwargs '{"enable_thinking": false}' \
-  > /srv/tenants/ext01/artifacts/logs/20260828/serve_8b_032810.log 2>&1 &
+  > /srv/tenants/user/artifacts/logs/20260828/serve_8b_032810.log 2>&1 &
 
 # --- run ---
-DS=/srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1
+DS=/srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1
 python -m src.cli run \
   --profile b1_single_qwen3_8b \
   --target "$DS/blind/PWN-003/source" \
   --condition B1prime@2x2 \
   --device atom \
-  --artifacts-root /srv/tenants/ext01/artifacts \
+  --artifacts-root /srv/tenants/user/artifacts \
   --seed 20260828
 ```
 

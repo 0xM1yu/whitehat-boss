@@ -33,8 +33,8 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험 시각 | 2026-09-03 13:33~14:34 KST |
-| 장비 | `aitopatom-d06a` (GB10, 통합메모리 물리 119.7 GiB) |
-| vLLM | 0.27.1 (`/srv/tenants/ext01/venv-probe`) |
+| 장비 | `atom-host` (GB10, 통합메모리 물리 119.7 GiB) |
+| vLLM | 0.27.1 (`/srv/tenants/user/venv-probe`) |
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` (별칭 `qwen3-coder-30b-a3b`) |
 | 기동 인자 | `--host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.45 --max-model-len 32768`. **2부만 `--enable-sleep-mode` 추가** |
 | 환경변수 | `VLLM_USE_DEEP_GEMM=0 VLLM_HOST_IP=127.0.0.1 NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo`. 2부는 `VLLM_SERVER_DEV_MODE=1` 추가(sleep 엔드포인트가 그때만 붙는다) |

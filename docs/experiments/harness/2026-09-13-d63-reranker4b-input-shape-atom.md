@@ -47,8 +47,8 @@
 | 반복 | 질의×모드마다 **3회**. 전 조합 3회 동일(결정론) |
 | 동시에 떠 있던 다른 서버 | **없다.** 800x 0개에서 8005 하나만 띄우고 측정 후 PGID로 내렸다 |
 | `--gpu-memory-utilization` | `0.20` — 분모는 물리 통합메모리 **119.7 GiB**([model-serving.md](../../model-serving.md) §1 「물리값」). 기동 시점 `free`가 약 114 GiB(그 순간 값, 재현 아님) |
-| 프로브·원문 산출물 | 프로브 [`tools/probe/d63_reranker_input_shape.py`](../../../tools/probe/d63_reranker_input_shape.py)(이 PR에 커밋). ⚠ **콘솔 원문 `/srv/tenants/ext01/d63_reranker4b_probe_20260913.txt`(ATOM 홈)는 순위표까지이고 top-5 줄은 없다** — `_top5_vuln`은 그 뒤 프로브에 더했고, top-5 수치는 순위표에서 파생한 것이다(위 ⚠) |
-| vLLM · 환경 | `0.27.1` · arch `sm121` · venv `/srv/tenants/ext01/venv-probe` (Python 3.12) |
+| 프로브·원문 산출물 | 프로브 [`tools/probe/d63_reranker_input_shape.py`](../../../tools/probe/d63_reranker_input_shape.py)(이 PR에 커밋). ⚠ **콘솔 원문 `/srv/tenants/user/d63_reranker4b_probe_20260913.txt`(ATOM 홈)는 순위표까지이고 top-5 줄은 없다** — `_top5_vuln`은 그 뒤 프로브에 더했고, top-5 수치는 순위표에서 파생한 것이다(위 ⚠) |
+| vLLM · 환경 | `0.27.1` · arch `sm121` · venv `/srv/tenants/user/venv-probe` (Python 3.12) |
 
 ## 1. 요약
 

@@ -23,18 +23,18 @@
 | --- | --- |
 | 실험 종료 시각 | `2026-09-12 23:5x KST` (프로브 종료). run 자체는 `2026-09-12 12:49:46Z` = `21:49 KST` |
 | 실제 서빙 모델 | Critic `hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee` · Auditor `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` · Scout `hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e`. `--served-model-name`은 전부 별칭 |
-| `repo_commit` | `5b0bec90800632fe52a1206fa5e41cc4c9a92f77` + **dirty** — ATOM 워크트리 `/srv/tenants/ext01/wire-test`에서 `config/profiles.yaml`의 `critic`만 `gpt-oss-20b`로 바꾼 미커밋 상태. run WARN이 `repo_dirty`로 적었고 **모델 비교표에서 제외된다** |
+| `repo_commit` | `5b0bec90800632fe52a1206fa5e41cc4c9a92f77` + **dirty** — ATOM 워크트리 `/srv/tenants/user/wire-test`에서 `config/profiles.yaml`의 `critic`만 `gpt-oss-20b`로 바꾼 미커밋 상태. run WARN이 `repo_dirty`로 적었고 **모델 비교표에서 제외된다** |
 | `run_id` | `run_20260912_0001` — §3.1·§3.2가 그 run의 산출물을 읽는다. **§3.3·§3.4·§3.5의 프로브 호출에는 `run_id`가 없다**(하네스를 안 지났다) |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/run_20260912_0001` — 보존. `prompts/` 403건 · `trace.jsonl` · `state.db` |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/artifacts/run_20260912_0001` — 보존. `prompts/` 403건 · `trace.jsonl` · `state.db` |
 | 입력 프롬프트 | §3.3·§3.4는 그 run의 `state.db` Finding에서 **재구성**했다 — 그 run은 critic을 안 불러 `prompts/`에 critic 프롬프트가 **0건**이다. §3.5는 `prompts/0003_auditor.md` **원문 재생** |
 | `tool_runner` | `docker` (프로필 선언값 그대로) |
 | `--device` | `atom` |
 | `tool_images` digest | 이 보고서 범위 밖 — 도구는 run에서만 돌았고 프로브는 안 돌렸다 |
 | `--gpu-memory-utilization` | 8001 `0.12` · 8002 `0.28` · 8006 `0.22` — **분모는 물리 통합메모리 119.7 GiB** |
 | 동시에 떠 있던 다른 서버 | **셋 다 동시 상주.** 8001 scout · 8002 auditor · 8006 critic. §3.3·§3.4의 초 단위 값은 그 경합 아래 값이다 |
-| 원문 산출물 보존 위치 | ATOM `/srv/tenants/ext01/critic_reasoning_split.json` · `critic_harness_settings.json` · `gptoss_probe_now.jsonl` · `d67_probe_20260912.json` |
-| 서빙 서버 stdout | ATOM `/srv/tenants/ext01/vllm_8001.log` · `vllm_8002.log` · `vllm_8006.log` — 보존. **저장소에는 없다** |
-| vLLM · 환경 | `0.27.1` · `sm121` · venv `/srv/tenants/ext01/venv-probe` |
+| 원문 산출물 보존 위치 | ATOM `/srv/tenants/user/critic_reasoning_split.json` · `critic_harness_settings.json` · `gptoss_probe_now.jsonl` · `d67_probe_20260912.json` |
+| 서빙 서버 stdout | ATOM `/srv/tenants/user/vllm_8001.log` · `vllm_8002.log` · `vllm_8006.log` — 보존. **저장소에는 없다** |
+| vLLM · 환경 | `0.27.1` · `sm121` · venv `/srv/tenants/user/venv-probe` |
 
 ⚠ **세 서버 전부 `StructuredOutputsConfig(... disable_any_whitespace=False ...)`로 떴다.**
 [2026-09-11 실험](2026-09-11-d67-required-schema-atom.md)이 그 옵션을 [D46](../../open-questions/D/D46.md)
@@ -150,7 +150,7 @@ input_value='{\n "finding_id": "find...\t\t\t\t\n \t\t\t\t\n '
 | `medium` | 69 / 142 / 227 | 82 / 86 / 98 | 242 / 327 | 5.5 | 0/8 |
 | `low` | 12 / 12 / 23 | 76 / 77 / 84 | 108 / 113 | 2.5 | 0/8 |
 
-**근거 로그.** ATOM `/srv/tenants/ext01/critic_reasoning_split.json`.
+**근거 로그.** ATOM `/srv/tenants/user/critic_reasoning_split.json`.
 
 **해석 ① — `max_tokens`는 답변이 아니라 추론을 재고 있었다.** 본문은 세 조건 전부에서
 76~126토큰이다. 세 자릿수 차이는 전부 추론 쪽에서 난다. `find_0014`는 `high`에서 추론
@@ -187,7 +187,7 @@ registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `Decision
 **결과.** 16콜 · **JSON 실패 0 · `finish=length` 0** · `completion_tokens` 615~1,508
 (추론 520~1,401 · 본문 78~114) · 초 min 29.0 / 중앙 45.2 / max 71.8 · 합 797초.
 
-**근거 로그.** ATOM `/srv/tenants/ext01/critic_harness_settings.json`.
+**근거 로그.** ATOM `/srv/tenants/user/critic_harness_settings.json`.
 
 **해석 — `output_max_by_role.critic`을 선언하지 않는다.** 비폭주 최대가 1,508이라 4,096은
 2.7배 여유다. 폭주는 확률적이고 드물다 — 실 프롬프트 `high` 전 시행에서 **3/32**(§3.3의 1건 +
@@ -229,7 +229,7 @@ registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `Decision
 → **§7 우선순위 1은 편의가 아니라 선행 조건이다.** D67을 `required`로 닫으려면 D46 (a)가
 먼저 서야 한다.
 
-원문: ATOM `/srv/tenants/ext01/d67_probe_20260912.json`.
+원문: ATOM `/srv/tenants/user/d67_probe_20260912.json`.
 
 ## 4. 막힌 것과 해결
 
@@ -237,7 +237,7 @@ registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `Decision
 | --- | --- | --- |
 | `tools/probe/d67_required_schema.py`가 첫 호출 전에 `TypeError` | PR #185가 `factory._model_client`의 `role`을 **키워드 필수**로 바꿨는데 그 호출부가 안 따라갔다 | 한 줄 수정. 이 PR에 포함 |
 | 추론 길이가 늘 0으로 읽혔다 | **vLLM 0.27.1의 필드 이름은 `reasoning`이고 `reasoning_content`는 없다.** `message` 키는 `annotations`·`audio`·`content`·`function_call`·`reasoning`·`refusal`·`role` | 키를 고쳐 읽었다. §7 항목 2·3 |
-| 시스템 `python3`에 pydantic이 없다 | 하네스는 `/srv/tenants/ext01/venv-probe`에서 돈다 | 그 venv로 실행 |
+| 시스템 `python3`에 pydantic이 없다 | 하네스는 `/srv/tenants/user/venv-probe`에서 돈다 | 그 venv로 실행 |
 
 ## 5. 미측정 항목과 사유
 
@@ -271,20 +271,20 @@ registry 선언값) · `Decision` 스키마(§3.3의 ⚠ — 실서빙 `Decision
 ## 8. 정리 상태
 
 프로브 종료 후 ATOM의 vLLM 서버 셋(8001·8002·8006)을 내렸다. 산출물 JSON 넷과 서버 로그
-셋은 `/srv/tenants/ext01/`에 남긴다. `run_20260912_0001` 산출물은 보존.
+셋은 `/srv/tenants/user/`에 남긴다. `run_20260912_0001` 산출물은 보존.
 
 ## 9. 부록 — 재현 절차
 
 ```bash
 # 1. 프롬프트 크기 분포만 (모델 호출 0회)
 python tools/probe/critic_output_budget.py \
-    --state-db /srv/tenants/ext01/artifacts/run_20260912_0001/state.db \
+    --state-db /srv/tenants/user/artifacts/run_20260912_0001/state.db \
     --profile local_balanced --model-key gpt-oss-20b --dry-run \
     --out ~/probe_results/critic_budget_dryrun.json
 
 # 2. 하네스 실제 설정 (§3.4)
 python tools/probe/critic_output_budget.py \
-    --state-db /srv/tenants/ext01/artifacts/run_20260912_0001/state.db \
+    --state-db /srv/tenants/user/artifacts/run_20260912_0001/state.db \
     --profile local_balanced --model-key gpt-oss-20b \
     --schema decision --max-tokens 4096 --trials 2 --top 8 \
     --out ~/probe_results/critic_budget_4096.json

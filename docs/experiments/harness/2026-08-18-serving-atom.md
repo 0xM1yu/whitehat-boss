@@ -7,7 +7,7 @@
 > 그 외 본문은 고치지 않았다. 서식(메타 표, §11~15)은 [TEMPLATE.md](../TEMPLATE.md)에 맞춰
 > 2026-08-19에 정리했고, 그 과정에서 주장은 바꾸지 않았다.
 
-**작성**: 조민규 (서빙 · 컨테이너 · GPU 회계)
+**작성**: 팀 (서빙 · 컨테이너 · GPU 회계)
 **실험 기간**: 2026-08-17 저녁 ~ 2026-08-18 새벽
 **대상 장비**: GIGABYTE AI TOP ATOM (NVIDIA DGX Spark 계열, GB10 Grace Blackwell)
 **전제 조건**: TCP 예외 승인 및 Docker 데몬 접근 확보 이후
@@ -88,7 +88,7 @@ scope는 `max`라 그것만 보면 "제한 없음"으로 오판합니다.**
 
 | 항목 | 값 |
 | --- | --- |
-| vLLM | **0.27.1** (venv: `/srv/tenants/ext01/venv-probe`, Python 3.12) |
+| vLLM | **0.27.1** (venv: `/srv/tenants/user/venv-probe`, Python 3.12) |
 | Docker | **29.2.1** / aarch64 / runc |
 | 비교 대상 | Seraph (A2000, sm_86, x86_64), vLLM 0.19.1 |
 
@@ -511,7 +511,7 @@ B1 조건은 세 LLM 역할 전부를 단일 30B MoE 모델로 실행하도록 �
 
 ```bash
 # 환경
-source /srv/tenants/ext01/venv-probe/bin/activate
+source /srv/tenants/user/venv-probe/bin/activate
 export CPATH="$HOME/pyhdr/usr/include/python3.12:$HOME/pyhdr/usr/include:${CPATH:-}"
 
 # 프로브

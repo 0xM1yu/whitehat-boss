@@ -40,7 +40,7 @@
 | 실제 서빙 모델 ② | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` | 별칭 `qwen3-coder-30b-a3b` |
 | `repo_commit` | `393b38e2d647cf830de0db859c6350ceac031d49` | dirty: `config/models.yaml` (bench `--apply`) + `config/checksums/*.txt` 2건 신규 |
 | `run_id` | **해당 없음** — `cli bench`는 run 디렉터리를 만들지 않는다 | 같은 날 `run_20260825_0001`은 **다른 실험**이다([542건 보고서](2026-08-25-pipeline-zlib542-atom.md)) |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/logs/` — **보존** | **저장소 밖이다.** [open-questions](../../open-questions.md) R3이 경고한 바로 그 배치다 |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/artifacts/logs/` — **보존** | **저장소 밖이다.** [open-questions](../../open-questions.md) R3이 경고한 바로 그 배치다 |
 | `tool_runner` | **해당 없음** — bench는 도구를 돌리지 않는다 | |
 | `--device` | `atom` | |
 | `tool_images` digest | **해당 없음** — 컨테이너를 쓰지 않는다 | |
@@ -49,7 +49,7 @@
 | 원문 산출물 보존 위치 | `logs/bench30b_20260825_142256.log` (11,142 B) · `logs/models30b_20260825_142256.json` | **보존** |
 | 서빙 서버 stdout | `logs/serve_8b_20260825_142256.log` (28,230 B) · `logs/serve_30b_20260825_142256.log` (77,599 B) | **보존.** [README](../README.md)의 `setsid nohup` 규약을 지킨 두 번째 사례 |
 
-> **경로 접두사**: 위 `logs/`는 전부 `/srv/tenants/ext01/artifacts/logs/` 아래다.
+> **경로 접두사**: 위 `logs/`는 전부 `/srv/tenants/user/artifacts/logs/` 아래다.
 
 ## 1. 요약
 

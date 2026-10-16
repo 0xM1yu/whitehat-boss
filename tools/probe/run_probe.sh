@@ -44,7 +44,7 @@ WAIT_S="${WAIT_S:-300}"
 # 접속하려다 실패한다 (2026-08-17 ATOM 실측):
 #
 #   distributed_init_method=tcp://192.168.0.10:54029 backend=nccl
-#   [c10d] The client socket has failed to connect to [aitopatom-d06a]:54029
+#   [c10d] The client socket has failed to connect to [atom-host]:54029
 #          (errno: 113 - No route to host)
 #   TCP client failed ... retrying (try=0, timeout=600000ms, ...)
 #

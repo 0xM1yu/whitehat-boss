@@ -475,7 +475,7 @@ def test_a_cited_id_grounds_a_rebut_whatever_the_axes_say(axes: tuple[str, ...])
     assert gate.normalize(decision) is Verdict.REBUT
 
 
-# --- v8 이상: 근거는 반박 축뿐이다 (ADR 0015 ⏵ 2026-10-15, 조민규 승인) ------------------------
+# --- v8 이상: 근거는 반박 축뿐이다 (ADR 0015 ⏵ 2026-10-15, 팀 승인) ------------------------
 
 
 @pytest.mark.parametrize("version", ["v6", "v7"])

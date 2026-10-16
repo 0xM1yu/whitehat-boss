@@ -16,12 +16,12 @@
 | 실제 서빙 모델 | scout `qwen3-8b`(8001) · auditor `qwen3-coder-30b-a3b`(8002) · critic `devstral-small-2-24b`(8003). **셋 다 `--max-model-len 32768`** ⚠ **revision 미기재** — 그때 안 적었다 |
 | `repo_commit` | **미기재** |
 | `run_id` | `run_20260904_0001` |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts_20260904/run_20260904_0001` — **보존됨**(`trace.jsonl` 5,724줄 · `state.db` 950 KB · 도구 로그 1.5 MB) |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/artifacts_20260904/run_20260904_0001` — **보존됨**(`trace.jsonl` 5,724줄 · `state.db` 950 KB · 도구 로그 1.5 MB) |
 | `tool_runner` | docker (로그의 `# runtime: docker`) |
 | `--device` | `atom` |
 | `--condition` · `--seed` | `B3prime@pipeline` · `20260904` |
 | 프로필 | `local_balanced` |
-| 대상 | `/srv/tenants/ext01/targets/zlib` |
+| 대상 | `/srv/tenants/user/targets/zlib` |
 | `tool_images` digest | **미기재** (로그에는 `harness-tools:v1` 태그만 있다) |
 | `--gpu-memory-utilization` | **미기재** |
 | 동시에 떠 있던 다른 서버 | **미기재** |

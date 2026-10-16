@@ -24,11 +24,11 @@ file:line은 **로컬**에서만 대조했다(후보의 `file`·`line`과 basena
 | 항목 | 값 |
 | --- | --- |
 | 실험일 | 2026-09-22 KST |
-| 장비 | ATOM, 계정 `ext01`, Linux aarch64 |
+| 장비 | ATOM, 계정 `user`, Linux aarch64 |
 | 코드 | PR #243 커밋 `f95ce99af02b60db30671c6aca0d231c267d2123`; `slicer_queries.py` SHA-256 `b3f6b95c7a6f314da951accd38b5c5a4996edfc95889311c0d2d18b377b9ddf0` |
 | Joern | [미기록] — 서버 버전을 이 실행에서 안 남겼다 |
 | 발행 방식 | Joern 서버 `--server` + `/query-sync`에 `candidates_b_query()` 및 진단 질의 직접 발행(하네스 러너 밖) |
-| 표본 | `/srv/tenants/ext01/release-eval-slices-20260918/samples/sample_NN/repo` (WavPack·pcre2·libvnc·libsixel·libtasn1) |
+| 표본 | `/srv/tenants/user/release-eval-slices-20260918/samples/sample_NN/repo` (WavPack·pcre2·libvnc·libsixel·libtasn1) |
 | GT | 로컬 `release.tar.gz`의 `internal/.../sample_NN/private_gt/ground_truth_enriched.json`(ATOM에 올리지 않음) |
 
 ## 2. operator 모집단은 폭증한다 — 그래서 좁힌다 (sample_08 WavPack, 1,020 메서드) [실측]

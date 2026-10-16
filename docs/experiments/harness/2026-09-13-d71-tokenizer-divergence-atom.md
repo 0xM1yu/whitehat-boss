@@ -14,11 +14,11 @@
 | --- | --- |
 | 측정 종료 시각 | `2026-09-13 KST` (프로브 종료). 하네스 run이 아니다 — `run_id` 없다 |
 | 측정한 것 | **토크나이저 토큰 수뿐.** GPU·서빙 없음 — `AutoTokenizer.from_pretrained`로 세 가중치의 토크나이저만 로드해 `encode()` 길이를 셌다 |
-| 토크나이저 원천 (ATOM `/srv/tenants/ext01/.cache/huggingface/hub/`) | `scout_memory` = `NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` · `scout_boundary` = `mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128` · `scout_injection` = `Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218` |
+| 토크나이저 원천 (ATOM `/srv/tenants/user/.cache/huggingface/hub/`) | `scout_memory` = `NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` · `scout_boundary` = `mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128` · `scout_injection` = `Qwen/Qwen3-8B@b968826d9c46dd6066d109eabc6255188de91218` |
 | 입력 | 캡슐 본문에 실리는 모양의 코드 조각 6개 (C·C 매크로·파이썬·C++ 템플릿·식별자 밀집·한영 혼합 주석). 프로브 소스에 인라인 — `d71_tokenizer_divergence.py`의 `CHUNKS` |
-| 프로브 소스 | ATOM `/srv/tenants/ext01/d71_tokenizer_divergence.py` (저장소 미커밋 — 이 보고서가 §2에 값과 조각을 전재한다) |
-| 원문 출력 보존 | ATOM `/srv/tenants/ext01/d71_tokenizer_divergence_20260913.txt` — 보존. **저장소에는 없다** |
-| transformers · 환경 | `5.15.0` · venv `/srv/tenants/ext01/venv-probe` |
+| 프로브 소스 | ATOM `/srv/tenants/user/d71_tokenizer_divergence.py` (저장소 미커밋 — 이 보고서가 §2에 값과 조각을 전재한다) |
+| 원문 출력 보존 | ATOM `/srv/tenants/user/d71_tokenizer_divergence_20260913.txt` — 보존. **저장소에는 없다** |
+| transformers · 환경 | `5.15.0` · venv `/srv/tenants/user/venv-probe` |
 | `--device` | `atom` (GPU 미사용 — CPU에서 토크나이저만) |
 
 ## 1. 왜 쟀나

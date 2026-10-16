@@ -10,7 +10,7 @@
 > 하지 않았다. 되찾을 값의 목록이 §8.4에 파일·키 단위로 있다.
 >
 > **두 run 다 2×2 매트릭스 run이 아니다.** `experiments/2x2/config/run_matrix.yaml`이 정한
-> `artifacts_root`를 쓰지 않았고(`--artifacts-root /srv/tenants/ext01/artifacts`),
+> `artifacts_root`를 쓰지 않았고(`--artifacts-root /srv/tenants/user/artifacts`),
 > 팀 2×2 실험은 이 세션과 별개로 이미 진행 중이다. 이 두 run이 그쪽과 부딪히는 지점은
 > §8.3에 있다.
 
@@ -22,16 +22,16 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` — 별칭 `qwen3-coder-30b-a3b`. **별칭이 아니라 `/v1/models`의 `root`로 확인했다**(§2 근거 로그) |
 | `repo_commit` | run B `1f4c4da63b40fc17499944c3b49513742af7f0d7` (`main`) · v2 `e111eb8230548e98a1e1ccf04c5228eabb9fa38c` (`measure/v2-smoke-20260829`, **머지 대상 아님**). 양쪽 다 커밋된 상태에서 돌았다(run B는 `git status --porcelain` 무출력, v2는 `git commit -am` 직후). **`RunRecord.repo_dirty`의 실제 기록값은 미기재** |
 | `run_id` | `run_20260829_0001` (run B) · `run_20260829_0002` (v2) |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/run_20260829_0001` · `/srv/tenants/ext01/artifacts/run_20260829_0002` — **둘 다 보존** |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/artifacts/run_20260829_0001` · `/srv/tenants/user/artifacts/run_20260829_0002` — **둘 다 보존** |
 | `tool_runner` | 선언 `docker` (`b1_single`) / 실제 `docker`. **오버라이드가 아닌데 경고가 오버라이드라고 신고했다** — D50의 네 번째 관측(§7.2). **PR #55가 고치는 중이다** |
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `b5d7048bc0a5` — **docker 이미지 ID 단축 12자리**다. 종류는 docker 이미지 config sha256이고, 같은 태그의 전체값을 [2×2 B1′ 보고서](2026-08-28-2x2-b1prime-qwen3-8b-atom.md) 메타가 `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17`로 적었다(앞 12자리 일치). **이 세션이 직접 받은 것은 단축형이고 전체값은 미기재** |
 | `--gpu-memory-utilization` | `0.28` — 분모는 물리 통합메모리 **119.7 GiB** |
 | 동시에 떠 있던 다른 서버 | **없음.** 기동 직후 `ss -ltnp`의 8000번대가 8002 하나뿐이다(§2 근거 로그) |
 | 원문 산출물 보존 위치 | 각 run 디렉터리에 `trace.jsonl` · `state.db` · `report.md` · `run_manifest.json` · `serve_prefix_cache.txt` · `cli_stdout_runB.log` / `cli_stdout_runV2.log` |
-| 서빙 서버 stdout | `/srv/tenants/ext01/artifacts/logs/serve_30b_runB_20260829_173017.log` — **두 run 디렉터리 양쪽에 사본을 복사했다** |
+| 서빙 서버 stdout | `/srv/tenants/user/artifacts/logs/serve_30b_runB_20260829_173017.log` — **두 run 디렉터리 양쪽에 사본을 복사했다** |
 | `profile` / `condition` | `b1_single` / `B1prime@pipeline` (양쪽 동일) |
-| 분석 대상 | `<DS>/blind/PWN-003/source` (`DS` = `/srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1`) |
+| 분석 대상 | `<DS>/blind/PWN-003/source` (`DS` = `/srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1`) |
 | `kb_snapshot` | `kb-none` (자리표시자 — run 경고) |
 | `seed` · `sampling` · `source_hash` | **미기재** — `run_manifest.json`을 열지 않았다(§8.4 회수 6번) |
 
@@ -72,7 +72,7 @@
 ```
 LISTEN 0      2048                     127.0.0.1:8002       0.0.0.0:*    users:(("vllm",pid=3663640,fd=43))
             "id": "qwen3-coder-30b-a3b",
-            "root": "/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048",
+            "root": "/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048",
 structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False
  1004:   376 376/376 376/5000 1902/500000
 ```
@@ -610,7 +610,7 @@ PR #51을 지금 머지하지 말라는 것(§8.3 3번)과 **같은 근거**다.
 
 ### 8.4 다음 접속 때 회수할 값
 
-**어느 파일의 어느 키인지까지 적는다.** 경로는 `/srv/tenants/ext01/artifacts/` 아래다.
+**어느 파일의 어느 키인지까지 적는다.** 경로는 `/srv/tenants/user/artifacts/` 아래다.
 
 | # | 파일 | 키 | 무엇을 가르나 |
 | --- | --- | --- | --- |
@@ -665,14 +665,14 @@ Welcome to NVIDIA DGX Spark Version 7.4.0 (GNU/Linux 6.11.0-1016-nvidia aarch64)
   System load:  0.11                Temperature:             46.0 C
   Usage of /:   34.2% of 467.89GB   Processes:               779
   Memory usage: 5%                  Users logged in:         1
-  Swap usage:   4%                  IPv4 address for wlP9s9: 10.0.0.236
+  Swap usage:   4%                  IPv4 address for wlP9s9: REDACTED
 
-Last login: Sat Aug 29 12:02:44 2026 from 100.111.126.71
-ext01@aitopatom-d06a:~$ echo "== host"; hostname; date; uptime
+Last login: Sat Aug 29 12:02:44 2026 from REDACTED
+user@atom-host:~$ echo "== host"; hostname; date; uptime
 echo "== 메모리(cgroup)"; cat /sys/fs/cgroup/memory.max /sys/fs/cgroup/memory.current 2>/dev/null; free -g | head -2
-echo "== 디스크"; df -h /srv/tenants/ext01 | tail -1
+echo "== 디스크"; df -h /srv/tenants/user | tail -1
 == host
-aitopatom-d06a
+atom-host
 2026. 08. 29. (토) 17:26:51 KST
  17:26:51 up 61 days,  2:45, 5757 users,  load average: 0.13, 0.28, 0.28
 == 메모리(cgroup)
@@ -680,7 +680,7 @@ aitopatom-d06a
 메모리:          119           7          82           0          31         112
 == 디스크
 /dev/nvme0n1p3 1007G  186G  812G   19% /srv/tenants
-ext01@aitopatom-d06a:~$ echo "== 떠 있는 vllm"; pgrep -af "vllm serve" || echo "없음"
+user@atom-host:~$ echo "== 떠 있는 vllm"; pgrep -af "vllm serve" || echo "없음"
 echo "== 열린 포트"; ss -ltnp 2>/dev/null | grep -E ':80(0[0-9]|1[0-9])' || echo "8000번대 없음"
 echo "== GPU"; nvidia-smi --query-gpu=utilization.gpu,memory.used --format=csv 2>/dev/null; nvidia-smi | tail -12
 == 떠 있는 vllm
@@ -702,7 +702,7 @@ utilization.gpu [%], memory.used [MiB]
 |=========================================================================================|
 |  No running processes found                                                             |
 +-----------------------------------------------------------------------------------------+
-ext01@aitopatom-d06a:~$ cd ~/whitehat-boss && git fetch origin
+user@atom-host:~$ cd ~/whitehat-boss && git fetch origin
 echo "== 현재"; git rev-parse --abbrev-ref HEAD; git log --oneline -1; git status --porcelain | head
 echo "== origin/main"; git log --oneline -1 origin/main          # 1f4c4da 여야 한다
 echo "== 뒤처짐(왼쪽=로컬 앞, 오른쪽=원격 앞)"; git rev-list --left-right --count HEAD...origin/main
@@ -730,7 +730,7 @@ b29e262 (HEAD -> measure/build-wiring-542) chore(threshold): 측정 전용 — c
 b0477fb Merge pull request #50 from Yunse4l/fix/d48-skipped-stage
 e0154b5 Merge pull request #49 from Yunse4l/fix/d47-retry-input-echo
 0aba8ab Merge pull request #52 from Yunse4l/docs/runa-report-corrections
-ext01@aitopatom-d06a:~/whitehat-boss$ echo "== output_max"; git show origin/main:config/budgets.yaml | grep -E '^\s+output_max'      # 8192 기대(#51 미머지)
+user@atom-host:~/whitehat-boss$ echo "== output_max"; git show origin/main:config/budgets.yaml | grep -E '^\s+output_max'      # 8192 기대(#51 미머지)
 echo "== v2 프롬프트"; git ls-tree --name-only origin/main -- prompts/scout/v2 prompts/auditor/v2 prompts/critic/v2
 echo "== trigger_status"; git show origin/main:src/schemas/finding.py | grep -n "trigger_status:"
 echo "== D47 수정"; git show origin/main:src/adapters/openai_compat.py | grep -n "include_input"
@@ -745,31 +745,31 @@ prompts/scout/v2
 == D47 수정
 102:                # **`include_input=False`가 그 두 줄을 실행하는 자리다 (D47).** pydantic의
 122:                    f"{exc.errors(include_url=False, include_input=False)}"
-ext01@aitopatom-d06a:~/whitehat-boss$ DS=/srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
+user@atom-host:~/whitehat-boss$ DS=/srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
 echo "== 대상"; ls -d "$DS/blind/PWN-003/source" && ls "$DS/blind/PWN-003/source" | head
 echo "== 스냅샷"; ls -d "$SNAP" && ls "$SNAP" | head -5
-echo "== artifacts"; ls -d /srv/tenants/ext01/artifacts /srv/tenants/ext01/artifacts/logs
+echo "== artifacts"; ls -d /srv/tenants/user/artifacts /srv/tenants/user/artifacts/logs
 == 대상
-/srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1/blind/PWN-003/source
+/srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1/blind/PWN-003/source
 Makefile
 channel_store.c
 record_format.h
 record_reader.c
 router_main.c
 == 스냅샷
-/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
+/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
 README.md
 added_tokens.json
 chat_template.jinja
 config.json
 generation_config.json
 == artifacts
-/srv/tenants/ext01/artifacts  /srv/tenants/ext01/artifacts/logs
-ext01@aitopatom-d06a:~/whitehat-boss$ # --- 건너뛴 셋 ---
+/srv/tenants/user/artifacts  /srv/tenants/user/artifacts/logs
+user@atom-host:~/whitehat-boss$ # --- 건너뛴 셋 ---
 echo "== keyring"; grep "^ *$(id -u):" /proc/key-users || cat /proc/key-users
 echo "== docker"; docker --version; docker images | grep harness-tools
-echo "== venv/vllm"; source /srv/tenants/ext01/venv-probe/bin/activate && which vllm python3 && vllm --version
+echo "== venv/vllm"; source /srv/tenants/user/venv-probe/bin/activate && which vllm python3 && vllm --version
 
 # --- 머지 안 된 커밋이 있는가 ---
 cd ~/whitehat-boss
@@ -783,14 +783,14 @@ Docker version 29.2.1, build a5c7197
 WARNING: This output is designed for human readability. For machine-readable output, please use --format.
 harness-tools:v1                              b5d7048bc0a5       1.11GB          249MB
 == venv/vllm
-/srv/tenants/ext01/venv-probe/bin/vllm
-/srv/tenants/ext01/venv-probe/bin/python3
+/srv/tenants/user/venv-probe/bin/vllm
+/srv/tenants/user/venv-probe/bin/python3
 0.27.1
 OK   feat/trigger-status-and-produced-by
 OK   feat/prompts-v2-role-split
 OK   fix/d47-retry-input-echo
 OK   fix/d48-skipped-stage
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ cd ~/whitehat-boss && git checkout main && git pull
+(venv-probe) user@atom-host:~/whitehat-boss$ cd ~/whitehat-boss && git checkout main && git pull
 'main' 브랜치로 전환합니다
 브랜치가 'origin/main'보다 128개 커밋 뒤에 있고, 앞으로 돌릴 수 있습니다.
   (로컬 브랜치를 업데이트하려면 "git pull"을 사용하십시오)
@@ -798,10 +798,10 @@ OK   fix/d48-skipped-stage
 Fast-forward
  …생략: 변경 파일 83건 목록 + create mode 목록…
  83 files changed, 10318 insertions(+), 305 deletions(-)
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ git rev-parse HEAD
+(venv-probe) user@atom-host:~/whitehat-boss$ git rev-parse HEAD
 1f4c4da63b40fc17499944c3b49513742af7f0d7
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ git status --porcelain
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ grep -E "candidate_max|critic_top_n|schema_retries|output_max" config/budgets.yaml
+(venv-probe) user@atom-host:~/whitehat-boss$ git status --porcelain
+(venv-probe) user@atom-host:~/whitehat-boss$ grep -E "candidate_max|critic_top_n|schema_retries|output_max" config/budgets.yaml
   critic_top_n: 8
   # 상한은 아래 `candidate_max`가 따로 든다 — 이 키의 뜻을 조용히 넓히지 않는다.
   # `over_candidate_max`로 남기고, 건수는 run 경고와 report.md에도 올린다 — 안 만들어진
@@ -813,9 +813,9 @@ Fast-forward
     # **정정(2026-08-28): 이 식이 쓰던 `output_max 2000`은 하네스에 없던 값이었다.**
     # 2,000은 `docs/agent-contracts.md` §1의 실행 계약 **예시**(`token_budget.output_max`)이고
     # 2,000이 아니라 `--max-model-len`이었다. 지금은 위 `thresholds.output_max: 8192`가
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ source /srv/tenants/ext01/venv-probe/bin/activate
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
-SERVE_LOG=/srv/tenants/ext01/artifacts/logs/serve_30b_runB_$(date +%Y%m%d_%H%M%S).log
+(venv-probe) user@atom-host:~/whitehat-boss$ source /srv/tenants/user/venv-probe/bin/activate
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
+SERVE_LOG=/srv/tenants/user/artifacts/logs/serve_30b_runB_$(date +%Y%m%d_%H%M%S).log
 
 setsid nohup env VLLM_USE_DEEP_GEMM=0 VLLM_HOST_IP=127.0.0.1 \
   NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
@@ -834,13 +834,13 @@ for i in $(seq 1 40); do
   sleep 15; printf .
 done
 [1] 3663636
-pid=3663636  log=/srv/tenants/ext01/artifacts/logs/serve_30b_runB_20260829_173017.log
+pid=3663636  log=/srv/tenants/user/artifacts/logs/serve_30b_runB_20260829_173017.log
 [1]+  완료                  setsid nohup env VLLM_USE_DEEP_GEMM=0 VLLM_HOST_IP=127.0.0.1 NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo "$(which vllm)" serve "$SNAP" --served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.28 --max-model-len 32768 --enable-prefix-caching > "$SERVE_LOG" 2>&1
  죽었다
 nohup: 입력 무시
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ pgrep -af "vllm serve" || echo "== 정말 없다"
+(venv-probe) user@atom-host:~/whitehat-boss$ pgrep -af "vllm serve" || echo "== 정말 없다"
 tail -20 "$SERVE_LOG"
-3663640 /srv/tenants/ext01/venv-probe/bin/python3 /srv/tenants/ext01/venv-probe/bin/vllm serve /srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048 --served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.28 --max-model-len 32768 --enable-prefix-caching
+3663640 /srv/tenants/user/venv-probe/bin/python3 /srv/tenants/user/venv-probe/bin/vllm serve /srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048 --served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.28 --max-model-len 32768 --enable-prefix-caching
 (APIServer pid=3663640) INFO 08-29 17:30:22 [api_utils.py:345]
 (APIServer pid=3663640) INFO 08-29 17:30:22 [api_utils.py:273] non-default args: {'model_tag': '...snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048', 'host': '127.0.0.1', 'port': 8002, 'model': '...snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048', 'max_model_len': 32768, 'served_model_name': ['qwen3-coder-30b-a3b'], 'gpu_memory_utilization': 0.28, 'enable_prefix_caching': True}
 (APIServer pid=3663640) INFO 08-29 17:30:22 [model.py:645] Resolved architecture: Qwen3MoeForCausalLM
@@ -854,7 +854,7 @@ tail -20 "$SERVE_LOG"
 (EngineCore pid=3664171) INFO 08-29 17:30:30 [parallel_state.py:1640] world_size=1 rank=0 local_rank=0 distributed_init_method=tcp://127.0.0.1:49815 backend=nccl
 (EngineCore pid=3664171) INFO 08-29 17:30:30 [parallel_state.py:1977] rank 0 in world size 1 is assigned as DP rank 0, PP rank 0, PCP rank 0, TP rank 0, EP rank 0, EPLB rank N/A
 (EngineCore pid=3664171) INFO 08-29 17:30:31 [topk_topp_sampler.py:62] Using FlashInfer for top-p & top-k sampling.
-(EngineCore pid=3664171) INFO 08-29 17:30:31 [gpu_model_runner.py:5308] Starting to load model /srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048...
+(EngineCore pid=3664171) INFO 08-29 17:30:31 [gpu_model_runner.py:5308] Starting to load model /srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048...
 (EngineCore pid=3664171) INFO 08-29 17:30:31 [__init__.py:1077] Using FlashInferCutlassNvFp4LinearKernel for NVFP4 GEMM
 (EngineCore pid=3664171) INFO 08-29 17:30:31 [cuda.py:482] Using FLASHINFER attention backend out of potential backends: ['FLASHINFER', 'TRITON_ATTN'].
 (EngineCore pid=3664171) INFO 08-29 17:30:31 [nvfp4.py:285] Using 'FLASHINFER_CUTLASS' NvFp4 MoE backend out of potential backends: ['FLASHINFER_TRTLLM', 'FLASHINFER_CUTEDSL', 'FLASHINFER_CUTEDSL_BATCHED', 'FLASHINFER_CUTLASS', 'VLLM_CUTLASS', 'MARLIN', 'HUMMING', 'EMULATION'].
@@ -862,7 +862,7 @@ tail -20 "$SERVE_LOG"
 (EngineCore pid=3664171) INFO 08-29 17:30:32 [weight_utils.py:890] Auto-prefetch is disabled because the filesystem (EXT4) is not a recognized network FS (NFS/Lustre). If you want to force prefetching, start vLLM with --safetensors-load-strategy=prefetch.
 Loading safetensors checkpoint shards:   0% Completed | 0/4 [00:00<?, ?it/s]
 Loading safetensors checkpoint shards:  25% Completed | 1/4 [00:38<01:54, 38.32s/it]
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ echo 3663640 > ~/vllm_runB.pid
+(venv-probe) user@atom-host:~/whitehat-boss$ echo 3663640 > ~/vllm_runB.pid
 VLLM_PID=3663640
 for i in $(seq 1 60); do
   curl -s http://127.0.0.1:8002/v1/models >/dev/null 2>&1 && { echo " 떴다"; break; }
@@ -870,7 +870,7 @@ for i in $(seq 1 60); do
   sleep 15; printf .
 done
 .... 떴다
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ # ① 다른 포트 전부 — 보고서 필수 칸
+(venv-probe) user@atom-host:~/whitehat-boss$ # ① 다른 포트 전부 — 보고서 필수 칸
 ss -ltnp | grep -E ':800[0-9]'
 # ② 서빙 모델이 진짜 그 스냅샷인가 (root가 40 hex 경로여야 한다)
 curl -s 127.0.0.1:8002/v1/models | python3 -m json.tool | grep -E '"(id|root)"'
@@ -880,10 +880,10 @@ grep -o "structured_outputs_config=[^,]*, disable_any_whitespace=[A-Za-z]*" "$SE
 grep "^ *$(id -u):" /proc/key-users
 # ⑤ doctor
 python3 -m src.cli doctor --profile b1_single --device atom --tool-runner docker \
-  --artifacts-root /srv/tenants/ext01/artifacts
+  --artifacts-root /srv/tenants/user/artifacts
 LISTEN 0      2048                     127.0.0.1:8002       0.0.0.0:*    users:(("vllm",pid=3663640,fd=43))
             "id": "qwen3-coder-30b-a3b",
-            "root": "/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048",
+            "root": "/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048",
                     "id": "modelperm-b6766aaa88d315b2",
 structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_whitespace=False
  1004:   376 376/376 376/5000 1902/500000
@@ -905,31 +905,31 @@ structured_outputs_config=StructuredOutputsConfig(backend='auto', disable_any_wh
 [OK   ] auditor 프롬프트 v1 확인
 [OK   ] critic 프롬프트 v1 확인
 [WARN ] 실측 전 초기값 임계값: ['scout_threshold', 'capsule_expansion_max', 'requeue_max'] — 조건 간 비교 전에 확정한다 (open-questions D2·D3)
-[OK   ] state DB 경로가 저장소 밖이다: /srv/tenants/ext01/artifacts
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ ^C
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ which tmux screen
+[OK   ] state DB 경로가 저장소 밖이다: /srv/tenants/user/artifacts
+(venv-probe) user@atom-host:~/whitehat-boss$ ^C
+(venv-probe) user@atom-host:~/whitehat-boss$ which tmux screen
 tmux new -s runB
 /usr/bin/tmux
 /usr/bin/screen
 [server exited]
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ pgrep -af tmux || echo "tmux 없음"
+(venv-probe) user@atom-host:~/whitehat-boss$ pgrep -af tmux || echo "tmux 없음"
 ls /tmp/tmux-$(id -u) 2>/dev/null || echo "소켓 없음"
 grep "^ *$(id -u):" /proc/key-users          # 376보다 줄었으면 정상
 pgrep -af "vllm serve" | head -1              # 3663640 살아 있어야 한다
 curl -s 127.0.0.1:8002/v1/models >/dev/null && echo "서버 OK"
-ls -l /srv/tenants/ext01/artifacts/run_20260829_0001/serve_prefix_cache.txt \
-      /srv/tenants/ext01/artifacts/run_20260829_0001/cli_stdout_runB.log
+ls -l /srv/tenants/user/artifacts/run_20260829_0001/serve_prefix_cache.txt \
+      /srv/tenants/user/artifacts/run_20260829_0001/cli_stdout_runB.log
 tmux 없음
 default
  1004:   376 376/376 376/5000 1902/500000
-3663640 /srv/tenants/ext01/venv-probe/bin/python3 /srv/tenants/ext01/venv-probe/bin/vllm serve /srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048 --served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.28 --max-model-len 32768 --enable-prefix-caching
+3663640 /srv/tenants/user/venv-probe/bin/python3 /srv/tenants/user/venv-probe/bin/vllm serve /srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048 --served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.28 --max-model-len 32768 --enable-prefix-caching
 서버 OK
--rw-rw-r-- 1 ext01 ext01  589  8월 29 17:39 /srv/tenants/ext01/artifacts/run_20260829_0001/cli_stdout_runB.log
--rw-rw-r-- 1 ext01 ext01 1212  8월 29 17:39 /srv/tenants/ext01/artifacts/run_20260829_0001/serve_prefix_cache.txt
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ cd ~/whitehat-boss
-source /srv/tenants/ext01/venv-probe/bin/activate
-export DS=/srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1
-export SERVE_LOG=/srv/tenants/ext01/artifacts/logs/serve_30b_runB_20260829_173017.log
+-rw-rw-r-- 1 user user  589  8월 29 17:39 /srv/tenants/user/artifacts/run_20260829_0001/cli_stdout_runB.log
+-rw-rw-r-- 1 user user 1212  8월 29 17:39 /srv/tenants/user/artifacts/run_20260829_0001/serve_prefix_cache.txt
+(venv-probe) user@atom-host:~/whitehat-boss$ cd ~/whitehat-boss
+source /srv/tenants/user/venv-probe/bin/activate
+export DS=/srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1
+export SERVE_LOG=/srv/tenants/user/artifacts/logs/serve_30b_runB_20260829_173017.log
 
 git switch -c measure/v2-smoke-$(date +%Y%m%d)
 awk '/^  [a-z0-9_-]+:/ { inblk = ($0 ~ /^  qwen3-coder-30b-a3b:/) }
@@ -947,20 +947,20 @@ print({r: c.models[c.profile.roles[r]].prompt_template_version for r in ('scout'
 -    prompt_template_version: "v1"
 +    prompt_template_version: "v2"
 {'scout': 'v2', 'auditor': 'v2', 'critic': 'v2'}
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ git commit -am 'measure: qwen3-coder-30b-a3b를 프롬프트 v2로 — 머지 대상 아님'
+(venv-probe) user@atom-host:~/whitehat-boss$ git commit -am 'measure: qwen3-coder-30b-a3b를 프롬프트 v2로 — 머지 대상 아님'
 git rev-parse HEAD
 
 time python3 -u -m src.cli run \
   --profile b1_single --device atom --tool-runner docker \
   --condition "B1prime@pipeline" \
-  --artifacts-root /srv/tenants/ext01/artifacts \
+  --artifacts-root /srv/tenants/user/artifacts \
   --target "$DS/blind/PWN-003/source" \
   2>&1 | tee ~/runV2.log
 [measure/v2-smoke-20260829 e111eb8] measure: qwen3-coder-30b-a3b를 프롬프트 v2로 — 머지 대상 아님
  1 file changed, 1 insertion(+), 1 deletion(-)
 e111eb8230548e98a1e1ccf04c5228eabb9fa38c
 run_id: run_20260829_0002
-산출물: /srv/tenants/ext01/artifacts/run_20260829_0002
+산출물: /srv/tenants/user/artifacts/run_20260829_0002
 리포트: report.md
 후보 19건 / Finding 6건
 완주 여부: 완주
@@ -972,16 +972,16 @@ run_id: run_20260829_0002
 real    20m0.956s
 user    0m0.548s
 sys     0m0.262s
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ R2=/srv/tenants/ext01/artifacts/run_20260829_0002
+(venv-probe) user@atom-host:~/whitehat-boss$ R2=/srv/tenants/user/artifacts/run_20260829_0002
 grep -E "Prefix cache hit rate" "$SERVE_LOG" | tail -5 | tee "$R2/serve_prefix_cache.txt"
 cp ~/runV2.log "$R2/cli_stdout_runV2.log"
-cp "$SERVE_LOG" "$R2/" && cp "$SERVE_LOG" /srv/tenants/ext01/artifacts/run_20260829_0001/
+cp "$SERVE_LOG" "$R2/" && cp "$SERVE_LOG" /srv/tenants/user/artifacts/run_20260829_0001/
 (APIServer pid=3663640) INFO 08-29 18:02:16 [loggers.py:310] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 65.6 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 2.5%, Prefix cache hit rate: 50.7%
 (APIServer pid=3663640) INFO 08-29 18:02:26 [loggers.py:310] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 64.9 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 2.8%, Prefix cache hit rate: 50.7%
 (APIServer pid=3663640) INFO 08-29 18:02:36 [loggers.py:310] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 64.3 tokens/s, Running: 1 reqs, Waiting: 0 reqs, GPU KV cache usage: 3.0%, Prefix cache hit rate: 50.7%
 (APIServer pid=3663640) INFO 08-29 18:02:46 [loggers.py:310] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 52.6 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%, Prefix cache hit rate: 50.7%
 (APIServer pid=3663640) INFO 08-29 18:02:56 [loggers.py:310] Engine 000: Avg prompt throughput: 0.0 tokens/s, Avg generation throughput: 0.0 tokens/s, Running: 0 reqs, Waiting: 0 reqs, GPU KV cache usage: 0.0%, Prefix cache hit rate: 50.7%
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ python3 - "$R2" <<'PYEOF'
+(venv-probe) user@atom-host:~/whitehat-boss$ python3 - "$R2" <<'PYEOF'
 import json,sys,os,collections
 R=sys.argv[1]
 rows=[json.loads(l) for l in open(os.path.join(R,'trace.jsonl'),encoding='utf-8')]
@@ -1019,7 +1019,7 @@ model_call 총 시간: 1194 초 / run 총 1201초
       6 trigger_status":"triggerable"
       6 "produced_by":{"role":"auditor","model":"qwen3-coder-30b-a3b","prompt_version":"v2"}
       3 "produced_by":{"role":"critic","model":"qwen3-coder-30b-a3b","prompt_version":"v2"}
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ cd ~/whitehat-boss && python3 - <<'PYEOF'
+(venv-probe) user@atom-host:~/whitehat-boss$ cd ~/whitehat-boss && python3 - <<'PYEOF'
 import json,urllib.request
 from src.schemas.finding import Finding
 s=Finding.model_json_schema()
@@ -1035,13 +1035,13 @@ print("모델이 낸 순서 :", list(json.loads(raw).keys()))
 PYEOF
 스키마 선언 순서: ['finding_id', 'run_id', 'candidate_id', 'state', 'path', 'trigger_status', 'confidence', 'rca_draft', 'cwe', 'title', 'evidence_refs', 'missing_evidence', 'repro_spec', 'produced_by']
 모델이 낸 순서 : ['finding_id', 'run_id', 'candidate_id', 'state', 'path', 'confidence', 'cwe', 'title', 'repro_spec', 'produced_by']
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ kill "$(cat ~/vllm_runB.pid)"; sleep 5; pgrep -af "vllm serve" || echo "서버 정리 완료"
+(venv-probe) user@atom-host:~/whitehat-boss$ kill "$(cat ~/vllm_runB.pid)"; sleep 5; pgrep -af "vllm serve" || echo "서버 정리 완료"
 cd ~/whitehat-boss && git checkout main
 서버 정리 완료
 'main' 브랜치로 전환합니다
-(venv-probe) ext01@aitopatom-d06a:~/whitehat-boss$ exit
+(venv-probe) user@atom-host:~/whitehat-boss$ exit
 로그아웃
-Connection to 100.83.147.105 closed.
+Connection to REDACTED closed.
 ```
 
 > ⚠ **run B의 `src.cli run` 명령 원문은 이 세션 로그에 없다 — `미기재`.**

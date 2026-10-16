@@ -42,7 +42,7 @@
 
 ## 2. 실험 환경
 
-- **장비** — ATOM `aitopatom-d06a`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB · aarch64 20코어.
+- **장비** — ATOM `atom-host`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB · aarch64 20코어.
   vLLM 0.27.1(`~/venv-probe`, Python 3.12). docker는 rootless다(`~/.local/share/docker`) — 도구 컨테이너도 사용자 cgroup에 든다.
 - **이미지** — `harness-tools:v2`를 `~/index-v2/wt`(feat/index-v2 + 스모크 설정)의 `tools/harness-tools/`에서 빌드했다
   (`--build-arg SEMGREP_RULES_COMMIT=40b8c63f75dc7c22c8a77482d73bfb864b146f7e` — v1 이미지의 룰셋 커밋. 기본값이 `develop`이라
@@ -188,11 +188,11 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험 종료 시각 | `2026-09-26 19:51 KST`(v2 쪽 재실행 종료) |
-| 장비 | ATOM `aitopatom-d06a` — 착수 전 GPU 연산 프로세스·docker 컨테이너·다른 harness run 0, `MemAvailable` 115 GiB |
+| 장비 | ATOM `atom-host` — 착수 전 GPU 연산 프로세스·docker 컨테이너·다른 harness run 0, `MemAvailable` 115 GiB |
 | 모델 | 전부 fake — 프로필 `atom_index_v2_fake`(두 스모크 브랜치의 설정 커밋, §9) |
 | 두 트리 | v1 = `smoke/index-v2-atom-main` `edcf4ef`(→ `harness-tools:v1`) · v2 = `smoke/index-v2-atom` `0c2f7f2`(→ `harness-tools:v2`). 두 run 모두 `repo_dirty: false` |
 | `tool_images` digest | v1 `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` · v2 `sha256:09e5a5bf54d9c864b4a6f2502b0db9501bfbafc3df6920e7a392222899b1db47`(§메타와 같다) |
-| 표본 | 평가 표본 `sample_24` — ATOM `/srv/tenants/ext01/release-eval-slices-20260918/samples/sample_24/repo`(읽기만). `.h` 54개, `.c` 86개 |
+| 표본 | 평가 표본 `sample_24` — ATOM `/srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo`(읽기만). `.h` 54개, `.c` 86개 |
 | 슬라이스 | 같은 디렉터리의 `runs/sample_24/export/slices.json`(2026-09-18 슬라이서 산출, 읽기만) — 207개, `run_signature` `b6f3e0e39a09…`. entry가 `.h`에 있는 것 23개, `.h` 줄을 지나는 것 50개 |
 | `run_id` | v1 `~/index-v2/artifacts/h-main/run_20260926_0002` · v2 `~/index-v2/artifacts/h-pr/run_20260926_0002`(날짜는 UTC). **버린 run 둘** — 같은 경로의 `run_20260926_0001` 둘(아래 「첫 시도」) |
 | 대조 스크립트 | `~/index-v2/compare_fake.py`(§9) · `~/index-v2/compare_caps.py`(이번에 새로 — **슬라이스 id로 짝짓는다**, 아래) |
@@ -254,8 +254,8 @@
 
 ```bash
 MAX_HOURS=3 setsid nohup bash ~/index-v2/guard.sh > /dev/null 2>&1 < /dev/null &
-bash ~/index-v2/run_h.sh h-main ~/index-v2/wt-main ~/index-v2/artifacts/h-main atom_index_v2_fake /srv/tenants/ext01/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/ext01/release-eval-slices-20260918/runs/sample_24/export/slices.json
-bash ~/index-v2/run_h.sh h-pr ~/index-v2/wt ~/index-v2/artifacts/h-pr atom_index_v2_fake /srv/tenants/ext01/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/ext01/release-eval-slices-20260918/runs/sample_24/export/slices.json
+bash ~/index-v2/run_h.sh h-main ~/index-v2/wt-main ~/index-v2/artifacts/h-main atom_index_v2_fake /srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/user/release-eval-slices-20260918/runs/sample_24/export/slices.json
+bash ~/index-v2/run_h.sh h-pr ~/index-v2/wt ~/index-v2/artifacts/h-pr atom_index_v2_fake /srv/tenants/user/release-eval-slices-20260918/samples/sample_24/repo /srv/tenants/user/release-eval-slices-20260918/runs/sample_24/export/slices.json
 python3 ~/index-v2/compare_fake.py ~/index-v2/artifacts/h-main ~/index-v2/artifacts/h-pr
 python3 ~/index-v2/compare_caps.py ~/index-v2/artifacts/h-main ~/index-v2/artifacts/h-pr
 touch ~/index-v2/STOP_GUARD

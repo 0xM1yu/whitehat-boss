@@ -21,7 +21,7 @@
 | `tool_images` digest | 해당 없음 |
 | `--gpu-memory-utilization` | `0.30` (분모 = 물리 통합메모리 **119.7 GiB**) |
 | 동시에 떠 있던 다른 서버 | **없다.** 8006 하나뿐이고 **네 번 재기동**했다(조건별로) |
-| 원문 산출물 보존 위치 | **`/srv/tenants/ext01/gpt_oss_structured.jsonl` (9줄, 팔당 1줄).** 요청·응답 전문 포함 |
+| 원문 산출물 보존 위치 | **`/srv/tenants/user/gpt_oss_structured.jsonl` (9줄, 팔당 1줄).** 요청·응답 전문 포함 |
 | 서빙 서버 stdout | `~/vllm_logs/gptoss_8006_xgrammar.log` · `_rparser.log` · `_order.log` · `_outlines.log` |
 
 ⚠ **`run_id`가 없으므로 이 결과는 비교표에 들어가지 않는다**([evaluation.md](../../evaluation.md) §6).
@@ -59,7 +59,7 @@ JSONL에 같은 라벨이 **두 줄** 있고 뒤가 outlines다 — `serve_cmd`�
 ## 2. 실험 환경
 
 - ATOM (NVIDIA DGX Spark, aarch64, sm_121), vLLM 0.27.1
-- venv `/srv/tenants/ext01/venv-probe`, 저장소 `/srv/tenants/ext01/whitehat-boss`
+- venv `/srv/tenants/user/venv-probe`, 저장소 `/srv/tenants/user/whitehat-boss`
 - 프로브 `tools/probe/gpt_oss_structured.py` (PR #175). **이 실험이 그 프로브의 첫 실행이다**
 - 프로브가 팔 간 상수를 잡는다 — 같은 프롬프트(UAF 한 케이스), `max_tokens=3000`,
   `reasoning_effort=high`, `trials=5`. 기동 인자 원문은 [§11](#11-부록--재현-절차)
@@ -323,7 +323,7 @@ After calling free(p)…"*) **그 직후에 `verdict: safe`를 낸다.** 「추�
 ### 서버 — 조건 넷
 
 ```bash
-export PATH=/srv/tenants/ext01/venv-probe/bin:/usr/local/cuda/bin:$PATH
+export PATH=/srv/tenants/user/venv-probe/bin:/usr/local/cuda/bin:$PATH
 
 # (A) 팔 1·2 — xgrammar
 VLLM_USE_DEEP_GEMM=0 VLLM_ATTENTION_BACKEND=TRITON_ATTN VLLM_USE_FLASHINFER_SAMPLER=0 \
@@ -345,9 +345,9 @@ until curl -s -f http://127.0.0.1:8006/v1/models >/dev/null 2>&1; do sleep 10; d
 ### 팔 1~4·8
 
 ```bash
-cd /srv/tenants/ext01/whitehat-boss
+cd /srv/tenants/user/whitehat-boss
 python tools/probe/gpt_oss_structured.py --label xgrammar-report33 --schema report33 \
-  --trials 5 --out /srv/tenants/ext01/gpt_oss_structured.jsonl
+  --trials 5 --out /srv/tenants/user/gpt_oss_structured.jsonl
 # (--label · --schema만 바꿔 반복)
 ```
 
@@ -356,7 +356,7 @@ python tools/probe/gpt_oss_structured.py --label xgrammar-report33 --schema repo
 ```bash
 cat > /tmp/arm_describe.py <<'PYEOF'
 import importlib.util, sys
-src = "/srv/tenants/ext01/whitehat-boss/tools/probe/gpt_oss_structured.py"
+src = "/srv/tenants/user/whitehat-boss/tools/probe/gpt_oss_structured.py"
 spec = importlib.util.spec_from_file_location("gos", src)
 g = importlib.util.module_from_spec(spec); sys.modules["gos"] = g
 spec.loader.exec_module(g)
@@ -373,7 +373,7 @@ g.CORRECT["describe"] = "vulnerable"
 sys.argv = ["probe", "--label", "rparser-describe", "--schema", "describe",
             "--trials", "5",
             "--serve-cmd", "same-server-as-rparser-report33 (schema name=Verdict, vocab=vulnerable/safe)",
-            "--out", "/srv/tenants/ext01/gpt_oss_structured.jsonl"]
+            "--out", "/srv/tenants/user/gpt_oss_structured.jsonl"]
 raise SystemExit(g.main())
 PYEOF
 python /tmp/arm_describe.py
@@ -387,7 +387,7 @@ python /tmp/arm_describe.py
 ```bash
 cat > /tmp/arm_order.py <<'PYEOF'
 import importlib.util, sys
-src = "/srv/tenants/ext01/whitehat-boss/tools/probe/gpt_oss_structured.py"
+src = "/srv/tenants/user/whitehat-boss/tools/probe/gpt_oss_structured.py"
 spec = importlib.util.spec_from_file_location("gos", src)
 g = importlib.util.module_from_spec(spec); sys.modules["gos"] = g
 spec.loader.exec_module(g)
@@ -414,7 +414,7 @@ g.SCHEMAS["reason_first"] = {
 }
 g.CORRECT["reason_first"] = "vulnerable"
 
-OUT = "/srv/tenants/ext01/gpt_oss_structured.jsonl"
+OUT = "/srv/tenants/user/gpt_oss_structured.jsonl"
 for key, label, note in (
     ("flipped", "rparser-flipped", "describe와 enum 순서만 다르다 (safe, vulnerable)"),
     ("reason_first", "rparser-reason-first", "describe와 속성 순서만 다르다 (reason 먼저)"),
@@ -433,7 +433,7 @@ python /tmp/arm_order.py
 ```bash
 python -c "
 import json
-for d in map(json.loads, open('/srv/tenants/ext01/gpt_oss_structured.jsonl')):
+for d in map(json.loads, open('/srv/tenants/user/gpt_oss_structured.jsonl')):
     t=d['structured_trials']; ok=sum(1 for x in t if x.get('correct'))
     print(d['label'].ljust(20), d['schema_key'].ljust(12), 'correct', ok, '/', len(t),
           '| verdicts', [x.get('verdict') for x in t])
@@ -445,7 +445,7 @@ for d in map(json.loads, open('/srv/tenants/ext01/gpt_oss_structured.jsonl')):
 ```bash
 python -c "
 import json
-d=[x for x in map(json.loads,open('/srv/tenants/ext01/gpt_oss_structured.jsonl')) if x['label']=='rparser-reason-first'][0]
+d=[x for x in map(json.loads,open('/srv/tenants/user/gpt_oss_structured.jsonl')) if x['label']=='rparser-reason-first'][0]
 for i,t in enumerate(d['structured_trials'],1):
     print(i, 'json', t['json_valid'], '|', t.get('verdict'), '|', (t.get('reason') or t.get('content',''))[:180]); print()
 "

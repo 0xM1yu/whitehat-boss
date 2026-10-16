@@ -12,7 +12,7 @@ run 산출물(`trace.jsonl`·`prompts/`)과 서빙 모델 `tokenizer.json`에서
 | 항목 | 값 |
 | --- | --- |
 | 대상 run | `run_20260827_0004` (30B `b1_single`, PWN-003). run 자체의 세션 메타·`repo_commit`은 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §메타 |
-| run 산출물·보존 | `/srv/tenants/ext01/artifacts/run_20260827_0004` — **ATOM 보존.** `trace.jsonl`·`prompts/`(33건)를 재분석 입력으로 받았다 |
+| run 산출물·보존 | `/srv/tenants/user/artifacts/run_20260827_0004` — **ATOM 보존.** `trace.jsonl`·`prompts/`(33건)를 재분석 입력으로 받았다 |
 | `repo_commit` (재분석 시점) | **해당 없음** — 이 재분석은 하네스를 돌리지 않고 산출물만 읽었다(§5가 쓰는 것은 `tokenizers`와 표준 라이브러리뿐이다). run 자체의 `repo_commit`은 [track_a 보고서](2026-08-28-pipeline-track-a-pwn003-atom.md) §메타 |
 | `--device` | `atom` |
 | 서빙 스냅샷 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` — Prove가 이 `tokenizer.json`으로 셌다. **이 40 hex가 이 문서 전체의 근거다**(무엇으로 셌나). revision은 [NVFP4 검증 보고서](2026-08-25-serving-nvfp4-atom.md)와 같다 |

@@ -4,7 +4,7 @@
 > ⚠ 아래 정정 — **그 「못 쓰게 된다」의 원인이 serve 설정인지 스키마 어휘인지 아직 안 갈렸다.**
 
 > **정정 (2026-09-09, [#160](https://github.com/0xM1yu/whitehat-boss/pull/160) 코멘트 후속).** §5가 미측정으로 남긴
-> *"`--structured-outputs-config.reasoning_parser` 명시 지정"*을 손수민이 ATOM에서 돌렸고
+> *"`--structured-outputs-config.reasoning_parser` 명시 지정"*을 팀이 ATOM에서 돌렸고
 > **verdict 3/3 정답**을 얻었다([#160 코멘트](https://github.com/0xM1yu/whitehat-boss/pull/160#issuecomment-5591142118)).
 > **관측은 그대로다** — 2026-09-09 03:14에 이 설정으로 본 것이 0/5이고, 바뀐 것은 그 관측이
 > 무엇까지 말하는가다(CLAUDE.md §2.2).
@@ -66,7 +66,7 @@
 | 동시에 떠 있던 다른 서버 | **없다.** 매 기동 전 `dropcache.py` 실행, 기동 시점 여유 111.93~112.01 GiB |
 | 원문 산출물 보존 위치 | **보존하지 않았다** — `curl` 응답을 파이프로 흘렸다. 아래 §3.3 표가 재구성본이다 |
 | 서빙 서버 stdout | `~/vllm_8006.log`(1차) · `~/vllm_8006b.log`(2차) · `~/vllm_8006c.log`(3차). **ATOM 홈에만 있고 저장소에 없다** |
-| vLLM · 환경 | `0.27.1` · `huggingface_hub 1.27.0` · venv `/srv/tenants/ext01/venv-probe` |
+| vLLM · 환경 | `0.27.1` · `huggingface_hub 1.27.0` · venv `/srv/tenants/user/venv-probe` |
 
 ---
 
@@ -231,7 +231,7 @@ Yes – the code is a classic **use-after-free**.
 
 | 벽 | 원인 | 해결 |
 | --- | --- | --- |
-| `python3`에 `huggingface_hub` 없음 | 시스템 python(`/usr`)에는 없다 | `source /srv/tenants/ext01/venv-probe/bin/activate` |
+| `python3`에 `huggingface_hub` 없음 | 시스템 python(`/usr`)에는 없다 | `source /srv/tenants/user/venv-probe/bin/activate` |
 | 전 요청 500 | Harmony vocab을 원격에서 받다 실패(§3.1) | `TIKTOKEN_ENCODINGS_BASE`에 로컬 디렉터리 |
 | `TIKTOKEN_RS_CACHE_DIR`로 안 풀림 | 그 캐시는 해시 파일명을 쓴다 | 위 변수를 쓴다 |
 | `guidance` 500 | **미해결** | 사유 미확인 |
@@ -264,7 +264,7 @@ Yes – the code is a classic **use-after-free**.
 - **「모델은 멀쩡하다」가 틀렸다면**: 자유 서술 3/3은 문제가 자명해서 나온 것일 수 있다. 어려운 표본에서 무너지면 이 문장은 좁혀야 한다. **표본이 하나이고 자명한 것을 골랐다.**
 - **「Marlin 팽창 1.16~1.25배」가 틀렸다면**: 다른 크기에서 비율이 달라진다. **20B 한 점이다** — `#50925`가 신고한 1.57배(67→105 GiB)는 더 큰 모델의 값이고 이 관측이 그것을 반증하지 않는다.
 - **메모리 범위가 틀렸다면**: 3회는 적다. 이상치가 있으면 범위가 바뀐다.
-- **⚠ 검토된 가설 하나 — 「`reasoning_parser`를 CLI로 안 줘서 채널 경계를 몰랐다」**(PR #160에서 손수민 제기). **이 로그로는 성립하지 않는다** — CLI에 안 준 것은 맞지만 EngineCore가 `openai_gptoss`로 채웠다(§2). 다만 **「해석된 값이 실제 문법 적용 시점에 쓰였는가」는 우리가 안 봤다.** 그것까지 부정하지는 않는다. 확인법: 그 플래그를 명시하고 §3.3을 반복해 verdict가 0/5에서 움직이는지 본다 — **움직이면 이 실험의 결론이 바뀐다.** ⚠ **2026-09-09 — 그 확인법이 교란된 채로 실행됐다.** 플래그를 준 run이 3/3을 냈으나 §3.3 반복이 아니라 축 넷이 함께 바뀌었다. **머리의 정정 블록**을 읽는다 — 이 문단만 보고 「가설이 반증됐다」로 읽으면 안 된다.
+- **⚠ 검토된 가설 하나 — 「`reasoning_parser`를 CLI로 안 줘서 채널 경계를 몰랐다」**(PR #160에서 팀 제기). **이 로그로는 성립하지 않는다** — CLI에 안 준 것은 맞지만 EngineCore가 `openai_gptoss`로 채웠다(§2). 다만 **「해석된 값이 실제 문법 적용 시점에 쓰였는가」는 우리가 안 봤다.** 그것까지 부정하지는 않는다. 확인법: 그 플래그를 명시하고 §3.3을 반복해 verdict가 0/5에서 움직이는지 본다 — **움직이면 이 실험의 결론이 바뀐다.** ⚠ **2026-09-09 — 그 확인법이 교란된 채로 실행됐다.** 플래그를 준 run이 3/3을 냈으나 §3.3 반복이 아니라 축 넷이 함께 바뀌었다. **머리의 정정 블록**을 읽는다 — 이 문단만 보고 「가설이 반증됐다」로 읽으면 안 된다.
 
 ---
 
@@ -289,5 +289,5 @@ Yes – the code is a classic **use-after-free**.
 - [model-serving.md](../../model-serving.md) §3 — 배포 전 필수 검증 체크리스트(이 실험이 1번을 답하고, 6번은 **이 스키마·이 serve 설정 범위로** 답한다 — 머리의 정정 블록)
 - [research/2026-09-08-roster.md](../../research/2026-09-08-roster.md) §1·§4·§8 — 로스터, Critic 선정 근거, 온보딩 순서
 - [research/2026-09-08-critic-quantization.md](../../research/2026-09-08-critic-quantization.md) — gpt-oss 네이티브 MXFP4·Harmony
-- `ADR 0010` — 로스터를 정하는 문서. **2026-09-09에 승인됐다**(조민규 확정 + 손수민 리뷰). 위 후속 1이 여기로 갔다. **PR #148**
+- `ADR 0010` — 로스터를 정하는 문서. **2026-09-09에 승인됐다**(팀 확정 + 팀 리뷰). 위 후속 1이 여기로 갔다. **PR #148**
 - [experiments/README.md](../README.md) — 보고서 규약

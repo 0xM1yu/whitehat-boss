@@ -1238,7 +1238,7 @@ def test_a_dropped_finding_ranks_with_the_uncritiqued_not_with_the_rebutted(
     ctx: RunContext,
 ) -> None:
     """판정 호출이 실패해 버려진 Finding(`critic_failed_ids`)은 판정이 없으므로 **Critic을
-    안 거친 것과 같은 계단 1**이다 (2026-10-15 조민규 승인 - 전엔 반박처럼 풀에서 빠졌다). 같은
+    안 거친 것과 같은 계단 1**이다 (2026-10-15 팀 승인 - 전엔 반박처럼 풀에서 빠졌다). 같은
     계단 안에서는 `confidence`가 가른다 - 미경유(0.5)가 버려진 것(0.2)보다 앞서고 둘 다
     보류(0.9)보다 앞선다. 버려진 것을 반박(3)·보류(2)에 두는 변이는 순서가 바뀌어 빨개진다."""
     state = runner._Accumulator()

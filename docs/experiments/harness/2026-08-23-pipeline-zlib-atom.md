@@ -10,7 +10,7 @@
 | 실제 서빙 모델 | 별칭 `qwen3-4b` (fp8). **revision 미기재** — 서버 기동 로그를 보존하지 않았다 |
 | `repo_commit` | `28754ec951e5e7a0a2ae15129808d74b4a53d635` · dirty **False** (base `main` = `672434a`) |
 | `run_id` | `run_20260823_0001`(픽스처) · `run_20260823_0002`(zlib) |
-| run 산출물 경로·보존 | `/srv/tenants/ext01/artifacts` — **보존 여부 미기재** |
+| run 산출물 경로·보존 | `/srv/tenants/user/artifacts` — **보존 여부 미기재** |
 | `tool_runner` | 프로필 선언 `fake` / 실제 `docker` (`--tool-runner docker` 오버라이드) |
 | `--device` | `atom` |
 | `tool_images` digest | **미기재** |
@@ -412,5 +412,5 @@ Fake auditor의 성질일 수 있다 — 이 run의 auditor는 Fake다. 그러�
 
 # 하네스
 --profile single_gpu_12g --device atom --tool-runner docker \
-  --artifacts-root /srv/tenants/ext01/artifacts
+  --artifacts-root /srv/tenants/user/artifacts
 ```

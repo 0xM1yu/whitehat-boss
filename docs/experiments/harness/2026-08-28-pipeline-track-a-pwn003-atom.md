@@ -15,13 +15,13 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` (별칭 `qwen3-coder-30b-a3b`). **근거**: trace `token_counter`의 `scout_source`·`auditor_source`가 그 문자열이고 기동 명령의 스냅샷 경로와 같다 |
 | `repo_commit` | `run_0001` = `3f93e1cce0e1785054cb84517459322ae27f7d34` · `run_0004` = `1b43d55a3d6182f3b323ab2714bb512bc6aa675a` (둘 다 dirty **False**). **`run_0002`·`run_0003`은 미기재** — 매니페스트를 남기기 전에 죽었다 |
 | `run_id` | `run_20260827_0001` ~ `run_20260827_0004`. **날짜가 UTC다** — `cli.py`가 `new_run_id(datetime.now(UTC))`를 쓰므로 KST 08-28 00:45에 시작한 run이 `20260827`로 찍힌다. 이 파일 이름(종료일 KST)과 하루 어긋나는 것이 정상이며, run_id로 날짜를 읽으면 안 된다 |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/artifacts/run_20260827_000{1,2,3,4}` — **넷 다 보존.** 단 `0002`·`0003`에는 `report.md`도 `run_manifest.json`도 **없다**(생성 전에 죽었다) |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/artifacts/run_20260827_000{1,2,3,4}` — **넷 다 보존.** 단 `0002`·`0003`에는 `report.md`도 `run_manifest.json`도 **없다**(생성 전에 죽었다) |
 | `tool_runner` | 프로필 선언 **`podman`**(`config/profiles.yaml`의 `b1_single`) / 실제 **`docker`**. `--tool-runner docker` 오버라이드이며 [ADR 0005](../../decisions/0005-tool-runner-override.md) 예외다. **이번 세션 run 넷 전부 해당** |
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` (docker `RepoDigests`) — 8/25·8/26과 **동일** |
 | `--gpu-memory-utilization` | **0.28** · 분모 물리 통합메모리 **119.7 GiB** → 33.52 GiB. 두 서버 같다 |
 | 동시에 떠 있던 다른 서버 | **없다.** 서버 A 기동 전 `pgrep -af "vllm serve"` 0건 · `nvidia-smi --query-compute-apps` 0건(세션 stdout(파일 미보존)). A→B는 `pkill` 후 재기동이라 겹치지 않았다 |
-| 원문 산출물 보존 위치 | 위 run 디렉터리 4개 + `/srv/tenants/ext01/artifacts/logs/` |
+| 원문 산출물 보존 위치 | 위 run 디렉터리 4개 + `/srv/tenants/user/artifacts/logs/` |
 | 서빙 서버 stdout | **보존.** 서버 A `logs/serve_30b_20260827_234536.log` · 서버 B `logs/serve_30b_nows_20260828_003841.log`. A는 `run_20260827_0001/`에도 복사돼 있다 |
 
 ### run 네 개
@@ -277,9 +277,9 @@ $ git grep -n "max_tokens" -- src/
 `logs/run_b1single_20260828_001523.log` (전문 보존)
 
 ```
-  File "/srv/tenants/ext01/measure-20260827/src/orchestrator/runner.py", line 499, in run_pipeline
+  File "/srv/tenants/user/measure-20260827/src/orchestrator/runner.py", line 499, in run_pipeline
     _analyze(ctx, artifacts, state, last)
-  File "/srv/tenants/ext01/measure-20260827/src/orchestrator/runner.py", line 599, in _analyze
+  File "/srv/tenants/user/measure-20260827/src/orchestrator/runner.py", line 599, in _analyze
     after, decision = critic.run(
 ...
 src.interfaces.model_client.SchemaParseError: critic 역할의 qwen3-coder-30b-a3b이 2회 안에
@@ -543,7 +543,7 @@ Qwen3-8B ×3이고 **이 run은 30B ×3**이다. **이 기록을 조건 비교�
   pid 78448을 내고 `nvidia-smi`가 32,940 MiB를 잡고 있다(포트 8002). **공유 계정이므로 끄지
   않으면 다음 사람의 서빙을 밀어낸다.** 서버 A는 00:38에 `pkill`로 종료됐다.
 - **임시 설정·프로필**: 저장소 `config/`는 안 건드렸다. 측정 전용 변경 둘은 워크트리
-  `/srv/tenants/ext01/measure-20260827`의 커밋 `3f93e1c`(candidate_max 64)·
+  `/srv/tenants/user/measure-20260827`의 커밋 `3f93e1c`(candidate_max 64)·
   `1b43d55`(max_tokens 2000)에 있고 **둘 다 머지 대상이 아니다.** 그 워크트리는 clean이다.
 - **저장소 변경**: 셋뿐이다 — 이 보고서 · [open-questions.md](../../open-questions.md)(D42~D45 신설, D29·D35 갱신) · [README.md](../README.md)(색인 1행, 미확정 #1 해소 블록).
 
@@ -552,9 +552,9 @@ Qwen3-8B ×3이고 **이 run은 30B ×3**이다. **이 기록을 조건 비교�
 ```bash
 # --- 워크트리 (origin/main 3851c37 기준) ---
 git worktree add -b measure/b1single-20260827 \
-  /srv/tenants/ext01/measure-20260827 origin/main
-cd /srv/tenants/ext01/measure-20260827
-source /srv/tenants/ext01/venv-probe/bin/activate
+  /srv/tenants/user/measure-20260827 origin/main
+cd /srv/tenants/user/measure-20260827
+source /srv/tenants/user/venv-probe/bin/activate
 export CPATH="$HOME/pyhdr/usr/include/python3.12:$HOME/pyhdr/usr/include:${CPATH:-}"
 
 # 측정 전용 커밋 1 — 머지 대상 아님
@@ -562,8 +562,8 @@ sed -i 's/^  candidate_max: 256$/  candidate_max: 64/' config/budgets.yaml
 git commit -am "measure: b1_single 첫 run용 candidate_max 64 — 머지 대상 아님"   # 3f93e1c
 
 # --- 서버 A (structured outputs 기본값) ---
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
-SERVE_LOG=/srv/tenants/ext01/artifacts/logs/serve_30b_$(date +%Y%m%d_%H%M%S).log
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
+SERVE_LOG=/srv/tenants/user/artifacts/logs/serve_30b_$(date +%Y%m%d_%H%M%S).log
 setsid nohup env \
   VLLM_USE_DEEP_GEMM=0 \
   VLLM_HOST_IP=127.0.0.1 NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo \
@@ -578,15 +578,15 @@ until curl -s http://127.0.0.1:8002/v1/models >/dev/null 2>&1; do sleep 15; prin
 
 # --- run_0001 (zlib) ---
 python3 -m src.cli doctor --profile b1_single --device atom --tool-runner docker \
-  --artifacts-root /srv/tenants/ext01/artifacts
+  --artifacts-root /srv/tenants/user/artifacts
 time python3 -m src.cli run \
   --profile b1_single --device atom --tool-runner docker \
   --condition "B1prime@pipeline" \
-  --artifacts-root /srv/tenants/ext01/artifacts \
-  --target /srv/tenants/ext01/targets/zlib
+  --artifacts-root /srv/tenants/user/artifacts \
+  --target /srv/tenants/user/targets/zlib
 
 # 서버를 끄기 전에 챙긴다
-RUN_DIR=/srv/tenants/ext01/artifacts/run_20260827_0001
+RUN_DIR=/srv/tenants/user/artifacts/run_20260827_0001
 grep -E "Prefix cache hit rate" "$SERVE_LOG" | tail -5 | tee "$RUN_DIR/serve_prefix_cache.txt"
 cp "$SERVE_LOG" "$RUN_DIR/"
 
@@ -610,14 +610,14 @@ setsid nohup env \
     --max-model-len 32768 \
     --enable-prefix-caching \
     --structured-outputs-config '{"backend": "xgrammar", "disable_any_whitespace": true}' \
-  > /srv/tenants/ext01/artifacts/logs/serve_30b_nows_$(date +%Y%m%d_%H%M%S).log 2>&1 &
+  > /srv/tenants/user/artifacts/logs/serve_30b_nows_$(date +%Y%m%d_%H%M%S).log 2>&1 &
 
 # --- run_0004 (track_a PWN-003) ---
 time python3 -m src.cli run \
   --profile b1_single --device atom --tool-runner docker \
   --condition "B1prime@pipeline" \
-  --artifacts-root /srv/tenants/ext01/artifacts \
-  --target /srv/tenants/ext01/experiments/2x2/dataset/track_a_evaluation_release_v1/blind/PWN-003/source
+  --artifacts-root /srv/tenants/user/artifacts \
+  --target /srv/tenants/user/experiments/2x2/dataset/track_a_evaluation_release_v1/blind/PWN-003/source
 ```
 
 > **`run_0004`의 명령 원문은 세션 stdout(파일 미보존)에서 옮겼다.** `--target` 경로는

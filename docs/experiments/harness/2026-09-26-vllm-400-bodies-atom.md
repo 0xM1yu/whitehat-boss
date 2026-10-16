@@ -10,16 +10,16 @@
 | --- | --- |
 | 실험 종료 시각 | `2026-09-26 18:00 KST` — 서버 정리 직후. 로그의 마지막 요청은 17:59:53 |
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-0.6B@c1899de289a04d12100db370d81485cdf75e47ca` — 별칭 `probe-a`·`probe-b`(같은 가중치) |
-| `repo_commit` | `194b08fb96394d3ba46a0bd2e30733380299dd1a`(PR #298 head, clean — 새 detached 워크트리 `/srv/tenants/ext01/d88-probe/wt`) |
+| `repo_commit` | `194b08fb96394d3ba46a0bd2e30733380299dd1a`(PR #298 head, clean — 새 detached 워크트리 `/srv/tenants/user/d88-probe/wt`) |
 | `run_id` | 없음 — `cli run`이 아니다 |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/d88-probe/out/probe_400.json` 보존(sha256 `c80f572c71ac44895669b60fb198eb12a631a7811e63e4bc769ca6813009853c`, 로컬 회수본과 같다) |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/d88-probe/out/probe_400.json` 보존(sha256 `c80f572c71ac44895669b60fb198eb12a631a7811e63e4bc769ca6813009853c`, 로컬 회수본과 같다) |
 | `tool_runner` | 해당 없음 — 도구를 안 돌렸다 |
 | `--device` | `atom` |
 | `tool_images` digest | 해당 없음 |
 | `--gpu-memory-utilization` | 서버마다 `0.10`, 분모 119.7 GiB |
 | 동시에 떠 있던 다른 서버 | 없음 — 기동 전 GPU 연산 프로세스 0 · vLLM 프로세스 0, 이 두 서버뿐이었다 |
 | 원문 산출물 보존 위치 | 위 `probe_400.json`, 이 보고서 §3 「근거 로그」에 원문 전부 |
-| 서빙 서버 stdout | `/srv/tenants/ext01/d88-probe/logs/probe-a.log`·`probe-b.log` 보존 |
+| 서빙 서버 stdout | `/srv/tenants/user/d88-probe/logs/probe-a.log`·`probe-b.log` 보존 |
 
 ## 1. 요약
 
@@ -40,9 +40,9 @@
 
 ## 2. 실험 환경
 
-- ATOM `aitopatom-d06a` — NVIDIA GB10, 통합 메모리 119.7 GiB
-- vLLM `0.27.1` · Python `3.12.3`(`/srv/tenants/ext01/venv-probe`)
-- 하네스 코드: 위 `repo_commit`. 프로브 스크립트는 워크트리 밖(`/srv/tenants/ext01/d88-probe/d88_probe.{sh,py}`)에 두었다
+- ATOM `atom-host` — NVIDIA GB10, 통합 메모리 119.7 GiB
+- vLLM `0.27.1` · Python `3.12.3`(`/srv/tenants/user/venv-probe`)
+- 하네스 코드: 위 `repo_commit`. 프로브 스크립트는 워크트리 밖(`/srv/tenants/user/d88-probe/d88_probe.{sh,py}`)에 두었다
 
 ## 3. 실험 1 — 400 본문과 러너 분류
 
@@ -60,7 +60,7 @@
 vllm serve Qwen/Qwen3-0.6B --served-model-name probe-a --host 127.0.0.1 --port 8090 \
   --gpu-memory-utilization 0.10 --max-model-len 4096 --max-num-seqs 4 --enforce-eager \
   --structured-outputs-config.backend xgrammar \
-  --chat-template /srv/tenants/ext01/d88-probe/qwen38_chat_template.jinja
+  --chat-template /srv/tenants/user/d88-probe/qwen38_chat_template.jinja
 vllm serve Qwen/Qwen3-0.6B --served-model-name probe-b --host 127.0.0.1 --port 8091 \
   --gpu-memory-utilization 0.10 --max-model-len 4096 --max-num-seqs 4 --enforce-eager \
   --structured-outputs-config.backend xgrammar --reasoning-parser qwen3

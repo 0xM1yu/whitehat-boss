@@ -55,7 +55,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 - [ ] 단일 스트림 tok/s vs 배치(8/16/32 동시 요청) 합산 tok/s → `roles.*.throughput.tok_s_single` / `.by_concurrency.*`
 - [ ] automatic prefix caching 동작 확인 및 적중률 → `roles.*.prefix_cache.verdict` / `.metrics_delta` (장부가 비어도 `prompt_tokens_cached_delta`가 토큰 수를 준다 — 구간 합계라 BudgetLedger에는 넣지 않는다)
 - [ ] structured output(JSON schema 강제) 동작 확인 → `roles.*.structured_output.valid_ratio`
-- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다. ⚠ **이 항목이 묻던 질문은 2026-09-09에 성립을 잃었다 — §4 머리와 [D4](open-questions/D/D4.md)를 먼저 읽는다.** ~~문구는 `src/bench_report.py`의 `CHECKLIST[6]`과 같은 것이고 **코드는 아직 안 고쳤으므로 `bench` 출력에도 이 문장이 그대로 뜬다**~~ → ⏵ **2026-09-24 — 코드는 고쳐져 있다.** 이 줄과 같은 커밋 `184aade`(2026-09-11)가 `CHECKLIST[6]`을 「Critic 반박 정확도 표본 (#93 재정의 — 고정밀 대비가 아니다)」로 바꿨고 `bench` 출력도 그 문장이다. 가중치는 bf16 그대로 쓰기로 해(조민규) NVFP4 대비라는 물음은 지금 로스터에 대상이 없다
+- [ ] NVFP4 양자화 시 Critic 반박 정확도 저하 여부 → §4 — **bench 범위 밖**(고정 반박 표본 필요). 출력에는 `unmeasured(데이터셋 대기)`로만 뜬다. ⚠ **이 항목이 묻던 질문은 2026-09-09에 성립을 잃었다 — §4 머리와 [D4](open-questions/D/D4.md)를 먼저 읽는다.** ~~문구는 `src/bench_report.py`의 `CHECKLIST[6]`과 같은 것이고 **코드는 아직 안 고쳤으므로 `bench` 출력에도 이 문장이 그대로 뜬다**~~ → ⏵ **2026-09-24 — 코드는 고쳐져 있다.** 이 줄과 같은 커밋 `184aade`(2026-09-11)가 `CHECKLIST[6]`을 「Critic 반박 정확도 표본 (#93 재정의 — 고정밀 대비가 아니다)」로 바꿨고 `bench` 출력도 그 문장이다. 가중치는 bf16 그대로 쓰기로 해(팀) NVFP4 대비라는 물음은 지금 로스터에 대상이 없다
 
 `bench` 출력의 `checklist` 배열이 위 7개를 통과/실패/미측정으로 요약한다. **못 잰 값은 0으로
 남기고 사유를 함께 낸다** — 추정치를 넣으면 `Benchmark.is_measured`가 0 여부로 판정하므로
@@ -261,7 +261,7 @@ python tools/model_checksum.py <스냅샷 경로> --key qwen3-14b \
 
 `source`는 그 스냅샷이 어디서 왔는지다(`hf://org/repo@rev` 또는 `file:///경로`). 후보가
 전부 커뮤니티·서드파티 산출물이라(2026-08-16 조사: Auditor NVFP4만 세 벌) **같은 이름의
-모델이 리포지터리마다 다르다**(⏵ 2026-09-24 — 가중치를 bf16 원본 그대로 쓰기로 해(조민규) 지금 로스터에서 서드파티
+모델이 리포지터리마다 다르다**(⏵ 2026-09-24 — 가중치를 bf16 원본 그대로 쓰기로 해(팀) 지금 로스터에서 서드파티
 산출물은 `seccoderx-8b`(`hf://SecCoderX/…`) 하나이고 나머지는 제작사 리포다 — `config/models.yaml`의 `source`. 리비전을
 적어야 하는 이유는 그대로다. ⏵ 2026-10-14 — 그 키가 로스터에서 내려왔다. **지금 제작사 리포가 아닌 것은
 `feyospace-v1-small`**(`hf://feyospace/…` — Qwen3.8-27B를 post-train한 것) **하나다** — 나머지 다섯은

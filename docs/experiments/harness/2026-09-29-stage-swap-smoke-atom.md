@@ -48,7 +48,7 @@
 
 ## 2. 실험 환경
 
-- **장비** `aitopatom-d06a`(NVIDIA GB10 · 통합메모리 MemTotal 119.70 GiB). `nvidia-smi --query-gpu=memory.total`이 `[N/A]`를 내서, 교대 명령이 **통합메모리 판정**(MemAvailable)을 탔다(`swap.log`의 `memory=unified`).
+- **장비** `atom-host`(NVIDIA GB10 · 통합메모리 MemTotal 119.70 GiB). `nvidia-smi --query-gpu=memory.total`이 `[N/A]`를 내서, 교대 명령이 **통합메모리 판정**(MemAvailable)을 탔다(`swap.log`의 `memory=unified`).
 - **vLLM 0.27.1**(교대 보고 `vllm_version`) · 하네스 파이썬 `~/venv-probe`(3.12.3 — 같은 날 04:41 KST 읽기 점검의 `python -V`) · 가중치는 HF 캐시(`~/.cache/huggingface/hub`).
 - **기동 인자는 장비 파일이 든다.**
   - 네 서버 모두 `--enforce-eager` · `--max-num-seqs 8` · `--enable-prompt-tokens-details`다.
@@ -197,7 +197,7 @@ run 끝(`swap.log` · `guard.log` · `chain.log`):
 | 우선순위 | 항목 | 현황 |
 | --- | --- | --- |
 | 1 | Auditor 기동 전 여유 0.4 GiB 안팎 — §4 선택지 | PR #334에서 결정. 설정 무변경 |
-| 2 | 이 run의 4.27 tok/s로 셈하면 Auditor `request_timeout_s` 7,500 s가 출력 상한 32,768토큰을 못 덮는다 — 32,768 ÷ 4.27 ≈ 7,674 s(계산값)이고 설정 근거 4.5 tok/s는 외부 보고값이다. 선택지: (a) 타임아웃을 올린다(하한 ≈ 7,674 s — 2026-09-28 스모크에서 가장 느린 Auditor 호출의 4.17 tok/s면 ≈ 7,853 s, 둘 다 계산값) (b) 사고 예산·출력 상한을 줄인다 — 지금 값은 2026-09-26 조민규가 council에 맡겨 정했다(성능이 시간보다 먼저 — `config/models.yaml`의 `qwen3.8-27b` 주석) (c) 근거 문구만 4.27로 갱신한다 — 잠금 테스트 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`의 속도 상수(4.5)를 같이 바꾸면 실패하므로 (c)만으로는 서지 않는다. ⚠ 어느 쪽이든 run GPU 예산 7,200 s와 같이 본다 — 이 run의 Auditor 두 호출이 그 예산의 50.8%(3,655 s, 계산값)를 썼고, 타임아웃 7,500 s는 호출 하나로 그 예산보다 길다(같은 주석이 이 예산 문제를 이슈 #97로 든다) | 결정 대기. 설정 무변경. 이슈 미등재 — 결정 뒤 #261에 잔여로 적거나 신규로 뗀다 |
+| 2 | 이 run의 4.27 tok/s로 셈하면 Auditor `request_timeout_s` 7,500 s가 출력 상한 32,768토큰을 못 덮는다 — 32,768 ÷ 4.27 ≈ 7,674 s(계산값)이고 설정 근거 4.5 tok/s는 외부 보고값이다. 선택지: (a) 타임아웃을 올린다(하한 ≈ 7,674 s — 2026-09-28 스모크에서 가장 느린 Auditor 호출의 4.17 tok/s면 ≈ 7,853 s, 둘 다 계산값) (b) 사고 예산·출력 상한을 줄인다 — 지금 값은 2026-09-26 팀이 council에 맡겨 정했다(성능이 시간보다 먼저 — `config/models.yaml`의 `qwen3.8-27b` 주석) (c) 근거 문구만 4.27로 갱신한다 — 잠금 테스트 `test_the_canonical_auditor_thinks_within_a_budget_that_holds_together`의 속도 상수(4.5)를 같이 바꾸면 실패하므로 (c)만으로는 서지 않는다. ⚠ 어느 쪽이든 run GPU 예산 7,200 s와 같이 본다 — 이 run의 Auditor 두 호출이 그 예산의 50.8%(3,655 s, 계산값)를 썼고, 타임아웃 7,500 s는 호출 하나로 그 예산보다 길다(같은 주석이 이 예산 문제를 이슈 #97로 든다) | 결정 대기. 설정 무변경. 이슈 미등재 — 결정 뒤 #261에 잔여로 적거나 신규로 뗀다 |
 | 3 | `atom.yaml`의 준비 상한·주석을 계획값에서 이 실측(191 · 126 · 442 · 131 s)으로 | PR #334 |
 | 4 | 새 키 셋 `checksum`(Scout·Auditor) | 미착수 |
 | 5 | 큰 슬라이스로 v3 Auditor 호출 시간·GPU 예산(입력 몫 400 우려는 이 창에서 해당 없음 — §5) | 미착수 |

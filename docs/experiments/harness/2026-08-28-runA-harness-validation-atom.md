@@ -19,7 +19,7 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` · 별칭 `qwen3-coder-30b-a3b` |
 | `repo_commit` | `44392a6fd72c7933e9b42858a233ef1a82fe9401` (dirty: `false`) |
 | `run_id` | `run_20260828_0002` |
-| run 산출물 경로·보존 여부 | ATOM `/srv/tenants/ext01/artifacts/run_20260828_0002` · **보존**. 사본 `~/runA-20260828.tgz`(무효 run `run_20260828_0001` 동봉) |
+| run 산출물 경로·보존 여부 | ATOM `/srv/tenants/user/artifacts/run_20260828_0002` · **보존**. 사본 `~/runA-20260828.tgz`(무효 run `run_20260828_0001` 동봉) |
 | `tool_runner` | 프로필 선언 `docker` / 실제 `docker` — **오버라이드가 아니었다.** `--tool-runner docker`를 명시했을 뿐인데 CLI가 값을 비교하지 않고 경고를 낸다(아래 §7 D50) |
 | `--device` | `atom` |
 | `tool_images` digest | `harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17` (docker = 이미지 config sha256) |
@@ -74,7 +74,7 @@ setsid nohup env VLLM_USE_DEEP_GEMM=0 VLLM_HOST_IP=127.0.0.1 \
 
 ```bash
 python3 -m src.cli run --profile b1_single --device atom --tool-runner docker \
-  --condition "B1prime@pipeline" --artifacts-root /srv/tenants/ext01/artifacts \
+  --condition "B1prime@pipeline" --artifacts-root /srv/tenants/user/artifacts \
   --target "$TGT"
 ```
 

@@ -15,8 +15,8 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험 시각 | 2026-09-04 13:23~16:0x KST (vLLM 로그 타임스탬프 기준) |
-| 장비 | `aitopatom-d06a` (GB10, 물리 통합메모리 119.7 GiB) |
-| vLLM | 0.27.1 (`/srv/tenants/ext01/venv-probe`) |
+| 장비 | `atom-host` (GB10, 물리 통합메모리 119.7 GiB) |
+| vLLM | 0.27.1 (`/srv/tenants/user/venv-probe`) |
 | `repo_commit` | `f47af57` → `b613d71` (`feat/local-balanced-hybrid-profile`). 측정 중 `--apply`로 한 커밋 늘었다 |
 | 프로필 | `local_balanced_hybrid` (PR #138, 머지 전) |
 | 실제 서빙 모델 | scout `hf://nvidia/Qwen3-8B-NVFP4@ccd10a893cbca613259517c3efe08e151ddf2b8e` · auditor `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` · critic `hf://mistralai/Devstral-Small-2-24B-Instruct-2512@55c5b41e98c2dbd21b0c8afffc540dcfc9eb5128` · embedding `hf://Qwen/Qwen3-Embedding-0.6B@97b0c614be4d77ee51c0cef4e5f07c00f9eb65b3` · reranker `hf://Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473` |
@@ -172,7 +172,7 @@ $ echo 3 > /proc/sys/vm/drop_caches
 
 ```python
 import os, glob
-for f in glob.glob('/srv/tenants/ext01/.cache/huggingface/hub/**/*.safetensors', recursive=True):
+for f in glob.glob('/srv/tenants/user/.cache/huggingface/hub/**/*.safetensors', recursive=True):
     fd = os.open(f, os.O_RDONLY)
     os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
     os.close(fd)

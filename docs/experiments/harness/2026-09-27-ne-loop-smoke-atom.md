@@ -70,7 +70,7 @@
 
 ## 3. 실험 환경
 
-- **장비** — ATOM `aitopatom-d06a`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB.
+- **장비** — ATOM `atom-host`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB.
   vLLM 0.27.1(`~/venv-probe`). docker rootless.
 - **서빙**(운영 창) — 둘 다 `--max-model-len 40960` · `--max-num-seqs 4` · `--reasoning-parser deepseek_r1` · `--enforce-eager`.
   `seccoderx-8b` 가중치 15.27 GiB · 로드 112.7 s · KV 54,064토큰(40,960 기준 1.32배) / `qwen3-14b` 27.52 GiB ·

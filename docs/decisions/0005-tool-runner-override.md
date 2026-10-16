@@ -15,7 +15,7 @@
 | 장비 | 쓸 수 있는 런타임 | 근거 |
 | --- | --- | --- |
 | ATOM (GB10) | Docker | R1 검증 대상 장비 |
-| Seraph (moana-u3) | Singularity만 | `/usr/bin/docker`가 permission denied (2026-08-13 실측) |
+| Seraph (REDACTED-node) | Singularity만 | `/usr/bin/docker`가 permission denied (2026-08-13 실측) |
 
 R1은 2026-08-17 마감의 크리티컬 패스이고, ATOM에 올리기 전에 Seraph에서 리허설을 돌려
 설정·프롬프트·배선 오류를 걸러내는 것이 유일한 예행 수단이다. 프로필이 런타임을 못박고

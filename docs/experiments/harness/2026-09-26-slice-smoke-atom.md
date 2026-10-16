@@ -49,7 +49,7 @@
 
 ## 2. 실험 환경
 
-- **장비** — ATOM `aitopatom-d06a`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB.
+- **장비** — ATOM `atom-host`. GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB.
   vLLM 0.27.1(`~/venv-probe`, Python 3.12).
 - **입력** — 표본 셋 v2 슬라이스 **241개**(`sample_01` 68 · `sample_02` 30 · `sample_03` 143).
   2026-09-14~15 슬라이서 산출(`slice_version: slice-v2`, joern 4.0.605).

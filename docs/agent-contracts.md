@@ -51,7 +51,7 @@ agent:
 > `output_max_by_role.auditor`가 32,768이 됐다 — 전역 4,096은 그대로다. 값은 실측이 아니라 사고를 켜서
 > 들어갔다(근거·한계는 `config/budgets.yaml`의 그 주석). 위 예시 블록이 그 값을 들고,
 > `tests/test_docs_format.py`가 블록의 `role:`과 짝으로 대조한다.
-> ⏵ **2026-10-03 — 그 값이 65,536이 됐다**(조민규 승인 · 위 예시 블록도 같이 움직였다). 올린 조건은 잠긴 관계
+> ⏵ **2026-10-03 — 그 값이 65,536이 됐다**(팀 승인 · 위 예시 블록도 같이 움직였다). 올린 조건은 잠긴 관계
 > 「타임아웃 ≥ 출력 상한 ÷ 속도」의 **속도 근거가 외부 보고 4.5에서 운영 장비(vast) 실측 16.2 tok/s로 바뀐 것**
 > 이다(`config/serving/vastai.yaml`). 동기는 5단계 도구 루프이고, 사고 상한도 28,672 → 57,344로 같이 올랐다
 > (`config/models.yaml`). ⚠ **이득이 아니라 보험이다** — 그 좌석 관측 출력 최대는 9.4k토큰(옛 사고 상한의 33%,
@@ -657,7 +657,7 @@ Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 �
     등록된 ID를 인용하라고 적고, v7은 rebut에 ID를 금지하고 축마다 SOURCE 코드 인용을 요구한다.
     「코드 위치」는 ②에서 rationale 속 인용이고, **하네스는 축 어휘만 본다** - 인용한 코드가 SOURCE에 실재하는지는
     안 본다(ADR 0015의 P0b, 보류). 어휘 안인 축은 근거의 **자격**이고 근거의 참이 아니다.
-  - ⏵ 2026-10-15([ADR 0015](decisions/0015-rebut-grounding.md) 개정, 조민규 승인) — **v8 이상에서는 근거가
+  - ⏵ 2026-10-15([ADR 0015](decisions/0015-rebut-grounding.md) 개정, 팀 승인) — **v8 이상에서는 근거가
     ②뿐이다.** v8(서빙 판)은 `rebut`에 Evidence ID를 금지하므로 ID만 든 v8 `rebut`은 근거가 아니라 규약 위반이고
     `need_evidence`로 정규화된다(사유 `rebut_ids_only`). 판은 `Decision.produced_by.prompt_version`이 정하고
     이름 집합은 `schemas/decision.AXIS_ONLY_GROUNDING_VERSIONS`다. v6·v7은 위 그대로다.
@@ -693,7 +693,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
 **남은 것은 E4 게이트 전이**이고 서빙+도구 되는 호스트가 잡힌 뒤다(표현력 절벽 — `PovSpec`으로
 못 만드는 계산 크로스필드 — 이 실측되면 gen-script 승격을 **검토**한다: 코드열람·Python 스크립팅, 별도
 신뢰면·리뷰. `src/schemas/pov.py` docstring). 외부 oracle 제출은 `run --oracle-submit`으로 들어왔다 —
-아래 「채점기 제출」. ⚠ 하네스 run으로 실서버 왕복을 잰 것은 0건이다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(조민규, 2026-09-30 —
+아래 「채점기 제출」. ⚠ 하네스 run으로 실서버 왕복을 잰 것은 0건이다. **검증 벤치마크는 CyberGym Level 1로 결정됐다**(팀, 2026-09-30 —
 [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다). 벤치마크 설계(데이터셋·정답지·조건 — 같은 ADR 결정 5)는 실험팀 몫이고,
 어느 벤치마크로 검증하느냐는 그 결정으로 정해졌다.
 
@@ -740,7 +740,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
   run은, 오라클에 이미 낸 후보나 구제된 중간 gen(`OracleLedger.pool`)이 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
-  ⏵ 2026-10-15(조민규 승인) — **낸 PoC나 구제된 중간 gen(`OracleLedger.pool`)이 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
+  ⏵ 2026-10-15(팀 승인) — **낸 PoC나 구제된 중간 gen(`OracleLedger.pool`)이 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
   `Exception`이든(위 두 예외 밖의 예상 밖 예외 포함) 최종 지정을 하고 **원 예외를 그대로** 올린다 — 최종 지정이
   던지면 그 사유는 원 예외의 노트로 붙고 원 예외가 이긴다. 최종 지정은 run당 한 번이다(`_Accumulator.oracle_finalized`가
   채점기 호출 전에 선다). `BaseException`(`KeyboardInterrupt`·`SystemExit`)은 안 부른다.
@@ -820,7 +820,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (uphold → 미경유·판정 호출 실패 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
-  러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 조민규가
+  러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 팀이
   council 뒤 정한 이 저장소의 규칙이다(⏵ 2026-10-14 — 「채점기 점수로는」에서 **후보 자기 `vul` 응답의 종료 코드 계단 하나**를 뺐다. 아래). 저자 `FAQ.md`에 고르는 방법을 금지한 문장은 없다(연구 문서
   1.3절은 최종 하나를 에이전트가 지정한다는 채점 방식만 적는다). 등급은 **채점기 바깥의 하네스 내부
   값**이고 8단계 `validate.run`이 낸 도구 근거까지 센다(`gate_eval`과 같은 등급 —
@@ -834,7 +834,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   (`runner._designate_final`). 🔴 **지정 로직이 읽는 채점기 값은 후보 자기 `vul` 제출의 `response_exit_code` 하나뿐이다**
   (⏵ 2026-10-14 이슈 #637 — 앞 판은 그것도 안 읽었다). 환경 값으로 보는 코드(124~127·137·255·음수·255 초과 — 로컬 `poc` 도구의 분류를 빌린 것이고 서버 응답 경로의 근거는 없다)와 없는 코드(`None`)는
   크래시로 세지 않고(300도 모름이지만 서버가 300을 응답에서 0으로 덮어 응답 경로로는 닿지 않는다 — #384) 「모름」으로 크래시와 크래시 아님 사이에 둔다. 후보의 `poc_id`·`cached`와 중간 gen의
-  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). ⏵ **2026-10-15 — 구제(rescued)**([ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 1 개정, council → 조민규 승인). `submit` 없이 끝난 Finding(루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊었다 — 채점기 응답을 받은 `designatable` 시도가 하나도 없다)의 중간 gen 중 **자기 `vul` 제출 응답 코드가 크래시 계단**인 것이 지정 풀(`OracleLedger.pool` = 제출된 후보 + `rescued`)에 든다. 새 제출·새 조회는 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번 돈다. 같은 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`). 응답을 받은 `submit`이 있는 Finding은 구제가 없다(틀린 `submit`도 마찬가지). ⏵ 2026-10-15 (사용자 승인) — 제출이 끝내 실패했거나 0바이트라 건너뛴 `submit`은 응답이 없어 「`submit` 없음」으로 센다(그 Finding의 크래시 중간 gen이 구제된다 · 이어받은 행은 `ok`라 제출자다). trace `oracle_final.rescued`·사이드카 `candidates[*].rescued`·`final.rescued`가 표시하고 파생 플래그는 후보에 안 찍는다(결정 5). 한계: 구제된 크래시가 다른 버그·호스트 잡음이면 `fix` 다리도 크래시라 0점(모든 Finding이 후보 0건인 `no_poc` run보다 나쁘진 않지만, 다른 Finding의 제출된 후보를 모름·크래시 아님 계단에서 **밀어낼 수는 있다**) · v8 문장의 행동 효과·구제 비율은 미실측.
+  `query_vul` 관측은 지정 시점에 손에 있는데도 안 읽는다(`runner._designate_final`). ⏵ **2026-10-15 — 구제(rescued)**([ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 1 개정, council → 팀 승인). `submit` 없이 끝난 Finding(루프가 `MAX_HOP`·`REPEAT_SPEC`·`PARSE_FAILED`·`CONTEXT_OVERFLOW`·`GATEWAY_ERROR`로 서거나 예산이 끊었다 — 채점기 응답을 받은 `designatable` 시도가 하나도 없다)의 중간 gen 중 **자기 `vul` 제출 응답 코드가 크래시 계단**인 것이 지정 풀(`OracleLedger.pool` = 제출된 후보 + `rescued`)에 든다. 새 제출·새 조회는 없고(이미 쌓인 행), `fix` 다리는 지정된 하나에만 한 번 돈다. 같은 코드 계단에서는 제출된 후보가 구제된 것보다 늘 앞선다(`submitted_over_rescued`). 응답을 받은 `submit`이 있는 Finding은 구제가 없다(틀린 `submit`도 마찬가지). ⏵ 2026-10-15 (사용자 승인) — 제출이 끝내 실패했거나 0바이트라 건너뛴 `submit`은 응답이 없어 「`submit` 없음」으로 센다(그 Finding의 크래시 중간 gen이 구제된다 · 이어받은 행은 `ok`라 제출자다). trace `oracle_final.rescued`·사이드카 `candidates[*].rescued`·`final.rescued`가 표시하고 파생 플래그는 후보에 안 찍는다(결정 5). 한계: 구제된 크래시가 다른 버그·호스트 잡음이면 `fix` 다리도 크래시라 0점(모든 Finding이 후보 0건인 `no_poc` run보다 나쁘진 않지만, 다른 Finding의 제출된 후보를 모름·크래시 아님 계단에서 **밀어낼 수는 있다**) · v8 문장의 행동 효과·구제 비율은 미실측.
   🔴 **읽기(사용자 확인 필요) — 중간 vul 되먹임은 any-of 채점이 아니라 모델의
   반복이다.** 하네스가 오라클 값으로 최종 한 장을 **새로 물어 고르지는** 않는다(지정은 `pool`(제출된 후보 + 구제된 중간 gen — ⏵ 2026-10-15)만 읽고, 정렬 키에
   든 오라클 값은 후보가 이미 낸 자기 제출 응답의 코드 하나다 — 새 제출·`fix` 호출·승격이 없다). 다만 모델은 자기 마지막 `gen`의 `vul` 종료 코드를 본 뒤 `submit`을 정하므로 Finding당

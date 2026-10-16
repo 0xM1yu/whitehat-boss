@@ -188,7 +188,7 @@ def test_run_globs_include_run_prompt_artifacts() -> None:
 #
 # R3가 적는 결함: *"`RUN_GLOBS`가 `REPO_ROOT.glob("artifacts/*/…")`이라 저장소 밖
 # `--artifacts-root`로 돈 run은 기본 호출에서 한 건도 안 잡힌다."* ATOM run이 전부
-# 그 모양이므로(`--artifacts-root /srv/tenants/ext01/artifacts`) 기본 호출은 **그 장비에
+# 그 모양이므로(`--artifacts-root /srv/tenants/user/artifacts`) 기본 호출은 **그 장비에
 # 남은 잔여물**을 검사하고 방금 돈 run은 안 본다.
 
 

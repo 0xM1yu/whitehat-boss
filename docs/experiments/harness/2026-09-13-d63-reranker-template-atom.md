@@ -16,11 +16,11 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험일 | 2026-09-13 (ATOM) |
-| 소스 확인 대상 | `vllm==0.27.1` @ `/srv/tenants/ext01/venv-probe` — `model_executor/models/config.py`·`interfaces.py`·`entrypoints/pooling/scoring/io_processor.py`, 모델 README(`Qwen3-Reranker-4B` 스냅샷 `@22e6836`) |
+| 소스 확인 대상 | `vllm==0.27.1` @ `/srv/tenants/user/venv-probe` — `model_executor/models/config.py`·`interfaces.py`·`entrypoints/pooling/scoring/io_processor.py`, 모델 README(`Qwen3-Reranker-4B` 스냅샷 `@22e6836`) |
 | 서빙 | A·B: 리랭커 8005(`is_original_qwen3_reranker`) · C: 일반 causal LM 8008(오버라이드 없이, `/v1/completions`) — 둘 다 `Qwen/Qwen3-Reranker-4B` bf16 |
 | 채점(C) | 전체 공식 양식으로 생성 `max_tokens=1`·`temperature=0`·`logprobs=20`, `P(yes)=softmax(lp_yes, lp_no)` |
 | `run_id` | **없다.** 어댑터 밖 직접 호출 — 비교표 밖 |
-| 원문 | `/srv/tenants/ext01/d63_official_template_20260913.txt` · 프로브 `d63_official_template_test.py`(ATOM 홈) |
+| 원문 | `/srv/tenants/user/d63_official_template_20260913.txt` · 프로브 `d63_official_template_test.py`(ATOM 홈) |
 
 ## 1. 소스 확인 — 서버는 Qwen3에 양식을 안 붙인다
 

@@ -4,8 +4,8 @@
 순수 규칙(명세 §4.3·§4.4.4·§4.4.5)은 `src/adapters/symbol_render.py`에 있고 이 모듈이
 그것을 가져다 쓴다.
 
-명세 원천은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
-(https://app.notion.com/p/Scout-RAG-baseline-3e1bec1a15bc80fa9fb8e15540f5def7,
+명세 원천은 팀 Notion 「실험팀 › Scout RAG baseline」
+(
 2026-09-26 판독)이다.
 
 `resolve()`가 조립 지점이다 — `GraphIndex.table()`(조회)과 `read_lines`(파일 읽기) 훅을

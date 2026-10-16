@@ -13,9 +13,9 @@
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98` (별칭 `qwen3-4b`, fp8). **근거**: `/v1/models`의 `root`가 그 스냅샷 경로 — `models_20260826_124034.json`에 보존 |
 | `repo_commit` | `7acf1b5e74b021d38b1a6773d543903aca554452` · dirty **False** |
 | 브랜치 구성 | `measure/remeasure-20260826` = `origin/main`(`21da039`) + `feat/d21-budget-floor`(#29·#30) + `feat/d21-tokenizer`(#31) + `feat/d26b-critic-skipped`(#32) → `721d58c`, **세 병합 모두 충돌 0** · 그 위에 측정 전용 커밋 `7acf1b5` |
-| 작업 위치 | `git worktree` `/srv/tenants/ext01/measure-20260826` — 공용 계정의 더러운 작업 트리(`config/profiles.yaml` 타인 WIP)를 건드리지 않기 위해 분리했다 |
+| 작업 위치 | `git worktree` `/srv/tenants/user/measure-20260826` — 공용 계정의 더러운 작업 트리(`config/profiles.yaml` 타인 WIP)를 건드리지 않기 위해 분리했다 |
 | `run_id` | `run_20260826_0001` |
-| run 산출물 경로 | `/srv/tenants/ext01/artifacts/run_20260826_0001` — **보존** |
+| run 산출물 경로 | `/srv/tenants/user/artifacts/run_20260826_0001` — **보존** |
 | `tool_runner` | 프로필 선언 `fake` / 실제 **`docker`** (`--tool-runner docker` 오버라이드, ADR 0005). **다섯 번째 사례다** |
 | `--device` | `atom` |
 | `condition` | `B3prime@pipeline` (기본값) |
@@ -62,7 +62,7 @@
 | KV cache | **17.88 GiB → 130,176 tokens** · 32,768 토큰 요청 기준 최대 동시 **3.97x** |
 | 메모리 회계 | weights+non-torch **5.96 GiB** · peak activation **0.10 GiB** · CUDAGraph **0.52 GiB** (8/25는 0.82) |
 | 프로필 | `single_gpu_12g` — **scout만 실서빙**, auditor·critic·retriever·embedding·reranker는 Fake |
-| 대상 | zlib (`/srv/tenants/ext01/targets/zlib`) |
+| 대상 | zlib (`/srv/tenants/user/targets/zlib`) |
 
 **갈리는 항목을 먼저 적는다** — 8/25 `run_20260825_0001`과 대조할 때:
 
@@ -89,7 +89,7 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 명령 | `python3 -m src.cli run --profile single_gpu_12g --device atom --tool-runner docker --artifacts-root /srv/tenants/ext01/artifacts --target /srv/tenants/ext01/targets/zlib` |
+| 명령 | `python3 -m src.cli run --profile single_gpu_12g --device atom --tool-runner docker --artifacts-root /srv/tenants/user/artifacts --target /srv/tenants/user/targets/zlib` |
 | thresholds (박제값) | `scout_threshold 0.5 · critic_top_n 8 · candidate_max 1024 · schema_retries 1 · queue_maxsize 256 · capsule_expansion_max 3 · requeue_max 2 · capsule light 4000 / expanded 18000 / focused 8000` |
 | `budget` | `input_tokens 4,000,000 · output_tokens 400,000 · gpu_seconds 7,200 · tool_seconds 1,800` |
 | `sampling` | `temperature 0.2 · top_p 0.95` (`top_k`는 하네스가 안 보낸다 — §3 해석 ⑫) |
@@ -533,7 +533,7 @@ top_p 0.8`로 덮었다고 적는다. `budgets.yaml`의 `sampling`은 `temperatu
   run 디렉터리로 복사했다. 8/23에 이 순서를 어겨 R6이 그 run으로는 못 움직였다
 - **임시 설정**: `CPATH`는 셸 환경변수라 세션 종료와 함께 사라진다.
   `VLLM_USE_DEEP_GEMM=0`은 임시 조치가 아니라 **기동 조건**이므로 원복 대상이 아니다
-- **저장소 변경**: 워크트리 `/srv/tenants/ext01/measure-20260826`, 브랜치
+- **저장소 변경**: 워크트리 `/srv/tenants/user/measure-20260826`, 브랜치
   `measure/remeasure-20260826`에 측정 전용 커밋 1개(`7acf1b5`). **머지 대상이 아니다**
 - **타인 WIP 보존**: `config/profiles.yaml`의 커밋되지 않은 변경(B1′ 라벨 교정 + 약 61줄)은
   `measure/build-wiring-542` 쪽에 그대로 남아 있다. **건드리지 않았다**
@@ -542,15 +542,15 @@ top_p 0.8`로 덮었다고 적는다. `budgets.yaml`의 `sampling`은 `temperatu
 
 ```bash
 # --- 브랜치 ---
-cd /srv/tenants/ext01/whitehat-boss
+cd /srv/tenants/user/whitehat-boss
 git fetch origin
 git checkout -b measure/remeasure-20260826 origin/main          # 21da039
 git merge --no-ff origin/feat/d21-budget-floor                   # #29·#30
 git merge --no-ff origin/feat/d21-tokenizer                      # #31
 git merge --no-ff origin/feat/d26b-critic-skipped                # #32
 # → 721d58c · 충돌 0
-git worktree add /srv/tenants/ext01/measure-20260826 measure/remeasure-20260826
-cd /srv/tenants/ext01/measure-20260826
+git worktree add /srv/tenants/user/measure-20260826 measure/remeasure-20260826
+cd /srv/tenants/user/measure-20260826
 # config/budgets.yaml: thresholds.candidate_max 256 → 1024 (측정 전용)
 git commit -am "chore(measure): candidate_max 1024 (측정 전용, 머지 금지)"
 # → 7acf1b5 · git status --porcelain 비어 있음
@@ -568,10 +568,10 @@ for name, m in cfg["models"].items():
 PY
 
 # --- 서버 ---
-source /srv/tenants/ext01/venv-probe/bin/activate
+source /srv/tenants/user/venv-probe/bin/activate
 export CPATH="$HOME/pyhdr/usr/include/python3.12:$HOME/pyhdr/usr/include:${CPATH:-}"
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98
-SERVE_LOG=/srv/tenants/ext01/artifacts/logs/serve_20260826_124034.log
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98
+SERVE_LOG=/srv/tenants/user/artifacts/logs/serve_20260826_124034.log
 
 setsid nohup env \
   VLLM_USE_DEEP_GEMM=0 \
@@ -591,13 +591,13 @@ python3 -m src.cli run \
   --profile single_gpu_12g \
   --device atom \
   --tool-runner docker \
-  --artifacts-root /srv/tenants/ext01/artifacts \
-  --target /srv/tenants/ext01/targets/zlib
+  --artifacts-root /srv/tenants/user/artifacts \
+  --target /srv/tenants/user/targets/zlib
 
 # --- 수집 (서버를 끄기 전에) ---
-RUN_DIR=$(ls -dt /srv/tenants/ext01/artifacts/run_* | head -1)
+RUN_DIR=$(ls -dt /srv/tenants/user/artifacts/run_* | head -1)
 grep -E "Prefix cache hit rate" "$SERVE_LOG" | tail -20 > "$RUN_DIR/serve_prefix_cache.txt"
-cp "$SERVE_LOG" /srv/tenants/ext01/artifacts/logs/models_20260826_124034.json "$RUN_DIR/"
+cp "$SERVE_LOG" /srv/tenants/user/artifacts/logs/models_20260826_124034.json "$RUN_DIR/"
 pkill -f "vllm serve"
 ```
 

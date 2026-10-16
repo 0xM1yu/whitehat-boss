@@ -19,7 +19,7 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` (별칭 `qwen3-coder-30b-a3b` — 기동 로그 `non-default args`의 스냅샷 경로로 대조) |
 | `repo_commit` | `9078a50dfceeb542a1887d69eac160b4388f621a` (측정 시점 클린 — `--apply`가 그 뒤 `config/models.yaml`을 고쳤다) |
 | `run_id` | **해당 없음** — `cli bench`는 run 디렉터리를 만들지 않는다 |
-| run 산출물 경로·보존 여부 | `/srv/tenants/ext01/` 아래 `bench_20260902_140046.json`(1판) · `bench_apply_20260902_141150.json`(2판) · `bench_run3.json`(3판) · `bench_run4_nocache_20260902_161103.json`(4판). **넷 다 보존** |
+| run 산출물 경로·보존 여부 | `/srv/tenants/user/` 아래 `bench_20260902_140046.json`(1판) · `bench_apply_20260902_141150.json`(2판) · `bench_run3.json`(3판) · `bench_run4_nocache_20260902_161103.json`(4판). **넷 다 보존** |
 | `tool_runner` | 선언 `podman` / 실제 **사용 안 함** — `bench`는 도구를 실행하지 않는다(`run_bench`가 값을 기록만 한다) |
 | `--device` | `atom` |
 | `tool_images` digest | **해당 없음** — 위와 같은 이유 |
@@ -46,8 +46,8 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 장비 | `aitopatom-d06a` (GB10, compute_cap 12.1 = sm_121) |
-| vLLM | 0.27.1 (`/srv/tenants/ext01/venv-probe`) |
+| 장비 | `atom-host` (GB10, compute_cap 12.1 = sm_121) |
+| vLLM | 0.27.1 (`/srv/tenants/user/venv-probe`) |
 | 기동 인자 | `--served-model-name qwen3-coder-30b-a3b --host 127.0.0.1 --port 8002 --gpu-memory-utilization 0.45 --max-model-len 32768 --enable-prefix-caching`. **4판만 마지막을 `--no-enable-prefix-caching`으로 바꿨고 나머지는 동일하다** |
 | 환경변수 | `VLLM_USE_DEEP_GEMM=0 VLLM_HOST_IP=127.0.0.1 NCCL_SOCKET_IFNAME=lo GLOO_SOCKET_IFNAME=lo` |
 | 명령 | `python3 -u -m src.cli bench --profile b1_single --device atom --roles auditor --concurrency 8 16 32` (2판만 `--apply` 추가). 네 판 모두 같은 명령·같은 커밋 |

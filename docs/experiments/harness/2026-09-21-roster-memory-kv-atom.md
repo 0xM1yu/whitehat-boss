@@ -26,12 +26,12 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 날짜 · 장비 | 2026-09-21 · `atom` (`aitopatom-d06a` · NVIDIA GB10 · sm_121 · 통합메모리 119.7 GiB) |
-| vLLM | `0.27.1` (`/srv/tenants/ext01/venv-probe`) |
+| 날짜 · 장비 | 2026-09-21 · `atom` (`atom-host` · NVIDIA GB10 · sm_121 · 통합메모리 119.7 GiB) |
+| vLLM | `0.27.1` (`/srv/tenants/user/venv-probe`) |
 | 공통 인자 | `--enforce-eager` · `--revision`(registry `source`의 것) · 포트 8005 |
 | 공통 env | `VLLM_USE_DEEP_GEMM=0` · `VLLM_USE_FLASHINFER_SAMPLER=0` · `HF_HUB_OFFLINE=1` |
 | 스크립트 | 안전장치 넷을 건 래퍼(§5). 저장소 밖 — 서버 기동은 하네스 밖이다([portability.md](../../portability.md) §6 절 끝) |
-| 원문 로그 | ATOM `/srv/tenants/ext01/vllm_*_20260921_*.log` 일곱 |
+| 원문 로그 | ATOM `/srv/tenants/user/vllm_*_20260921_*.log` 일곱 |
 
 ## 1. 측정
 

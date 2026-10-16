@@ -17,8 +17,8 @@
 | 실제 서빙 모델 | `hf://NVFP4/Qwen3-Coder-30B-A3B-Instruct-FP4@3b554c28e968128990ef4ac2d25ca757bf4ce048` (`--served-model-name qwen3-coder-30b-a3b`는 별칭) |
 | `repo_commit` | 조건 A의 1회차만 `2ed9a98`, 나머지 전부 `2ef2c7d`. **팔 판정 코드는 두 커밋 사이에서 안 바뀌었다** — `2ef2c7d`가 더한 것은 `_diagnose` 하나이고 `_run_arm`·`_schema_for`는 동일하다 |
 | `run_id` | **없다.** `cli run`을 안 돌렸다. 이 실험은 하네스의 어댑터만 쓰고 오케스트레이터를 안 지난다 |
-| run 산출물 경로·보존 여부 | **넷 중 둘만 남았다.** `/srv/tenants/ext01/whitehat-boss/d67_probe.json`(조건 B) · `d67_probe_ws_off.json`(C) — 보존됨. ⚠ **조건 A의 JSON은 없다** — 조건 B가 같은 `--out d67_probe.json`으로 덮었다. ⚠ **조건 D의 JSON도 없다** — 조작자가 `min_items` 진단 중에 중단해서(§3.4) 스크립트가 파일을 쓰기 전에 죽었다. **A와 D는 콘솔 출력만 남았고 아래 §3.1·§3.4가 그것이다** — 이 보고서가 그 둘의 유일한 기록이다 |
-| 입력 프롬프트 | `/srv/tenants/ext01/artifacts_20260904/run_20260904_0001/prompts/0002_auditor.md` — **`run_20260904_0001`이 실제로 보낸 원문**(`prompt_version: v1` · `stage: 5`) |
+| run 산출물 경로·보존 여부 | **넷 중 둘만 남았다.** `/srv/tenants/user/whitehat-boss/d67_probe.json`(조건 B) · `d67_probe_ws_off.json`(C) — 보존됨. ⚠ **조건 A의 JSON은 없다** — 조건 B가 같은 `--out d67_probe.json`으로 덮었다. ⚠ **조건 D의 JSON도 없다** — 조작자가 `min_items` 진단 중에 중단해서(§3.4) 스크립트가 파일을 쓰기 전에 죽었다. **A와 D는 콘솔 출력만 남았고 아래 §3.1·§3.4가 그것이다** — 이 보고서가 그 둘의 유일한 기록이다 |
+| 입력 프롬프트 | `/srv/tenants/user/artifacts_20260904/run_20260904_0001/prompts/0002_auditor.md` — **`run_20260904_0001`이 실제로 보낸 원문**(`prompt_version: v1` · `stage: 5`) |
 | `tool_runner` | 해당 없음 (도구를 안 돌렸다) |
 | `--device` | `atom` |
 | `tool_images` digest | 해당 없음 |
@@ -26,7 +26,7 @@
 | 동시에 떠 있던 다른 서버 | **없다.** 조건마다 하나씩 띄우고 다음 조건 전에 `pkill`했다 |
 | 원문 산출물 보존 위치 | 위 JSON **둘**(B·C) + 아래 서버 로그 넷. **A·D는 이 보고서가 유일한 기록이다** |
 | 서빙 서버 stdout | `~/vllm_logs/serve_auditor_8002_ws_default.log`(A·B) · `_ws_off.log`(C) · `_xgrammar_only.log`(D) · `_FAILED_ninja_path.log`(§4 벽 1). **ATOM 홈에만 있고 저장소에 없다** |
-| vLLM · 환경 | `0.27.1` · arch `sm121` · venv `/srv/tenants/ext01/venv-probe` (Python 3.12.3) |
+| vLLM · 환경 | `0.27.1` · arch `sm121` · venv `/srv/tenants/user/venv-probe` (Python 3.12.3) |
 
 ## 1. 요약
 
@@ -199,7 +199,7 @@ StructuredOutputsConfig(backend='xgrammar', disable_any_whitespace=False, ...)
 
 | 벽 | 원인 | 해결 |
 | --- | --- | --- |
-| 엔진 초기화가 `FileNotFoundError: 'ninja'`로 죽었다 | flashinfer가 NVFP4 GEMM 커널을 JIT 빌드하는데(`flashinfer_mm_fp4` → `get_gemm_sm120_module_cutlass_fp4` → `run_ninja`) `ninja`가 PATH에 없었다. **없는 게 아니라 안 보였다** — `/srv/tenants/ext01/venv-probe/bin/ninja`에 있고 `nvcc`는 `/usr/local/cuda/bin/nvcc`에 있다 | 기동 시 `PATH=/srv/tenants/ext01/venv-probe/bin:/usr/local/cuda/bin:$PATH` |
+| 엔진 초기화가 `FileNotFoundError: 'ninja'`로 죽었다 | flashinfer가 NVFP4 GEMM 커널을 JIT 빌드하는데(`flashinfer_mm_fp4` → `get_gemm_sm120_module_cutlass_fp4` → `run_ninja`) `ninja`가 PATH에 없었다. **없는 게 아니라 안 보였다** — `/srv/tenants/user/venv-probe/bin/ninja`에 있고 `nvcc`는 `/usr/local/cuda/bin/nvcc`에 있다 | 기동 시 `PATH=/srv/tenants/user/venv-probe/bin:/usr/local/cuda/bin:$PATH` |
 | `--structured-outputs-config.disable_any_whitespace true`가 기동을 거부했다 | `disable_any_whitespace is only supported for xgrammar and guidance backends` — `backend`가 `auto`였다 | `--structured-outputs-config.backend xgrammar`를 함께 준다. **그래서 조건 D(귀속용)가 필요해졌다** |
 | `auto`가 무엇으로 풀렸는지 못 봤다 | vLLM 0.27.1이 해석된 structured output 백엔드를 로그에 안 남긴다(`grep` 0건) | **못 풀었다.** 조건 D를 따로 돌려 `xgrammar` 명시의 효과를 분리했다 |
 | 조작자가 프로브를 서버 기동 30초 뒤에 돌려 전량 `Connection refused` | 가중치 로딩에 2.5분이 걸린다 | `until curl -s -f …/v1/models; do sleep 10; done` |
@@ -268,10 +268,10 @@ D42는 *"하네스가 `output_max`를 안 보낸다"*이고, 그 계약 결함�
 `--structured-outputs-config.disable_any_whitespace true`가 없다.
 
 ```bash
-SNAP=/srv/tenants/ext01/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
-PATH=/srv/tenants/ext01/venv-probe/bin:/usr/local/cuda/bin:$PATH \
+SNAP=/srv/tenants/user/.cache/huggingface/hub/models--NVFP4--Qwen3-Coder-30B-A3B-Instruct-FP4/snapshots/3b554c28e968128990ef4ac2d25ca757bf4ce048
+PATH=/srv/tenants/user/venv-probe/bin:/usr/local/cuda/bin:$PATH \
 VLLM_USE_DEEP_GEMM=0 \
-setsid nohup /srv/tenants/ext01/venv-probe/bin/vllm serve "$SNAP" \
+setsid nohup /srv/tenants/user/venv-probe/bin/vllm serve "$SNAP" \
   --port 8002 --served-model-name qwen3-coder-30b-a3b \
   --max-model-len 32768 --gpu-memory-utilization 0.30 \
   --structured-outputs-config.backend xgrammar \
@@ -288,7 +288,7 @@ until curl -s -f http://127.0.0.1:8002/v1/models >/dev/null 2>&1; do sleep 10; d
 ```
 
 ```bash
-cd /srv/tenants/ext01/whitehat-boss && /srv/tenants/ext01/venv-probe/bin/python tools/probe/d67_required_schema.py --run-dir /srv/tenants/ext01/artifacts_20260904/run_20260904_0001 --profile local_balanced --trials 5 --diagnose required min_items --out d67_probe_ws_off.json
+cd /srv/tenants/user/whitehat-boss && /srv/tenants/user/venv-probe/bin/python tools/probe/d67_required_schema.py --run-dir /srv/tenants/user/artifacts_20260904/run_20260904_0001 --profile local_balanced --trials 5 --diagnose required min_items --out d67_probe_ws_off.json
 ```
 
 **기동 로그에서 실린 값을 확인한다** — 인자를 줬다고 실렸다고 읽지 않는다:

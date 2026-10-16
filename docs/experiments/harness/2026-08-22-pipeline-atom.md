@@ -4,7 +4,7 @@
 > **원자료는 터미널 출력에서 옮겼고, run 산출물을 다시 열어 확인한 것이 아니다.**
 > 그래서 메타 표의 여러 칸이 `미기재`다 — 채우는 방법은 §5에 적었다.
 
-**작성**: 조민규
+**작성**: 팀
 **실험일**: 2026-08-22 (KST)
 **대상 장비**: GIGABYTE AI TOP ATOM (NVIDIA DGX Spark 계열, GB10 Grace Blackwell)
 
@@ -13,10 +13,10 @@
 | 항목 | 값 |
 | --- | --- |
 | 실험 종료 시각 | **2026-08-22 01:42:23 KST** (`finished_at` = 2026-08-21T16:42:23Z) — 2026-08-22 검증 run(`run_20260821_0007`)이 `run_manifest.json`을 열어 확정했다. 디렉터리 mtime `2026-08-22 01:42:23.886773379 +0900`이 같은 값을 가리킨다. `run_id`가 `run_20260821_0004`인 것이 모순이 아닌 이유도 여기서 확인된다: `run_id`는 `started_at`의 **UTC 날짜**에서 나오고 이 run의 `started_at`이 2026-08-21T16:42:11Z다 |
-| 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98`<br>별칭 `qwen3-4b` — **별칭은 근거가 못 된다.** 스냅샷 경로가 revision과 일치하는 것을 기동 로그의 `model_tag`로 확인했다:<br>`/srv/tenants/ext01/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98` |
+| 실제 서빙 모델 | `hf://Qwen/Qwen3-4B-Instruct-2507-FP8@8591804019c8b22094c3b5b4454e0edc05dffc98`<br>별칭 `qwen3-4b` — **별칭은 근거가 못 된다.** 스냅샷 경로가 revision과 일치하는 것을 기동 로그의 `model_tag`로 확인했다:<br>`/srv/tenants/user/.cache/huggingface/hub/models--Qwen--Qwen3-4B-Instruct-2507-FP8/snapshots/8591804019c8b22094c3b5b4454e0edc05dffc98` |
 | `repo_commit` | **`54c80705fb848f4852dc2163c19b1a2541bf61b5`** · `repo_dirty` **false** — 2026-08-22 검증 run(`run_20260821_0007`)이 확정했다. 기록 당시의 추정(`main@54c8070`)이 맞았고, **확인하지 못했던 dirty 여부도 깨끗한 것으로 확정됐다** |
 | `run_id` | `run_20260821_0004` |
-| run 산출물 경로·보존 | 경로 `/srv/tenants/ext01/artifacts/run_20260821_0004` · **보존 확인**(2026-08-22 검증 run(`run_20260821_0007`) 시점). `asan` `build` `clang-tidy` `index` `report.md` `run_manifest.json` `scratch` `semgrep` `state.db`(28,672 B) `trace.jsonl`(18,625 B)이 그대로 있다 — [open-questions.md](../../open-questions.md) **R7은 이 run에서 미실현**이다 |
+| run 산출물 경로·보존 | 경로 `/srv/tenants/user/artifacts/run_20260821_0004` · **보존 확인**(2026-08-22 검증 run(`run_20260821_0007`) 시점). `asan` `build` `clang-tidy` `index` `report.md` `run_manifest.json` `scratch` `semgrep` `state.db`(28,672 B) `trace.jsonl`(18,625 B)이 그대로 있다 — [open-questions.md](../../open-questions.md) **R7은 이 run에서 미실현**이다 |
 | `tool_runner` | 프로필 선언 **`fake`** / 실제 **`docker`** — `single_gpu_12g`가 `tool_runner: fake`라 도구를 돌리려면 오버라이드가 **구조적으로 필요했다.** [README.md](../README.md) 미확정 #4의 두 번째 사례다([ADR 0005](../../decisions/0005-tool-runner-override.md)가 상정한 용도가 아니다) |
 | `--device` | `atom` |
 | `tool_images` digest | **`harness-tools:v1` = `sha256:b5d7048bc0a5dac3b4307ca3c9d7b204d9617b462d3389000bf5335b56f4ae17`** · 종류 **docker(이미지 config sha256)**([portability.md](../../portability.md) §5 #4). 2026-08-22 검증 run(`run_20260821_0007`)의 digest와 **같다** — 두 run이 같은 이미지로 돌았다 |
@@ -333,5 +333,5 @@ stage 8에 `gate_eval`이 남았다 — W3 배선이 실서빙 run에서 동작�
 ```bash
 python -m src.cli run --profile single_gpu_12g --tool-runner docker \
   --target tests/fixtures/target --device atom \
-  --artifacts-root /srv/tenants/ext01/artifacts
+  --artifacts-root /srv/tenants/user/artifacts
 ```

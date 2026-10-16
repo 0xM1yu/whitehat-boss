@@ -117,7 +117,7 @@ _TOOL_CALLS = (
 # (`docs/experiments/harness/2026-09-26-index-v2-atom.md` §7 — `sample_24`, `.c` 86 · `.h` 54).
 # 명령줄의 바인드 인자가 이 경로를 그대로 싣는다.
 _SAMPLE_ROOT = (
-    "srv", "tenants", "ext01", "release-eval-slices-20260918", "samples", "sample_24", "repo"
+    "srv", "tenants", "user", "release-eval-slices-20260918", "samples", "sample_24", "repo"
 )
 
 

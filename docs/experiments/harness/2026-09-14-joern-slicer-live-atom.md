@@ -12,8 +12,8 @@
 | --- | --- |
 | 실험일 | 2026-09-14 KST |
 | 실험 종료 시각 | 2026-09-14 03:53:50 KST (최신 회귀 `checks.json` 원격 mtime; zlib 전량 결과·exit mtime은 03:46:39 KST. 결과 JSON `generated_at` `2026-09-13T15:28:50Z`는 실행 시작 시각이다) |
-| 장비 | ATOM `aitopatom-d06a`, 계정 `ext01`, Linux aarch64 |
-| 실제 도구 | 기존 설치 `/srv/tenants/ext01/tools/joern-cli`, Joern 4.0.605. `fixture-initial.json`의 실제 명령 출력에 `Version: 4.0.605`가 있다 |
+| 장비 | ATOM `atom-host`, 계정 `user`, Linux aarch64 |
+| 실제 도구 | 기존 설치 `/srv/tenants/user/tools/joern-cli`, Joern 4.0.605. `fixture-initial.json`의 실제 명령 출력에 `Version: 4.0.605`가 있다 |
 | Java / Python | Temurin JDK 21.0.12+8, Python 3.12.3 (ATOM 명령 출력) |
 | 소스 | PR #201 구현 커밋 `c4acdd2ec542e047a78c9602e96be57b711c79f5`. zlib 전량은 원격 `slicer.py` `ac94e2350365cbb570c77262d03f7d7094fe12c2ed94e8ab6aa590c76a8db578`을 사용했고, 최신 소규모 회귀는 manifest의 `slicer.py` `80b26532f234a43078ac1d7ce988ade8a6b28f89441f524096ebdf81f7bd31a8`을 사용했다. queries/source 해시는 두 실행에서 각각 `c24e0ca3...`/`14829c8b...`로 일치한다 |
 | run_id | 없음. 하네스 run이 아닌 독립 슬라이서 프로브 |
@@ -25,11 +25,11 @@
 | 엔진 설정 | 실제 inventory에서 maxCallDepth=4, maxArgsToAllow=1000, maxOutputArgsExpansion=1000 |
 | 배치 제한 | 질의별 HTTP 전체 120초. 작은 입력은 무제한 및 후보별 flow 1개, zlib은 후보별 flow 10개 |
 | 동시 실행 | 시작 시 Joern/vLLM 프로세스 없음. zlib 실행 중 별도 포트에서 최종 작은 회귀 입력을 검증했다. 전체 소요 시간은 단독 성능 벤치마크가 아니다 |
-| 원문 기준 디렉터리 | ATOM `/srv/tenants/ext01/slicer-live-20260913-a0e5514/` — 이하 경로는 여기 기준, 보존 |
+| 원문 기준 디렉터리 | ATOM `/srv/tenants/user/slicer-live-20260913-a0e5514/` — 이하 경로는 여기 기준, 보존 |
 | 서버 stdout | zlib 전량 `server-live-16240-20260914.log`, 최신 회귀 `server-live-16241-20260914.log`. 시작 명령·세션·해시는 각각 `results/zlib-full-20260914.launch.json`과 `results/live-suite-20260914-final-run.launch.json`에 보존했다 |
 | 검증 코드 | [joern_slicer_live.py](../../../tools/probe/joern_slicer_live.py), [C 입력](../../../tests/fixtures/slicer_live/cases.c), [C++ 입력](../../../tests/fixtures/slicer_live/cases.cpp), 기존 `tests/fixtures/target/` |
 
-서버 기본 Java는 8이므로 기동 시 `JAVA_HOME=/srv/tenants/ext01/tools/jdk21`과 해당 `bin`을
+서버 기본 Java는 8이므로 기동 시 `JAVA_HOME=/srv/tenants/user/tools/jdk21`과 해당 `bin`을
 PATH 앞에 지정했다. 기존 체크아웃이나 기존 서버를 교체하지 않고 전용 디렉터리에서 실행했다.
 Joern 4.0.605의 실행기는 `--version`을 경고하면서 시작 배너를 내므로 버전 원문에는 경고도
 그대로 남아 있다. 버전 명령에 stdin을 닫아, 대화형 REPL이 입력을 기다리는 경우를 막았다.
@@ -114,7 +114,7 @@ Joern 4.0.605의 [reachableByFlows 구현](https://github.com/joernio/joern/blob
 
 ### 2.2 최종 코드 판 — 2026-09-14
 
-최신 프로브는 `/srv/tenants/ext01/slicer-live-20260913-a0e5514/results/live-suite-20260914-final-run/`에
+최신 프로브는 `/srv/tenants/user/slicer-live-20260913-a0e5514/results/live-suite-20260914-final-run/`에
 원문을 보존했다. `full-1`과 `full-2`는 각각 새 CPG에서 실행했고, `cap-1`은 후보당 flow 1개로
 실행했다.
 

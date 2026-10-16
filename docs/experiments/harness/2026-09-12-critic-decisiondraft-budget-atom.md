@@ -23,7 +23,7 @@
 | `repo_commit` | **미기재** — 프로브가 하네스를 안 거치므로 기록하는 코드가 지나지 않는다 |
 | `run_id` | **없다.** `cli run`을 안 돌렸다. **비교표 밖이다**(evaluation.md §2.3) |
 | run 산출물 경로·보존 여부 | ATOM `~/probe_results/critic_budget_20260912.jsonl` — **ATOM 홈에만 있고 저장소에 없다** |
-| 프로브 스크립트 | ATOM `/srv/tenants/ext01/critic_budget.py` — **저장소에 없다** |
+| 프로브 스크립트 | ATOM `/srv/tenants/user/critic_budget.py` — **저장소에 없다** |
 | 입력 프롬프트 | **손으로 만든 케이스 3종.** 저장소의 `prompts/critic/*`을 렌더한 것이 아니다 |
 | 구조화 출력 스키마 | `DecisionDraft` — `verdict`·`rebuttal_axis`·`rationale`·`evidence_refs` 넷 |
 | `tool_runner` | 해당 없음 (도구를 안 돌렸다) |

@@ -1,6 +1,6 @@
 # 0008. 결함의 소스 오브 트루스 — 문서가 본체, GitHub Issue는 참조 미러
 
-- 상태: **승인** (2026-09-08 조민규 사인오프). 미결 넷의 결론은 아래 「사인오프」 절에 있다
+- 상태: **승인** (2026-09-08 팀 사인오프). 미결 넷의 결론은 아래 「사인오프」 절에 있다
 - 일자: 2026-09-01
 - 관련: [open-questions.md](../open-questions.md) §서두·:7, [CLAUDE.md](../../CLAUDE.md) §3, 이슈 #91–#103 「이관 메모」, 2026-09-01 병렬 전수조사(아티팩트 `e6cee515`), [tests/test_docs_format.py](../../tests/test_docs_format.py) (`test_decision_references_point_at_a_real_row`)·[tests/test_open_questions_layout.py](../../tests/test_open_questions_layout.py) (`test_every_d_has_a_body_file`), PR #86(워크플로 매뉴얼)·#104(코드 D참조 이슈화)·#105(본문 분리)
 
@@ -62,7 +62,7 @@
 
 이슈-원천이 채택되면 위 1·3의 방향이 반대가 되고, 인덱스·CI 처리 방안을 별도로 설계해야 한다.
 
-## 사인오프 — 2026-09-08, 조민규
+## 사인오프 — 2026-09-08, 팀
 
 아래 「미결」 넷에 대한 결론이다. **원 질문은 지우지 않는다** — 무엇을 고르지 않았는지가
 이 결정의 절반이다.

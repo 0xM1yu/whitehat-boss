@@ -25,7 +25,7 @@
 | 배포 코드 SHA-256 | `slicer.py` `0373767aece9c27935084bed4437ef73dfbe2d8541b81fcc273d7fce7f0589f4` · `slicer_queries.py` `e977dcfd2918e2c88c437cf7ed3414b11e79f4cc23600526c697a1072b53a966` · `slicer_backward.py` `f657961c916cf32ad088c51f8ff3c5cc3213d664588eb41f95d260818ea1165a` · `slicer_pipeline.py` `c49478f9f5e268daf6a72a36e6b4923c5a0549d7e05c763bd5e60e0754b27dce` · `slicer_checkpoint.py` `afa578cab980e928d57ed10c2c9d86c79df4657d4eaf867d2fe7126cb8eada04` · `slicer_source.py` `1be67a06e7bdfff64b3aaaf547e6b855757cf1d97221a7083fa67752bdcd051a` · `slicer_candidates.py` `4901ede40cb9d2ef96e9e90eea2a84a6370fd942bac621e89ad5a9442755a1c8` · `slicer_export.py` `8335ccd5e0c828b36ddbd9d0c767dcfa1901e2c6fc168e9e828fc70ee53ce330` |
 | 코드 전송 검증 | 로컬 워킹트리와 ATOM 사본을 SHA-256으로 대조해 일치를 확인한 뒤 실행했다. **셀 수 있는 것은 위 행의 배포 코드 8개**(`slicer*.py` — `code_hashes`가 세는 그 집합이다)이고, 해시를 실은 것도 그 8개다. ⚠ 이전 판은 「12개」라고 적었는데 **그 수의 근거가 이 문서에 없어 지웠다**(§0) — 도구·fixture까지 대조했더라도 이 문서가 그것을 적지 않았다 |
 | `run_id` | **없다.** 하네스 run이 아니라 독립 슬라이서 실행이라 `RunRecord`가 없다 — 비교표 밖이다 |
-| run 산출물 경로·보존 여부 | ATOM `/srv/tenants/ext01/slicer-live-20260913-a0e5514/v2-20260915-rerun2/` — **보존**. run별로 `result.json`·`progress.jsonl`·`trace/responses.jsonl`·`server.log`·`client.log`·`exit-code.txt`·`resources.jsonl`·`export/` |
+| run 산출물 경로·보존 여부 | ATOM `/srv/tenants/user/slicer-live-20260913-a0e5514/v2-20260915-rerun2/` — **보존**. run별로 `result.json`·`progress.jsonl`·`trace/responses.jsonl`·`server.log`·`client.log`·`exit-code.txt`·`resources.jsonl`·`export/` |
 | `tool_runner` | 해당 없음 (하네스 프로필을 쓰지 않는다) |
 | `--device` | `atom` |
 | `tool_images` digest | 해당 없음 — 컨테이너를 쓰지 않고 호스트에서 직접 실행했다 |
@@ -54,9 +54,9 @@
 
 | 항목 | 값 |
 | --- | --- |
-| 장비 | ATOM `aitopatom-d06a`, 계정 `ext01`, Linux aarch64 |
+| 장비 | ATOM `atom-host`, 계정 `user`, Linux aarch64 |
 | Joern | **4.0.605** — `result.json`의 `joern_version` 필드에서 읽은 값이다 |
-| JVM | Temurin OpenJDK **21.0.12** (`/srv/tenants/ext01/tools/jdk21`) |
+| JVM | Temurin OpenJDK **21.0.12** (`/srv/tenants/user/tools/jdk21`) |
 | JVM heap 설정 | `-J-Xss64m -J-Xmx16g`. 서버가 보고한 `heap_max_bytes` = `17179869184` (16 GiB) |
 | Joern EngineConfig | `maxCallDepth=4`, `maxArgsToAllow=1000`, `maxOutputArgsExpansion=1000` — **설치본 기본값을 읽은 것**이고 override하지 않았다 |
 | 포트 | `127.0.0.1:16242` (전용). run마다 서버를 새로 띄우고 그 process group만 종료했다 |
@@ -165,7 +165,7 @@ fixture의 `control` 함수는 `switch`/`case`/`default`, `break`, `continue`, `
 
 [PR #203의 v1 측정](https://github.com/0xM1yu/whitehat-boss/pull/203)과 같은 입력
 (`repo_smoke_test_bundle.zip`의 `runner_samples/sample_XX/repo`, ATOM
-`/srv/tenants/ext01/slicer-smoke-20260914-512ab693/inputs/`)과 같은 flow cap 10을 썼다.
+`/srv/tenants/user/slicer-smoke-20260914-512ab693/inputs/`)과 같은 flow cap 10을 썼다.
 표본마다 새 run 디렉터리·새 `state.db`·새 Joern 서버다.
 
 ### 4.1 결과 — 완주 판정
@@ -429,12 +429,12 @@ GT 범위 29줄 중 합집합이 18줄을 보존했고 누락 11줄의 내역은
 전용 서버와 클라이언트의 전체 명령이다. 줄이지 않았다.
 
 ```bash
-export JAVA_HOME=/srv/tenants/ext01/tools/jdk21
+export JAVA_HOME=/srv/tenants/user/tools/jdk21
 export PATH="$JAVA_HOME/bin:$PATH"
-cd /srv/tenants/ext01/slicer-live-20260913-a0e5514/v2-20260915-rerun2
+cd /srv/tenants/user/slicer-live-20260913-a0e5514/v2-20260915-rerun2
 
 # 서버 — run마다 새로 띄우고 그 process group만 종료한다.
-setsid /srv/tenants/ext01/tools/joern-cli/joern -J-Xss64m -J-Xmx16g \
+setsid /srv/tenants/user/tools/joern-cli/joern -J-Xss64m -J-Xmx16g \
   --server --server-host 127.0.0.1 --server-port 16242 \
   > runs/<run>/server.log 2>&1 < /dev/null &
 
@@ -446,7 +446,7 @@ python3 tools/run_slicer_recorded.py runs/<run>/trace \
   --progress runs/<run>/progress.jsonl \
   --export-dir runs/<run>/export \
   --joern-endpoint http://127.0.0.1:16242 \
-  --joern-version-command /srv/tenants/ext01/tools/joern-cli/joern \
+  --joern-version-command /srv/tenants/user/tools/joern-cli/joern \
   --max-flows-per-candidate 10 \
   --backward-depth 30 \
   --backward-nodes 5000 \

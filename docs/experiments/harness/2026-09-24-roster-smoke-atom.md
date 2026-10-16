@@ -11,7 +11,7 @@
 > 머지하지 않는 브랜치에서 돌았다 — `exp/atom-roster-smoke` @ `fdbc465`이고, main `c301342`에 설정만 얹었다(§9).
 >
 > **이 폴더에 적은 이유** — ADR 0012 결정 5는 실험 기록의 원천을 Notion으로 옮기지만 아직 제안이다(⏵ 2026-09-25 — 승인됐다. ⏵ 2026-09-26 — 그 결정의 범위가 좁아져 **하네스를 돌린 run 기록은 이 폴더가 맞다** — 그 결정의 ⏵ 표).
-> 그래서 현행 규칙(이 폴더 [README](../README.md)의 첫 규약)을 따랐다(2026-09-24 조민규 결정).
+> 그래서 현행 규칙(이 폴더 [README](../README.md)의 첫 규약)을 따랐다(2026-09-24 팀 결정).
 
 ## 메타
 
@@ -47,7 +47,7 @@
 
 ## 2. 실험 환경
 
-- **장비** — ATOM `aitopatom-d06a`.
+- **장비** — ATOM `atom-host`.
   - GB10 · 통합메모리 119.7 GiB · 사용자 cgroup `memory.max` 80 GiB · `memory.high` max다
     (cgroup 값은 [portability.md](../../portability.md) §6 `atom` 행).
   - vLLM 0.27.1(`~/venv-probe`, Python 3.12).
@@ -401,17 +401,17 @@ MAX_HOURS=5 setsid nohup bash ~/smoke-0924/guard.sh > /dev/null 2>&1 < /dev/null
 
 bash ~/smoke-0924/launch.sh seccoderx-8b 8009 0.20 16384 4 SecCoderX/SecCoderX_Reasoning_Vulnerability_Detection_Reward_Model --revision 25d7f38146bdf0fad1eac09c586b1993ef3e6ee4 --reasoning-parser deepseek_r1
 bash ~/smoke-0924/launch.sh qwen3-14b 8010 0.30 16384 4 Qwen/Qwen3-14B --revision 40c069824f4251a91eefaf281ebe4c544efd3e18 --reasoning-parser deepseek_r1
-cd ~/smoke-0924/wt && setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_scout_pool --target /srv/tenants/ext01/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_scout_pool.log 2>&1 < /dev/null &
+cd ~/smoke-0924/wt && setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_scout_pool --target /srv/tenants/user/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_scout_pool.log 2>&1 < /dev/null &
 bash ~/smoke-0924/stop.sh
 
 # run_0002 — parser를 건 판(Finding 0)
 bash ~/smoke-0924/launch.sh qwen3.6-35b-a3b 8008 0.64 24576 2 Qwen/Qwen3.6-35B-A3B --revision 995ad96eacd98c81ed38be0c5b274b04031597b0 --reasoning-parser deepseek_r1
-cd ~/smoke-0924/wt; setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_auditor --target /srv/tenants/ext01/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_auditor.log 2>&1 < /dev/null &
+cd ~/smoke-0924/wt; setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_auditor --target /srv/tenants/user/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_auditor.log 2>&1 < /dev/null &
 bash ~/smoke-0924/stop.sh
 
 # run_0003 — parser 없이 옛 Auditor의 기동 인자
 bash ~/smoke-0924/launch.sh qwen3.6-35b-a3b 8008 0.64 24576 2 Qwen/Qwen3.6-35B-A3B --revision 995ad96eacd98c81ed38be0c5b274b04031597b0 --structured-outputs-config.backend xgrammar --structured-outputs-config.disable_any_whitespace true
-cd ~/smoke-0924/wt; setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_auditor --target /srv/tenants/ext01/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_auditor2.log 2>&1 < /dev/null &
+cd ~/smoke-0924/wt; setsid nohup timeout 5400 ~/venv-probe/bin/python -m src.cli run --profile atom_smoke_auditor --target /srv/tenants/user/targets/zlib --device atom --condition B3prime@pipeline > ~/smoke-0924/logs/run_auditor2.log 2>&1 < /dev/null &
 bash ~/smoke-0924/stop.sh
 touch ~/smoke-0924/STOP_GUARD
 ```
