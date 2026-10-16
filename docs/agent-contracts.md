@@ -16,7 +16,7 @@ agent:
     input_max: 18000         # config의 thresholds.capsule_budget_tokens.expanded와 같은 값
     output_max: 65536        # config의 thresholds.output_max_for(auditor)와 같은 값. 요청에 max_tokens로 실린다
     retries: 1
-  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15 → ⏵ 2026-10-14 v16 → ⏵ 2026-10-14 v17)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15·v16·v17 AuditorProcedureProbeInputAction)를 선언한다(§2.2 도구 루프)
+  output_schema: Finding     # 아래 §3 — 한 방 판의 값. 서빙 Auditor(⏵ 2026-10-07 v10 → ⏵ 2026-10-09 v11 → ⏵ 2026-10-10 v13 → ⏵ 2026-10-11 v14 → ⏵ 2026-10-13 v15 → ⏵ 2026-10-14 v16 → ⏵ 2026-10-14 v17 → ⏵ 2026-10-16 v18)는 meta가 루프 봉투(v10 AuditorProcedureAction · v11·v13 AuditorProcedureNullableCweAction · v14 AuditorProcedureAuditAlwaysAction · v15·v16·v17 AuditorProcedureProbeInputAction · v18 그 서브클래스 AuditorProcedureProbeInputDiscriminatedAction — 디코더 스키마만 판별 합)를 선언한다(§2.2 도구 루프)
 ```
 
 > **`output_max`는 2026-08-28부터 강제된다 (D42, PR #36).** `config/budgets.yaml`의
@@ -478,6 +478,13 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
    (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` · 노트가 없으면 키도 없다) —
    「노트 뒤 재선택률」은 **hop ≥ 0**의 `tool`(`probe`)이 그 집합에 드는 비율이다(hop 0의 답이 노트 뒤 첫
    선택이다). 🔴 **미실측:** 노트가 모델의 도구 선택을 바꾸는지는 이 변경 뒤 run이 0건이다.
+   ⏵ 2026-10-16 — 그 run이 생겼다: `run_20261016_0001`에서 노트가 실린 뒤에도 컴파일 경로 probe가 2회 나왔고 둘 다 같은
+   오류로 끝났다(#698). ⏵ **2026-10-16 (#698 · council 2026-10-16)** — 「`build`·`asan`·`gdb`가 같은 컴파일 명령이라 같은 오류가 예상된다」는 이제
+   예측이 아니다: 2단계가 그 파일에서 컴파일러 오류를 잰 도구는 그 파일의 요청 스키마 `tool` enum에서 빠진다
+   (`signals.withheld_tools`·`without_tools` · `build`면 `build`·`asan`·`gdb`, `clang-tidy`면 `clang-tidy`) — 모델이 고를 수
+   없다(서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 노트 문구도 「그 파일에는 제시하지 않는다」로 바뀌었다(`signals.compile_note` — 노트와 enum이 같은 실패 집합에서
+   나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않는다
+   (`ContainerToolRunner._execute` · ADR 0014 ⏵ 2026-10-16).
 
 4. **관측 형식.** 도구·조회 결과는 **다음 홉의 user 턴 본문**으로 온다. prefix(역할 지시·스키마 서술)와 hop0의
    `SOURCE`·`FACTS`는 hop0에서 **한 번 렌더해 고정**한다(재렌더·재산출 안 함). 다만 어댑터가 매 요청을
@@ -620,7 +627,7 @@ v12는 서빙 판이 아니다 -> FT Auditor를 서빙할 때 고를 판이고 r
 §1 예시의 `tool_policy`는 계약의 **모양**을 보이는 예시이고 Auditor의 실제 도구 집합은 위 3번이다. ~~기본(꺼짐)에서
 Auditor는 `ctx.call_tool`을 부르지 않는다.~~ ⏵ 2026-10-04 — 필드 기본(`Thresholds.auditor_tool_hops` = 0)이나
 명시로 끈 run에서는 Auditor가 `ctx.call_tool`을 부르지 않는다. 저장소 설정은 켜져 있다 — `config/budgets.yaml`이 16을
-들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 · ⏵ 2026-10-14 v16 · ⏵ 2026-10-14 v17)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
+들고 정본 Auditor가 루프 판(~~v9~~ ⏵ 2026-10-07 v10 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 · ⏵ 2026-10-11 v14 · ⏵ 2026-10-13 v15 · ⏵ 2026-10-14 v16 · ⏵ 2026-10-14 v17 · ⏵ 2026-10-16 v18)이라 `probe`가 도구를 부른다. Fake Auditor(`dev_*` 프로필)는 `Finding` 한 방 판이라
 상한이 16이어도 루프를 안 돈다(`loop_problem`의 면제 — 그 run의 manifest에는 `auditor_tool_hops` 키가 없다).
 
 ### 2.3 Independent Critic
@@ -791,6 +798,12 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `compile_note`·`compile_note_tools`를 싣는다(`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면
   `"clang-tidy"` · 노트가 없으면 키도 없다) — 「노트 뒤 재선택률」은 **hop ≥ 0**의 `inspect` 홉 `tool`이
   `compile_note_tools`에 드는 비율이다. 🔴 **미실측:** 이 변경 뒤 run이 0건이다.
+  ⏵ **2026-10-16 (#698 · council 2026-10-16)** — 「`build`·`asan`·`gdb`가 같은 컴파일 명령이라 같은 오류가 예상된다」는 이제
+  예측이 아니다: 2단계가 그 파일에서 컴파일러 오류를 잰 도구는 그 파일의 요청 스키마 `tool` enum에서 빠진다
+  (`signals.withheld_tools`·`without_tools` · `build`면 `build`·`asan`·`gdb`, `clang-tidy`면 `clang-tidy`) — 모델이 고를 수
+  없다(서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 노트 문구도 「그 파일에는 제시하지 않는다」로 바뀌었다(`signals.compile_note` — 노트와 enum이 같은 실패 집합에서
+  나온다). 백스톱으로 컨테이너 어댑터는 같은 run에서 이미 실패한 앞단 컴파일 명령을 다시 띄우지 않는다
+  (`ContainerToolRunner._execute` · ADR 0014 ⏵ 2026-10-16).
   ⚠ **진입점 조회(`FACTS.fuzz_entrypoint`)의 `found=true`도 확정이 아니다** — resolver가 이름이
   같은 후보 중 하나를 고른 것이다(동명 함수가 여럿이면 `(file, line)` 오름차순, `symbol_resolver.
   _pick_record`). 후보 수는 지금 FACTS에 없다 — 노출하려면 `Resolution` 스키마 확장이 필요해
@@ -801,6 +814,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-14 — 서빙 pov 판이 **v7**이다(S20 Phase 14). v7 prefix도 그 재질문 턴을 서술한다(v6과 바이트 동일한 부분). v6과 다른 곳은 셋이다: body의 「JSON이 입력 사실 전부다」 문장을 "Vulnerability·Target·Source 절과 JSON이 입력에 든다(전부라고 하지 않는다 - hop0 본문 끝에 컴파일 노트·재질문 노트가 붙을 수 있다) · JSON의 Finding 데이터는 `finding_id`뿐이다"로 고쳤고(Finding의 CWE·제목·경로 단계·촉발 상태는 FACTS 밖 `{{FINDING}}` 산문에만 있다 - `nodes/pov._describe_finding` · `_render_prompt`는 `build_facts`에 `ids={"finding_id": ...}`만 넘긴다 · FACTS 바이트는 안 바꿨다), prefix의 「How to reach the vulnerable path」 머리에 SOURCE 끝의 입력 맥락 함수 블록과 쓰기 지점 창 표지 줄이 하네스 생성 텍스트라는 한 문단을 더했고, DEF-SUBMIT의 「Why a non-crash is not submitted」 한 줄을 #637(PR #673 - 지정 키의 첫 성분이 후보 자기 `vul` 응답 코드의 계단)에 맞게 다시 썼다(v6은 "하네스는 그 자리를 채점기 코드로 가르지 않는다"고 적었다)(이슈 #649 · #669 · #637). v7로 돈 run은 0건이다.
   ⏵ 2026-10-15 — 서빙 pov 판이 **v8**이다(S20 Phase 15 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 2026-10-15 개정). v8은 v7에 prefix 「Hop budget」 한 줄만 더했다 — `submit` 없이 끝난 Finding은 자기 vul 응답이 크래시였던 중간 gen이 같은 응답 코드 묶음 안의 제출된 후보보다 아래 순위로 구제될 수 있으니 기대지 말라(계단이 다르면 구제된 크래시가 다른 Finding의 제출된 비-크래시를 이긴다)(body·봉투·도구·나머지 규칙·`source_options` 선언은 v7과 같다). v8로 돈 run은 0건이고 효과는 미실측이다.
   ⏵ 2026-10-15 — 서빙 pov 판이 **v9**다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력 밖 정보였다. 그 줄만 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있으며, 다른 sanitizer 빌드가 `1`로 끝날 수도 있다」로 줄였고 판정 규칙·body·봉투·나머지는 v8과 같다(`prompts/pov/v9/meta.yaml`). v9로 돈 run은 0건이고 효과는 미실측이다.
+  ⏵ 2026-10-16 — 서빙 pov 판이 **v10**이다(v9 + prefix 다섯 군데, #698). 2단계가 그 파일에서 컴파일러 오류를 잰 `build`·`asan`·`gdb`는
+  요청 스키마 `tool` enum에서 빠지므로(`signals.without_tools`) v9의 「tool은 poc/asan/gdb/build 중 하나」와 `inspect(build)` 권유를
+  그 경우에 맞게 고쳤다(`prompts/pov/v10/meta.yaml` · `tests/test_pov_prompt_v10.py`). body·봉투는 v9와 같다. v10으로 돈 run은 0건이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -978,7 +994,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v17"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v18"}
 }
 ```
 
@@ -1043,7 +1059,8 @@ finding을 떨구므로, 지금은 뭐가 나오든 기록만 한다([finding.py
 > ⏵ 2026-10-13 — **지금 고르는 것은 v15**다(v14 + 계약 문장 여섯 — 아래 「v14 → v15」). 출력 계약은 v12와 같다. 위 Finding 예시의
 > `prompt_version`도 v15로 고쳤다.
 > ⏵ 2026-10-14 — **지금 고르는 것은 v17**이다(v16 + 슬라이스 상태 서술 · 「배너 없으면 첫 블록 하나」 정정 — 아래 「v16 → v17」; v16은 v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명, 「v15 → v16」). 출력 계약은 v12와 같다. 위 Finding 예시의
-> `prompt_version`도 v17로 고쳤다.
+> `prompt_version`도 v17로 고쳤다. ⏵ 2026-10-16 — **지금 고르는 것은 v18**이다(v17 + 「Harness note (stage 2)」 문단 두 문장 정정 —
+> 아래 「v17 → v18」). 출력 계약(pydantic)은 같고 디코더 스키마만 판별 합으로 좁아졌다. 위 Finding 예시의 `prompt_version`도 v18로 고쳤다.
 > ⚠ 위 v3 서술(run 없음)은
 > 쓰인 지 3시간 남짓에 틀려졌다 — [스테이지 교대 스모크](experiments/harness/2026-09-29-stage-swap-smoke-atom.md)가
 > 같은 날 Auditor를 v3로 2호출 돌렸다(비교표 밖). 그 보고서는 `trigger_status`를 재지 않아 채움률·분포는
@@ -1217,7 +1234,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
     "auditor": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
     "critic": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
-  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v17", "critic": "v8"},
+  "prompt_versions": {"scout_memory": "v4", "scout_boundary": "v4", "scout_injection": "v4", "auditor": "v18", "critic": "v8"},
   "tool_images": {
     "semgrep": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
   },
@@ -1312,7 +1329,11 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 >
 > ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 현재 판은 Critic v8 · PoV v8이다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >
-> ⏵ **2026-10-15 — PoV v8 → v9.** 현재 판은 Critic v8 · PoV v9다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력(취약 저장소 + description.txt) 밖 정보였다. 그 줄을 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있으며, 다른 sanitizer 빌드가 `1`로 끝날 수도 있다」로 줄였고 판정 규칙은 그대로다 - body·봉투·나머지는 v8과 바이트 동일이다(`tests/test_pov_v9.py`). 규칙 1이 걸린다 - v9 뒤 run은 v8 이하 run과 직접 비교하지 않는다. v9 run 0건, 효과 미실측.
+> ⏵ **2026-10-16 — PoV v9 → v10 (#698).** 현재 판은 Critic v8 · PoV v10이다. v10 = v9 + prefix 다섯 군데: 2단계가 그 파일에서
+> 컴파일러 오류를 잰 `build`·`asan`·`gdb`는 요청 스키마 `tool` enum에서 빠질 수 있다는 서술(「tool은 poc/asan/gdb/build 중 하나」 정정 ·
+> `inspect(build)` 권유에 예외 · 「네 도구」 → 「도구」). body·봉투는 v9와 바이트 동일이다(`tests/test_pov_prompt_v10.py`).
+>
+> ⏵ **2026-10-15 — PoV v8 → v9.** 그날의 판은 Critic v8 · PoV v9였다. v9 = v8 − 과제 고유 사실 한 줄: DEF-EXIT의 `77` 줄이 지난 run이 특정 과제(arvo·oss-fuzz 번호)에서 본 종료 코드를 모델에 줘 Level 1 입력(취약 저장소 + description.txt) 밖 정보였다. 그 줄을 「`77`은 제외 코드가 아니고 libFuzzer의 오류 종료일 수 있으며, 다른 sanitizer 빌드가 `1`로 끝날 수도 있다」로 줄였고 판정 규칙은 그대로다 - body·봉투·나머지는 v8과 바이트 동일이다(`tests/test_pov_v9.py`). 규칙 1이 걸린다 - v9 뒤 run은 v8 이하 run과 직접 비교하지 않는다. v9 run 0건, 효과 미실측.
 >
 > **영향 범위 — 커밋된 run 기준 [관측].** `prompt_versions`에 `critic v1`이 박힌 run은 **둘**
 > 이고([2026-08-25](experiments/harness/2026-08-25-pipeline-zlib542-atom.md) `run_20260825_0001` ·
@@ -1406,6 +1427,30 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 키가 없을 때도 참이라 옵션을 **끈 채** meta `source_options`에 선언한다(그래야 켠 run ↔ 끈 run을 같은 prefix로 짝 비교한다 — `tests/test_config.py`의 「선언 == 켜진 옵션」 검사는 이 하나만 예외로 둔다).
 > v17로 돈 run은 0건이고 켠 옵션의 효과(모델이 `slice_state`를 판정에 쓰는지)는 미실측이다. ⚠ #669의 나머지 — **Critic v7 prefix 60-62행**(SOURCE 블록 목록에 입력 맥락 함수·끝 줄 표지가 없다)과 PoV v6 — 는 이 판이 안 고친다
 > (같은 SOURCE 문자열이 거기에도 간다 · 후속 — ⏵ 2026-10-14 Critic v8 · PoV v7이 그 후속이다: Critic v8 prefix가 그 블록 둘을 서술하고 ⏵ 2026-10-15 관측 절·`auditor_hops`도 서술한다). v17은 PR #668(v16 · 입력 맥락 블록) 위에 선다.
+> ⏵ 2026-10-16 — 위 「v17로 돈 run은 0건」은 낡았다: v17은 `run_20261016_0001`에서 돌았다(#698).
+>
+> ⏵ **2026-10-16 — v17 → v18 (이슈 #698 · #602 · council 2026-10-16).** v18 = v17 + prefix 두 군데 + 봉투의 디코더 스키마.
+> body·도구·옵션 열은 v17과 같고 v17은 한 글자도 안 바뀌었다(규칙 1). ① #698 — 「Harness note (stage 2)」 문단의 두 문장(아래). v17은 「`build`가 컴파일러 오류로 실패했으면 `build`·`asan`·`gdb`는
+> 같은 컴파일 명령이라 같은 오류가 예상된다」·「it refuses no tool: a `probe` you still choose runs as usual」이라 적었는데, #698부터 2단계가
+> 그 파일에서 컴파일러 오류를 잰 도구는 그 파일의 요청 스키마 `tool` enum에서 빠진다(`signals.withheld_tools`·`without_tools`).
+> v18은 그 사실을 적는다 — `build`가 오류를 냈으면 `build`·`asan`·`gdb`가, `clang-tidy`가 냈으면 `clang-tidy`가 그 대상에 제시되지
+> 않고(`tool` 필드가 받지 않는다), 다른 파일은 그 절이 다루지 않는다(`tests/test_auditor_v18.py`가 문장과 `withheld_tools`를 함께 문다).
+> 빠진 도구는 고를 수 없다(서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다).
+> ② #602 — 봉투가 `AuditorProcedureProbeInputAction`의 서브클래스 `AuditorProcedureProbeInputDiscriminatedAction`이고 디코더가 받는
+> JSON 스키마(`model_json_schema()` — `response_format` strict로 간다)만 판별 합이다: `action`별 세 갈래(`answer`는 `procedure`
+> 필수·non-null), `procedure`는 `trigger_status`별 두 갈래(`no_signal`은 `category none` · `defense.status not_applicable` ·
+> `refutation.result no_candidate` · `cwe` null 고정, 다른 상태는 그 셋을 빼고 `cwe` non-null). v17 이하는 `procedure` 없는 `answer`와
+> `no_signal`인데 `defense.status`가 `absent`인 답을 문법이 허용하고 pydantic이 뒤에서 거절해 후보가 버려졌다(#602 · `run_20261016_0001`).
+> pydantic 검증기는 그대로 백스톱이고, prefix의 「JSON Schema does not enforce …」 문장은 거짓이 되어 고쳤다. ⚠ 스키마가 `no_signal`의
+> `cwe`를 null로 강제하는 것은 pydantic보다 좁다(pydantic은 non-null도 받는다 — `tests/test_auditor_v18_envelope.py`가 그 차이를 적는다).
+> 백엔드(xgrammar)가 이 스키마를 컴파일하는지는 서빙 전 스키마 컴파일 게이트(`tools/check_decoder_schemas.py` · doctor)가 본다.
+> 판별이 판정 분포에 주는 영향은 미실측이다. v18로 돈 run은 0건이다.
+> ⚠ **판과 무관하게 바뀌는 것(Santa 리뷰 2026-10-16 M2).** 하네스 노트 문구(`signals.compile_note`)와 `tool` enum 축소
+> (`signals.without_tools`)는 **판을 보지 않고** 적용된다 — v15~v17 · PoV v3~v9를 고른 run도 2단계 컴파일 실패가 있으면 hop-0
+> 노트 문구와 요청 스키마가 이 변경 전과 다르다. 「v17은 한 글자도 안 바뀌었다」는 **prompt 파일**의 바이트 이야기이고 그 판의
+> 요청 전체가 아니다. 그 판들의 prefix(「같은 오류가 예상된다 · it refuses no tool」)는 새 노트와 어긋난다. 그래서 **옛 판 +
+> 컴파일 실패가 있는 run은 이 변경 전 run과 직접 비교하지 않는다**(`docs/evaluation.md` §2.3 규칙 4와 같은 이유). 서빙 판은
+> v18 · PoV v10이라 그 어긋남은 서빙 run에서는 없다.
 
 > ⏵ **2026-10-13 — Scout v4의 요청 바이트가 판 번호 없이 바뀌었다**(#529). 노드가 `SOURCE`의 모양을 meta
 > `input` 선언으로 고르게 돼서, `--slices` run의 v4(`input: source`)는 슬라이스 렌더가 아니라 entry를 품는

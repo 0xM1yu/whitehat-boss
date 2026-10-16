@@ -374,28 +374,9 @@ def test_v17_is_wired_in_every_place_a_new_prompt_version_has_to_be() -> None:
     assert auditor.tool_hops_in_effect("v17", 16) == 16
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_auditor_seat_selects_v17_and_the_doctor_has_nothing_to_say(
-    profile: str,
-) -> None:
-    config = load_config(profile)
-    version = config.model_for("auditor").prompt_template_version
-
-    assert version == "v17"
-    assert cli._check_prompt_version(config, "auditor", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-    assert cli._undescribed_source_options(config) == []
-
-
-def test_no_auditor_version_newer_than_the_served_one_is_on_disk() -> None:
-    """doctor의 「디스크 새 판」 WARN이 0인 이유 - 서빙 판이 디스크의 마지막 판이다."""
-    numbers = sorted(
-        int(p.name[1:])
-        for p in (PROMPTS_DIR / "auditor").iterdir()
-        if p.is_dir() and p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 17
+# ⏵ 2026-10-16 — 「서빙 판이 v17이고 doctor가 할 말이 없다」·「디스크 최신 판이 v17」 핀은 서빙 판이
+# v18로
+# 올라가며 `tests/test_auditor_v18.py`로 옮겼다(#698).
 
 
 def test_turning_the_option_on_is_blocked_before_v17_and_allowed_on_it() -> None:

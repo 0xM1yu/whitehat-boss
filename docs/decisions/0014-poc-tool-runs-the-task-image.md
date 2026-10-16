@@ -172,11 +172,24 @@ docker run --rm --network none --pull never \
 - 샌드박스 이미지가 도구마다 갈린다 — 저장소에 선례가 **0건**이던 모양이다.
 - `#507`은 **안 닫힌다.** 그쪽은 `clang-tidy`·`build`(정적·컴파일 근거)이고 이 결정은 실행 근거만
   건드린다. 두 도구는 여전히 이 번들에서 `ok=0`이다.
+  ⏵ 2026-10-16 — #507은 2026-10-13에 선택지 (d′)(2단계 컴파일 실패를 hop-0 하네스 노트로)로 닫혔다(`deee2f5`).
+  두 도구가 이 번들에서 `ok=0`인 것은 그대로다 — 후속은 #698이다.
 
 **안 바뀌는 것.**
 
 - 채점 경로(`oracle.final` 지정) · any-of 금지 · 「끝에 정확히 한 장」.
 - 다른 세 도구(`asan`·`gdb`·`build`)의 argv — **바이트 동등**이어야 한다.
+  ⏵ 2026-10-16 (#698 · council 2026-10-16 · 사용자 결정) — argv 조립(`plan()`)은 그대로다. 대신 두 가지가 더해졌다.
+  ① **요청 스키마에서 뺀다**: 2단계가 그 대상 파일에서 컴파일러 오류를 잰 도구(`build`가 냈으면 `build`·`asan`·`gdb`,
+  `clang-tidy`가 냈으면 `clang-tidy`)는 그 파일의 Auditor·PoV 요청 스키마 `tool` enum에 없다(`signals.withheld_tools` ·
+  `without_tools` — 요청이 `response_format` strict라 서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 2026-10-13 council (d′)의 「도구 거절
+  없음」을 이 범위에서 뒤집었다 — 근거는 노트가 실린 뒤에도 컴파일 경로 probe가 2회 나왔고 둘 다 같은 오류로 끝난 것이고
+  (`run_20261016_0001`, #698), 사용자가 「완벽하게 수정 · 더 이상 측정 없음」으로 enum 축소를 정했다. ② **어댑터 백스톱**:
+  같은 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일 명령은 다시 띄우지 않고 그 측정(Evidence id · 건수 · 첫 오류)을
+  돌려준다(`ContainerToolRunner._execute`) — ①이 못 덮는 경우(2단계가 안 잰 파일을 한 번 실패한 뒤 다시 요청)만 남는다.
+  ⚠ `build`의 실패로 `asan`·`gdb`까지 빼는 것과 메모의 앞단 키에서 `-O`·`-fsanitize`를 뺀 것은 **같은 추정**이다
+  (`__OPTIMIZE__`·`__SANITIZE_ADDRESS__`가 전처리를 바꿀 수 있다) — 잰 오류(헤더의 타입 해석)는 그것과 무관하다고 보았고,
+  키가 같은데 결과가 갈리는 것이 측정되면 키와 `withheld_tools`를 고친다(`_compile_key` docstring).
 - `D99`의 상태. 선행 하나(「도구가 PoC 바이트를 읽는 것」)가 서지만 나머지가 남는다.
 
 ## 미결 · 미측정

@@ -267,6 +267,7 @@ def doctor(
     checks.extend(_check_prompts(config))
     checks.extend(_check_source_options(config))
     checks.extend(_check_auditor_loop(config))
+    checks.extend(_check_decoder_schemas(config))
     checks.extend(_check_score_chain(config))
     checks.extend(_check_scout_slice_trim(config))
     checks.append(_check_thresholds())
@@ -687,7 +688,7 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
     프롬프트(⏵ 2026-10-07 v10 — 그 전 v9·v8·v7 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 ·
-    ⏵ 2026-10-11 v14)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    ⏵ 2026-10-11 v14 · v15~v18도)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -817,6 +818,34 @@ def _check_auditor_loop(config: HarnessConfig) -> list[Check]:
     if problem is None:
         return []
     return [Check(Severity.ERROR, problem)]
+
+
+def _check_decoder_schemas(config: HarnessConfig) -> list[Check]:
+    """한 run이 보낼 요청 스키마를 xgrammar로 문법에 옮겨 본다 — 못 옮기면 ERROR (#698).
+
+    서빙 vLLM이 못 옮기는 스키마는 요청마다 HTTP 400이다. 그걸 run 몇 시간 뒤가 아니라 여기서 안다.
+    **xgrammar가 없으면 WARN이다 - 돌지 않았다고 적지 통과했다고 적지 않는다**(ERROR로 두면 서빙
+    장비가 아닌 곳의 `doctor`가 전부 exit 1이 된다). 로직은 `src/decoder_schemas.py`이고 명령줄
+    진입점은 `tools/check_decoder_schemas.py`다 — 이 모듈은 `tools/`를 import하지 않는다
+    (`test_the_report_gate_does_not_invoke_the_tool`).
+    """
+    from src import decoder_schemas as gate
+
+    try:
+        results = gate.check_profile(config)
+    except ImportError:
+        return [Check(Severity.WARN, "xgrammar가 없어 디코더 스키마 게이트를 돌리지 않았다")]
+    except PromptError as exc:
+        return [Check(Severity.WARN, f"디코더 스키마 게이트를 돌리지 못했다(프롬프트): {exc}")]
+    failed = [
+        Check(Severity.ERROR, f"디코더 스키마 컴파일 실패: {gate.format_line(i, e)}")
+        for i, e in results
+        if e is not None
+    ]
+    version = gate.xgrammar_version()
+    return failed or [
+        Check(Severity.OK, f"디코더 스키마 {len(results)}개가 xgrammar {version}로 변환됐다")
+    ]
 
 
 def _check_score_chain(config: HarnessConfig) -> list[Check]:
@@ -1884,7 +1913,9 @@ def run(args: argparse.Namespace) -> int:
     # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + `auditor_input_context` 서술 · 표지 줄
     # `auditor_write_window_marker` 설명 — 두 옵션의 서술은 v16부터다, S20 Phase 13).
     # ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + `auditor_slice_state` 서술 — 그 옵션의 서술은
-    # v17부터다, S20 Phase 14 · 이슈 #438 (b). 위 두 옵션은 v17도 선언한다).
+    # v17부터다, S20 Phase 14 · 이슈 #438 (b). 위 두 옵션은 v17도 선언한다). ⏵ 2026-10-16 — 서빙
+    # 판은 v18이고
+    # 옵션 선언은 v17과 같다(#698 — 하네스 노트 문단만 고쳤다).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:
