@@ -43,7 +43,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TARGET = FIXTURES / "target"
 MEASURED_AT = "2026-08-17T00:00:00Z"
 
-# 실측 원문 (2026-08-14, Slurm REDACTED-node / vLLM 0.19.1 / Qwen3-0.6B).
+# 실측 원문 (2026-08-14, Slurm 클러스터 <node> / vLLM 0.19.1 / Qwen3-0.6B).
 # 파일명에 버전·장비를 박아 둔다 — ATOM 원문이 들어오면 두 번째 파일이 되고, 그때 이름이
 # 바뀌면 `test_bench_reads_only_names_that_exist_in_every_fixture`가 잡는다.
 # ⏵ 2026-10-08 — ATOM 원문은 2026-08-18에 받았으나(`2026-08-18-serving-atom.md` §3.5) 이 디렉터리에
@@ -198,7 +198,7 @@ def test_null_prompt_tokens_details_is_reported_as_r6_not_an_adapter_bug(
 ) -> None:
     """장부는 0인데 `/metrics`는 적중 — **어댑터 결함이 아니다.**
 
-    2026-08-11 Slurm 실측이 이 경우였다(적중 99.0%인데 `cached_tokens: 0`). 여기서
+    2026-08-11 Slurm 클러스터 실측이 이 경우였다(적중 99.0%인데 `cached_tokens: 0`). 여기서
     판정이 `neither`로 접히면 "prefix caching이 안 돈다"는 정반대 결론이 기록된다.
     """
     client, template, tokens = served
@@ -593,7 +593,7 @@ def test_cache_config_labels_carry_the_names_that_are_not_metrics(
 
     프로브가 이 이름을 문자열로 다시 적지 않게 하려고 라벨을 통째로 내보낸다. 값을
     해석하지 않는 것도 계약이다 — 실측 원문에서 이 라벨은 문자열 `"None"`이고
-    (Slurm는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
+    (Slurm 클러스터는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
     숫자로 채워지면 그때 `mem_gb_ctx8k`를 nvidia-smi 없이 얻을 수 있다.
     ⏵ 2026-10-08 — ATOM도 `None`이었다(2026-08-18 — `2026-08-18-serving-atom.md` §3.3).
     """

@@ -138,7 +138,7 @@
 
 ```bash
 # 1) 박스: 하네스 몫 설치 → 감시자 → 가중치 선취(이미지에 hf_transfer가 없다) → 서버
-SWAP_SSH_HOST=root@<host> SWAP_SSH_PORT=REDACTED-port SWAP_REMOTE_ROOT=/root/harness \
+SWAP_SSH_HOST=root@<host> SWAP_SSH_PORT=<ssh-port> SWAP_REMOTE_ROOT=/root/harness \
   SWAP_REMOTE_PYTHON=python3 bash tools/serve/vast-bootstrap.sh
 ssh <box> 'cd /root/harness && MAX_HOURS=4 setsid nohup bash tools/serve/guard.sh >/dev/null 2>&1 &'
 ssh <box> 'pip install hf_transfer && HF_HUB_ENABLE_HF_TRANSFER=1 hf download \
