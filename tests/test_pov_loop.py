@@ -2110,6 +2110,8 @@ def test_the_served_pov_prefix_splits_the_four_tools_instead() -> None:
         "v9": ("**`poc` receives your PoC.**", "do not receive your bytes"),
         # 2026-10-16 - v10도 같은 절을 든다(v9 + 도구 서술 다섯 군데 정정)
         "v10": ("**`poc` receives your PoC.**", "do not receive your bytes"),
+        # 2026-10-17 - v11은 v10 prefix 바이트 그대로다(봉투만 판별 합 · 이슈 #704)
+        "v11": ("**`poc` receives your PoC.**", "do not receive your bytes"),
     }[_POV_SERVED_VERSION]
     for sentence in split_sentences:
         assert sentence in prefix, sentence
@@ -2486,11 +2488,15 @@ def test_the_served_pov_version_requests_the_named_envelope() -> None:
     **서빙 좌석**으로 옮긴 선례가 같은 파일의 `_POV_PREFIX_VERSIONS` 둘레 주석이다."""
     template = load_prompt(Role.POV, _POV_SERVED_VERSION)
 
-    assert template.output_schema == "PovActionNamed", (
+    # ⏵ 2026-10-17 — v11은 하위 봉투 `PovDiscriminatedAction`을 선언한다(이슈 #704). 이 검사가 무는
+    # 성질은
+    # 「서빙 봉투에 `poc_sha256`이 있다」이므로 이름 등식이 아니라 하위 클래스로 본다.
+    envelope = pov_node.resolve_output_schema(template.output_schema)
+    assert issubclass(envelope, PovActionNamed), (
         f"서빙 pov 판 {_POV_SERVED_VERSION}이 `{template.output_schema}`를 요청한다 — "
         "지명(`poc_sha256`)이 조용히 사라진다"
     )
-    assert pov_node.resolve_output_schema(template.output_schema) is PovActionNamed
+    assert "poc_sha256" in envelope.model_fields
 
 
 def test_bench_resolves_the_pov_envelope_the_node_requests() -> None:

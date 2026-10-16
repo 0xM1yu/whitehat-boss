@@ -62,7 +62,13 @@ from src.schemas.finding import (
     PathStep,
     ReproSpec,
 )
-from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
+from src.schemas.pov import (
+    PovAction,
+    PovActionNamed,
+    PovDiscriminatedAction,
+    PovSegment,
+    PovSpec,
+)
 from src.schemas.run import CONDITION_PATTERN, Budget, RunRecord, Sampling
 from src.schemas.scout_response import AnalysisSummary, ScoutResponse
 
@@ -114,6 +120,7 @@ __all__ = [
     "PathStepKind",
     "PovAction",
     "PovActionNamed",
+    "PovDiscriminatedAction",
     "PovSegment",
     "PovSpec",
     "ProducedBy",

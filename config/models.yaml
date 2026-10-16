@@ -947,7 +947,10 @@ models:
     # poc/asan/gdb/build」·「`inspect(build)`를 쓰라」가 거짓·오도가 된다(`prompts/pov/v10/meta.yaml`). body·봉투·옵션 선언은 v9와 같다
     # (v9는 한 글자도 안 고쳤다 - 규칙 1). prefix.md sha256 `9c51df1d2bb33f219f859e42a9bb3b2c7abfadc5f3eae8064748c5ac4507dd6e`.
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v10을 더했다. **v10으로 돈 run은 0건 · 효과 미실측.**
-    prompt_template_version: "v10"
+    # ⏵ 2026-10-17 — **v11**로 올렸다(이슈 #704). v11 = v10 prefix·body 바이트 동일 + 봉투 `PovDiscriminatedAction`(디코더
+    # 스키마가 액션별 판별 합 — `gen`은 `spec` 필수). run_20261016_0001(v9)의 8단계가 `spec` 없는 `gen` 6/6으로 버려졌다.
+    # `nodes/pov._WIDE_INPUT_VERSIONS`에 v11을 더했다. **v11로 돈 run은 0건 · 효과 미실측.**
+    prompt_template_version: "v11"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
