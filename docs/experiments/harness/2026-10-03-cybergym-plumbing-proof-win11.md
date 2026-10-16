@@ -79,7 +79,7 @@
 | 채점 서버 | 저자 소스 commit `c6fe202`, `cybergym.server` | 2026-10-02 왕복 보고서 §4에서 바이트 대조한 트리 |
 | 서버 python | 3.14.5 (scratchpad `stage0/venv`) | `python.exe -V` |
 | 하네스 트리 | `C:/w/p4`, `origin/main 1fa2182` | 🔴 **서버는 저장소 밖에 설치했다** |
-| 과제 번들 | **`C:\Users\user\Desktop\vuln_multi_agent_orchestration\eval\datasets\arvo-1065\`** (`description.txt` 79 B · `repo-vul.tar.gz` 493,478 B + 우리가 만든 `submit.sh`) | ⚠ **`C:/w/p4/eval/datasets/`에는 없다**(`.gitkeep`·`README.md`뿐) — `--task-dir`로 절대경로를 줬다. trace는 그 경로를 기록하지 않는다 |
+| 과제 번들 | **`<저장소>\eval\datasets\arvo-1065\`** (`description.txt` 79 B · `repo-vul.tar.gz` 493,478 B + 우리가 만든 `submit.sh`) | ⚠ **`C:/w/p4/eval/datasets/`에는 없다**(`.gitkeep`·`README.md`뿐) — `--task-dir`로 절대경로를 줬다. trace는 그 경로를 기록하지 않는다 |
 | GPU | **미사용** | `gpu_ms: 0` |
 
 ---

@@ -142,7 +142,7 @@ def generation_tokens(endpoint: str) -> float | None:
 class CacheCounters:
     """`/metrics`의 캐시 카운터 한 시점. 절대값은 구간 delta를 만들 때만 쓴다.
 
-    **네 카운터가 세는 것이 서로 다르다** (2026-08-14 Slurm 실측, HELP 원문 기준):
+    **네 카운터가 세는 것이 서로 다르다** (2026-08-14 Slurm 클러스터 실측, HELP 원문 기준):
 
     | 필드 | 메트릭 | 세는 것 |
     | --- | --- | --- |
@@ -366,7 +366,7 @@ def cache_config_labels(endpoint: str) -> tuple[dict[str, str], str | None]:
 
     값을 해석하지 않고 문자열 그대로 준다. 실측에서 `kv_cache_memory_bytes="None"`,
     `gpu_memory_utilization="0.6"`처럼 **라벨마다 타입이 다르고** vLLM이 파이썬 `None`을
-    문자열로 찍기 때문이다(2026-08-14 Slurm 원문). 해석은 쓰는 쪽이 한다.
+    문자열로 찍기 때문이다(2026-08-14 Slurm 클러스터 원문). 해석은 쓰는 쪽이 한다.
     """
     text, error = fetch(metrics_url(endpoint))
     if text is None:
@@ -409,7 +409,7 @@ def kv_cache_perc(endpoint: str) -> float | None:
     """`vllm:kv_cache_usage_perc` — KV cache 점유율 게이지(1.0 = 100%).
 
     **counter가 아니라 gauge다.** 요청이 끝나면 KV cache가 반납되어 0.0으로 돌아간다
-    (2026-08-14 Slurm 실측: 요청 6회를 끝낸 뒤 스크레이프한 원문에서 이 값이 0.0이다,
+    (2026-08-14 Slurm 클러스터 실측: 요청 6회를 끝낸 뒤 스크레이프한 원문에서 이 값이 0.0이다,
     `tests/fixtures/metrics/vllm_0191_slurm_sm86.txt`). 그래서 이 함수를 부르는 쪽은
     요청이 떠 있는 동안 반복해서 표본을 떠야 한다 — `_one_context` 참조.
     """

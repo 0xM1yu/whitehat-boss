@@ -70,7 +70,7 @@
 | 항목 | 값 | 갈리는 항목인가 |
 | --- | --- | --- |
 | 장비 | `atom` — NVIDIA GB10, Blackwell **sm_121**, aarch64 | ✅ slurm(sm_86, x86_64)와 갈린다 |
-| vLLM | **0.27.1** (로그 원문: `Initializing a V1 LLM engine (v0.27.1)`) | ✅ slurm는 0.19.1 상한 |
+| vLLM | **0.27.1** (로그 원문: `Initializing a V1 LLM engine (v0.27.1)`) | ✅ Slurm 클러스터는 0.19.1 상한 |
 | dtype | `torch.bfloat16` · `quantization=modelopt_fp4` | ✅ 4B는 `fp8` |
 | `kv_cache_dtype` | **`fp8_e4m3` (자동 선택)** | ✅✅ **4B는 `bf16`이다. 해석 ⑤** |
 | `max_seq_len` | 32768 | |

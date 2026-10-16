@@ -3,6 +3,8 @@ name = "whitehat-boss"
 version = "0.1.0"
 description = "소형 LLM 앙상블 기반 취약점 연구 Multi-Agent Orchestration Harness"
 requires-python = ">=3.11.4"
+# 표 형식은 build-system의 setuptools>=68에서 읽힌다(SPDX 문자열 형식은 77부터다).
+license = { text = "MIT" }
 dependencies = [
     "pydantic>=2.7",
     # config/*.yaml 로더 (src/config.py). engineering-guide.md §2가 설정 파일을 YAML로 정한다.

@@ -213,7 +213,7 @@ gdb는 2026-09-28 독립 `ContainerToolRunner` 실행에서 정상 종료·SIGSE
   `strnlen` 미선언 오류였다. 현재 clang 계열 도구는 C에 `-std=gnu17`, C++에
   `-std=gnu++17`을 쓴다(`_STD_ARGS`).
 
-**Slurm 검증 완료 (2026-08-14, <node>).** `dev_singularity` 프로필이 Docker와 같은
+**Slurm 클러스터 검증 완료 (2026-08-14, <node>).** `dev_singularity` 프로필이 Docker와 같은
 결과를 냈다.
 
 - **SIF 변환에 재빌드가 필요 없었다.** Singularity 3.7.3이 buildx가 만든 tar(manifest
@@ -467,7 +467,7 @@ singularity가 없다). evaluation.md §2.3 규칙 2의 예외이므로 **실제
 재지 못했다는 뜻이고, 그 상태가 그대로 보여야 한다.
 
 
-## 7. 검증 완료 (2026-08-11, Slurm)
+## 7. 검증 완료 (2026-08-11, Slurm 클러스터)
 
 하드웨어·버전 무관 항목이라 ATOM으로 그대로 이전된다.
 
@@ -805,23 +805,23 @@ RepoDigest를 기록한다(`container_tools._image_digest()`). 셋 다 그 런�
 
 → **"tool_images가 같으면 같은 도구로 돌린 것"이라는 추론은 같은 런타임·같은 아키텍처
 안에서만 성립한다.** 지금은 각 run을 한 환경에서 돌리므로 문제가 없지만, ATOM(podman)·
-Slurm(singularity)·로컬(docker)을 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이
+Slurm 클러스터(singularity)·로컬(docker)을 섞어 쓰기 시작하면 조건 간 비교에서 걸린다. 반대로 값이
 다르다고 다른 이미지인 것도 아니다 — 위 세 값 중 docker·singularity는 같은 이미지다. 해법(예:
 양쪽에서 같은 값이 나오는 이미지 식별자를 쓰기)은 정하지 않았다.
 
 ### 두 장비의 결과를 같은 비교 셀에 넣지 않는다
 
-ATOM(GB10, sm_121)과 Slurm(A2000, sm_86)는 **둘 다 지원 대상이다** — 한쪽으로 이관하는
-것이 아니라 파이프라인 전체가 양쪽에서 각각 완주해야 한다(Slurm는 이식성 요구사항이다).
+ATOM(GB10, sm_121)과 Slurm 클러스터(A2000, sm_86)는 **둘 다 지원 대상이다** — 한쪽으로 이관하는
+것이 아니라 파이프라인 전체가 양쪽에서 각각 완주해야 한다(Slurm 클러스터는 이식성 요구사항이다).
 
 그래서 같은 프로필·같은 조건으로 돈 두 run이 다른 하드웨어의 결과일 수 있다.
 `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않으므로 **기록만 놓고
 보면 두 run이 완전히 같아 보인다.** `RunRecord.device`와 `Benchmark.measured_on`이 그 둘을
 가른다([decisions/0006](docs/decisions/0006-record-the-device-a-run-happened-on.md)).
 
-→ 장비별 제약, slurm 노드가 고정되지 않는다는 것, 그리고 **아직 한쪽에서 완주하지 못하는
+→ 장비별 제약, 클러스터 노드가 고정되지 않는다는 것, 그리고 **아직 한쪽에서 완주하지 못하는
 항목의 대장**은 [docs/portability.md](docs/portability.md)에 모았다. 첫 항목은
-`local_balanced`·`b1_single`이 NVFP4 모델을 써서 Slurm(sm_86)에서 완주 불가라는 것이다.
+`local_balanced`·`b1_single`이 NVFP4 모델을 써서 Slurm 클러스터(sm_86)에서 완주 불가라는 것이다.
 
 ### Fake 어댑터의 수치는 성능이 아니다
 

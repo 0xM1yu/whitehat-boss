@@ -464,7 +464,7 @@ def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: 
 
 
 def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
-    """대학 학생이 Slurm에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
+    """외부 사용자가 Slurm 클러스터에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
 
     `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않는다 — 이
     필드가 없으면 두 run이 기록만으로는 완전히 같아 보인다.
@@ -509,7 +509,7 @@ def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
 
 
 def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -> None:
-    """registry가 ATOM 기준인데 Slurm에서 doctor를 치면 그 사실이 드러나야 한다."""
+    """registry가 ATOM 기준인데 Slurm 클러스터에서 doctor를 치면 그 사실이 드러나야 한다."""
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     path = _models_copy(tmp_path)

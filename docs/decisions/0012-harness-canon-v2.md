@@ -2,7 +2,7 @@
 
 - 상태: **승인** (2026-09-25 — @sumin0218 구두 승인, @danielcho02가 전했다. 사인오프 기록은 [README](README.md)의 0012 문단이다). 2026-09-24에 「제안」인 채 머지됐고(#260 — @sumin0218 리뷰 M1), 이 ADR에 기댄 [D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)는 승인 커밋(PR #275)이 닫았다(`Closes #60`·`#62` — 아래 「결과」)
 - 일자: 2026-09-24
-- 관련: [ADR 0010](0010-harness-structure-and-model-roster.md) §2·§3·「리뷰에서 정할 것」 #2, [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1·§2·§5, [build-plan.md](../build-plan.md) §5·§6, [architecture.md](../architecture.md) §3, [D3](../open-questions/D/D3.md)·[D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)·[D13](../open-questions/D/D13.md)·[D20](../open-questions/D/D20.md)·[D74](../open-questions/D/D74.md)·[D78](../open-questions/D/D78.md)·[D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md)·[D85](../open-questions/D/D85.md)·[D86](../open-questions/D/D86.md), `prompts/scout_{memory,boundary,injection}/v3/prefix.md`, `prompts/auditor/v3/`, 팀 Notion 워크스페이스 [화햇대장](#private-notion)(실험팀 「Scout RAG baseline」·「Auditor·Critic 모델 최종 선정」·「scout 모델 후보 실험」·「Embedder Reranker 재실험」, 「Agent Fine-Tuning 팀 가이드」 — 2026-09-23 판독, 원문은 저장소에 없다)
+- 관련: [ADR 0010](0010-harness-structure-and-model-roster.md) §2·§3·「리뷰에서 정할 것」 #2, [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md) §1·§2·§5, [build-plan.md](../build-plan.md) §5·§6, [architecture.md](../architecture.md) §3, [D3](../open-questions/D/D3.md)·[D10](../open-questions/D/D10.md)·[D12](../open-questions/D/D12.md)·[D13](../open-questions/D/D13.md)·[D20](../open-questions/D/D20.md)·[D74](../open-questions/D/D74.md)·[D78](../open-questions/D/D78.md)·[D82](../open-questions/D/D82.md)·[D83](../open-questions/D/D83.md)·[D84](../open-questions/D/D84.md)·[D85](../open-questions/D/D85.md)·[D86](../open-questions/D/D86.md), `prompts/scout_{memory,boundary,injection}/v3/prefix.md`, `prompts/auditor/v3/`, 팀 내부 Notion 워크스페이스(실험팀 「Scout RAG baseline」·「Auditor·Critic 모델 최종 선정」·「scout 모델 후보 실험」·「Embedder Reranker 재실험」, 「Agent Fine-Tuning 팀 가이드」 — 2026-09-23 판독, 원문은 저장소에 없다)
 
 ## 왜 이 기록이 필요한가
 
@@ -70,7 +70,7 @@
 
 ### 2. need_evidence 정본 프로토콜 — 팀 Notion 「Scout RAG baseline」
 
-명세의 원천은 실험팀 Notion 「Scout RAG baseline」이다(화햇대장 › 실험팀 — 원문은 저장소에 없다). 이 ADR은 요약만 든다.
+명세의 원천은 실험팀 Notion 「Scout RAG baseline」이다(실험팀 — 원문은 저장소에 없다). 이 ADR은 요약만 든다.
 
 | 항목 | 정본 |
 | --- | --- |
@@ -137,7 +137,7 @@
 
 **가르는 축은 「전처리냐」가 아니라 「하네스를 돌렸느냐」다** — 슬라이서는 이 저장소에서 개발하지만(위 결정 1 문단) 그 **품질**을 재는 실험은 실험팀 소관이다. 아래 「`PR·D 본문에`」는 그대로 유효하다 — 보고서를 쓰는 run이라도 ADR·D가 인용할 때는 그 세 필드를 같은 문장에 싣는다. 실험팀 수치를 인용할 때의 판독 날짜·「팀 보고, run ID 없음」 규칙도 그대로다. `STATUS.md`는 실험 기록이 아니라 현황 기록이라 보관 그대로다(현재 상태의 정본은 [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)다).
 
-- **실험 기록의 원천은 팀 Notion 워크스페이스 [화햇대장](#private-notion)이다.** ~~새 실험 기록은 이 저장소로 들이지 않는다.~~ (⏵ 2026-09-26 — 이 불릿의 「실험 기록」은 실험팀 실험으로 좁혀졌고, 하네스를 돌린 run 기록은 `docs/experiments/`에 들인다 — 위 표.) 이 저장소가 드는 것은 하네스의 코드·설정·프롬프트, 하네스가 파일로 받는 입력을 만드는 오프라인 도구와 그 결함, 하네스 결정(ADR)·결함(D·R), 그리고 하네스 자신의 run 기록(run ID·장비·profile·commit — PR·D 본문에)이다. 그 도구는 `tools/slicer/`의 `slicer*.py`(⏵ 2026-10-03 — 루트에서 옮겼다)이고 이 저장소에서 계속 개발한다 — 2026-09-24 기준으로 열려 있는 슬라이서 PR #252·#255가 그 예이고, 테스트도 이 저장소의 `tests/test_slicer.py`·`tests/test_slicer_v2.py`에서 돈다.
+- **실험 기록의 원천은 팀 내부 Notion 워크스페이스이다.** ~~새 실험 기록은 이 저장소로 들이지 않는다.~~ (⏵ 2026-09-26 — 이 불릿의 「실험 기록」은 실험팀 실험으로 좁혀졌고, 하네스를 돌린 run 기록은 `docs/experiments/`에 들인다 — 위 표.) 이 저장소가 드는 것은 하네스의 코드·설정·프롬프트, 하네스가 파일로 받는 입력을 만드는 오프라인 도구와 그 결함, 하네스 결정(ADR)·결함(D·R), 그리고 하네스 자신의 run 기록(run ID·장비·profile·commit — PR·D 본문에)이다. 그 도구는 `tools/slicer/`의 `slicer*.py`(⏵ 2026-10-03 — 루트에서 옮겼다)이고 이 저장소에서 계속 개발한다 — 2026-09-24 기준으로 열려 있는 슬라이서 PR #252·#255가 그 예이고, 테스트도 이 저장소의 `tests/test_slicer.py`·`tests/test_slicer_v2.py`에서 돈다.
 - **하네스 결정의 근거가 된 실험은 ADR·D 본문에 요약하고 Notion 페이지를 링크한다.** 그 수치를 인용할 때는 출처(Notion 페이지)와 **판독 날짜**를 같은 문장에 적고, 그 페이지가 들고 있으면 **run ID · 실제로 서빙한 모델 · 실험이 끝난 시각**도 같은 문장에 옮긴다(아래 「잃는 것」 6). run ID가 없으면 **「팀 보고, run ID 없음」**을 붙인다 — Notion 페이지는 git 이력이 없어 [CLAUDE.md](../../CLAUDE.md) §2.4의 `git log -L`로 그 줄이 언제 쓰였는지 못 잰다. §0은 그대로다.
 - **외부 문헌 조사도 같은 범위를 따른다.** ~~`docs/research/`는 실험 기록이 아니라 남이 주장한 것의 조사지만 하네스 개발 산출물도 아니다 — 새 조사는 Notion에 두고, 하네스 결정의 근거가 되면 실험과 같이 ADR·D 본문에 요약한다.~~ → ⏵ 2026-09-26 — 하네스 결정·결함의 근거가 되는 조사는 `docs/research/`에 쓴다(위 표). 그 밖의 조사는 Notion에 두고, 하네스 결정의 근거가 되면 ADR·D 본문에 요약한다.
 - **~~보관 대상은 셋이다 — `docs/experiments/`·`docs/research/`·`STATUS.md`.~~ 옮기지 않고 제자리에 둔다.** (⏵ 2026-09-26 — 두 폴더의 보관은 풀렸고 보관은 `STATUS.md`만 남는다 — 위 표. 두 폴더 머리의 표시는 「보관이 풀렸다」로 바뀌었다. 두 폴더를 옮기지 않는 이유는 아래 링크 수 그대로다.) ~~각 머리에 보관 표시를 달고,~~ 안의 서술은 절마다 든 날짜의 기록으로 읽는다. 두 폴더를 옮기면 경계를 넘는 상대 링크 — 폴더 밖에서 안으로, 안에서 밖으로 — 433개(파일 대상 431 · 디렉터리 대상 2)가 깨지고, 그 링크를 든 추적 `.md` 99개에서 `test_internal_links_point_at_a_real_file`(파일마다 한 케이스)이 빨개진다. `c301342`에서 그 테스트의 `_LINK` 정규식으로 추적 `.md` 전수를 훑어 센 값이다 — 옮겨서 돌려 본 것이 아니다.

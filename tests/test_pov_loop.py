@@ -3110,7 +3110,7 @@ def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> 
     assert runner._run_pov(scripted, state, finding) is None
 
 
-# --- 전 시도가 `length`로 끝난 파싱 실패는 재질문 없이 선다 (#550 리뷰 · @sumin0218) ----------------
+# --- 전 시도가 `length`로 끝난 파싱 실패는 재질문 없이 선다 (#550 리뷰 · @sumin0218) ---
 #
 # 같은 프롬프트로 같은 상한에 닿는 것이 체계적일 수 있어 다시 물으면 모델 호출만
 # `pov_tool_hops + 1`번 쓴다(리뷰 재현: 17번). 횟수 상한은 이 PR에 없다 — 이슈 #613이 쫓는다.

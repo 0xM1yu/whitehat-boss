@@ -171,10 +171,10 @@ podman은 docker CLI 호환이라 `container_argv`가 바이너리 이름만 갈
 (docs/portability.md §5 #4).
 
 825MB(arm64) 이미지가 `dev_docker --tool-runner podman`으로 완주했고(후보 2 / Finding 2,
-`run_20260817_0001`), 이는 Slurm의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은
+`run_20260817_0001`), 이는 Slurm 클러스터의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은
 판정을 낸다. **그 run이 이 저장소의 유일한 podman 도구 실행 기록이다**(docs/portability.md §6).
 
-### Slurm 이관 (Singularity)
+### Slurm 클러스터 이관 (Singularity)
 
 <node>에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
 `/usr/local/bin/singularity` 3.7.3만 쓸 수 있다. **무거운 작업은 반드시 컴퓨트 노드에서
@@ -200,7 +200,7 @@ docker save harness-tools:v3 -o harness-tools_v3.tar
 ```
 
 ```bash
-scp harness-tools_v3.tar <계정>@slurm:/data/<account>/
+scp harness-tools_v3.tar <account>@<cluster-host>:/data/<account>/
 ```
 
 ```bash
