@@ -421,3 +421,149 @@ def test_desc_reserve_filled_counts_the_pick_and_desc_reserved_counts_the_effect
     ctx, _, _ = _cut(items, limit, reserve)
     plan_event = ctx.trace.events[0][1]
     assert (plan_event["desc_reserve_filled"], plan_event["desc_reserved"]) == (filled, promoted)
+
+
+# --- 슬라이스 경로: 걸친 함수로 매긴다 (#693) ---
+#
+# 실형태 출처: run_20261015_0001(commit 856528d)의 `slices.json` `slice_0524`와 그 run의
+# `scratch/index/index.json`(@sumin0218 handoff, 저장소 밖). entry는 `funcs.c:76`(감싸는 함수
+# `file_vprintf` 56-81)이고 걸친 줄 `funcs.c:508`이 `file_regexec`(507-513) 안이다. 그 run은 이
+# 슬라이스를 `desc_rank` 0으로 잘랐다(`target_skipped` · `target_plan.desc_part_matches` 0).
+_FUNCS = "src-vul/file/src/funcs.c"
+_SOFT = "src-vul/file/src/softmagic.c"
+_APPR = "src-vul/file/src/apprentice.c"
+_INDEX = {
+    _FUNCS: [
+        Location(file=_FUNCS, symbol="file_vprintf", line_start=56, line_end=81),
+        Location(file=_FUNCS, symbol="file_regcomp", line_start=491, line_end=505),
+        Location(file=_FUNCS, symbol="file_regexec", line_start=507, line_end=513),
+    ],
+    _SOFT: [Location(file=_SOFT, symbol="match", line_start=162, line_end=402)],
+    # 같은 run에서 `FILE_REGEX`·`REGEX_OFFSET_START`가 본문에 든 함수(apprentice.c `getvalue`).
+    _APPR: [Location(file=_APPR, symbol="getvalue", line_start=2564, line_end=2634)],
+}
+
+
+def _ref(slice_id: str, entry: Location, lines: tuple[tuple[str, int], ...]) -> SliceRef:
+    return SliceRef(
+        slice_id=slice_id, location=entry, given_end="source", entry=entry, lines=lines,
+        degraded=False,
+    )
+
+
+_GT = _ref(
+    "slice_0524",
+    Location(file=_FUNCS, line_start=76, symbol="file_vprintf"),
+    ((_FUNCS, 76), (_FUNCS, 508), (_SOFT, 365)),
+)
+_MACRO_ONLY = _ref(
+    "slice_0029", Location(file=_APPR, line_start=2564, symbol="getvalue"), ((_APPR, 2600),)
+)
+
+
+def _plan_refs(
+    monkeypatch: pytest.MonkeyPatch, refs: list[SliceRef], *, index: dict | None = _INDEX,
+    limit: int = 8, reserve: int = 2,
+) -> tuple[SimpleNamespace, runner._TargetPlan]:
+    # 그 run처럼 `apprentice.c`에는 정적 신호가 있다(planned 8개가 signal_rank 1·2) — 신호 없는
+    # 설명과 맞는 슬라이스는 키 순서로는 못 들고 예약으로만 든다.
+    monkeypatch.setattr(
+        runner, "_artifact_signals", lambda _c, artifact, _g: ((), [], artifact.path == _APPR)
+    )
+    ctx = _ctx(ARVO_1065, limit, reserve)
+    ctx.symbols_for = lambda file: None if index is None else index.get(file, [])
+    files = {r.location.file for r in refs}
+    plan = runner._TargetPlan(analyzable_artifacts=len(files))
+    artifacts = [SimpleNamespace(path=f) for f in sorted(files)]
+    runner._plan_slice_targets(ctx, plan, artifacts, None, tuple(refs))  # type: ignore[arg-type]
+    runner._order_and_cut(ctx, plan, runner._Accumulator())  # type: ignore[arg-type]
+    return ctx, plan
+
+
+def test_a_slice_is_ranked_by_a_function_it_spans_not_only_its_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _, plan = _plan_refs(monkeypatch, [_GT])
+    (target,) = plan.collected
+    assert target.desc_rank == 2  # `file_regexec`의 조각 `regexec`가 설명 토큰이다
+    assert target.desc_symbol == Location(
+        file=_FUNCS, symbol="file_regexec", line_start=507, line_end=513
+    )
+    assert target.location.symbol == "file_vprintf"  # 타깃 위치는 그대로 entry다
+
+
+def test_the_spanned_match_takes_a_reserved_seat_from_path_ordered_slices(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """그 run의 꼴 — 경로 사전순 앞(`apprentice.c`) 슬라이스가 컷을 다 채운다."""
+    filler = [
+        _ref(f"slice_{i:04d}", Location(file=_APPR, line_start=i, symbol=f"f{i}"), ())
+        for i in range(1, 10)
+    ]
+    ctx, plan = _plan_refs(monkeypatch, [*filler, _GT])
+    assert "slice_0524" in [t.slice_id for t in plan.targets]
+    plan_event = ctx.trace.events[0][1]
+    assert (plan_event["desc_part_matches"], plan_event["desc_reserved"]) == (1, 1)
+    planned = [f for k, f in ctx.trace.events if k.value == "target_planned"]
+    (gt,) = [f for f in planned if f["slice_id"] == "slice_0524"]
+    assert (gt["desc_symbol"], gt["desc_symbol_file"]) == ("file_regexec", _FUNCS)
+
+
+def test_macros_in_a_spanned_function_do_not_rank_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    """함수 **이름**만 본다 — 본문의 `FILE_REGEX` 같은 식별자는 대상이 아니다."""
+    _, plan = _plan_refs(monkeypatch, [_MACRO_ONLY])
+    assert plan.collected[0].desc_rank == 0
+    assert plan.collected[0].desc_symbol is None
+
+
+def test_without_an_index_only_the_entry_is_ranked_and_counted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, plan = _plan_refs(monkeypatch, [_GT], index=None)
+    assert plan.collected[0].desc_rank == 0
+    assert ctx.trace.events[0][1]["desc_unindexed_slices"] == 1
+
+
+def test_two_slices_matching_the_same_spanned_function_reserve_one_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    twin = _ref(
+        "slice_0600", Location(file=_SOFT, line_start=365, symbol="match"), ((_FUNCS, 510),)
+    )
+    filler = [
+        _ref(f"slice_{i:04d}", Location(file=_APPR, line_start=i, symbol=f"f{i}"), ())
+        for i in range(1, 10)
+    ]
+    ctx, plan = _plan_refs(monkeypatch, [*filler, _GT, twin])
+    assert ctx.trace.events[0][1]["desc_reserve_filled"] == 1
+    assert sum(t.slice_id in {"slice_0524", "slice_0600"} for t in plan.targets) == 1
+
+
+def test_the_entry_keeps_a_tie_and_a_higher_entry_is_not_displaced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # entry가 이미 3(전체 이름 `regexec`)이면 걸친 2(`file_regexec`)가 안 이긴다 — 엄격 부등호.
+    entry = Location(file=_FUNCS, line_start=508, symbol="regexec")
+    _, plan = _plan_refs(monkeypatch, [_ref("slice_0001", entry, ((_FUNCS, 508),))])
+    assert (plan.collected[0].desc_rank, plan.collected[0].desc_symbol) == (3, None)
+    # 같은 2끼리면 entry가 남는다.
+    entry = Location(file=_FUNCS, line_start=76, symbol="pmatch_init")
+    _, plan = _plan_refs(monkeypatch, [_ref("slice_0002", entry, ((_FUNCS, 508),))])
+    assert (plan.collected[0].desc_rank, plan.collected[0].desc_symbol) == (2, None)
+
+
+def test_a_spanned_file_name_match_alone_does_not_rank(monkeypatch: pytest.MonkeyPatch) -> None:
+    """걸친 함수는 이름 일치(≥ 2)만 센다 — 파일 이름(`regex.c`)만 맞는 함수는 0으로 둔다."""
+    regex_c = "src/regex.c"
+    index = {**_INDEX, regex_c: [Location(file=regex_c, symbol="helper", line_start=1, line_end=9)]}
+    entry = Location(file=_APPR, line_start=2564, symbol="getvalue")
+    _, plan = _plan_refs(monkeypatch, [_ref("slice_0003", entry, ((regex_c, 5),))], index=index)
+    assert (plan.collected[0].desc_rank, plan.collected[0].desc_symbol) == (0, None)
+
+
+def test_an_index_without_symbols_for_a_file_is_not_counted_as_unindexed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ctx, plan = _plan_refs(monkeypatch, [_GT], index={_FUNCS: [], _SOFT: []})
+    assert plan.collected[0].desc_rank == 0
+    assert ctx.trace.events[0][1]["desc_unindexed_slices"] == 0  # `[]`은 「색인 있음 · 심볼 0건」

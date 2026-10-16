@@ -397,6 +397,11 @@ thresholds:
   # 아니라 참고다: 파일 이름만 맞은 것(rank 1)을 뺀 심볼 일치율은 미측정이다. 상한이 있는 것은 흔한 낱말이
   # 우연히 맞은 후보가 컷을 다 채우지 않게 하려는 것이다. **효과는 미실측이다.** 0이면 예약이 없다(종전 컷).
   # `candidate_max` 이하. 예약 자리는 서로 다른 (file, symbol)에만 쓴다.
+  # ⏵ 2026-10-16 (#693) — 슬라이스 target은 entry 이름만이 아니라 슬라이스가 **걸친 함수** 이름으로도 매긴다
+  # (최댓값 · 걸친 함수는 이름 일치 ≥ 2만 · `runner._slice_desc_rank`). 위 (file, symbol)은 **설명과 맞은 함수**다.
+  # entry만 보던 동안 실서빙 run_20261015_0001의 trace `target_plan`이 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches` 셋 다 0이었다(실측 · 166조각) — 예약이 한 일이 없었다.
+  # ⚠ 걸친 함수가 많은 슬라이스일수록 우연히 맞기 쉽다 — 다른 과제에서는 미측정(`runner._plan_slice_targets` docstring).
+  # 실서빙 `run_20261015_0001`(commit `856528d`)의 `slices.json` 166조각과 그 run의 `index.json`으로 다시 계산하면 1조각(`slice_0524` — entry `funcs.c:file_vprintf`, 걸친 `funcs.c:file_regexec`)이 2가 된다(계산값 · run 아님 · n=1 · 산출물은 저장소 밖 handoff).
   candidate_desc_reserve: 2
 
   # 구조화 출력 파싱 실패 시 재요청 횟수 (agent-contracts.md §1의 token_budget.retries).
