@@ -818,6 +818,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-16 — 서빙 pov 판이 **v10**이다(v9 + prefix 다섯 군데, #698). 2단계가 그 파일에서 컴파일러 오류를 잰 `build`·`asan`·`gdb`는
   요청 스키마 `tool` enum에서 빠지므로(`signals.without_tools`) v9의 「tool은 poc/asan/gdb/build 중 하나」와 `inspect(build)` 권유를
   그 경우에 맞게 고쳤다(`prompts/pov/v10/meta.yaml` · `tests/test_pov_prompt_v10.py`). body·봉투는 v9와 같다. v10으로 돈 run은 0건이다.
+  ⏵ 2026-10-17 — 서빙 pov 판이 **v11**이다(#704). v11 = v10 prefix·body **바이트 동일** + 봉투 `PovDiscriminatedAction`(`PovActionNamed`의
+  하위 클래스 — 검증은 부모 그대로, 디코더에 보내는 JSON 스키마만 액션별 판별 합: `gen`은 `spec` 필수 · `inspect`는 `tool` 필수 ·
+  `poc_sha256`은 `submit` 갈래에만). run_20261016_0001(v9)의 8단계에서 옛 봉투 문법이 `spec` 없는 `gen`을 받고 pydantic만 거절해 3 hop ·
+  6시도가 모두 버려졌다. Auditor v18(#602 · PR #699)과 같은 처방이다(`tests/test_pov_v11.py`). v11로 돈 run은 0건 · 모델이 `spec`을
+  채우는지는 미실측이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1297,7 +1302,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v8도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v9도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v8도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v9도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-17 — v11은 그 하위 봉투 `PovDiscriminatedAction`을 선언하고 서빙 pov 판이다(#704 — 요청 스키마가 판별 합이라 v5~v10의 `PovActionNamed` 스키마와 다르다. 그 스키마는 sha256 핀으로 그대로다).
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
 > ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)

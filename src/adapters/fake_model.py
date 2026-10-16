@@ -50,7 +50,13 @@ from src.schemas.finding import (
     PathStep,
     ReproSpec,
 )
-from src.schemas.pov import PovAction, PovActionNamed, PovSegment, PovSpec
+from src.schemas.pov import (
+    PovAction,
+    PovActionNamed,
+    PovDiscriminatedAction,
+    PovSegment,
+    PovSpec,
+)
 from src.schemas.scout_response import AnalysisSummary, RequestedContext, ScoutResponse
 
 # 4바이트 ≈ 1토큰. 실제 토크나이저가 아니라 비용 지표 경로를 태우기 위한 근사다.
@@ -689,9 +695,18 @@ def _build_auditor_procedure_probe_input_discriminated_action(
 def _build_pov_action_named(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovActionNamed:
-    """형제 봉투(`PovActionNamed` · v5~v10, 서빙 판은 v10)의 fake — `_build_pov_action`과 같은
+    """형제 봉투(`PovActionNamed` · v5~v10)의 fake — `_build_pov_action`과 같은
     액션(`poc_sha256` 없음)."""
     return PovActionNamed(**_build_pov_action(context, produced_by, history).model_dump())
+
+
+def _build_pov_discriminated_action(
+    context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
+) -> PovDiscriminatedAction:
+    """v11 봉투(`PovDiscriminatedAction` · 서빙 판)의 fake — 같은 액션. 판별 합은 요청 스키마의
+    일이라
+    값은 `PovActionNamed`와 같다(`tests/test_pov_v11.py`가 표본을 스키마에 대조한다)."""
+    return PovDiscriminatedAction(**_build_pov_action(context, produced_by, history).model_dump())
 
 
 # `PovSpec`은 모델 출력 스키마로 직접 요청되지 않는다 — pov 루프는 `PovAction`(⏵ 2026-10-11 — v5는
@@ -714,6 +729,7 @@ _BUILDERS = {
     DecisionDraft: _build_decision_draft,
     PovAction: _build_pov_action,
     PovActionNamed: _build_pov_action_named,
+    PovDiscriminatedAction: _build_pov_discriminated_action,
     AuditorAction: _build_auditor_action,
     AuditorProcedureAction: _build_auditor_procedure_action,
     AuditorProcedureNullableCweAction: _build_auditor_procedure_nullable_cwe_action,

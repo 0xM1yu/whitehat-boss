@@ -1,5 +1,6 @@
 """PoV 역할의 출력 스키마 — 매 홉 `PovAction`(v5~v10은 형제
-`PovActionNamed`이고 서빙 판은 v10), 그 `gen`이 싣는 PoC 바이트 구성 스펙 `PovSpec`.
+`PovActionNamed`, v11은 그 하위 봉투 `PovDiscriminatedAction`이고 서빙 판은 v11), 그 `gen`이 싣는
+PoC 바이트 구성 스펙 `PovSpec`.
 
 council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내지 않는다. 대신
 **어떻게 바이트를 조립할지**를 스펙으로 내고, 순수 함수 `orchestrator.poc_assembly.assemble_poc`가
@@ -18,7 +19,7 @@ council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내�
 넓히거나 generator-script를 별도로 검토한다.
 """
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import Field, model_validator
 
@@ -257,3 +258,70 @@ class PovActionNamed(PovAction):
             "접두 허용). 없으면 마지막 gen의 PoC가 최종 후보다. 형식은 받는 쪽이 정규화한다."
         ),
     )
+
+
+# ⏵ 2026-10-17 — `PovActionNamed`의 하위 봉투(v11 · 이슈 #704). **검증은 부모 그대로이고, 디코더에
+# 보내는 JSON 스키마만 판별 합이다** — Auditor v18(`AuditorProcedureProbeInputDiscriminatedAction`,
+# PR #699 · #602)과 같은 처방이다. 부모 스키마는 `required: [action, rationale]`이라 문법이
+# `{"action": "gen", "rationale": "…", "poc_sha256": null}`을 받고, 「gen이면 spec 필수」는 생성이
+# 끝난 뒤
+# `_check_action`에서만 걸렸다. run_20261016_0001 8단계는 3 hop · 6시도가 전부 이 모양으로 거절됐다
+# (재시도 회복 0/3). 이 봉투의 스키마는 액션마다 갈래 하나다:
+#   - `GenHop`: `spec` 필수(non-null) · `tool`·`poc_sha256`은 null만
+#   - `InspectHop`: `tool` 필수(non-null, `signals.without_tools`가 좁힌 enum을 그대로 물려받는다) ·
+#     `spec`·`poc_sha256`은 null만
+#   - `SubmitHop`: `spec`·`tool`은 null만 · `poc_sha256`은 선택(부모 필드 그대로)
+# **의도한 차이 하나**: 부모는 `submit` 밖의 `poc_sha256` 문자열을 거절하지 않고 무시한다. 문법은
+# 그것을 막는다 — `submit` 밖에서는 읽히지 않는 값이고, 열어 두면 `gen`과 `submit` 모양이
+# 섞인다(#704의
+# 6시도가 모두 `gen`에 `poc_sha256: null`을 실었다 — 섞임이 원인이라는 것은 추정).
+# 갈래·필드 순서는 부모 필드 순서(action · spec · tool · rationale · poc_sha256)를 따른다 — 문법이
+# 키 순서대로 생성하므로 `gen`이면 `spec`이 `rationale` 앞에 강제된다.
+# 이름·docstring(= 요청 스키마 `description`)은 부모와 같다 — 모델이 읽는 설명은 v10과 한 글자도 안
+# 다르다. 이 봉투로 모델이 `spec`을 채우는지는 **미실측**이다.
+class PovDiscriminatedAction(PovActionNamed):
+    __doc__ = PovActionNamed.__doc__
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """디코더에 보내는 스키마 — 위 주석의 판별 합. 검증은 부모의 것 그대로다."""
+        schema = super().model_json_schema(*args, **kwargs)
+        props = schema["properties"]
+        null = {"type": "null"}
+        own: dict[str, dict[str, Any]] = {
+            "gen": {"spec": _non_null(props["spec"])},
+            "inspect": {"tool": {"title": props["tool"]["title"], **_non_null(props["tool"])}},
+            "submit": {"poc_sha256": props["poc_sha256"]},
+        }
+        required = {"gen": ["spec"], "inspect": ["tool"], "submit": []}
+        defs = dict(schema.get("$defs", {}))
+        branches = []
+        for action, fields in own.items():
+            name = f"{action.capitalize()}Hop"
+            defs[name] = {
+                "additionalProperties": False,
+                "title": name,
+                "type": "object",
+                "properties": {
+                    "action": {"const": action, "title": "Action", "type": "string"},
+                    "spec": fields.get("spec", null),
+                    "tool": fields.get("tool", null),
+                    "rationale": props["rationale"],
+                    "poc_sha256": fields.get("poc_sha256", null),
+                },
+                "required": ["action", *required[action], "rationale"],
+            }
+            branches.append({"$ref": f"#/$defs/{name}"})
+        return {
+            "$defs": defs,
+            "anyOf": branches,
+            "description": schema.get("description", ""),
+            "title": schema["title"],
+            "type": "object",
+        }
+
+
+def _non_null(prop: dict[str, Any]) -> dict[str, Any]:
+    """`anyOf[X, null]`에서 X만 — nullable 필드의 non-null 쪽 스키마(`schemas/auditor.py`의 같은
+    이름)."""
+    return next(b for b in prop["anyOf"] if b.get("type") != "null")

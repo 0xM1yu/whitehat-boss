@@ -8,7 +8,8 @@ v10은 그 다섯 군데만 「`tool` 필드가 받는 값」 기준으로 고�
 1. **v9는 한 글자도 안 바뀌었다** - prefix·body sha256(`tests/test_pov_v9.py`의 값과 같다).
 2. **v10 = v9 + 이 편집 다섯** - body는 v9와 바이트 동일, prefix는 편집 목록의 결과와 바이트 동일.
 3. **봉투·홉 줄·중계 옵션 선언은 v9와 같다.**
-4. **배선** - `_WIDE_INPUT_VERSIONS` · 서빙 좌석 · doctor · 디스크의 최신 판.
+4. **배선** - `_WIDE_INPUT_VERSIONS`. (서빙 좌석·디스크 최신 판 핀은 ⏵ 2026-10-17
+`tests/test_pov_v11.py`로 옮겼다.)
 5. **고친 문장이 코드와 맞는다** - 실제 `signals.withheld_tools`로 좁힌 봉투가 그 세 도구를 거절하고
    하네스 노트가 prefix가 인용하는 문구를 쓴다.
 
@@ -22,8 +23,6 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src import cli
-from src.config import load_config
 from src.orchestrator.nodes import pov, signals
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
 from src.schemas.enums import Role
@@ -148,23 +147,9 @@ def test_v10_gets_the_same_wide_inputs_as_v9(ctx) -> None:  # noqa: ANN001, F811
     assert v10.prefix != v9.prefix and v10.prompt_version == "v10"
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_pov_seat_selects_v10_and_the_doctor_has_nothing_to_say(profile: str) -> None:
-    config = load_config(profile)
-    version = config.model_for("pov").prompt_template_version
-
-    assert version == "v10"
-    assert cli._check_prompt_version(config, "pov", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-    assert cli._undescribed_relayed_options(config) == [], "서빙 조합이 중계 옵션 가드를 통과한다"
-
-
-def test_no_pov_version_newer_than_the_served_one_is_on_disk() -> None:
-    numbers = sorted(
-        int(p.name[1:]) for p in (PROMPTS_DIR / "pov").iterdir() if p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 10
+# ⏵ 2026-10-17 — 「서빙 좌석이 v10을 고른다」·「디스크의 최신 판이 v10이다」 두 핀은 v11이 서빙 판이
+# 되며
+# `tests/test_pov_v11.py`로 옮겼다(이슈 #704).
 
 
 # === 5. 고친 문장이 코드와 맞는다 =================================================================

@@ -109,3 +109,30 @@ def test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise
     probe = next(s for s in _valid_samples().values() if s.get("action") == "probe")
     assert accepts(narrowed, {**probe, "tool": "poc"})
     assert not accepts(narrowed, {**probe, "tool": "build"})
+
+
+def test_the_compiled_grammar_enforces_what_the_pov_v11_schema_promises() -> None:
+    """#704의 근거 — 같은 xgrammar로 컴파일한 v11 문법이 관측된 실패 모양(`spec` 없는 `gen`)을
+    거절하고 pydantic이 받는 표본은 받는다. v10 봉투의 문법은 그 모양을 받는다(이 PR 전의 결함).
+    서버의 실제 집행은 아니다(합성 어휘 · 같은 문법)."""
+    import json
+
+    xgr = pytest.importorskip("xgrammar")
+    from src.orchestrator.nodes import signals
+    from src.schemas.pov import PovActionNamed
+    from src.schemas.pov import PovDiscriminatedAction as Envelope
+    from tests.test_pov_v11 import _OBSERVED, _valid_samples
+
+    compiler = gate.make_compiler(xgr)
+
+    def accepts(schema, sample) -> bool:  # noqa: ANN001
+        return gate.grammar_accepts(schema, json.dumps(sample), xgr, compiler)
+
+    for name, sample in _valid_samples().items():
+        assert accepts(Envelope, sample), name
+    assert accepts(PovActionNamed, _OBSERVED)
+    assert not accepts(Envelope, _OBSERVED)
+    assert not accepts(Envelope, {"action": "inspect", "rationale": "r"})
+    narrowed = signals.without_tools(Envelope, signals.COMPILE_NOTE_TOOLS)
+    assert accepts(narrowed, {"action": "inspect", "tool": "poc", "rationale": "r"})
+    assert not accepts(narrowed, {"action": "inspect", "tool": "build", "rationale": "r"})
