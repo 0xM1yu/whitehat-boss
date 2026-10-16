@@ -678,7 +678,11 @@ models:
     # (`prompts/auditor/v18/meta.yaml`): 2단계가 그 파일에서 컴파일러 오류를 잰 도구가 요청 스키마 `tool` enum에서 빠지게 되어
     # (`signals.withheld_tools`·`without_tools`) v17의 「같은 오류가 예상된다」·「it refuses no tool」이 거짓이 됐다. body·봉투·도구·옵션 열은 v17과 같다(v17은 한 글자도 안 고쳤다 -
     # 규칙 1). 위 v17 줄의 「이 판으로 돈 run은 0건」은 낡았다 — v17은 `run_20261016_0001`에서 돌았다(#698). v18로 돈 run은 0건이다.
-    prompt_template_version: "v18"
+    # ⏵ 2026-10-17 — **v19**로 올렸다(이슈 #702 · council 2026-10-17). v19 = v18 + SOURCE 순서 예외 하나(과제 설명과 이름이 맞는 걸친
+    # 함수가 걸친 함수 중 맨 앞 · `auditor_desc_first`)와 `FACTS.source_omitted_functions`(상한에 빠진 걸친 함수 목록 ·
+    # `auditor_omitted_functions`) 서술(`prompts/auditor/v19/meta.yaml`). 두 옵션은 `config/budgets.yaml`이 켠다. body·봉투·도구는 v18과
+    # 같다(v18은 한 글자도 안 고쳤다 - 규칙 1). v19로 돈 run은 0건이다.
+    prompt_template_version: "v19"
     fallback: null
     benchmark:
       measured_at: null

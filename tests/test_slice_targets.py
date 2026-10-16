@@ -1354,6 +1354,69 @@ def test_a_token_cap_uses_the_auditor_model_counter_when_one_is_wired() -> None:
     assert (event["functions"], event["dropped"]) == (1, 1)
 
 
+def _options(**values: int):  # noqa: ANN202
+    def configure(config):  # noqa: ANN001, ANN202
+        return config.transition(thresholds=config.thresholds.transition(**values))
+
+    return configure
+
+
+def test_the_runner_hands_the_omitted_list_to_hop0_facts_only_when_switched_on(
+    tmp_path: Path,
+) -> None:
+    """이슈 #702 배선 핀 - `_step_auditor`가 같은 리스트를 `_auditor_source`(채운다)와 `auditor.run`
+    (hop0 FACTS로 싣는다)에 넘긴다. 상한 1토큰이면 `parse_header`가 빠진다(위
+    `test_a_token_cap_without_a_tokenizer_counts_with_the_estimate`). 켜면 그 함수가 이름째 실리고
+    끄면 키가 없다 - 러너·노드 어느 쪽 인자를 지워도 여기서 죽는다."""
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+    traces = {
+        name: _run(
+            tmp_path, name, slices_path=path, before=_with_index(),
+            configure=_options(auditor_source_tokens=1, auditor_omitted_functions=flag),
+        )[1]
+        for name, flag in (("on", 1), ("off", 0))
+    }
+
+    ((_, facts_on),) = _prompts(traces["on"], "auditor")
+    ((_, facts_off),) = _prompts(traces["off"], "auditor")
+    (event,) = _source_events(traces["on"])
+    listed = facts_on["source_omitted_functions"]
+    assert [item["symbol"] for item in listed["functions"]] == ["parse_header"]
+    assert (len(listed["functions"]), listed["more"]) == (event["dropped"], 0) == (1, 0)
+    assert "source_omitted_functions" not in facts_off
+
+
+def test_the_runner_moves_the_described_function_first_only_when_switched_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """이슈 #702 배선 핀 - `_step_auditor`가 `auditor_desc_first`가 켜졌을 때만
+    타깃의 `desc_symbol`을
+    `_auditor_source`에 넘긴다. 설명 순위는 과제 설명이 있어야 서므로 `_slice_desc_rank`만 바꿔
+    `parse_header`(24번 줄을 품는 걸친 함수)를 설명 일치로 세운다."""
+    from src.orchestrator import runner
+
+    real = runner._slice_desc_rank
+
+    def described(ctx, tokens, ref, symbols):  # noqa: ANN001, ANN202
+        _, _, unindexed = real(ctx, tokens, ref, symbols)
+        return 2, runner.narrowest_symbol(ctx.symbols_for("parser.c"), 24), unindexed
+
+    monkeypatch.setattr(runner, "_slice_desc_rank", described)
+    path = _slices_file(tmp_path, [_slice(*_SPANS_TWO)])
+    events = {}
+    for name, flag in (("on", 1), ("off", 0)):
+        _, trace_path = _run(
+            tmp_path, name, slices_path=path, before=_with_index(),
+            configure=_options(auditor_desc_first=flag),
+        )
+        (events[name],) = _source_events(trace_path)
+
+    assert (events["on"]["desc_symbol"], events["on"]["desc_carried"]) == (
+        "parser.c:parse_header", True,
+    )
+    assert "desc_symbol" not in events["off"] and "desc_carried" not in events["off"]
+
+
 def _trim_source(
     trim: int, cap: int, helper: bool = False, at: tuple[int, ...] = (100,)
 ) -> tuple[str, dict]:
@@ -2173,6 +2236,7 @@ def test_auditor_v4_t1_refuses_the_wrapper_option() -> None:
         auditor_caller_lines=0, auditor_callee_wrappers=1,
         auditor_indirect_callees=0, auditor_write_sites=0, auditor_guards=0,
         auditor_write_window_marker=0, auditor_input_context=0,
+        auditor_desc_first=0, auditor_omitted_functions=0,
     )
     config = config.transition(models={**config.models, key: entry}, thresholds=on)
     assert cli._undescribed_source_options(config) == ["auditor_callee_wrappers(auditor/v4_t1)"]

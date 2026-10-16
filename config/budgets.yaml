@@ -227,6 +227,8 @@ thresholds:
   #   ⏵ 2026-10-14 — 서빙 판 v16도 같다(`facts_source: false` · body는 v15와 바이트 동일). prefix는 다섯 군데만 더 든다(입력 맥락 함수 서술 · 쓰기 창 표지 줄) — 다시 안 셌다.
   #   ⏵ 2026-10-14 — 서빙 판 v17도 같다(body는 v16과 바이트 동일 · prefix는 두 군데 — `FACTS.slice_state` 서술 · 「배너 없으면 첫 블록 하나」 정정) — 다시 안 셌다.
   #   ⏵ 2026-10-16 — 서빙 판 v18도 같다(body는 v17과 바이트 동일 · prefix는 「Harness note (stage 2)」 문단 두 문장, #698) — 다시 안 셌다.
+  #   ⏵ 2026-10-17 — 서빙 판 v19는 body가 v18과 바이트 동일이고 prefix가 68,769자(재서 센 값)로 길다. hop0 FACTS에 빠진 걸친 함수 목록
+  #   (`source_omitted_functions` · 최대 100항목)이 더 실린다(#702) — 다시 안 셌다.
   # - 16홉을 다 쓰면 17호출 × 30,924 ≈ 525,700토큰/후보. 거기에 `lookup` 관측이 매번 15,000자
   #   (`_LOOKUP_MAX_CHARS`, 위 낙관 비 3.28이면 4,574토큰)로 오면 홉 k의 요청에 k개가 쌓여
   #   136 × 4,574 ≈ 622,100이 더해진다 → 약 1,147,800토큰/후보(어시스턴트 턴 열여섯은 안 셌다).
@@ -729,6 +731,7 @@ thresholds:
   # ⏵ 2026-10-14 — 정본은 **v16**이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명). 옵션은 `auditor_write_window_marker`(#650)와 `auditor_input_context`가 더해져 열이다(각각 쓰기 창 바로 뒤와 아래).
   # ⏵ 2026-10-14 — 정본은 **v17**이다(v16 + `FACTS.slice_state` 서술 · 「배너 없으면 첫 블록 하나」 정정). 옵션 서술·선언은 열하나가 됐고 열한째 `auditor_slice_state`는 **꺼져 있다**(맨 아래).
   # ⏵ 2026-10-16 — 정본은 **v18**이다(v17 + 「Harness note (stage 2)」 문단 두 문장 정정 · #698). 옵션 선언은 v17과 같다.
+  # ⏵ 2026-10-17 — 정본은 **v19**다(v18 + SOURCE 순서 예외 · `FACTS.source_omitted_functions` 서술 · #702). 옵션은 `auditor_desc_first`·`auditor_omitted_functions`가 더해져 열셋이다(맨 아래 · 둘 다 켠다).
   # 고른 근거는 둘 다 로컬 소표본이다(run ID 없음 · 원자료 저장소 밖):
   # - 20,000토큰 + 정의 + 피호출 -> 2026-10-01 s500 실패 표본 9개(GT 보는 슬라이스 35)에서 정의 누락
   #   97.9 -> 69.4% · 피호출 누락 56.3 -> 47.2% · 입력 토큰 중앙값 347 -> 1,106(`measure_results/
@@ -786,6 +789,7 @@ thresholds:
   # ⏵ 2026-10-14 — 서빙 판 v16·v17도 같은 서술로 선언한다(`prompts/auditor/v16/`·`v17/` — v15의 여덟에 더한 옵션을
   # 그 판이 더 든다).
   # ⏵ 2026-10-16 — 서빙 판 v18도 같은 서술로 선언한다(`prompts/auditor/v18/` — v17과 같은 옵션 열, #698).
+  # ⏵ 2026-10-17 — 서빙 판 v19도 같은 서술로 선언한다(`prompts/auditor/v19/`, #702).
   # v7·v8은 선언하지 않아 그 판을 고르고 켜면 `cli`의 run·doctor가 막는다(`_undescribed_source_options`).
   auditor_guards: 1
   # 슬라이서의 입력 디코더 함수 본문(`analysis.input_context` · S20 Phase 13 · 2026-10-14 · 사용자 결정 - 켠다). 슬라이스에
@@ -793,7 +797,7 @@ thresholds:
   # 쓰기 창 뒤의 마지막 블록(#650 표지 줄이 있으면 그 앞)으로 같은 상한으로 붙인다(`orchestrator/source_input_context`). `syntax` 근거·
   # `dispatches`·`carried_decoders`는 안 싣는다. 키가 없는 슬라이스는 `SOURCE`가 그대로이고
   # `auditor_source` 이벤트에 `input_context: absent` 하나만 는다. 서술·선언은 Auditor **v16**과
-  # **v17**이 든다(`prompts/auditor/v16/`·`v17/` - v17은 v16의 서술을 그대로 물려받는다 · ⏵ 2026-10-16 v18도 같다) - v15 이하를
+  # **v17**이 든다(`prompts/auditor/v16/`·`v17/` - v17은 v16의 서술을 그대로 물려받는다 · ⏵ 2026-10-16 v18 · 10-17 v19도 같다) - v15 이하를
   # 고르고 켜면 `cli`의 run·doctor가 막는다.
   # **켠 효과는 미실측이다** - 이 옵션으로 돈 run은 0건이고, 디코더 본문이 PoV·Critic 입력(`finding_sources`)에도 간다.
   auditor_input_context: 1
@@ -802,9 +806,20 @@ thresholds:
   # 슬라이스는 `false`가 아니라 `null`이다(`orchestrator/slice_state`). 켜면 Auditor hop0 FACTS가 달라지고(다른 역할은 그대로)
   # `auditor_source` 이벤트에 `slice_state_*`가 남는다. **꺼 둔다 - 켜는 것은 측정 결정이다**: 이슈 #438의 닫히는 조건이 켠 run ↔ 끈 run을
   # 같은 표본으로 짝 비교하라고 하고, 입력이 길어지는 정도와 판정 분포가 어느 쪽으로 움직일지는 안 쟀다. 서술·선언은 Auditor **v17**이
-  # 든다(`prompts/auditor/v17/` · ⏵ 2026-10-16 v18도 같다) - 켜려면 v16 이하를 고르면 안 된다(`cli`의 run·doctor가 막는다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
+  # 든다(`prompts/auditor/v17/` · ⏵ 2026-10-16 v18 · 10-17 v19도 같다) - 켜려면 v16 이하를 고르면 안 된다(`cli`의 run·doctor가 막는다). 꺼진 run은 Auditor 입력(SOURCE·FACTS)과
   # 이벤트가 이 옵션이 생기기 전과 바이트 동일하다(`tests/test_slice_state.py`).
   auditor_slice_state: 0
+  # 이슈 #702 — 과제 설명이 entry 함수보다 더 잘 맞히는 걸친 함수(`desc_symbol` — 이름 일치 순위 2 이상, #693)를 걸친 함수 중 맨 앞(entry·GUARDS
+  # 바로 뒤)에 싣는다. 그 후보가 그 일치 때문에 컷에 들었는지는 안 본다.
+  # 상한 **안**에서 순서만 바꾼다. 그 run(`run_20261016_0001` · arvo:1065 · `slice_0524`)에서는 (파일, 시작 줄) 순이라
+  # `apprentice.c`가 상한을 먹고(이슈 #702의 SOURCE 배너 집계 — 40블록 중 24) 그 함수(`funcs.c` `file_regexec`)가 빠졌다. **켠다 - 측정 결정이 아니라 결함 수정이다**
+  # (council 2026-10-17 · 사용자 승인). 서술·선언은 Auditor **v19**가 든다 - v18 이하를 고르고 켜면 `cli`의 run·doctor가 막는다.
+  auditor_desc_first: 1
+  # 이슈 #702 — 상한에 걸려 빠진 걸친 함수의 위치·이름을 hop0 FACTS `source_omitted_functions`로 싣는다(앞 100개 + `more`).
+  # 빠진 함수는 피호출 단계에서도 안 돌아온다(`_auditor_source`의 `seen`) — 모델이 `lookup`할 이름을 받는 길은 이것뿐이다. SOURCE
+  # 문자열은 안 바뀌어 Critic·PoV는 그대로다. **켠다**(같은 근거). 서술·선언은 v19다. FACTS의 이 목록은 SOURCE 상한
+  # (`auditor_source_tokens`)에 안 센다 — 늘어난 입력 토큰은 미실측이다.
+  auditor_omitted_functions: 1
 
   # 🔴 ⏵ 2026-10-05 — 아래 셋은 선언이 없어 필드 기본값 0(= 꺼짐)으로 돌던 스위치다. 켠다(사용자 결정).
   # Scout 슬라이스가 창을 넘으면 entry 가까운 줄만 남긴다(#353 (b)). **0이면 통째로 보내고

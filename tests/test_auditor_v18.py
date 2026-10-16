@@ -28,8 +28,6 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
-from src.config import load_config
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor
 from src.orchestrator.prompt_loader import PROMPTS_DIR, load_prompt
@@ -181,26 +179,8 @@ def test_v18_is_wired_in_every_place_a_new_prompt_version_has_to_be() -> None:
     assert auditor.tool_hops_in_effect("v18", 16) == 16
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_auditor_seat_selects_v18_and_the_doctor_has_nothing_to_say(
-    profile: str,
-) -> None:
-    config = load_config(profile)
-    version = config.model_for("auditor").prompt_template_version
-
-    assert version == "v18"
-    assert cli._check_prompt_version(config, "auditor", version) == []
-    assert cli._undescribed_source_options(config) == []
-
-
-def test_no_auditor_version_newer_than_the_served_one_is_on_disk() -> None:
-    """doctor의 「디스크 새 판」 WARN이 0인 이유 - 서빙 판이 디스크의 마지막 판이다."""
-    numbers = sorted(
-        int(p.name[1:])
-        for p in (PROMPTS_DIR / "auditor").iterdir()
-        if p.is_dir() and p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 18
+# ⏵ 2026-10-17 - 서빙 판 검사(좌석이 이 판을 고른다 · 디스크에 더 새 판이 없다)는 v19로 옮겼다
+# (`tests/test_auditor_v19.py`, 이슈 #702).
 
 
 def test_a_fake_loop_runs_on_v18(ctx: RunContext) -> None:
