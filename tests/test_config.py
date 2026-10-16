@@ -1977,7 +1977,8 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
     """실행 단위를 선언한 것은 canonical 풀 쌍뿐이고, **교대는 `harness_pool` 하나만 선언한다.**
 
     2026-09-24 전에는 `execution`을 선언한 프로필이 0이었다(ADR 0009 결과 1 — 스키마만 열고 값은
-    안 박는다). 그날 @danielcho02가 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로 정했다 —
+    안 박는다). 그날 @danielcho02가 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로
+    정했다 —
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
@@ -2608,7 +2609,8 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
 def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
     """canonical Auditor는 가장 높은 등급으로 사고하고, 그 사고가 끝날 자리가 예산에 있다.
 
-    2026-09-26 @danielcho02 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이 깨진다**
+    2026-09-26 @danielcho02 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이
+    깨진다**
     (같은 날 council): ① 사고가 출력 상한 안에 안 끝나면 본문이 비거나 잘려 스키마 실패다 — 옛
     Auditor에 parser를 걸고 4,096으로 돌린 판이 7/7(본문 `None` 6 · 잘린 JSON 1)이었다 ② 요청
     타임아웃이 상한보다 먼저 오면 호출이 끊기고

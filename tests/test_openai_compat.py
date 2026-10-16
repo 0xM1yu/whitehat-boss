@@ -1137,7 +1137,8 @@ _METRICS_FIXTURE = (
 
 
 def _metrics_with_generation(tokens: float) -> bytes:
-    """실측 원문(vLLM 0.19.1 Slurm 클러스터)에서 생성 카운터 값만 바꾼다 — 이름·라벨은 원문 그대로다."""
+    """실측 원문(vLLM 0.19.1 Slurm 클러스터)에서 생성 카운터 값만 바꾼다 — 이름·라벨은 원문
+    그대로다."""
     text, count = re.subn(
         r'^(vllm:generation_tokens_total\{[^}]*\}) \S+$',
         rf"\g<1> {tokens}",
