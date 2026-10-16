@@ -1,0 +1,30 @@
+# 도구 루프 판. 배선 조건은 v12·v14~v18과 같다 — `config/models.yaml`의 auditor 엔트리가 이 버전을 고르고
+# `config/budgets.yaml`의 `thresholds.auditor_tool_hops`가 양수여야 루프가 돈다(`nodes/auditor.loop_problem`).
+#
+# v19 = v18 + **두 군데**(이슈 #702, council 2026-10-17). body·봉투·도구는 v18과 같다.
+# - body는 v18과 바이트 동일이다. prefix는 「Original-source input contract」의 두 항목만 v18과 다르다
+#   (`tests/test_auditor_v19.py`가 묶는다):
+#   ① 「Each other slice line … `(file, start line)` order」 항목 끝 — 설명 일치 함수가 걸친 함수 중 맨 앞이다
+#     (`auditor_desc_first`). 상한은 같이 받는다.
+#   ② 상한 항목 끝 — `FACTS.source_omitted_functions`(상한에 빠진 걸친 함수 목록 · `auditor_omitted_functions`)와
+#     그것을 `lookup`으로 물으라는 문장.
+# - 왜: 과제 설명이 entry보다 더 잘 맞히는 걸친 함수(`desc_symbol`, #693)가 있는 슬라이스가 컷에 들었는데, SOURCE가 걸친
+#   함수를 (파일, 시작 줄) 순으로 상한까지 채워 그 함수가 잘렸다(`run_20261016_0001` · arvo:1065 · `slice_0524` —
+#   functions 40 · dropped 68 · 프롬프트에 `file_regexec` 0회). 상한에 빠진 함수는 수로만 남아 모델이 무엇을
+#   `lookup`할지 몰랐다.
+# - source_options: v18의 열하나에 `auditor_desc_first`·`auditor_omitted_functions`를 더한 열셋이다. 둘 다 Auditor만
+#   서술한다 — 순서만 바꾼 SOURCE는 블록 종류가 같고 목록은 FACTS로만 가서, 같은 SOURCE를 받는 Critic·PoV 판이
+#   서술할 옵션(`config.RELAYED_SOURCE_OPTIONS`)이 아니다.
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `9c9c6ea1385b3eff0c383e3d811660626bd555e5b20ad52601a8ada1db58352f`
+#   body.md   sha256 `c4799594df6cc3e6d84658674e82bf357d9127479a27c255b93a5a093acb9584` (v18 body와 같다)
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 크래시 지점(그 run의 `softmagic.c` `match`)은 GT라 하네스가 run 중에 모르고,
+#   이 판으로 SOURCE에 든다는 보장이 없다. 모델이 목록을 보고 `lookup`하는지·판정 분포가 어떻게 움직이는지는 미측정이다.
+# v18 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: auditor
+version: v19
+output_schema: AuditorProcedureProbeInputDiscriminatedAction
+description: v18에 SOURCE 순서 예외 하나(과제 설명과 이름이 맞는 걸친 함수가 맨 앞)와 FACTS.source_omitted_functions(상한에 빠진 걸친 함수 목록) 서술을 더한 판입니다(이슈 #702). body·봉투·도구는 v18과 같습니다.
+source_options: [auditor_source_tokens, auditor_definitions, auditor_callee_hops, auditor_caller_lines, auditor_callee_wrappers, auditor_indirect_callees, auditor_write_sites, auditor_guards, auditor_write_window_marker, auditor_input_context, auditor_slice_state, auditor_desc_first, auditor_omitted_functions]
+tools: [semgrep, clang-tidy, build, asan, gdb, poc]
+facts_source: false

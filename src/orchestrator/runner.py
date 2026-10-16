@@ -4904,13 +4904,25 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
     )
     with using_counter(ctx.counter_for_role(Role.AUDITOR.value)):
         expanded = retrieval.run(ctx, target=anchor, level=CapsuleLevel.EXPANDED)
+    # 이슈 #702 — 설명 일치 함수를 맨 앞에(`auditor_desc_first`), 상한에 빠진 걸친 함수를 hop0
+    # FACTS로(`auditor_omitted_functions`). 리스트는 `_auditor_source`가 채우고 노드가 FACTS 조립 때
+    # 읽는다(`_render_hop0`이 `source()`를 FACTS 조립 전에 부르는 순서에 기댄다).
+    # 꺼졌거나 슬라이스가 없으면 `None`이라 SOURCE·FACTS·이벤트가 옛 모양 그대로다.
+    thresholds = ctx.config.thresholds
+    desc_symbol = item.target.desc_symbol if thresholds.auditor_desc_first else None
+    omitted_functions: list[Location] | None = (
+        [] if ref is not None and thresholds.auditor_omitted_functions else None
+    )
     # 콜러블이라 노드가 5단계 구간 안에서 부른다(`auditor.run` docstring). `_Once`로 감싸는 이유는
     # **8단계 PoV가 같은 문자열을 다시 쓰기 때문**이다(아래 `state.finding_sources`).
     source = (
         _Once(partial(ctx.read_source, expanded.target))
         if ref is None
         else _Once(
-            partial(_auditor_source, ctx, ref, anchor, candidate.candidate_id, slice_state=exposed)
+            partial(
+                _auditor_source, ctx, ref, anchor, candidate.candidate_id, slice_state=exposed,
+                desc_symbol=desc_symbol, omitted_functions=omitted_functions,
+            )
         )
     )
     # 도구 루프가 홉마다 본 관측을 받는 통로 — Finding과 함께 7단계 Critic에 물려 준다(#600 H2ⓐ).
@@ -4927,6 +4939,7 @@ def _step_auditor(ctx: RunContext, item: _InFlight, state: _Accumulator) -> bool
             # `probe`가 이 디렉터리에서 도구를 돌린다. 아래 `state.workdirs`와 같은 값이다.
             workdir=artifact.path,
             slice_state=exposed,
+            omitted_functions=omitted_functions,
         )
     except auditor.AuditorHopLimit:
         # **도구 루프가 Finding 없이 섰다**(같은 요청 반복 · 조사만으로 상한 소진 — 이슈 #419). 둘
@@ -5059,6 +5072,8 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # `auditor_slice_state`는 꺼져 있어 hop0 user 턴은 v16과 같다. 위 상한은 다시 안 셌다. ⏵ 2026-10-16
 # — 서빙 판은
 # v18이다(v17 + 하네스 노트 문단 두 문장 · body는 v17과 바이트 동일, #698). 위 상한은 다시 안 셌다.
+# ⏵ 2026-10-17 — 서빙 판은 v19다(prefix 68,769자 · 재서 센 값). hop0 FACTS에
+# `source_omitted_functions`(최대 100항목)가 더 실린다 — 위 합에 미산입이고 다시 안 셌다(#702).
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).
@@ -5135,13 +5150,16 @@ def _auditor_source(
     candidate_id: str,
     *,
     slice_state: Mapping[str, object] | None = None,
+    desc_symbol: Location | None = None,
+    omitted_functions: list[Location] | None = None,
 ) -> str:
     """슬라이스 타깃의 5단계 `SOURCE`. 노드가 5단계 구간 안에서 부른다(`_step_auditor`) — 슬라이스
     타깃이 아니면 부르지 않고 노드가 캡슐 대상(`anchor`)을 그대로 읽는다.
 
     결정 1-b = 넓은 (i)(2026-09-25 팀 합의): **슬라이스가 걸친 함수의 원본을 전부** 준다. 맨 앞이
     entry 함수(`anchor` — `_auditor_target`)이고, 나머지는 슬라이스 줄마다 그 줄을 품는 가장 좁은
-    인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다. 둘 이상이면 함수마다 `파일:시작-끝` 배너를 단다 —
+    인덱스 심볼을 (파일, 시작 줄) 순으로 붙인다(예외 하나 — 아래 「설명 일치 함수 먼저」). 둘
+    이상이면 함수마다 `파일:시작-끝` 배너를 단다 —
     하나면 배너 없이 그 함수 그대로라 넓히기 전과 바이트가 같다. 단 그 하나 뒤에 #650 표지 줄
     (`_WRITE_WINDOWS_MORE`)이 붙을 수 있고(쓰기 창이 전부 못 실렸을 때) 줄인 entry 함수
     (`auditor_entry_trim`)는 혼자여도 배너를 단다 — 아래 `source = ...` 줄 근처 주석.
@@ -5160,6 +5178,19 @@ def _auditor_source(
     상한을 둘지는 이 이벤트가 실서빙에서 내는 값을 보고 정한다.
     ⏵ `auditor_entry_trim`이 1이면 entry 함수가 상한을 넘을 때 줄인다(`_trim_entry`) — 그때
     `entry_omitted_lines`가 뺀 줄 수를 들고, `anchor_chars`는 줄이기 전 크기 그대로다.
+
+    **설명 일치 함수 먼저(`auditor_desc_first`, 이슈 #702)** — `desc_symbol`(과제 설명이 entry
+    함수보다 더 잘 맞히는 걸친 함수, #693)을 주면 걸친 함수 중 그것이 맨 앞이고 나머지는 (파일, 시작
+    줄) 순 그대로다. 상한은 같이 받는다 — 넘치면 통째로 빠진다(상한 밖으로 운반하지 않는다). 그것이
+    entry 범위 안이라 걸친 함수가 아니면 순서가 안 바뀐다. 이벤트에 `desc_symbol`(`파일:이름`)·
+    `desc_carried`(실렸나)가 더 실린다. 러너가 옵션이 꺼졌을 때 `None`을 주므로 그때 `SOURCE`·
+    이벤트는
+    옛 모양 그대로다.
+    **빠진 걸친 함수(`auditor_omitted_functions`, 이슈 #702)** — `omitted_functions`(리스트)를 주면
+    상한에 걸려 빠진 걸친 함수를 빠진 순서로 거기 붙인다 — `dropped`를 세는 그 자리라 길이가 늘
+    `dropped`와 같다. 노드가 hop0 FACTS `source_omitted_functions`로 싣는다(`_render_hop0`이
+    `source()`를 FACTS 조립 **전에** 부른다). `SOURCE` 문자열은 안 바뀐다. 정의·피호출·창 단계에서
+    빠진 것은 안 든다.
 
     **GUARDS(`auditor_guards`)** — 1이고 sink를 아는 슬라이스(Case B)면 entry 함수 **바로 뒤에**
     `source_guards`가 훑은 sink 앞 가드 블록을 붙인다. entry 함수 몫이라 상한에 밀려 빠지지
@@ -5305,12 +5336,20 @@ def _auditor_source(
     # (`write_windows_omitted`)의 「이미 보이나」와 입력 맥락 함수의 「이미 실렸나」
     # (`source_input_context._contained`).
     shown = _shown_ranges(anchor, anchor_text) if omitted else [anchor]
-    for symbol in sorted(spanned, key=lambda symbol: (symbol.file, symbol.line_start or 0)):
+    # 설명 일치 함수(#702)가 걸친 함수면 그것이 맨 앞이다 — 첫 항이 `False`인 것은 그 하나뿐이라
+    # 나머지는 (파일, 시작 줄) 순 그대로다. 없거나 entry 범위 안이면 첫 항이 전부 `True`다.
+    order = sorted(
+        spanned,
+        key=lambda symbol: (symbol != desc_symbol, symbol.file, symbol.line_start or 0),
+    )
+    for symbol in order:
         seen.append(symbol)
         text = ctx.read_source(symbol)
         block = _block(symbol, text)
         if size + 1 + measure(block) > cap:
             dropped += 1
+            if omitted_functions is not None:
+                omitted_functions.append(symbol)
             continue
         blocks.append(block)
         shown.append(symbol)
@@ -5642,6 +5681,14 @@ def _auditor_source(
             - (len(input_context.blocks) if input_context else 0)
         ),
         dropped=dropped,
+        **(
+            {
+                "desc_symbol": f"{desc_symbol.file}:{desc_symbol.symbol or ''}",
+                "desc_carried": desc_symbol in carried,
+            }
+            if desc_symbol is not None
+            else {}
+        ),
         uncovered_lines=uncovered,
         chars=len(source),
         anchor_chars=anchor_chars,

@@ -47,7 +47,7 @@ def test_the_serving_combination_passes_every_source_option_check() -> None:
     config = load_config("harness_pool")
     seats = ("auditor", "critic", "pov")
     versions = {role: config.model_for(role).prompt_template_version for role in seats}
-    assert versions == {"auditor": "v18", "critic": "v8", "pov": "v10"}, "전제 - 서빙 조합"
+    assert versions == {"auditor": "v19", "critic": "v8", "pov": "v10"}, "전제 - 서빙 조합"
     on = config.thresholds.auditor_source_options_on()
     assert {MARKER, CONTEXT} <= set(on), "전제 - 두 옵션이 켜져 있다"
     assert cli._undescribed_source_options(config) == []

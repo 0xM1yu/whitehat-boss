@@ -280,5 +280,7 @@ def test_a_fake_loop_runs_on_v16(ctx: RunContext) -> None:
 def test_the_v16_meta_declares_exactly_the_options_turned_on(profile: str) -> None:
     config = load_config(profile)
     declared = set(load_prompt(Role.AUDITOR, "v16").source_options)
-    assert declared == set(config.thresholds.auditor_source_options_on())
+    # ⏵ 2026-10-17 - v19가 들인 둘(#702)은 v16이 선언하지 않는다 - 켜진 집합에서 빼고 비교한다.
+    later = {"auditor_desc_first", "auditor_omitted_functions"}
+    assert declared == set(config.thresholds.auditor_source_options_on()) - later
     assert "auditor_input_context" in declared

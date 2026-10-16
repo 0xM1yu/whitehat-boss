@@ -384,7 +384,11 @@ def test_turning_the_option_on_is_blocked_before_v17_and_allowed_on_it() -> None
     이하를 고르고 켜면 `cli`가 막는다(모델 입력에 서술 없는 키가 실리므로)."""
     config = load_config("harness_pool")
     key = config.model_key_for("auditor")
-    on = config.thresholds.transition(auditor_slice_state=1)
+    # ⏵ 2026-10-17 - `auditor_desc_first`·`auditor_omitted_functions`(v19부터 서술 - #702)는
+    # v17이 서술하지 않아 끈다.
+    on = config.thresholds.transition(
+        auditor_slice_state=1, auditor_desc_first=0, auditor_omitted_functions=0
+    )
 
     def with_version(version: str):  # noqa: ANN202
         entry = config.models[key].transition(prompt_template_version=version)
@@ -442,5 +446,6 @@ def test_the_v17_meta_declares_the_options_turned_on_plus_the_one_pending_measur
     on = set(config.thresholds.auditor_source_options_on())
 
     assert declared - on == {"auditor_slice_state"}
-    assert on <= declared
+    # ⏵ 2026-10-17 - v19가 들인 둘(#702)은 v17이 선언하지 않는다.
+    assert on - {"auditor_desc_first", "auditor_omitted_functions"} <= declared
     assert config.thresholds.auditor_slice_state == 0
