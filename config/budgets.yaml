@@ -812,11 +812,11 @@ thresholds:
   # 이슈 #702 — 과제 설명이 entry 함수보다 더 잘 맞히는 걸친 함수(`desc_symbol` — 이름 일치 순위 2 이상, #693)를 걸친 함수 중 맨 앞(entry·GUARDS
   # 바로 뒤)에 싣는다. 그 후보가 그 일치 때문에 컷에 들었는지는 안 본다.
   # 상한 **안**에서 순서만 바꾼다. 그 run(`run_20261016_0001` · arvo:1065 · `slice_0524`)에서는 (파일, 시작 줄) 순이라
-  # `apprentice.c`가 상한을 먹고(이슈 #702의 SOURCE 배너 집계 — 40블록 중 24) 그 함수(`funcs.c` `file_regexec`)가 빠졌다. **켠다 - 측정 결정이 아니라 결함 수정이다**
+  # `apprentice.c`가 상한을 먹고(이슈 #702의 SOURCE 배너 집계 — 40블록 중 24) 그 함수(`funcs.c` `file_regexec`)가 빠졌다. **켠다 - 사용자 승인(council 2026-10-17) · 효과는 미실측이다**
   # (council 2026-10-17 · 사용자 승인). 서술·선언은 Auditor **v19**가 든다 - v18 이하를 고르고 켜면 `cli`의 run·doctor가 막는다.
   auditor_desc_first: 1
   # 이슈 #702 — 상한에 걸려 빠진 걸친 함수의 위치·이름을 hop0 FACTS `source_omitted_functions`로 싣는다(앞 100개 + `more`).
-  # 빠진 함수는 피호출 단계에서도 안 돌아온다(`_auditor_source`의 `seen`) — 모델이 `lookup`할 이름을 받는 길은 이것뿐이다. SOURCE
+  # 빠진 함수는 피호출 단계에서도 안 돌아온다(`_auditor_source`의 `seen`) — SOURCE·FACTS에서 그 이름을 받는 길은 이것이다(과제 설명에 이름이 있으면 모델은 거기서도 얻는다). SOURCE
   # 문자열은 안 바뀌어 Critic·PoV는 그대로다. **켠다**(같은 근거). 서술·선언은 v19다. FACTS의 이 목록은 SOURCE 상한
   # (`auditor_source_tokens`)에 안 센다 — 늘어난 입력 토큰은 미실측이다.
   auditor_omitted_functions: 1

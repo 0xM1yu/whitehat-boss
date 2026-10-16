@@ -237,7 +237,7 @@ agent:
   이벤트가 이 옵션이 생기기 전과 **바이트 동일**하다(`tests/test_slice_state.py`). `degraded`·`truncated`·경계는 선택지 (a)의 `gate_reasons`(`auditor_source_gate`)와 같은 신호의 다른 출구다 — 사후 집계는 이벤트가, 모델 입력은 이 키가 든다.
   **v17부터 서술·선언한다**(v16 이하를 고르고 켜면 `cli` run·doctor가 막는다). 아직 안 쓴 것: 켠 run 짝 비교는 0건이다. ⚠ `analysis_kind`는 슬라이서의 방법 이름이다 —
   `slice_criterion`(어느 끝을 쥐여 줬는가)이 아니고 그 키는 Auditor에 안 간다.
-  ⏵ **2026-10-17 — 열두째·열셋째 옵션 `auditor_desc_first`·`auditor_omitted_functions`**(이슈 #702 · `budgets.yaml` 둘 다 1). 앞의 것은 SOURCE 순서만 바꾼다 — 과제 설명이 entry 함수보다 더 잘 맞히는 걸친 함수가 걸친 함수 중 맨 앞이다. 뒤의 것은 hop0 FACTS에 opt-in 키 `source_omitted_functions`(상한에 빠진 걸친 함수의 위치 앞 100개 + `more`)를 붙인다(**Auditor만** — `build_facts`에 그 인자를 넘기는 곳은 `_render_hop0` 하나다). v19부터 서술·선언한다(v18 이하를 고르고 켜면 `cli` run·doctor가 막는다). SOURCE 문자열은 안 바뀌어 Critic·PoV 좌석은 그대로다 — 아래 「v18 → v19」.
+  ⏵ **2026-10-17 — 열두째·열셋째 옵션 `auditor_desc_first`·`auditor_omitted_functions`**(이슈 #702 · `budgets.yaml` 둘 다 1). 앞의 것은 SOURCE 순서만 바꾼다 — 과제 설명이 entry 함수보다 더 잘 맞히는 걸친 함수가 걸친 함수 중 맨 앞이다. 뒤의 것은 hop0 FACTS에 opt-in 키 `source_omitted_functions`(상한에 빠진 걸친 함수의 위치 앞 100개 + `more`)를 붙인다(**Auditor만** — `build_facts`에 그 인자를 넘기는 곳은 `_render_hop0` 하나다). v19부터 서술·선언한다(v18 이하를 고르고 켜면 `cli` run·doctor가 막는다). Critic·PoV 판은 안 올렸다 — 목록은 FACTS로만 가서 SOURCE 문자열을 안 바꾸고, 앞의 것은 SOURCE의 블록 순서만 바꿔 블록 종류가 같다(Critic·PoV 판은 함수 순서를 서술하지 않는다). 아래 「v18 → v19」.
   Evidence는 FACTS의 `evidence`로 id·kind·ok가 가고, content-aware 프롬프트 버전(`nodes/auditor.py`의
   `_CONTENT_AWARE_VERSIONS` — **판 목록을 여기 적지 않는다.** 그 상수에서 읽고, 서빙 판이 그 안에 드는지는
   `test_config.py`의 `test_the_canonical_auditor_version_receives_evidence_bodies`가 문다. ⏵ 2026-10-03 —
@@ -1170,7 +1170,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 그 데이터로 학습한 Auditor를 서빙할 수 없다. **서빙 판이 아니다** -> registry는 v11을 고르고 v12로 바꾸는 것은 FT 모델을 서빙할 때의 결정이다.
 ⏵ 2026-10-11 — 그 결정이 났다: 서빙 판은 v14(v12 + FACTS `source` 제거)다. v12 자체는 여전히 미선택이다.
 ⏵ 2026-10-13 — 서빙 판은 v15다(v14 + 계약 문장 여섯 · S19). 봉투는 v12의 넷째를 상속한 `AuditorProcedureProbeInputAction`이라 이 절의 `cwe`·`audit` 규칙은 그대로 선다. v12 자체는 여전히 미선택이다.
-⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다. ⏵ 같은 날 서빙 판은 v17이다(v16 + 슬라이스 상태 서술 · S20 Phase 14) - 봉투는 같다.
+⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + 입력 맥락 함수 블록 서술 · 쓰기 창 표지 줄 설명 · S20 Phase 13). 봉투는 v15와 같아 이 절의 규칙은 그대로 선다. ⏵ 같은 날 서빙 판은 v17이다(v16 + 슬라이스 상태 서술 · S20 Phase 14) - 봉투는 같다. ⏵ 2026-10-16 v18 · ⏵ 2026-10-17 v19가 서빙 판이 됐다(#698 · #702) - 이 절의 규칙은 그대로다.
 
 - 봉투 `AuditorProcedureAuditAlwaysAction`(액션 서술 docstring은 v10·v11과 같다) · 최종 답 `AuditProcedureAuditAlways`(`AuditProcedureNullableCwe`의
   서브클래스) -> 필드 순서·`cwe` 규칙(null은 `no_signal`에서만)을 물려받고 `audit`만 다시 선언한다(non-null · `AuditBlockWithNoSignal`).
