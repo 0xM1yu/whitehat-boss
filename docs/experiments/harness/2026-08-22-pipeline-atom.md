@@ -4,7 +4,7 @@
 > **원자료는 터미널 출력에서 옮겼고, run 산출물을 다시 열어 확인한 것이 아니다.**
 > 그래서 메타 표의 여러 칸이 `미기재`다 — 채우는 방법은 §5에 적었다.
 
-**작성**: 팀
+**작성**: @danielcho02
 **실험일**: 2026-08-22 (KST)
 **대상 장비**: GIGABYTE AI TOP ATOM (NVIDIA DGX Spark 계열, GB10 Grace Blackwell)
 

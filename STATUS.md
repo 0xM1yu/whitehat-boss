@@ -271,7 +271,7 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 미스·스키마·버릴 수 있는 게이트웨이 실패는 finding을 안 죽이고 `pov_skipped`로 남기고, 서버 쪽
 사건·예산 소진은 run으로 올린다). CyberGym Level 1
 과제 로더(`task_loader` — repo-vul.tar.gz 안전 해제 + description.txt)와 설명 주입(캡슐 `vuln_description`
-섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(팀 선정)는 §1 8단계 pov 좌석으로
+섹션 → Scout·Auditor·pov)도 붙었다. PoV 모델 **`feyospace-v1-small`**(@danielcho02 선정)는 §1 8단계 pov 좌석으로
 `harness_pool`·`_hybrid`에 배선됐다(swap·장비 파일 포함) — checksum·benchmark 미실측(호스트 확보 뒤).
 
 ⏵ **2026-10-09 — 그 조건이 섰다**(ADR 0014(`docs/decisions/0014-poc-tool-runs-the-task-image.md`) · 이슈 #513). `poc` 도구가 과제 자신의 `-vul` 이미지에
@@ -286,7 +286,7 @@ PoC를 `/tmp/poc`로 바인드해 돌리므로 **그 도구의 관측은 PoC의 
 vul 다리에 한해 깨졌다**(`win11`의 `run_20261003_0003`(trace sha256 `f308c5fbfc4f8e54…`)이 실서버에 8건
 제출, 전부 200 — **고유 PoC 1개**, `cached` 미적중 1·적중 7). **왕복(vul→fix→조회)은
 여전히 0건**이다 — 후보 8건이라 최종 PoC를 지정하지 않았다
-([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). ⏵ **고르는 규칙은 동결·배선됐다**(2026-10-03, 팀 · council 뒤) — 그때의 규칙은
+([보고서](docs/experiments/harness/2026-10-03-cybergym-plumbing-proof-win11.md)). ⏵ **고르는 규칙은 동결·배선됐다**(2026-10-03, @danielcho02 · council 뒤) — 그때의 규칙은
 **내부 근거 등급 최댓값, 동점이면 거부**였고(⏵ 2026-10-04에 뒤의 거부가 사슬로 바뀌었다 — 아래)
 지정 로직이 채점기 값을 안 읽는다는 불변식에 테스트가 붙었다(⏵ 2026-10-14 — 후보 자기 `vul` 응답 종료 코드 하나만 읽도록 개정됐다, 이슈 #637 · ADR 0013 결정 2). 지정이 보는 등급은 8단계 `gate_eval`과 같다(`runner._grades_by_finding` — 8단계 도구 근거까지
 센다). 🔴 **`dev_fake`에서는 그래도 점수가 안 난다** — Fake `_run_repro`가 대상 소스의 존재만 봐 재현이

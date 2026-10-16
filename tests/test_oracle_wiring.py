@@ -839,7 +839,7 @@ def test_a_final_designation_failure_reaches_the_run_warnings(
 def test_a_non_target_exception_after_a_submitted_poc_still_runs_the_final_designation(
     ctx, monkeypatch  # noqa: ANN001, F811
 ) -> None:
-    """**낸 PoC가 있으면 예외 종류를 가리지 않고 최종 지정이 돈다** (2026-10-15 팀 승인 - 전엔
+    """**낸 PoC가 있으면 예외 종류를 가리지 않고 최종 지정이 돈다** (2026-10-15 @danielcho02 승인 - 전엔
     이 자리가 「그 밖의 예외는 안 덮는다」의 핀이었고 `except Exception`으로 넓히는 변이를 물었다).
     앞 대상이 PoC를 냈고(후보 1건) 추가 대상에서 계약 밖 예외가 난다 - `fix` 다리·판정 조회가
     정확히 한 번 돌고 `oracle.final`이 `scored`이며, **원 예외가 그대로 올라가고** 노트가 붙는다.
