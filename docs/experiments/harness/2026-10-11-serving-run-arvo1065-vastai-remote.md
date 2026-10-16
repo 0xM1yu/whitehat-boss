@@ -24,7 +24,7 @@
 | GPU | vast **55256062**(홍콩) · RTX PRO 6000 Blackwell **Workstation** Edition · 97,887 MiB · 드라이버 590.48.01 · 32 vCPU · RAM 123 GiB · 디스크 300 GB · $1.444/hr · ⚠ 사양·단가·대여 시각의 원천은 vastai CLI 출력·세션 기록이다(`s14-results`에 없다) |
 | 버린 박스 | vast **55249138**(일본 · $1.39/hr) — 이미지 내려받기가 **48분**에도 안 끝나 홍콩 박스와 경주시켜 버렸다(§6) |
 | 배선 | 하네스·도구·채점기 **로컬**(Windows 11 · Python 3.14.5) · 서빙만 원격 · ssh 터널 `8000·8001·8002·8003·8006` |
-| 🔴 ssh 경로 | **직결** `root@<host-ip>:63027`. vast **프록시**(`ssh3/ssh8.vast.ai`)에서 두 번(trace로 확인되는 것은 `run_20261010_0001`의 `ssh3.vast.ai` 하나 · 둘째는 세션 기록) · **직결에서도 한 번**(`run_20261010_0004` 내림 ssh `<host-ip>:63027` `Connection timed out` · trace) 끊겼다 — 전부 로컬 인터넷 전환 때다(§6) |
+| 🔴 ssh 경로 | **직결** `root@REDACTED:63027`. vast **프록시**(`ssh3/ssh8.vast.ai`)에서 두 번(trace로 확인되는 것은 `run_20261010_0001`의 `ssh3.vast.ai` 하나 · 둘째는 세션 기록) · **직결에서도 한 번**(`run_20261010_0004` 내림 ssh `REDACTED:63027` `Connection timed out` · trace) 끊겼다 — 전부 로컬 인터넷 전환 때다(§6) |
 | 셸 | PowerShell + `Git\usr\bin`을 PATH 앞에([#538](https://github.com/0xM1yu/whitehat-boss/issues/538)) |
 | 도구 이미지 | `harness-tools:v3` · 인덱서 index-v4(preflight가 저장소 파일과 바이트 동일 확인) |
 | 채점기 | 저자 소스 `c6fe202` · `127.0.0.1:8666` · **새 `--db_path`** `C:\w\oracle-run08\poc.db` · rate limit 기본 20회/60초 |

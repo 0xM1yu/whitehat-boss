@@ -73,7 +73,7 @@ def _run(tmp_path: Path, name: str = "run", *, profile: str = "dev_fake", **over
     `configure`는 **위 셋으로 표현할 수 없는 config 변경**을 받는다 — `config`를 받아
     바꾼 것을 돌려주는 함수다. `execution.mode` 같은 프로필 필드가 그렇다. 이 훅이
     없으면 그런 검사가 이 헬퍼 본문을 복사하게 되고, 그러면 `cli.execute` 인자가
-    늘 때 **복사한 쪽만 조용히 뒤처진다**(@sumin0218 리뷰 #161-3).
+    늘 때 **복사한 쪽만 조용히 뒤처진다**(팀 리뷰 #161-3).
     """
     config = load_config(profile)
     if "budget" in overrides:
@@ -5942,7 +5942,7 @@ def test_an_auditor_that_never_succeeds_stops_the_run_even_when_the_scout_seat_d
 def test_a_critic_that_never_succeeds_still_lets_pov_run(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**고른 Finding 전부에서 Critic이 실패해도 8단계가 돈다 (2026-10-15 @danielcho02 결정).**
+    """**고른 Finding 전부에서 Critic이 실패해도 8단계가 돈다 (2026-10-15 팀 결정).**
 
     판정을 못 받은 Finding은 Critic 미경유로 PoV 풀에 남는다(ADR 0015 결정 4 ⏵). 예전에는
     여기서 7단계가 서서 그 결정이 무너졌다(D88 성공 0 백스톱). 「못 봤다」는 경고·trace가 알린다.
@@ -6056,7 +6056,7 @@ def _per_stage(config: object) -> object:
     보는지뿐이라 config 객체에서만 세운다.
 
     `_run(..., configure=_per_stage)`로 넘긴다 — 두 ADR-0009 검사가 **같은 실행 경로**를
-    타야 한다(@sumin0218 리뷰 #161-3).
+    타야 한다(팀 리뷰 #161-3).
     """
     from src.config import ExecutionPolicy
 
@@ -6118,7 +6118,7 @@ def test_per_stage_finishes_a_stage_for_every_target_before_the_next_starts(
 
 
 def test_every_triage_step_takes_the_same_arguments() -> None:
-    """`_TRIAGE_STEPS`의 콜러블 전부가 같은 시그니처여야 한다 (@sumin0218 리뷰 #161-1).
+    """`_TRIAGE_STEPS`의 콜러블 전부가 같은 시그니처여야 한다 (팀 리뷰 #161-1).
 
     **하나라도 다르면 디스패처가 특수분기를 갖고, 그 항목은 표에서 죽은 값이 된다.**
     표는 권위 있어 보이는데 아무도 그 칸을 안 읽으므로, 단계를 재배열하거나 앞에
@@ -6183,7 +6183,7 @@ def test_a_step_run_out_of_order_raises_instead_of_flowing_none_onward(
 ) -> None:
     """앞 단계가 안 채운 값으로 뒷 단계를 부르면 **경계에서 멈춰야 한다**.
 
-    **왜 전용 예외인가 (@sumin0218 리뷰 #161-4).** 원래는 `assert`였다. `assert`는
+    **왜 전용 예외인가 (팀 리뷰 #161-4).** 원래는 `assert`였다. `assert`는
     `python -O`에서 사라져 `None`이 노드 깊숙이 흘러 불명확한 `TypeError`가 된다.
     그리고 `origin/main`의 `src/`에는 `assert`가 **0건**이다 — 이 저장소가 불변식을
     알리는 방식은 전용 예외다(`ConfigError`·`PromptError`·`BenchApplyError`·

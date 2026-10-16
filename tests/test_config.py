@@ -1653,7 +1653,7 @@ def test_reasoning_effort_reaches_the_gateway_when_the_registry_declares_it(
 def test_reasoning_effort_reaches_the_run_record_and_the_gateway_together(
     tmp_path: Path,
 ) -> None:
-    """`reasoning_effort`가 **기록과 요청 양쪽**에 같은 값으로 간다 (@sumin0218 리뷰 #165 HIGH).
+    """`reasoning_effort`가 **기록과 요청 양쪽**에 같은 값으로 간다 (팀 리뷰 #165 HIGH).
 
     ## 왜 요청 경로만으로는 부족한가
 
@@ -1960,7 +1960,7 @@ def test_b1_puts_one_model_in_every_role_and_still_loads(tmp_path: Path) -> None
 # --- 실행 정책 (ADR 0009) ------------------------------------------------------
 
 
-# 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 @danielcho02).
+# 단계 단위로 도는 프로필 — 로스터 canonical 쌍(2026-09-24 팀).
 PER_STAGE_PROFILES = frozenset({"harness_pool", "harness_pool_hybrid"})
 # 그중 교대를 선언한 프로필(2026-09-29 — 교대 명령·장비 파일과 같이 왔다). hybrid는 검색 역할을
 # 어느 단계에 띄울지가 ADR 0012 결정 3 뒤라 선언하지 않는다(`SwapPolicy`가 검색 역할을 거부한다).
@@ -1972,7 +1972,7 @@ def test_only_the_canonical_pool_runs_per_stage_and_only_harness_pool_swaps(prof
     """실행 단위를 선언한 것은 canonical 풀 쌍뿐이고, **교대는 `harness_pool` 하나만 선언한다.**
 
     2026-09-24 전에는 `execution`을 선언한 프로필이 0이었다(ADR 0009 결과 1 — 스키마만 열고 값은
-    안 박는다). 그날 @danielcho02가 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로 정했다 —
+    안 박는다). 그날 팀이 로스터 canonical 배선(`harness_pool`·`_hybrid`)을 단계 단위로 정했다 —
     ADR 0010 §1이 승인한 `per_stage`이고, 네 서버의 util 합이 한 장비를 넘어 단계마다 그 단계의
     모델만 띄우려면 이 루프가 선행이다(`config/profiles.yaml`의 그 주석).
 
@@ -2353,7 +2353,7 @@ def test_an_unknown_execution_key_is_rejected() -> None:
 
 
 # ---------------------------------------------------------------------------
-# 포트 — 교대가 띄우는 순서대로 8000부터 (2026-09-24 @danielcho02)
+# 포트 — 교대가 띄우는 순서대로 8000부터 (2026-09-24 팀)
 # ---------------------------------------------------------------------------
 
 # 교대가 첫 모델을 띄우는 포트.
@@ -2603,7 +2603,7 @@ def _assert_thinking_seat_holds_together(role: str) -> None:
 def test_the_canonical_auditor_thinks_within_a_budget_that_holds_together() -> None:
     """canonical Auditor는 가장 높은 등급으로 사고하고, 그 사고가 끝날 자리가 예산에 있다.
 
-    2026-09-26 @danielcho02 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이 깨진다**
+    2026-09-26 팀 — Auditor를 `qwen3.8-27b`로 바꾸고 사고를 켠다. **켜기만 하면 셋이 깨진다**
     (같은 날 council): ① 사고가 출력 상한 안에 안 끝나면 본문이 비거나 잘려 스키마 실패다 — 옛
     Auditor에 parser를 걸고 4,096으로 돌린 판이 7/7(본문 `None` 6 · 잘린 JSON 1)이었다 ② 요청
     타임아웃이 상한보다 먼저 오면 호출이 끊기고

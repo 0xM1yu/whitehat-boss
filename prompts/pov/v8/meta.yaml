@@ -3,7 +3,7 @@
 #    *"Submit is how you choose. If a Finding ends with no `submit`, the harness may fall back to an intermediate `gen` whose own vul
 #    response was a crash (not `0`, `71`, `300`, a timeout, or an environment-failure code); within the same scorer-code group it ranks
 #    below submitted candidates — do not rely on it."*
-#    이유: ADR 0013 결정 1이 개정돼(2026-10-15, council → @danielcho02 승인) `submit` 없이 끝난 Finding의 중간 gen 중 **자기 vul 제출 응답 코드가
+#    이유: ADR 0013 결정 1이 개정돼(2026-10-15, council → 팀 승인) `submit` 없이 끝난 Finding의 중간 gen 중 **자기 vul 제출 응답 코드가
 #    크래시 계단인 것**이 지정 후보로 구제된다(`oracle_log.OracleLedger.rescued` · `runner._designation_key`의 둘째 성분). v7은 submit 없이 끝나면
 #    최종 후보가 없다고만 적었다 - 그 문장은 모델이 고르는 후보에 대해서는 여전히 참이지만(이 프롬프트에서 「final candidate」는 `submit`이 지정하는
 #    것이다 - DEF-SUBMIT) 하네스가 대신 집을 수 있다는 사실을 가린다. 동시에 「크래시 뒤엔 바로 submit」 지시를 약하게 만들지 않으려고

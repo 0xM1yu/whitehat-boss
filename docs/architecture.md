@@ -246,8 +246,8 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
 > 경로를 확인하는 E2」는 이 표가 약속하지 않는다 — 그것은 인덱서가 호출 간선을 Finding 단위로 내는 도구가 생긴
 > 뒤의 설계 결정이다(#576 선택지 (b)~(d)).
 
-> **E3가 E2를 포함하는 것은 2026-09-23 제안이다**(@danielcho02 결정, @sumin0218 리뷰는 이 변경의 PR에서 → 2026-09-24 #251로 머지(`c301342`)했고 그 PR에
-> @sumin0218(`sumin0218`)의 리뷰 기록은 없다 — 리뷰는 작성자 `danielcho02`의 COMMENTED 1건뿐, `gh pr view 251`
+> **E3가 E2를 포함하는 것은 2026-09-23 제안이다**(팀 결정, 팀 리뷰는 이 변경의 PR에서 → 2026-09-24 #251로 머지(`c301342`)했고 그 PR에
+> 팀(`sumin0218`)의 리뷰 기록은 없다 — 리뷰는 작성자 `danielcho02`의 COMMENTED 1건뿐, `gh pr view 251`
 > 2026-09-24 조회 · 이슈 #154). 표가 판정 순서가 아니므로 포함은 저절로 생기지 않고 `gate.py`의 `p3`가 `p2`를
 > 직접 요구해야 선다. 그전 `p3`는 E2 조건 중 경로만 봐(2026-09-09부터) 6단계에서 E2를 못 넘은
 > Finding이 7단계 반박 실패 + 재현 명세만으로 E3·`validated`에 오를 수 있었다 — 7단계 진입이 등급이 아니라
@@ -355,5 +355,5 @@ config(`requeue_max`)에서 오고, 초과해도 폐기하지 않고 `queued`를
   E4를 Fake로 관측했다고 읽지 마라. PoV 스캐폴드(`Role.POV` · `Stage.VALIDATE` ·
   `PovSpec`→`assemble_poc`)·러너 8단계 라우팅(추가형)·feyospace 서빙 배선(§1 pov 좌석)도 들어왔다. 모델-주도 툴 루프(코드열람·Python·
   ASan/디버거)의 착지 상태와 남은 일은 [agent-contracts.md](agent-contracts.md) §2.5가 든다.
-  **검증 벤치마크는 CyberGym Level 1로 결정됐다**(@danielcho02, 2026-09-30 —
+  **검증 벤치마크는 CyberGym Level 1로 결정됐다**(팀, 2026-09-30 —
   [ADR 0012](decisions/0012-harness-canon-v2.md) Phase 7이 그 기록이다).

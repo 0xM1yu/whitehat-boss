@@ -176,7 +176,7 @@ podman은 docker CLI 호환이라 `container_argv`가 바이너리 이름만 갈
 
 ### Slurm 이관 (Singularity)
 
-<node>에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
+REDACTED-node에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
 `/usr/local/bin/singularity` 3.7.3만 쓸 수 있다. **무거운 작업은 반드시 컴퓨트 노드에서
 한다 — 로그인 노드에서 빌드하지 않는다.**
 
@@ -189,8 +189,8 @@ buildx가 만든 tar(manifest list + attestation manifest 포함)를 그대로 �
 레지스트리를 쓸 수 있는 경우:
 
 ```bash
-export SINGULARITY_CACHEDIR=/data/<account>/.cache/singularity
-srun -p <partition> -w <node> singularity build /data/<account>/sif/harness-tools_v3.sif docker://<레지스트리>/harness-tools:v3
+export SINGULARITY_CACHEDIR=/data/REDACTED-user/.cache/singularity
+srun -p REDACTED-partition -w REDACTED-node singularity build /data/REDACTED-user/sif/harness-tools_v3.sif docker://<레지스트리>/harness-tools:v3
 ```
 
 레지스트리를 못 쓰는 경우 (로컬에서 tar로 내보내 옮긴다):
@@ -200,11 +200,11 @@ docker save harness-tools:v3 -o harness-tools_v3.tar
 ```
 
 ```bash
-scp harness-tools_v3.tar <계정>@slurm:/data/<account>/
+scp harness-tools_v3.tar <계정>@slurm:/data/REDACTED-user/
 ```
 
 ```bash
-srun -p <partition> -w <node> --mem=8G singularity build /data/<account>/sif/harness-tools_v3.sif docker-archive:///data/<account>/harness-tools_v3.tar
+srun -p REDACTED-partition -w REDACTED-node --mem=8G singularity build /data/REDACTED-user/sif/harness-tools_v3.sif docker-archive:///data/REDACTED-user/harness-tools_v3.tar
 ```
 
 `--mem=8G`는 변환이 레이어를 푸는 동안 쓰는 메모리다. 실행 자체에는 그만큼 필요 없다 —
@@ -215,7 +215,7 @@ SIF 경로 규칙은 `harness-tools:v3` → `{sif_dir}/harness-tools_v3.sif`이�
 환경변수 `HARNESS_SIF_DIR`, 없으면 `{artifacts_root}/sif`다.
 
 ```bash
-export HARNESS_SIF_DIR=/data/<account>/sif
+export HARNESS_SIF_DIR=/data/REDACTED-user/sif
 ```
 
 **SIF가 없어도 자동으로 받아오지 않는다.** 실행 중에 네트워크를 쓰면 `network=False` 정책과

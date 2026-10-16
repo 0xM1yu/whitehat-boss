@@ -367,7 +367,7 @@ models:
   #   `docs/experiments/harness/` 아래 스모크 보고서와 git 이력에 남아 있다 — 위 2026-09-24 문단이
   #   가리키던 `seccoderx-8b` 항목은 이제 이 파일에 없다.
   qwen3.8-27b:
-    # 확정 로스터 Auditor. 2026-09-26 @danielcho02가 `qwen3.6-35b-a3b`에서 이 모델로 바꾸고 추론(사고)을 켰다
+    # 확정 로스터 Auditor. 2026-09-26 팀이 `qwen3.6-35b-a3b`에서 이 모델로 바꾸고 추론(사고)을 켰다
     # (PROJECT-CONTEXT.md §1). 옛 키는 로스터 밖이라 지웠다 — 그 기동·측정 기록은 git 이력과
     # docs/experiments/harness/2026-09-24-roster-smoke-atom.md 에 있다.
     # Qwen/Qwen3.8-27B — dense 27.8B. 값은 2026-09-26 Hugging Face에서 직접 읽었다:
@@ -400,9 +400,9 @@ models:
     #   `enable_thinking`이 없으면 `reasoning_effort != "none"`으로 켠다(`entrypoints/openai/chat_completion/
     #   protocol.py`의 `build_chat_params` — 소스 판독, 미실측). 그래서 `chat_template_kwargs`는 안 적는다.
     # - `sampling` — 모델 카드의 사고 모드 권장값이다(temperature 1.0 · top_p 0.95 · top_k 20 · min_p 0 ·
-    #   presence_penalty 0). 프로필 공통 temperature 0.2·top_p 0.95를 이 모델에서 덮는다(2026-09-26 @danielcho02).
+    #   presence_penalty 0). 프로필 공통 temperature 0.2·top_p 0.95를 이 모델에서 덮는다(2026-09-26 팀).
     # - **예산** — 출력 상한 32,768(`config/budgets.yaml`의 `output_max_by_role.auditor`) · 사고 상한
-    #   `thinking_token_budget` 28,672 · 요청 타임아웃 `request_timeout_s` 7,500 s. 2026-09-26 @danielcho02가
+    #   `thinking_token_budget` 28,672 · 요청 타임아웃 `request_timeout_s` 7,500 s. 2026-09-26 팀이
     #   council에 맡겨 정했다(성능이 시간보다 먼저). 셋 다 **계산값이고 미실측**이다:
     #   - 출력 32,768 — 모델 카드가 자체 에이전트 벤치(QwenSWEBench)에 쓴 `max_tokens`다 `[출처주장]`. 카드의
     #     「reasoning 262,144 / final 131,072」는 1M 컨텍스트 호스팅 기준이라 옮기지 않았다.
@@ -417,7 +417,7 @@ models:
     #   올렸다(이슈 #389 — 한 바퀴 선언값 합 21,300 s의 3.4배 · 정한 값이지 잰 값이 아니다).
     #   ⏵ **2026-10-05 (둘째) — 7,200,000이다**(같은 합의 338배 · 계산값). 220 슬라이스 환산이 72,000을
     #   넘어서다 — `config/budgets.yaml`의 `default` 줄 주석이 식과 결과를, PR #501 본문이 그 한계를 든다.
-    #   ⏵ **2026-10-03 — 위 세 수 중 둘이 움직였다(@danielcho02 승인, council 판정).** 출력 상한 32,768 → **65,536** ·
+    #   ⏵ **2026-10-03 — 위 세 수 중 둘이 움직였다(팀 승인, council 판정).** 출력 상한 32,768 → **65,536** ·
     #   사고 상한 28,672 → **57,344** · 타임아웃 **7,500 s 그대로**. 그래서 위 「사고 28,672 = 32,768 − 4,096」과
     #   「7,500 ≥ 32,768 ÷ 4.5 ≈ 7,282 s」는 2026-09-26의 기록이고 지금 서는 관계는 **답 몫 8,192 = 65,536 − 57,344**
     #   와 **7,500 ≥ 65,536 ÷ 16.2 ≈ 4,045 s**다(둘 다 계산값).
@@ -693,7 +693,7 @@ models:
     #   Scout 단계의 키가 둘에서 하나가 되며 8001에서 **8000**이 됐다(단계 순서대로 빈틈없이 —
     #   `tests/test_config.py`의 `test_served_ports_count_up_from_8000_in_launch_order`).
     # 2026-09-23 팀 피드백(모델 크기를 내리자)으로 `deepseek-r1-distill-qwen-32b`에서 옮겼다 — 근거는
-    # ADR 0012(PR #260) 결정 4의 표이고, 2026-09-24 @danielcho02가 로스터 확정으로 배선을 지시했다.
+    # ADR 0012(PR #260) 결정 4의 표이고, 2026-09-24 팀이 로스터 확정으로 배선을 지시했다.
     # 값은 2026-09-24 Hugging Face에서 직접 읽었다:
     #   rev·license — `GET https://huggingface.co/api/models/Qwen/Qwen3-14B`의 `sha`·태그 `license:apache-2.0`
     #   `config.json@<rev>` — architectures `['Qwen3ForCausalLM']` · max_position_embeddings 40960 ·
@@ -814,7 +814,7 @@ models:
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
 
-  # ── 8단계 PoV 모델 — 사용자(@danielcho02) 선정. **`harness_pool`·`_hybrid`에 배선됨(8단계 pov 좌석)** ──
+  # ── 8단계 PoV 모델 — 사용자(팀) 선정. **`harness_pool`·`_hybrid`에 배선됨(8단계 pov 좌석)** ──
   # CyberGym Level 1(PoV 생성)용. Feyospace-v1-small — Qwen/Qwen3.8-27B를 사이버 에이전트
   # 연구용으로 post-train한 28B다(HF 카드 · `base_model` 태그 Qwen/Qwen3.8-27B). 그래서 아키텍처·
   # 크기·창·추론 템플릿이 지금 Auditor(`qwen3.8-27b`)와 같다 — `family`는 베이스 가중치 제작사

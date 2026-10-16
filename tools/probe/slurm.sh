@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Slurm(slurm) 래퍼. **잡 실행 방식만 감싼다** — 측정은 run_probe.sh가 한다.
+# Slurm(REDACTED-cluster) 래퍼. **잡 실행 방식만 감싼다** — 측정은 run_probe.sh가 한다.
 #
 # 로그인 노드에서 돌린다. srun 하나가 컴퓨트 노드에서 vLLM과 프로브를 **함께** 띄우므로
 # endpoint는 그 노드 안의 127.0.0.1이다. 무거운 작업을 로그인 노드에서 하지 말라는 규정
@@ -8,19 +8,19 @@
 # 사용:
 #
 #   tmux new -s probe                        # ← 먼저 tmux. 아래 주의 참조
-#   sinfo -p <partition>                  # ← idle 노드 확인. u 노드는 고정이 아니다
-#   tools/probe/slurm.sh --node <node> --out /data/<계정>/probe
+#   sinfo -p REDACTED-partition                  # ← idle 노드 확인. u 노드는 고정이 아니다
+#   tools/probe/slurm.sh --node REDACTED-node --out /data/<계정>/probe
 #
 # **--node에 기본값을 두지 않는다.** 비어 있는 노드를 그때그때 쓰는 것이 이 클러스터의
 # 운용 방식이고, 노드마다 카드가 다르다(u1은 6GB, u3·u4는 12GB, u8은 Prolog failure로
 # 사용 금지). 기본값을 두면 남이 쓰는 노드에 얹히거나 6GB 카드에서 재고도 그 사실이
-# 산출물에 안 남는다. 범위(`<node>[3-4]`)로 주면 `Node count specification invalid`다.
+# 산출물에 안 남는다. 범위(`REDACTED-node-range`)로 주면 `Node count specification invalid`다.
 #
 # **tmux 안에서 돌려라.** srun은 SSH가 끊기면 job까지 죽는다. 외부망에서는 접속 포트가
-# 다르다(`ssh -p <ssh-port>`). 끝나면 srun이 노드를 반납한다.
+# 다르다(`ssh -p REDACTED-port`). 끝나면 srun이 노드를 반납한다.
 set -euo pipefail
 
-PARTITION="${PARTITION:-<partition>}"
+PARTITION="${PARTITION:-REDACTED-partition}"
 # A2000. u3·u4에서 실측한 값이다.
 ARCH="${ARCH:-sm_86}"
 HOST_LABEL="${HOST_LABEL:-slurm}"
