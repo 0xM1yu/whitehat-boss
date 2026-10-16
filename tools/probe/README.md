@@ -1,6 +1,6 @@
 # /metrics 프로브
 
-vLLM `/metrics` 원문을 **두 장비에서 같은 절차로** 받아 내는 도구다. 2026-08-14 Slurm에서
+vLLM `/metrics` 원문을 **두 장비에서 같은 절차로** 받아 내는 도구다. 2026-08-14 Slurm 클러스터에서
 손으로 조립해 돌린 0단계 절차를 코드화한 것이고, 그 절차가 대화에만 있었던 것이 이 도구가
 생긴 이유다.
 
@@ -20,7 +20,7 @@ vLLM `/metrics` 원문을 **두 장비에서 같은 절차로** 받아 내는 �
 | `metrics_delta.status` / `hits_delta` | 카운터가 before→after로 늘었는가 | `no_traffic`이면 엔드포인트 불일치, `metrics_reset`이면 구간 무효 |
 | `cache_config.enable_prefix_caching` | prefix cache가 켜져 있는가 | `False`면 "적중 0"은 서버 설정 탓이다. 다시 띄워야 한다 |
 | `cache_config.gpu_memory_utilization` | 점유를 재현할 수 있는가 | 이 값 없이 적힌 `mem_gb_ctx8k`는 다른 사람이 재현 못 한다(model-serving.md §5) |
-| `cache_config.kv_cache_memory_bytes` | KV cache 크기를 서버가 알려주는가 | Slurm는 `"None"`이었다. **ATOM에서 숫자면 `mem_gb_ctx8k`를 nvidia-smi 없이 얻는다** |
+| `cache_config.kv_cache_memory_bytes` | KV cache 크기를 서버가 알려주는가 | Slurm 클러스터는 `"None"`이었다. **ATOM에서 숫자면 `mem_gb_ctx8k`를 nvidia-smi 없이 얻는다** |
 | `prompt_tokens_details` | 응답이 캐시 적중을 장부로 주는가 | `null`이면 R6 재현(open-questions R6). 어댑터 결함이 아니라 서버가 안 주는 것이다 |
 
 ## 왜 두 장비에서 같은 모델·같은 요청 수인가
@@ -68,18 +68,18 @@ Qwen3-0.6B로 통일한 이유가 그것이고, 기본값 `REQUESTS=6` / `PREFIX
 
 ## 돌리는 법
 
-### Slurm
+### Slurm 클러스터
 
 ```bash
 tmux new -s probe                        # srun은 SSH가 끊기면 job까지 죽는다
 sinfo -p <partition>                  # 비어 있는 노드 확인
-tools/probe/slurm.sh --node <node> --out /data/<계정>/probe
+PARTITION=<partition> tools/probe/slurm.sh --node <node> --out /data/<account>/probe
 ```
 
-`--node`에 **기본값이 없다.** slurm의 u 노드는 고정 대상이 아니라 그때그때 비어 있는 것을
+`--node`에 **기본값이 없다.** 클러스터의 계산 노드는 고정 대상이 아니라 그때그때 비어 있는 것을
 쓰고, 노드마다 카드가 다르다(u1은 6GB, u3·u4는 12GB, u8은 Prolog failure로 사용 금지).
 기본값을 두면 남이 쓰는 노드에 얹히거나 6GB 카드에서 재고도 그 사실이 산출물에 안 남는다.
-범위(`<node>[3-4]`)로 주면 `Node count specification invalid`다.
+범위(`<node>[a-b]`)로 주면 `Node count specification invalid`다.
 
 외부망에서는 접속 포트가 다르다(`ssh -p <ssh-port>`).
 

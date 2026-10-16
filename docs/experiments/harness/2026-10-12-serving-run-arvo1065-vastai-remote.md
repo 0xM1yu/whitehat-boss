@@ -26,7 +26,7 @@
 | GPU | vast **55417596**(offer `53005992`) · RTX PRO 6000 Blackwell **Server** Edition · 97,887 MiB · 드라이버 615.71.09 · CUDA 13.4 · 96 코어 · RAM 999 GiB · 디스크 300 GB · Virginia US |
 | 실시급 | **$1.7167/hr** = 기본 $1.4667 + 저장 $0.25(300 GB). 매물 표시는 $1.471이고 **저장료가 빠진 값이다** |
 | 배선 | 하네스·도구·채점기 **로컬**(Windows 11 · Python 3.14.5) · 서빙만 원격 · ssh 터널 `8000·8001·8002·8003·8006` |
-| ssh | **직결** `root@<host-ip>:40413`(`direct_port_start`) · 프록시 미사용 · `--loop` 재연결 터널 · **전송 끊김 0건** |
+| ssh | **직결** `root@<host>:40413`(`direct_port_start`) · 프록시 미사용 · `--loop` 재연결 터널 · **전송 끊김 0건** |
 | 셸 | PowerShell + `Git\usr\bin`을 PATH 앞에([#538](https://github.com/0xM1yu/whitehat-boss/issues/538)) · run은 `Start-Process`로 완전 분리 |
 | 도구 이미지 | `harness-tools:v3` · 인덱서 index-v4(preflight가 저장소 파일과 바이트 동일 확인) |
 | 채점기 | 저자 소스 `c6fe202` · `127.0.0.1:8666` · **새 `--db_path`** `C:\w\oracle-run09\poc.db` |

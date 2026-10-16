@@ -5,8 +5,7 @@
 그것을 가져다 쓴다.
 
 명세 원천은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
-(#private-notion,
-2026-09-26 판독)이다.
+(비공개 페이지, 2026-09-26 판독)이다.
 
 `resolve()`가 조립 지점이다 — `GraphIndex.table()`(조회)과 `read_lines`(파일 읽기) 훅을
 받아 `Resolution`을 낸다. 계약(`ResolveQuery`·`Resolution`·`UnfilledReason` 등)은

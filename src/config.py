@@ -258,7 +258,8 @@ class ModelEntry(HarnessModel):
     # ⏵ 2026-10-08 — 「ATOM 실측 뒤」는 낡았다 — ATOM 사용 종료 2026-09-29(#340 ·
     #   docs/portability.md §6). 아래 ⏵대로 값은 실측 전에 계산값으로 들어갔다.
     # ⏵ 2026-09-26 — Auditor(`qwen3.8-27b`)가 처음으로 셋을 선언했다 — `sampling`(모델 카드의
-    #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한 @danielcho02
+    #   사고 모드 권장값) · `thinking_token_budget` · `request_timeout_s`. 사고를 켜기로 한
+    # @danielcho02
     #   결정에 따라 실측 전에 계산값으로 넣었다(값과 근거는 `config/models.yaml`의 그 항목). 다른
     #   모델은 여전히 비어 있다.
     # ⏵ 2026-09-29 — `request_timeout_s`는 Scout·Critic 실서빙 키 셋(`seccoderx-8b`·`qwen3-14b`·
@@ -317,7 +318,7 @@ class AdapterSelection(HarnessModel):
     # 잘못됐는지가 스택 아래에 묻힌다.
     retriever: Literal["fake", "hybrid"]
     # docker·singularity·podman은 같은 구현(`ContainerToolRunner`)의 런타임 선택이다.
-    # Slurm는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
+    # Slurm 클러스터는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
     #
     # **ATOM은 docker와 podman을 둘 다 가진다**(2026-08-21 실측: Docker 29.2.1 · podman
     # 4.9.3). 이 주석은 2026-08-17 실측을 근거로 "ATOM은 데몬 접근이 없고 singularity도

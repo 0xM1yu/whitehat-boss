@@ -665,7 +665,7 @@ Welcome to NVIDIA DGX Spark Version 7.4.0 (GNU/Linux 6.11.0-1016-nvidia aarch64)
   System load:  0.11                Temperature:             46.0 C
   Usage of /:   34.2% of 467.89GB   Processes:               779
   Memory usage: 5%                  Users logged in:         1
-  Swap usage:   4%                  IPv4 address for wlP9s9: <private-ip>
+  Swap usage:   4%                  IPv4 address for wlP9s9: <host-ip>
 
 Last login: Sat Aug 29 12:02:44 2026 from <host-ip>
 user@atom-host:~$ echo "== host"; hostname; date; uptime
@@ -1041,7 +1041,7 @@ cd ~/whitehat-boss && git checkout main
 'main' 브랜치로 전환합니다
 (venv-probe) user@atom-host:~/whitehat-boss$ exit
 로그아웃
-Connection to <host-ip> closed.
+Connection to <host> closed.
 ```
 
 > ⚠ **run B의 `src.cli run` 명령 원문은 이 세션 로그에 없다 — `미기재`.**

@@ -100,7 +100,8 @@ def test_a_slice_v2_file_loads_with_its_status_signature_and_given_end(tmp_path:
 
 
 def test_a_degraded_slice_keeps_its_marker_through_load(tmp_path: Path) -> None:
-    """#307 리뷰(@danielcho02): 슬라이서는 anchor-only 대체 슬라이스에 `degraded`를 남기지만 consumer가
+    """#307 리뷰(@danielcho02): 슬라이서는 anchor-only 대체 슬라이스에 `degraded`를 남기지만
+    consumer가
     그것을 버려서 절단 슬라이스가 러너에 full로 보였다. marker가 적재를 넘어 살아야 하고, 정상
     슬라이스는 False로 남는다.
     """
