@@ -688,7 +688,7 @@ def _undescribed_source_options(config: HarnessConfig) -> list[str]:
     **Fake Auditor도 `[]`다** — Fake 클라이언트는 프롬프트 문장을 안 읽고 정해진 답을 내므로
     서술이 SOURCE와 어긋나도 결과가 안 바뀐다. thresholds는 프로필 공통이라(`budgets.yaml`) 정본
     프롬프트(⏵ 2026-10-07 v10 — 그 전 v9·v8·v7 · ⏵ 2026-10-09 v11 · ⏵ 2026-10-10 v13 ·
-    ⏵ 2026-10-11 v14 · v15~v18도)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
+    ⏵ 2026-10-11 v14 · v15~v19도)가 옵션을 서술하며 켜면, v1을 고르는 dev 프로필이
     여기서 막혀 GPU 없는 스모크가 죽는다(`_check_checksums`가 Fake 역할을 안 세는 것과
     같은 논법)."""
     on = config.thresholds.auditor_source_options_on()
@@ -1915,7 +1915,8 @@ def run(args: argparse.Namespace) -> int:
     # ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + `auditor_slice_state` 서술 — 그 옵션의 서술은
     # v17부터다, S20 Phase 14 · 이슈 #438 (b). 위 두 옵션은 v17도 선언한다). ⏵ 2026-10-16 — 서빙
     # 판은 v18이고
-    # 옵션 선언은 v17과 같다(#698 — 하네스 노트 문단만 고쳤다).
+    # 옵션 선언은 v17과 같다(#698 — 하네스 노트 문단만 고쳤다). ⏵ 2026-10-17 — 서빙 판은 v19이고
+    # 옵션 선언이 둘 늘었다(`auditor_desc_first`·`auditor_omitted_functions` · #702).
     # Auditor에 안 닿는 run은 막지 않는다(위 가드와 같은 판단).
     if spec.stop_at()[0] >= Stage.AUDITOR:
         try:

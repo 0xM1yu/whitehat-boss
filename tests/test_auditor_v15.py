@@ -794,7 +794,7 @@ def _require(active: bool, pr: str, what: str) -> None:
     # v17도 v16에서 prefix 두 군데만 고쳤고(`tests/test_auditor_v17.py`가 바이트 등식으로 문다)
     # 그 문장들은 안 건드렸다. ⏵ 2026-10-16 v18은 v17에서 하네스 노트 문단 두 문장만 고쳤다(#698 ·
     # `tests/test_auditor_v18.py`) - 이 창이 묻는 의존 PR 문장은 그대로다.
-    if _SERVED_AUDITOR_VERSION in ("v15", "v16", "v17", "v18"):
+    if _SERVED_AUDITOR_VERSION in ("v15", "v16", "v17", "v18", "v19"):
         pytest.fail(
             f"{pr}가 아직 main에 없는데 `config/models.yaml`의 Auditor 좌석이 이미 "
             f"{_SERVED_AUDITOR_VERSION}다 — "

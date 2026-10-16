@@ -156,7 +156,7 @@ profiles:
     #   **v15로 올렸다**(v14 + 계약 문장 여섯 · 봉투는 v12의 서브클래스 `AuditorProcedureProbeInputAction` ·
     #   `facts_source: false`는 그대로다 — S19). ⏵ 2026-10-14 — **v16으로 올렸다**(v15 + `auditor_input_context` 서술 · 쓰기 창 표지 줄(`auditor_write_window_marker`) 설명 —
     #   S20 Phase 13 · 봉투·body·도구는 그대로다). ⏵ 2026-10-14 — **v17로 올렸다**(v16 + `FACTS.slice_state` 서술 ·
-    #   「배너 없으면 첫 블록 하나」 정정 — S20 Phase 14 · 봉투·body·도구는 그대로다 · v16이 선언한 옵션 둘은 v17도 선언한다 · ⏵ 2026-10-16 **v18로 올렸다** — 하네스 노트 문단 두 문장 정정, #698). critic gpt-oss와
+    #   「배너 없으면 첫 블록 하나」 정정 — S20 Phase 14 · 봉투·body·도구는 그대로다 · v16이 선언한 옵션 둘은 v17도 선언한다 · ⏵ 2026-10-16 **v18로 올렸다** — 하네스 노트 문단 두 문장 정정, #698 · ⏵ 2026-10-17 **v19로 올렸다** — v18 + SOURCE 순서 예외 · `FACTS.source_omitted_functions` 서술, #702). critic gpt-oss와
     #   계열이 갈린다(qwen × gpt-oss, `_check_family_split`). **사고를 켠다**(`reasoning_effort: xhigh`) —
     #   기동 조건(`--reasoning-parser qwen3`가 없으면 사고가 죽는다)과 예산은 `config/models.yaml`의 그
     #   항목이 든다.

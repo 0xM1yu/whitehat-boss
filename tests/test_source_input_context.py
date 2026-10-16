@@ -647,7 +647,10 @@ def _with_auditor_version(version: str):  # noqa: ANN202
     config = load_config("harness_pool")
     key = config.model_key_for("auditor")
     entry = config.models[key].transition(prompt_template_version=version)
-    return config.transition(models={**config.models, key: entry})
+    # ⏵ 2026-10-17 - v19부터 서술하는 둘(#702)은 v15·v16이 서술하지 않아 끈다 - 이 파일이 묻는
+    # 것은 입력 맥락 옵션이다.
+    later_off = config.thresholds.transition(auditor_desc_first=0, auditor_omitted_functions=0)
+    return config.transition(models={**config.models, key: entry}, thresholds=later_off)
 
 
 def test_v15_does_not_describe_the_option_so_the_run_and_doctor_refuse_it() -> None:

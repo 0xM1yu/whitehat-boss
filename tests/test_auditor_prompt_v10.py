@@ -1442,7 +1442,7 @@ def test_the_v10_prose_does_not_revive_what_the_original_v10_prose_got_wrong() -
 # prefix 두 군데(`Original-source input contract` 마지막 항목의 정정 · 새 항목
 # `FACTS.slice_state`)로 바이트 등식으로 묶는다 - 그 둘 밖은 한 글자도 다르지 않다).
 _V10_REPRO_PROMISE_VERSIONS = frozenset(
-    {"v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18"}
+    {"v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17", "v18", "v19"}
 )
 
 
