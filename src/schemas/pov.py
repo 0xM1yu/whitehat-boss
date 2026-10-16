@@ -19,6 +19,7 @@ council verdict(2026-09-30, fork B-iii): 모델은 PoC 바이트를 직접 내�
 넓히거나 generator-script를 별도로 검토한다.
 """
 
+import copy
 from typing import Any, Literal
 
 from pydantic import Field, model_validator
@@ -262,31 +263,40 @@ class PovActionNamed(PovAction):
 
 # ⏵ 2026-10-17 — `PovActionNamed`의 하위 봉투(v11 · 이슈 #704). **검증은 부모 그대로이고, 디코더에
 # 보내는 JSON 스키마만 판별 합이다** — Auditor v18(`AuditorProcedureProbeInputDiscriminatedAction`,
-# PR #699 · #602)과 같은 처방이다. 부모 스키마는 `required: [action, rationale]`이라 문법이
-# `{"action": "gen", "rationale": "…", "poc_sha256": null}`을 받고, 「gen이면 spec 필수」는 생성이
-# 끝난 뒤
-# `_check_action`에서만 걸렸다. run_20261016_0001 8단계는 3 hop · 6시도가 전부 이 모양으로 거절됐다
-# (재시도 회복 0/3). 이 봉투의 스키마는 액션마다 갈래 하나다:
+# PR #699 · #602)과 같은 처방이다.
+# 부모 스키마는 `required: [action, rationale]`이고 키 순서가 action · spec · tool · rationale ·
+# poc_sha256이다. xgrammar는 키를 이 순서로만 생성하게 한다. v5~v10 prefix의 `gen` 예시는
+# `rationale`을 `spec` 앞에 적는다. 그래서 모델이 예시대로 `rationale`을 먼저 쓰면 그 뒤에는 `spec`
+# 자리가 없고 `poc_sha256`이나 닫기만 남는다 — run_20261016_0001 8단계의 3 hop · 6시도가 모두 정확히
+# `{"action": "gen", "rationale": "…", "poc_sha256": null}`이었고 `_check_action`이 거절했다(재시도
+# 회복 0/3). 그 예시 순서로는 옛 문법도 새 문법도 `gen`을 낼 수 없다(xgrammar 0.2.8로 확인 — PR #707
+# 리뷰).
+# 그래서 v11은 둘을 같이 고친다: 이 봉투가 `gen`에 `spec`을 강제하고, v11 prefix의 예시를 이 키
+# 순서로 바꾼다(`tests/test_check_decoder_schemas.py`가 prefix 예시를 컴파일한 문법에 대조한다).
+# 갈래는 액션마다 하나다:
 #   - `GenHop`: `spec` 필수(non-null) · `tool`·`poc_sha256`은 null만
 #   - `InspectHop`: `tool` 필수(non-null, `signals.without_tools`가 좁힌 enum을 그대로 물려받는다) ·
 #     `spec`·`poc_sha256`은 null만
 #   - `SubmitHop`: `spec`·`tool`은 null만 · `poc_sha256`은 선택(부모 필드 그대로)
+# `spec` 안의 세그먼트도 같은 기제를 가진다 — `PovSegment`는 필드가 모두 선택이고 kind별 필수는
+# `_check_kind`가 생성 뒤에 본다(`{"kind": "literal"}`이 문법상 합법이다). 그래서 세그먼트도
+# kind마다 갈래 하나로 바꾼다(`LiteralSegment`: `hex` 필수 + 짝수 길이 16진 패턴 · `RepeatSegment`:
+# `byte`·`count` 필수 · `IntSegment`: `value`·`size`·`endian` 필수). 문법이 못 거는 것은 `int`의
+# 「값이 size바이트에 담긴다」와 총 바이트 상한(`PovSpec._check_total_size`)뿐이고, 둘은 pydantic이
+# 그대로 본다.
 # **의도한 차이 하나**: 부모는 `submit` 밖의 `poc_sha256` 문자열을 거절하지 않고 무시한다. 문법은
-# 그것을 막는다 — `submit` 밖에서는 읽히지 않는 값이고, 열어 두면 `gen`과 `submit` 모양이
-# 섞인다(#704의
-# 6시도가 모두 `gen`에 `poc_sha256: null`을 실었다 — 섞임이 원인이라는 것은 추정).
-# 갈래·필드 순서는 부모 필드 순서(action · spec · tool · rationale · poc_sha256)를 따른다 — 문법이
-# 키 순서대로 생성하므로 `gen`이면 `spec`이 `rationale` 앞에 강제된다.
-# 이름·docstring(= 요청 스키마 `description`)은 부모와 같다 — 모델이 읽는 설명은 v10과 한 글자도 안
-# 다르다. 이 봉투로 모델이 `spec`을 채우는지는 **미실측**이다.
+# 그것을 막는다 — `submit` 밖에서는 읽히지 않는 값이다.
+# 이름·docstring(= 요청 스키마 `description`)은 부모와 같다. 이 봉투로 모델이 `spec`을 채우는지는
+# **미실측**이다.
 class PovDiscriminatedAction(PovActionNamed):
     __doc__ = PovActionNamed.__doc__
 
     @classmethod
     def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
         """디코더에 보내는 스키마 — 위 주석의 판별 합. 검증은 부모의 것 그대로다."""
-        schema = super().model_json_schema(*args, **kwargs)
+        schema = copy.deepcopy(super().model_json_schema(*args, **kwargs))
         props = schema["properties"]
+        defs = schema["$defs"]
         null = {"type": "null"}
         own: dict[str, dict[str, Any]] = {
             "gen": {"spec": _non_null(props["spec"])},
@@ -294,7 +304,6 @@ class PovDiscriminatedAction(PovActionNamed):
             "submit": {"poc_sha256": props["poc_sha256"]},
         }
         required = {"gen": ["spec"], "inspect": ["tool"], "submit": []}
-        defs = dict(schema.get("$defs", {}))
         branches = []
         for action, fields in own.items():
             name = f"{action.capitalize()}Hop"
@@ -312,6 +321,9 @@ class PovDiscriminatedAction(PovActionNamed):
                 "required": ["action", *required[action], "rationale"],
             }
             branches.append({"$ref": f"#/$defs/{name}"})
+        defs["PovSpec"]["properties"]["segments"]["items"] = {
+            "anyOf": _segment_branches(defs, defs.pop("PovSegment"))
+        }
         return {
             "$defs": defs,
             "anyOf": branches,
@@ -321,7 +333,40 @@ class PovDiscriminatedAction(PovActionNamed):
         }
 
 
+# `literal`의 `hex` — `PovSegment._check_kind`가 `bytes.fromhex`로 보는 것
+# (비지 않은 짝수 길이 16진).
+_HEX_PATTERN = "^([0-9a-fA-F]{2})+$"
+
+
+def _segment_branches(defs: dict[str, Any], segment: dict[str, Any]) -> list[dict[str, str]]:
+    """`PovSegment`를 kind마다 갈래 하나로 — 그 kind의 필드는 필수(non-null), 다른 kind의
+    필드는 null만. 키 순서는 `PovSegment` 필드 순서 그대로다(prefix 예시가 그 순서다)."""
+    props = segment["properties"]
+    branches = []
+    for kind, fields in _FIELDS_BY_KIND.items():
+        name = f"{kind.capitalize()}Segment"
+        body: dict[str, Any] = {"kind": {"const": kind, "title": "Kind", "type": "string"}}
+        for key in props:
+            if key == "kind":
+                continue
+            if key not in fields:
+                body[key] = {"type": "null"}
+            elif key == "hex":
+                body[key] = {**_non_null(props[key]), "pattern": _HEX_PATTERN}
+            else:
+                body[key] = _non_null(props[key])
+        defs[name] = {
+            "additionalProperties": False,
+            "title": name,
+            "type": "object",
+            "properties": body,
+            "required": ["kind", *fields],
+        }
+        branches.append({"$ref": f"#/$defs/{name}"})
+    return branches
+
+
 def _non_null(prop: dict[str, Any]) -> dict[str, Any]:
-    """`anyOf[X, null]`에서 X만 — nullable 필드의 non-null 쪽 스키마(`schemas/auditor.py`의 같은
-    이름)."""
+    """`anyOf[X, null]`에서 X만 — nullable 필드의 non-null 쪽 스키마. `schemas/auditor.py`에 같은
+    함수가 있지만 그 모듈이 이 모듈을 import하므로 가져오면 순환이다."""
     return next(b for b in prop["anyOf"] if b.get("type") != "null")

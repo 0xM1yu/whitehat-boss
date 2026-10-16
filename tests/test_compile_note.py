@@ -588,6 +588,7 @@ def _without_tool(node: object) -> object:
         "AuditorProcedureProbeInputDiscriminatedAction",
         "PovAction",
         "PovActionNamed",
+        "PovDiscriminatedAction",
     ],
 )
 def test_the_narrowed_envelope_differs_from_the_original_only_in_the_tool_enum(

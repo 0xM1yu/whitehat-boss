@@ -153,7 +153,7 @@ your hypothesis** (DEF-REPEAT), and emit a different spec. If you are unsure the
 
 ## Output
 - Emit **exactly one `PovAction` JSON** — no analysis, prose, comments, or code fences. Keep `rationale` to one short sentence stating the action and its evidence. Longer `rationale` is allowed only for the chain required under `unavailable` ("Hop budget"), the `cached` note (DEF-CACHED), a report-kind mismatch note (DEF-EXIT), the entrypoint-guess note ("Where your bytes go"), and the spec-limit note (`PovSpec`).
-- Shapes (placeholders — a segment carries only its own kind's fields; `poc_sha256` is optional and read only on `submit`):
-  - `{"action":"gen","rationale":"<one sentence>","spec":{"rationale":"<why these bytes>","segments":[{"kind":"literal","hex":"<even-length hex>"},{"kind":"int","value":4096,"size":4,"endian":"little"},{"kind":"repeat","byte":65,"count":64}]}}`
+- Shapes (placeholders — write the keys **in the order shown**; a segment carries only its own kind's fields; `poc_sha256` is optional and read only on `submit`):
+  - `{"action":"gen","spec":{"segments":[{"kind":"literal","hex":"<even-length hex>"},{"kind":"int","value":4096,"size":4,"endian":"little"},{"kind":"repeat","byte":65,"count":64}],"rationale":"<why these bytes>"},"rationale":"<one sentence>"}`
   - `{"action":"submit","rationale":"<one sentence>","poc_sha256":"<last_gen_sha256 of an earlier gen>"}`
 - If your response is not a valid action, the harness spends a hop and asks again. The retry starts with the hop line and then `[스키마 오류] <reason>` (a schema-validation message), followed by the observation you had not yet answered — on hop 0 the same lines are appended to the end of the first prompt. Answer with a valid JSON action directly, with no explanation of the failed response. A parse failure on the last hop, or a response cut off at the output limit, ends the loop with no final candidate.
