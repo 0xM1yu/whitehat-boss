@@ -21,15 +21,15 @@
 | --- | --- | --- |
 | 실험 시각 | 시작 `2026-10-16 06:09:55Z`(15:09 KST) · 마지막 trace `22:37:22Z`(**종료 2026-10-17 07:37 KST**) → 벽시계 16h27m [실측, trace] | 끝은 완주가 아니라 운영자 중단이다 |
 | 실제 서빙 모델 | `hf://Qwen/Qwen3-14B@40c069824f4251a91eefaf281ebe4c544efd3e18`(`qwen3-14b`) · `hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0`(`qwen3.8-27b`) · `hf://openai/gpt-oss-20b@6cee5e81ee83917806bbde320786a8fb61efebee`(`gpt-oss-20b`) · `hf://feyospace/feyospace-v1-small@fd02711ea1eb8ea15772d0b7fbded18ecfe8c9d1`(`feyospace-v1-small`) [실측, trace `model_swap` `report.server.*.args`] | 괄호 안은 `--served-model-name` 별명이다 |
-| `repo_commit` | `8e843c45725cd925ef977442fc4fc0fa4fc4d423`(#695·#697 포함) · 소스 clean | ⚠ 그 뒤 main 이력이 다시 쓰여 이 커밋은 어느 브랜치에도 없다. main에서 같은 내용은 `b1c67550`(#697 머지)이다. 줄 번호는 같다. VM에는 `git bundle`로 올렸다(저장소가 비공개라 자격증명을 박스에 두지 않았다) |
+| `repo_commit` | `8e843c45725cd925ef977442fc4fc0fa4fc4d423`(#695·#697 포함) · 소스 clean | ⚠ 그 뒤 main 이력이 다시 쓰여 이 커밋은 어느 브랜치에도 없다. main에서 같은 내용은 `b1c67550`(#697 머지)이다. 줄 번호는 같다. VM에는 `git bundle`로 올렸다(run 당시 저장소가 비공개라 자격증명을 박스에 두지 않았다) |
 | `run_id` | `run_20261016_0001` | |
 | run 산출물 경로·보존 | `C:\fullrun\arvo-1065\run_20261016_0001\` — 로컬 보관 | `art/`(trace 1,022 이벤트 · `state.db` · `prompts/` · 도구 출력) · `poc.db` · 채점기 로그 · `run.log` · 카나리 · preflight·doctor 출력 · `env-facts.txt` |
 | 서빙 서버 로그 | **회수함** — 같은 경로 `bk/serve-logs/` | 모델 넷의 기동 로그 · `swap.log` · `guard.log`. 15분마다 로컬로 백업했고 destroy 전에 최종본을 받았다 |
 | `--device` | `vastai-remote` [실측, trace `model_swap` `report.device`] | 장비 파일은 그대로다. 「로컬」 자리가 노트북이 아니라 vast VM이다 |
 | `tool_runner` | 선언 `docker`(`harness_pool`) / 실제 `docker` — 덮어쓰지 않았다 | VM의 Docker 28.1.1 |
 | 동시에 떠 있던 다른 서버 | 없음 — 서빙 박스에는 한 번에 한 모델만 떴다(교대마다 앞 서버를 내렸다) [실측, `swap.log`] | 터널 포트 8000·8001·8002·8005는 VM→서빙 박스 전달일 뿐 서버가 아니다 |
-| 장비(오케스트레이터) | vast **KVM VM** `56204978` · 46코어 · RAM 98GB · Ubuntu 22.04(커널 6.8.0-59) · Docker 28.1.1 · `vm.mmap_rnd_bits` 28 [실측, `env-facts.txt`] | 템플릿 `docker.io/vastai/kvm:ubuntu_cli_22.04-2025-05-16`. 컨테이너 인스턴스에는 Docker가 없다(`config/serving/vastai.yaml` 머리 주석). 그래서 도구 단계를 돌릴 VM을 따로 빌렸다 |
-| 장비(모델) | vast `56206329` · **RTX PRO 6000 Blackwell Server Edition** `97,887 MiB` · 드라이버 595.71.05 · `vllm/vllm-openai v0.27.1` · `hf` 1.27.0 [실측, `env-facts.txt`] · 미국 버지니아 [실측, 세션 중 `vastai show instances`] | 첫 후보 `56205985`(몬태나)는 생성 응답이 `success: false`로 `stopped`에 머물러 지웠다 |
+| 장비(오케스트레이터) | vast **KVM VM** `56204978` · 46코어 · RAM 98GB · Ubuntu 22.04(커널 6.8.0-59) · Docker 28.1.1 · `vm.mmap_rnd_bits` 28 [실측, `env-facts.txt` · 인스턴스 ID는 세션 중 `vastai show instances`] | 템플릿 `docker.io/vastai/kvm:ubuntu_cli_22.04-2025-05-16`. 컨테이너 인스턴스에는 Docker가 없다(`config/serving/vastai.yaml` 머리 주석). 그래서 도구 단계를 돌릴 VM을 따로 빌렸다 |
+| 장비(모델) | vast `56206329` · **RTX PRO 6000 Blackwell Server Edition** `97,887 MiB` · 드라이버 595.71.05 · `vllm/vllm-openai v0.27.1` · `hf` 1.27.0 [실측, `env-facts.txt`] · 인스턴스 ID·미국 버지니아 [실측, 세션 중 `vastai show instances`] | 첫 후보 `56205985`(몬태나)는 생성 응답이 `success: false`로 `stopped`에 머물러 지웠다 |
 | 하네스 · 채점기 파이썬 | 3.11.9 · 3.12.10 (uv) | 채점기는 cybergym `c6fe2027` |
 | 채점기 API 키 | VM에서 새로 만든 64자 무작위 값(파일 권한 600) | 자체 채점기와 하네스가 공유하는 비밀일 뿐이다. 값은 어디에도 찍지 않았다 |
 | `tool_images` | `harness-tools:v3` · 이미지 ID `sha256:1357bca1a08a5c9beb5d9b07a7a2801e13caf9e9e107554fe143ef30b506a91a` [실측] | VM에서 저장소 `tools/harness-tools`로 빌드했다. 10-16 run의 `be72a7f6…`와 ID가 다르다. preflight가 인덱서 바이트 동일을 확인했다 |
@@ -162,7 +162,7 @@
 - **대상 선정** [계산값 — `8e843c45`의 `_pov_targets`를 `state.db`에 적용. 대상 목록을 남기는 trace 이벤트는 없다]: `VALIDATED`가 0건이라, 대상은 `pov_attempt_top_n: 8`이 붙이는 추가 풀뿐이었다. 추가 풀은 Critic `rebut` 셋(`find_0002`·`0005`·`0010`)을 뺀 5건이다. 정렬 키는 (Critic 판정 계단, −`confidence`, id)다(`_verdict_ranks_by_finding`: uphold 0 · 판정 없음 1 · `need_evidence` 2). 결과는 `find_0008`(uphold) → `find_0012` → `find_0013`(판정 없음) → `find_0004` → `find_0009`(`need_evidence`) 순이다. 첫 대상에서 run이 멈춰 나머지 넷은 돌지 않았다.
 - **이 순서는 Auditor 결론을 보지 않는다.** `find_0008`은 Auditor `no_signal`을 Critic이 `uphold`한 것, 즉 「취약하지 않다」에 둘이 동의한 Finding이다. 그런데 계단 0이라 맨 앞에 섰다. 풀에서 Auditor 결론이 취약 쪽에 가장 가까운 것은 `find_0004`(`reachability_unknown`)였다.
 - 응답 여섯은 모두 `{"action":"gen","rationale":"…","poc_sha256":null}`이다. 빠진 것은 `spec`이다 [실측, `prompts/007[0-2]_pov*_response*.txt`].
-- **무엇을 겨냥했나.** 사고(`*_reasoning*.txt`)는 여섯 모두 과제 설명의 regexec/pmatch 경로를 다뤘다. 응답의 rationale은 셋(`0070` 재시도 · `0071` · `0071` 재시도)이 regexec·pmatch·MSan을 직접 말했다. 둘(`0070` · `0072`)은 「regex match 경로」라고만 썼고, 하나(`0072` 재시도)는 regex 언급 없이 「앞 두 턴이 스키마 오류였으니 빌드가 도는지 본다」였다 [실측].
+- **무엇을 겨냥했나.** 사고(`*_reasoning*.txt`)는 여섯 모두 과제 설명의 regexec/pmatch 경로를 다뤘다. 응답의 rationale은 셋(`0070` 재시도 · `0071` · `0071` 재시도)이 regexec 또는 pmatch·MSan을 직접 말했다. 둘(`0070` · `0072`)은 「regex match 경로」라고만 썼고, 하나(`0072` 재시도)는 regex 언급 없이 「앞 두 턴이 스키마 오류였으니 빌드가 도는지 본다」였다 [실측].
 - 원인은 스키마다 — `PovActionNamed`의 JSON 스키마는 `required: [action, rationale]`이고 판별 합이 아니라, 디코더가 `spec` 없는 `gen`을 허용한다. PR #699는 Auditor만 판별 합으로 바꿨다 → **#704**. 연속 파싱 실패 상한이 없어 17 hop까지 갈 수 있었다 → #613에 측정 코멘트.
 - 22:37Z 운영자가 run을 멈췄다. 남은 hop 14개를 이 평균으로 돌렸다면 약 4.1시간 · 약 $8.5였다(계산값).
 
