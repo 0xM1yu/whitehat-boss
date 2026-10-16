@@ -2262,7 +2262,7 @@ def test_a_serving_profile_refuses_to_start_without_the_labels(
     monkeypatch: pytest.MonkeyPatch,
     empty_slices: Path,
 ) -> None:
-    """**실서빙 run에서는 경고로 부족하다** (수민 리뷰 #119).
+    """**실서빙 run에서는 경고로 부족하다** (@sumin0218 리뷰 #119).
 
     경고 한 줄은 긴 run의 출력에 묻힌다. 그리고 그 run은 시작하기도 전에 이미 못 쓰는
     것이 확정돼 있다 — `incomplete_fields()`가 `device`가 비면 "모델 비교표에서

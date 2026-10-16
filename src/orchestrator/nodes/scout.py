@@ -893,7 +893,7 @@ def _slice_criterion(ref: SliceRef) -> dict[str, object]:
             "symbol": ref.entry.symbol,
         },
         # anchor-only 대체 슬라이스(#307)면 True — 이 슬라이스엔 dataflow 문맥이 없다. 모델이
-        # 절단 슬라이스를 full로 오인하지 않게 FACTS에 싣는다(민규 #307 리뷰). `degraded`는
+        # 절단 슬라이스를 full로 오인하지 않게 FACTS에 싣는다(@danielcho02 #307 리뷰). `degraded`는
         # slice-v2 `slices[]`가 실제로 드는 값이라(지어낸 키가 아니다) 여기 실을 자격이 있다.
         "degraded": ref.degraded,
     }

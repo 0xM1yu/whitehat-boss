@@ -2,7 +2,7 @@
 
 - 상태: **승인** — 2026-09-06 팀 초안, **2026-09-09 팀 확정**, 같은 날 **팀 리뷰 승인**(PR #148, 커밋 `c347b9e`). 리뷰가 남긴 셋은 아래 「리뷰에서 정할 것」이 disposition을 든다. 아래 「결정」은 이제 정본이고 **저장소가 이 로스터를 바라본다**(→ [PROJECT-CONTEXT.md](../../PROJECT-CONTEXT.md)). ⚠ **모델은 계속 바뀐다** — 팀이 실험하며 정하는 중이고, 바꾸는 비용을 낮게 유지하는 것이 이 문서의 설계 목표다(「되돌리는 비용」). **바뀔 때 고치는 자리는 PROJECT-CONTEXT.md와 registry이지 문서 전부가 아니다.** 팀 리뷰는 폐기되지 않았다 — 아래 「리뷰에서 정할 것」에 남은 셋이 그 몫이고, 로스터를 막지 않는다
 - 일자: 2026-09-06
-- 관련: [docs/research/2026-09-04-models.md](../research/2026-09-04-models.md) §2·§3.4·§3.5·§5, [docs/research/2026-09-04-quantization.md](../research/2026-09-04-quantization.md), [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §6·§7, `ADR 0009`, [build-plan.md](../build-plan.md) §2·§4·§7·§8, [model-serving.md](../model-serving.md) §1·§2, [evaluation.md](../evaluation.md) §2.1, [D9](../open-questions/D/D9.md)·[D59](../open-questions/D/D59.md)·[D63](../open-questions/D/D63.md)·[D64](../open-questions/D/D64.md), [R2](../open-questions/R/R2.md)·[R8](../open-questions/R/R8.md), [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), 중간발표 v3 슬라이드 10·18·23, 하네스 리스트럭처 계획(2026-09-04, 수민·민규 — 로컬 노트 `.claude/restructure-2026-09-04.md`, 저장소 밖)
+- 관련: [docs/research/2026-09-04-models.md](../research/2026-09-04-models.md) §2·§3.4·§3.5·§5, [docs/research/2026-09-04-quantization.md](../research/2026-09-04-quantization.md), [docs/research/2026-09-04-swap.md](../research/2026-09-04-swap.md) §6·§7, `ADR 0009`, [build-plan.md](../build-plan.md) §2·§4·§7·§8, [model-serving.md](../model-serving.md) §1·§2, [evaluation.md](../evaluation.md) §2.1, [D9](../open-questions/D/D9.md)·[D59](../open-questions/D/D59.md)·[D63](../open-questions/D/D63.md)·[D64](../open-questions/D/D64.md), [R2](../open-questions/R/R2.md)·[R8](../open-questions/R/R8.md), [2026-09-04 다섯 상주 보고서](../experiments/harness/2026-09-04-five-model-residency-atom.md), 중간발표 v3 슬라이드 10·18·23, 하네스 리스트럭처 계획(2026-09-04, @sumin0218·@danielcho02 — 로컬 노트 `.claude/restructure-2026-09-04.md`, 저장소 밖)
 
 > ⚠ **2026-09-24 — [ADR 0012](0012-harness-canon-v2.md)가 이 ADR의
 > 네 자리를 다시 정한다. 본문은 안 고쳤다 — 자리마다 같은 날짜의 노트가 범위를 짓는다.**
@@ -30,7 +30,7 @@
 
 1. **중간발표 v3(슬라이드 23)의 기준안** — Scout `Phi-4`·`Mistral-Small-24B`·`QwQ-32B`, Auditor `DeepSeek-Coder-V2-Lite`, Critic `DeepSeek-R1-Distill-Llama-70B`. "가장 큰 조합에서 시작해 Top-Down으로 줄인다"는 전략과 함께다. 슬라이드 18이 Scout를 **CWE 계열별 세 에이전트**(Memory 415/416 · Boundary 119/125/787/190 · Injection 78/22/134)로, 슬라이드 10이 전체 구조(Code Slicing → Candidate Context Pool → Scout Orchestration → Auditor → Evidence Gate → Critic → Validation)로 그렸다.
 2. **2026-09-04 외부 문헌 조사 셋**([research/](../research/README.md)). 요지 셋 — *문헌으로는 후보를 못 고른다*(취약점 탐지 실측이 후보 전부 0~1건 · models.md §3.3.1), *"4비트"가 한 물건이 아니다*(quantization.md), *단계 단위 실행이 교대의 선행 조건이다*(swap.md §6.2 — 후보 단위면 교대 512회, 단계 단위면 3~5회 · 계산값).
-3. **리스트럭처 계획(2026-09-04, 수민·민규)** — 70B dense 폐기 → 30B급 MoE 둘(조합 B), Scout 오케스트레이터 팬아웃, 리랭커 키움, 단계 단위 + 교대 스키마, "낡은 결함 수정 중단·리스트럭처 먼저".
+3. **리스트럭처 계획(2026-09-04, @sumin0218·@danielcho02)** — 70B dense 폐기 → 30B급 MoE 둘(조합 B), Scout 오케스트레이터 팬아웃, 리랭커 키움, 단계 단위 + 교대 스키마, "낡은 결함 수정 중단·리스트럭처 먼저".
 
 결정을 묶는 실측 제약은 아래다. **전부 저장소 안의 값이고 라벨을 붙였다**(CLAUDE.md §0).
 

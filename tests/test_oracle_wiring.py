@@ -1569,7 +1569,7 @@ def test_a_held_poc_alone_is_designated_as_the_sole_candidate() -> None:
 def test_an_upheld_poc_beats_an_uncritiqued_poc_even_at_a_lower_grade() -> None:
     """uphold는 미경유(`decisions` 없음)보다 판정 계단이 앞서므로(0 대 1) 등급이 낮아도 이긴다 -
     `critic_verdict`가 가른다. ⏵ 2026-10-12 - 앞 판은 둘을 같은 0에 두고 `top_grade`로 내려가
-    E3 미경유가 E2 uphold를 이겼다(sumin 리뷰 MEDIUM 1 - 이슈 #604 (b)는 uphold > 미경유 > 보류)."""
+    E3 미경유가 E2 uphold를 이겼다(@sumin0218 리뷰 MEDIUM 1 - 이슈 #604 (b)는 uphold > 미경유 > 보류)."""
     uncritiqued = _attempt("f_none", b"\x01none")
     upheld = _attempt("f_upheld", b"\x02upheld\xfe")
     grades = {"f_none": EvidenceGrade.E3, "f_upheld": EvidenceGrade.E2}

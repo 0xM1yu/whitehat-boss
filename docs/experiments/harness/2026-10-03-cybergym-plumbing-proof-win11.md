@@ -79,7 +79,7 @@
 | 채점 서버 | 저자 소스 commit `c6fe202`, `cybergym.server` | 2026-10-02 왕복 보고서 §4에서 바이트 대조한 트리 |
 | 서버 python | 3.14.5 (scratchpad `stage0/venv`) | `python.exe -V` |
 | 하네스 트리 | `C:/w/p4`, `origin/main 1fa2182` | 🔴 **서버는 저장소 밖에 설치했다** |
-| 과제 번들 | **`C:\Users\danie\Desktop\vuln_multi_agent_orchestration\eval\datasets\arvo-1065\`** (`description.txt` 79 B · `repo-vul.tar.gz` 493,478 B + 우리가 만든 `submit.sh`) | ⚠ **`C:/w/p4/eval/datasets/`에는 없다**(`.gitkeep`·`README.md`뿐) — `--task-dir`로 절대경로를 줬다. trace는 그 경로를 기록하지 않는다 |
+| 과제 번들 | **`<저장소>\eval\datasets\arvo-1065\`** (`description.txt` 79 B · `repo-vul.tar.gz` 493,478 B + 우리가 만든 `submit.sh`) | ⚠ **`C:/w/p4/eval/datasets/`에는 없다**(`.gitkeep`·`README.md`뿐) — `--task-dir`로 절대경로를 줬다. trace는 그 경로를 기록하지 않는다 |
 | GPU | **미사용** | `gpu_ms: 0` |
 
 ---
@@ -270,7 +270,7 @@ POST /submit-vul → 200 1123.3 · 200 9.7 · 200 2.9 · 200 2.7 · 200 3.0 · 2
 POST /query-poc  → 404 36.8 · 200 2.6 · 200 2.7 · 200 3.2 · 200 3.9 · 200 3.0 · 200 2.6 · 200 2.3
 ```
 
-⏵ 2026-10-03 — 이 행과 위 ⚠는 3차 리뷰(sumin, PR #426)가 「8건 200」이 원문보다 세다고 지적한 뒤
+⏵ 2026-10-03 — 이 행과 위 ⚠는 3차 리뷰(@sumin0218, PR #426)가 「8건 200」이 원문보다 세다고 지적한 뒤
 `verdict.json`·서버 로그를 **직접 열어 센 값**이다. 첫 판은 `cached` 분포를 싣지 않았다.
 ⏵ 2026-10-04 — 그 반영본이 근거로 단 셋 중 「`output.vul` 하나」가 신호가 아니었다(PR #455 적대적 리뷰, §10) — 위 ①·②로 바꿨다.
 
@@ -449,7 +449,7 @@ sqlite3 <srv>/poc.db "select task_id,agent_id,poc_hash,poc_length,vul_exit_code,
 | 오염 테스트를 테스트처럼 적음 | **일회성·미커밋·출력 미보존**이고 `cli.py:699` 거부 경로를 안 탔다. 커밋된 핀은 `tests/test_oracle_cli.py:238-240` | 확인과 보증을 구별하지 않았다 |
 | §6을 *"설계 충돌"*로 단언 | 그 값에 **의존하는 테스트를 못 찾았다** — 주석이 낡은 것일 수 있다. ⏵ 2026-10-04 — 이 「못 찾았다」도 문자열 전수의 결과라 **틀렸다**(결합된 검사 둘 — 아래 둘째 표) | 주석 한 줄을 설계 근거로 읽었다 |
 
-### 머지 뒤에 잡힌 것 — 3차(sumin, PR #426) · PR #455의 적대적 리뷰
+### 머지 뒤에 잡힌 것 — 3차(@sumin0218, PR #426) · PR #455의 적대적 리뷰
 
 **위 표와 같이 지우지 마라.** 첫 판이 아니라 **머지된 판**이 틀렸던 자리다.
 

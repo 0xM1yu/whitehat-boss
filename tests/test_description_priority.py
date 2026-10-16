@@ -426,7 +426,7 @@ def test_desc_reserve_filled_counts_the_pick_and_desc_reserved_counts_the_effect
 # --- 슬라이스 경로: 걸친 함수로 매긴다 (#693) ---
 #
 # 실형태 출처: run_20261015_0001(commit 856528d)의 `slices.json` `slice_0524`와 그 run의
-# `scratch/index/index.json`(손수민 handoff, 저장소 밖). entry는 `funcs.c:76`(감싸는 함수
+# `scratch/index/index.json`(@sumin0218 handoff, 저장소 밖). entry는 `funcs.c:76`(감싸는 함수
 # `file_vprintf` 56-81)이고 걸친 줄 `funcs.c:508`이 `file_regexec`(507-513) 안이다. 그 run은 이
 # 슬라이스를 `desc_rank` 0으로 잘랐다(`target_skipped` · `target_plan.desc_part_matches` 0).
 _FUNCS = "src-vul/file/src/funcs.c"

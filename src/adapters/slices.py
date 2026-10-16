@@ -103,7 +103,7 @@ class Slice:
     code: str
     # anchor-only 대체 슬라이스(#307): flow/backward 질의가 실패·건너뛴 후보라 dataflow 문맥이
     # 없다. 슬라이서가 `slices.json`에 이 marker를 남기는데, 러너가 안 실으면 consumer가 절단
-    # 슬라이스를 full로 오인한다(민규 #307 리뷰). 기본 False라 정상 슬라이스는 영향 없다.
+    # 슬라이스를 full로 오인한다(@danielcho02 #307 리뷰). 기본 False라 정상 슬라이스는 영향 없다.
     degraded: bool = False
     # 줄별 출처 — slice-v2 `line_provenance`(`data_dependency`·`candidate_anchor`·`context` → 각
     # (file, line) 목록). Scout 창 트림이 어느 줄을 먼저 버릴지 정하는 데 쓴다(#375 HIGH-2 —

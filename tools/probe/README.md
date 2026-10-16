@@ -108,7 +108,7 @@ GLOO_SOCKET_IFNAME=lo
 **증상을 알아두는 것이 요점이다.** 이게 없으면 vLLM이 이렇게 죽는다:
 
 ```
-distributed_init_method=tcp://192.168.0.10:54029 backend=nccl
+distributed_init_method=tcp://<private-ip>:54029 backend=nccl
 [c10d] The client socket has failed to connect to [atom-host]:54029
        (errno: 113 - No route to host)
 TCP client failed ... retrying (try=0, timeout=600000ms, ...)

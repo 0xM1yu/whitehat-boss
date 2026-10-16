@@ -412,7 +412,7 @@ def test_the_v3_pool_gets_the_slice_contract_its_prompt_declares(tmp_path: Path)
 
 
 def test_a_degraded_slice_tells_the_v3_scout_its_path_is_absent(tmp_path: Path) -> None:
-    """#307 재리뷰(민규): FACTS가 degraded를 실어도 v3 prefix가 그 의미를 안 주면, 모델은
+    """#307 재리뷰(@danielcho02): FACTS가 degraded를 실어도 v3 prefix가 그 의미를 안 주면, 모델은
     "모든 slice가 도달 문장을 보존했다"는 prefix 단언과 충돌한다. degraded=true가 실제 v3
     프롬프트의 FACTS까지 가고, 세 prefix가 그 anchor-only 제한을 설명하는지 검사한다.
     """

@@ -166,7 +166,7 @@ class SliceRef(HarnessModel):
     lines: tuple[tuple[str, int], ...]
     # anchor-only 대체 슬라이스(#307)면 True — flow/backward 질의가 실패·건너뛴 후보라 dataflow
     # 문맥이 없다. FACTS와 RunRecord slicer summary가 이걸 실어야 모델·사후 기록이 절단 슬라이스를
-    # full로 오인하지 않는다(민규 #307 리뷰). 기본 False = 정상 full 슬라이스.
+    # full로 오인하지 않는다(@danielcho02 #307 리뷰). 기본 False = 정상 full 슬라이스.
     degraded: bool = False
     # 줄별 출처 — slice-v2 `line_provenance`(`data_dependency`·`candidate_anchor`·`context` → 각
     # (file, line) 목록). 슬라이서가 내는데 예전엔 하네스가 **안 읽고 버렸다**(#375 HIGH-2).

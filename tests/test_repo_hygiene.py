@@ -625,7 +625,7 @@ def test_the_live_source_sweeps_die_on_an_empty_collection(
     가드(`scanned > 100`)가 물어야 한다.
 
     소스 문자열(`REPO_ROOT.rglob`가 없는가)을 보는 판은 `glob("**/…")`·`Path(REPO_ROOT).rglob`·
-    루트 별칭으로 핀 철자를 남긴 채 되살아났다(sumin 리뷰). 수집을 다른 길로 걷는 전수는 비워진
+    루트 별칭으로 핀 철자를 남긴 채 되살아났다(@sumin0218 리뷰). 수집을 다른 길로 걷는 전수는 비워진
     수집기를 안 거치므로 가드가 안 물고 `DID NOT RAISE`로 빨개진다. 함수가 개명되면
     `getattr`이 터진다 - 테스트가 개명돼 이 핀이 아무것도 안 지키는 일은 없다.
     """

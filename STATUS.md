@@ -252,7 +252,7 @@ tool_images {'harness-tools:v1': 'sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f
 - **로컬 TCP 차단은 같은 날 해소됐고, 모델이 실제로 떴다.** 차단이 걸려 있던 동안에는
   같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가
   `ConnectionRefusedError: [Errno 111]`로 떨어졌고(`ss -ltn`에는 LISTEN으로 보이고 `lo`도
-  UP이었다), `192.168.0.10`은 `[Errno 113] No route to host`였다. vLLM은 `world_size=1`
+  UP이었다), `<private-ip>`은 `[Errno 113] No route to host`였다. vLLM은 `world_size=1`
   이어도 TCPStore에 자기 자신으로 붙으므로 그동안 기동 자체가 불가능했다. **관리자 예외가
   적용된 뒤 `qwen3-4b`가 `127.0.0.1:8001`에서 서빙됐다** — 근거는 registry의 실측이다
   (`config/models.yaml`: `measured_at: 2026-08-17T15:16:27Z`, `measured_on: atom`,

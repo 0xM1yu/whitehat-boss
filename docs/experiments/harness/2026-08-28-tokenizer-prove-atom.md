@@ -72,7 +72,7 @@ model = qwen3-coder-30b-a3b · ok = True · gpu_ms = 3085·2948·2681·… · gp
 
 ## 4. 의제 — `critic_top_n`은 무엇으로 정하나 (per-call 비용은 아직 근거 아님)
 
-민규가 "critic 개수·횟수는 회의가 필요"라고 남긴 항목이다. 이 run에서 얻을 수 있는 것과 없는 것을
+@danielcho02가 "critic 개수·횟수는 회의가 필요"라고 남긴 항목이다. 이 run에서 얻을 수 있는 것과 없는 것을
 가른다.
 
 **per-call 비용은 confound가 커 결정 근거로 못 쓴다.** 세 가지가 겹친다.

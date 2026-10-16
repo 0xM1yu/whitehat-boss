@@ -100,7 +100,7 @@ def test_a_slice_v2_file_loads_with_its_status_signature_and_given_end(tmp_path:
 
 
 def test_a_degraded_slice_keeps_its_marker_through_load(tmp_path: Path) -> None:
-    """#307 리뷰(민규): 슬라이서는 anchor-only 대체 슬라이스에 `degraded`를 남기지만 consumer가
+    """#307 리뷰(@danielcho02): 슬라이서는 anchor-only 대체 슬라이스에 `degraded`를 남기지만 consumer가
     그것을 버려서 절단 슬라이스가 러너에 full로 보였다. marker가 적재를 넘어 살아야 하고, 정상
     슬라이스는 False로 남는다.
     """
@@ -187,7 +187,7 @@ def test_a_slice_ref_keeps_the_raw_entry_beside_the_enclosing_function(tmp_path:
 
 
 def test_a_degraded_slice_carries_its_marker_to_the_sliceref_boundary(tmp_path: Path) -> None:
-    """#307 재리뷰(민규): marker가 Slice에서 멈추면 러너 소비 경계(SliceRef)와 FACTS·기록이
+    """#307 재리뷰(@danielcho02): marker가 Slice에서 멈추면 러너 소비 경계(SliceRef)와 FACTS·기록이
     절단 슬라이스를 full로 오인한다. SliceRef까지 살아야 하고, 정상 슬라이스는 False다.
     """
     document = _document([

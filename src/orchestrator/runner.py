@@ -2872,7 +2872,7 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
     추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다.
     판정은 `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
 
-    ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(sumin 리뷰): 미경유는 6단계 E0
+    ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(@sumin0218 리뷰): 미경유는 6단계 E0
     `QUEUED`와 `critic_top_n` 절단분이라 Critic이 **보증한** 것이 아닌데 uphold와 동점이 돼
     등급이 가렸다.
 
@@ -2932,7 +2932,7 @@ def _designation_key(
     등급·`confidence`로 uphold PoC를 밀어낼 수 있어서다(이슈 #604). 판정 계단이 등급보다 앞서므로
     **등급이 낮은 PoC가 계단이 뒤인 PoC를 이긴다**(E0 미경유·판정 호출 실패 > E4 보류,
     E2 uphold > E3 미경유·판정 호출 실패) —
-    의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은 계단에서 떼어 그 사이에 세웠다(sumin 리뷰,
+    의도한 것이다. ⏵ 2026-10-12 — 미경유를 uphold와 같은 계단에서 떼어 그 사이에 세웠다(@sumin0218 리뷰,
     `_verdict_ranks_by_finding`).
 
     ⏵ 2026-10-14 — ⓿을 맨 앞에 붙였다(이슈 #637, ADR 0013 결정 2 개정). **동기는 관측이 아니라 코드
@@ -3009,7 +3009,7 @@ def _designate_final(
       `designation`이다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·
       `top_confidence`·`smallest_poc`·`poc_digest`).
       `verdicts`는 Finding별 Critic 판정 계단이고(`_verdict_ranks_by_finding`) **필수 인자다** -
-      기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, sumin 리뷰).
+      기본값이 있으면 빠뜨린 호출처가 계단을 조용히 꺼 버린다(⏵ 2026-10-12, @sumin0218 리뷰).
 
     ⏵ **2026-10-04 — 동점 거부를 없앴다.** 2026-10-03 동결 규칙은 「내부 근거 등급 최댓값 ·
     동점이면 거부」였고 이 함수가 `grade_tie`를 냈다. 그 규칙이 실측에서 **점수를 0으로

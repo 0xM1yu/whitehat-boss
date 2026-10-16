@@ -1503,13 +1503,13 @@ def test_pov_observation_strips_the_harness_header_line_before_the_tail() -> Non
     log = (
         "# node argv: ['poc']\n"
         "# runtime: docker\n"
-        "$ docker run --rm -v /home/sumin/harness/workdir:/src:ro poc-image\n"
+        "$ docker run --rm -v /home/user/harness/workdir:/src:ro poc-image\n"
         "SUMMARY: AddressSanitizer: heap-buffer-overflow at 0x602000000018\n"
     )
 
     text = runner._pov_observation("inspect", _asan_evidence(), read_payload=lambda _ref: log)
 
-    assert "/home/sumin/harness/workdir" not in text, "호스트 절대경로가 꼬리로 샜다"
+    assert "/home/user/harness/workdir" not in text, "호스트 절대경로가 꼬리로 샜다"
     assert "SUMMARY: AddressSanitizer" in text, "머리줄을 빼면서 실제 도구 출력까지 지웠다"
 
 
@@ -3110,7 +3110,7 @@ def test_the_pov_loop_return_shapes_and_signatures_stay_put(ctx: RunContext) -> 
     assert runner._run_pov(scripted, state, finding) is None
 
 
-# --- 전 시도가 `length`로 끝난 파싱 실패는 재질문 없이 선다 (#550 리뷰 · sumin) ----------------
+# --- 전 시도가 `length`로 끝난 파싱 실패는 재질문 없이 선다 (#550 리뷰 · @sumin0218) ----------------
 #
 # 같은 프롬프트로 같은 상한에 닿는 것이 체계적일 수 있어 다시 물으면 모델 호출만
 # `pov_tool_hops + 1`번 쓴다(리뷰 재현: 17번). 횟수 상한은 이 PR에 없다 — 이슈 #613이 쫓는다.
