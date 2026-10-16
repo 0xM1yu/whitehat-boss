@@ -79,6 +79,10 @@ zlib의 `contrib/minizip/unzip.c` 67,662자가 그대로 실려 HTTP 400으로 �
 보므로 rank 2는 히트 줄이 entry 줄과 같을 때뿐이다 -> entry 줄이 아닌 곳에 걸린 semgrep
 히트는 clang-tidy만 걸린 것과 같은 rank 1이다(`_plan_slice_targets`의 ponytail, 코드 읽기 +
 함수 직접 호출 — `--slices` run으로 순서를 재지는 않았다).
+**설명 일치는 신호와 달리 entry만이 아니다(#693, 2026-10-16).** 슬라이스 target의 `desc_rank`는
+entry 이름과 슬라이스가 **걸친 함수** 이름 중 최댓값이다(`_slice_desc_rank` — 걸친 함수는 이름
+일치 ≥ 2만). entry만 보던 동안 실서빙 run_20261015_0001의 166조각이 셋 다 0이라(trace
+`target_plan`의 `desc_*_matches`, 실측) 위 예약이 한 일이 없었다.
 **점수 축은 아직 artifact 단위다**: `fake_model._has_static_signal()`은 심볼별로
 거르지 않은 evidence를 보므로 가산점은 artifact 전체에 간다 — 순서만 심볼 단위다.
 
@@ -758,6 +762,9 @@ class _Target:
     # 과제 설명과의 일치: 3=심볼 전체 이름 · 2=심볼 조각·확장 일치 · 1=파일 이름 · 0=없음/설명 없음
     # (#377 (b)). `signal_rank` 다음 정렬 항이다. 기본 0이라 설명이 없으면 종전 순서 그대로다.
     desc_rank: int = 0
+    # `desc_rank`를 낸 것이 타깃 위치(entry)가 아니라 **슬라이스가 걸친 함수**일 때 그 함수(#693).
+    # `None`이면 순위는 `location`에서 왔다. 예약은 이 함수로 중복을 거른다(`_cut_with_reserve`).
+    desc_symbol: Location | None = None
     # 슬라이스 타깃이면 그 슬라이스(ADR 0012 결정 1). id만이 아니라 통째로 드는 것은 4·5단계가
     # 더 꺼내 쓰기 때문이다 — Scout는 렌더 id와 `given_end`·entry(`slice_criterion`, ⏵ 2026-10-13
     # #529 `input: slice` 판만 — `source` 판은 entry를 품는 함수 본문을 받는다)를, Auditor는
@@ -787,6 +794,9 @@ class _TargetPlan:
     # `--slices`로 세운 타깃 수와, entry 파일이 이 run의 분석 대상 artifact가 아니라 못 세운 수.
     slice_targets: int = 0
     unmatched_slices: int = 0
+    # 순위가 아직 오를 수 있었는데 걸친 줄의 파일에 색인이 없어(`symbols_for` → `None`) 그 줄의
+    # 함수를 못 본 슬라이스 수(#693). 0이 아니면 예약이 덜 본 것이다.
+    desc_unindexed_slices: int = 0
     collected: list[_Target] = field(default_factory=list)
     targets: list[_Target] = field(default_factory=list)
 
@@ -4116,13 +4126,29 @@ def _plan_slice_targets(
 
     순위는 entry 줄로 매긴다(`_symbol_signal_rank`) — 히트가 entry 줄에 걸리면 2, 같은
     artifact의 다른 줄이면 1이다.
-    ponytail: entry 한 줄만 본다 — 슬라이스 줄(`SliceRef.lines`)에 든 히트로 매기지 않는다.
-    `candidate_max`가 슬라이스를 실제로 자르는 run이 왔다(2026-10-15 256 → 8) — 아직 그 줄로 안
-    매겼고, 첫 run의 `target_plan`(신호 수·`desc_*`)을 본 뒤 정한다.
+    ponytail: 신호는 entry 한 줄만 본다 — 슬라이스 줄(`SliceRef.lines`)에 든 히트로 매기지 않는다.
+
+    **설명 일치(`desc_rank`)는 entry와 슬라이스가 걸친 함수 전부 중 최댓값이다(#693).** entry만
+    보면 설명과 맞는 함수를 **걸친** 슬라이스가 0으로 잘린다 — 실서빙 run_20261015_0001에서
+    `slice_0524`(entry `funcs.c:file_vprintf`, 걸친 줄 `funcs.c:508` ∈ `file_regexec`)가 그랬다.
+    그 run의 trace `target_plan`이 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches`
+    셋 다 0이었다(실측 — 166조각) — 예약이 아무것도 안 했다. 이슈 #693이 과제 패치로 그 함수를 정답
+    위치라 진단했다(진단일 뿐 후보 선정에는 안 쓴다). 함수 **이름**만 본다(색인 경로와
+    같은 `description_rank`).
+    본문 식별자로 매기면 같은 166조각에서 35조각이 2 이상이 되고 그중 32조각은 `FILE_REGEX` 같은
+    `regex`가 든 식별자로만 맞는다(계산값 · 그 run 산출물 · 저장소 밖 handoff). 걸친 함수 이름으로는
+    1조각(`slice_0524`)이다(계산값).
+
+    ⚠ **걸친 함수가 많을수록 우연히 맞기 쉽다** — `slice_0524`는 함수 108개를 걸친다(계산값 ·
+    그 run의 `slices.json` 줄과 `index.json` · 저장소 밖 handoff). 흔한 조각(`parse`·`read`)을
+    부르는 설명이면 넓은 슬라이스가 순서와 예약 두 자리를 가져갈 수 있다. 예약은 서로 다른 함수
+    2자리라 피해는 8자리 중 2자리에 묶이지만 정렬 키 둘째 항은 더 넓다. 다른 과제에서는
+    미측정이다(이 과제는 166조각 중 1조각이 올라왔다).
     """
     by_path = {artifact.path: artifact for artifact in artifacts}
     tokens = description_tokens(ctx.vuln_description)
     seen: dict[str, tuple[tuple[Evidence, ...], list[int], bool]] = {}
+    symbols: dict[str, list[Location] | None] = {}
     for ref in refs:
         artifact = by_path.get(ref.location.file)
         if artifact is None:
@@ -4133,16 +4159,58 @@ def _plan_slice_targets(
             plan.signal_artifacts += seen[artifact.path][2]
         evidences, signal_lines, has_static = seen[artifact.path]
         plan.slice_targets += 1
+        desc_rank, desc_symbol, unindexed = _slice_desc_rank(ctx, tokens, ref, symbols)
+        plan.desc_unindexed_slices += unindexed
         plan.collected.append(
             _Target(
                 artifact=artifact,
                 location=ref.location,
                 evidences=evidences,
                 signal_rank=_symbol_signal_rank(ref.location, signal_lines, has_static),
-                desc_rank=description_rank(tokens, ref.location.file, ref.location.symbol),
+                desc_rank=desc_rank,
+                desc_symbol=desc_symbol,
                 slice=ref,
             )
         )
+
+
+def _slice_desc_rank(
+    ctx: RunContext,
+    tokens: frozenset[str],
+    ref: SliceRef,
+    symbols: dict[str, list[Location] | None],
+) -> tuple[int, Location | None, bool]:
+    """슬라이스의 설명 일치 — `(순위, 그 순위를 낸 걸친 함수 · entry면 None, 색인 없는 줄 유무)`.
+
+    entry 순위보다 **큰** 걸친 함수만 이긴다 — 같으면 entry(타깃 위치)가 남는다. 셋째 값은 **아직
+    순위가 오를 수 있는데**(최고 3 미만) 색인이 없어 못 본 줄이 있었는지다 — 이미 3이면 더 볼
+    것이 없어 멈춘다. `symbols`는 run 안 파일별 캐시다(슬라이스 수 × 줄 수만큼 색인을 다시 조회하지
+    않는다).
+    shortcut: 줄마다 `narrowest_symbol`(파일 심볼 수에 선형)을 부른다 — 166조각에서 무해했다,
+    슬라이스가 수천 개가 되면 함수별로 줄을 묶는다."""
+    best = description_rank(tokens, ref.location.file, ref.location.symbol)
+    matched: Location | None = None
+    unindexed = False
+    if not tokens:
+        return best, matched, unindexed
+    for file, line in ref.lines:
+        if best >= _DESC_TOP_RANK:
+            break
+        if file not in symbols:
+            symbols[file] = ctx.symbols_for(file)
+        defined = symbols[file]
+        if defined is None:
+            unindexed = True
+            continue
+        function = narrowest_symbol(defined, line)
+        if function is None:
+            continue
+        rank = description_rank(tokens, function.file, function.symbol)
+        # 걸친 함수는 **이름** 일치(≥ 2)만 센다 — 파일 이름 일치(1)까지 세면 많은 파일을 걸친
+        # 슬라이스일수록 우연히 앞선다.
+        if rank >= _DESC_RESERVE_MIN_RANK and rank > best:
+            best, matched = rank, function
+    return best, matched, unindexed
 
 
 def _cut_key(item: _Target) -> tuple[int, int, str, int, str, str]:
@@ -4159,6 +4227,8 @@ def _cut_key(item: _Target) -> tuple[int, int, str, int, str, str]:
     )
 
 
+# `description_rank`의 최댓값(심볼 전체 이름 일치) — 걸친 함수를 더 봐도 오를 수 없다.
+_DESC_TOP_RANK = 3
 # 설명 일치 예약 대상: 심볼 이름이 설명과 맞은 것(2 조각·확장 일치, 3 전체 이름). 파일 이름만(1)은
 # 흔해서(같은 파일의 심볼 전부가 1이다) 예약을 다 채울 수 있으므로 뺀다.
 _DESC_RESERVE_MIN_RANK = 2
@@ -4178,7 +4248,9 @@ def _cut_with_reserve(
     이미 막지만 이 함수가 단독으로도 안전하다.
 
     **예약 자리는 서로 다른 `(file, symbol)`에만 쓴다** — 슬라이스 경로에서 entry 함수가 같은
-    슬라이스 둘이 두 자리를 다 먹지 않게 한다. 같은 함수의 다른 슬라이스는 예약이 아니라 나머지
+    슬라이스 둘이 두 자리를 다 먹지 않게 한다. 그 함수는 **설명과 맞은 함수**다 — 걸친 함수로
+    매겨졌으면(`desc_symbol`, #693) 그 함수이고, entry가 다른 두 슬라이스가 같은 `file_regexec`를
+    걸쳐도 한 자리다. 같은 함수의 다른 슬라이스는 예약이 아니라 나머지
     경로(`rest`)로는 여전히 들어갈 수 있다. 넷째 값은 **이미 앞 순위라 예약이 없어도 들었을 것을
     포함한** 고른 수다 — 셋째(예약이 없었다면 잘렸을 것)와 다르다.
     """
@@ -4188,7 +4260,8 @@ def _cut_with_reserve(
     for item in ordered:
         if len(reserved) >= slots:
             break
-        function = (item.location.file, item.location.symbol)
+        matched = item.desc_symbol or item.location
+        function = (matched.file, matched.symbol)
         if item.desc_rank >= _DESC_RESERVE_MIN_RANK and function not in functions:
             functions.add(function)
             reserved.append(item)
@@ -4251,6 +4324,9 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
         desc_matches_deferred=sum(item.desc_rank > 0 for item in deferred),
         desc_reserved=len(promoted),
         desc_reserve_filled=filled,
+        # 걸친 함수로 매겨진 수와 색인이 없어 그것을 못 본 슬라이스 수(#693).
+        desc_spanned_matches=sum(item.desc_symbol is not None for item in plan.collected),
+        desc_unindexed_slices=plan.desc_unindexed_slices,
     )
     # **실행할 대상의 이름을 남긴다 (해소).** 위 `target_plan`은 개수만 싣고 이름을 싣는 것은
     # 아래 `_emit_skipped`뿐이었다 — **잘린 대상은 이름이 남고 실행된 대상은 안 남았다.**
@@ -6400,7 +6476,8 @@ def _emit_planned(ctx: RunContext, item: _Target, *, desc_reserved: bool) -> Non
 
     **`signal_rank`·`desc_rank`를 싣는다** — 잘린 쪽(`_emit_skipped`)과 같은 값이라 「무엇이 왜
     이 순서로 살았나」를 trace만으로 읽는다. `desc_reserved`는 **설명 일치 예약이 없었다면 잘렸을
-    후보**일 때만 참이다(`_order_and_cut`).
+    후보**일 때만 참이다(`_order_and_cut`). 걸친 함수가 `desc_rank`를 냈으면 `desc_symbol`·
+    `desc_symbol_file`도 싣는다(#693 — `_desc_symbol_field`, `_emit_skipped`와 같다).
 
     **`reason`이 없다.** 그쪽은 "왜 못 갔는가"를 싣지만 이쪽은 간 것이라 사유가 없다.
     빈 사유를 넣으면 두 이벤트가 같은 모양이 되어 합쳐 세는 실수를 부른다.
@@ -6415,6 +6492,7 @@ def _emit_planned(ctx: RunContext, item: _Target, *, desc_reserved: bool) -> Non
         signal_rank=item.signal_rank,
         desc_rank=item.desc_rank,
         desc_reserved=desc_reserved,
+        **_desc_symbol_field(item),
         # 슬라이스 타깃이면 그 id — entry가 같은 두 슬라이스를 가른다. 없으면 키를 안 만든다
         # (슬라이스 없는 run의 이벤트가 이 필드 이전과 같게 남는다). `_emit_skipped`와 같은 규칙.
         **({"slice_id": item.slice_id} if item.slice_id is not None else {}),
@@ -6476,8 +6554,19 @@ def _emit_skipped(
             if ranks is not None
             else {}
         ),
+        **(_desc_symbol_field(ranks) if ranks is not None else {}),
         **({"error_detail": detail} if detail else {}),
     )
+
+
+def _desc_symbol_field(item: _Target) -> dict[str, str]:
+    """`desc_rank`를 걸친 함수가 냈으면 그 이름(#693) — 타깃 위치(`symbol`)와 다른 함수가 순위를
+    올렸다는 것을 trace에서 읽는다. entry가 냈거나 일치가 없으면 키를 안 만든다(이전 이벤트와
+    같은 모양)."""
+    if item.desc_symbol is None:
+        return {}
+    # 파일도 싣는다 — 같은 이름이 두 파일에 있으면 이름만으로는 예약의 `(file, symbol)`을 못 읽는다.
+    return {"desc_symbol": item.desc_symbol.symbol or "", "desc_symbol_file": item.desc_symbol.file}
 
 
 def _triage_one(
