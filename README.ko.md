@@ -231,7 +231,7 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 - **펌웨어 입력은 아직 없다.** 바이너리·펌웨어 분석 경로는 설계에만 있다.
 
 > [!CAUTION]
-> **이 도구는 크래시 입력을 만든다.** 허가받은 대상에만 쓴다 — [SECURITY.md](SECURITY.md).
+> **이 도구는 크래시 입력을 만든다.** 허가받은 대상에만 쓴다 — [SECURITY.ko.md](SECURITY.ko.md).
 
 ## 문서
 

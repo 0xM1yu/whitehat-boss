@@ -1,28 +1,33 @@
-# 보안 정책
+# Security policy
 
-## 이 저장소의 취약점 보고
+**English** · [한국어](SECURITY.ko.md)
 
-이 하네스 자체의 보안 문제(예: 과제 번들이나 모델 출력이 신뢰 경계를 넘어 호스트에서 실행되는 경로)는
-**공개 이슈로 올리지 않는다.** GitHub 저장소의 **Security 탭 → Report a vulnerability**(비공개 보고)로
-알린다. 재현 절차, 영향 받는 커밋, 관찰한 결과를 함께 적는다.
+## Reporting a vulnerability in this repository
 
-보안 문의 담당은 [@danielcho02](https://github.com/danielcho02)다. Security 탭에 그 버튼이 없으면
-@danielcho02를 멘션한 공개 이슈에 「보안 문의」라고만 적고 세부는 적지 않는다 — 담당자가 비공개
-채널을 연다.
+Do **not** open a public issue for a security problem in the harness itself (for example, a path by which a
+task bundle or model output crosses a trust boundary and runs on the host). Report it privately through the
+repository's **Security tab → Report a vulnerability**. Include reproduction steps, the affected commit, and
+what you observed.
 
-## 책임 있는 사용
+The security contact is [@danielcho02](https://github.com/danielcho02). If the Security tab has no such
+button, open a public issue that mentions @danielcho02 and says only "security inquiry", with no details —
+the contact will open a private channel.
 
-이 도구는 C/C++ 코드에서 취약점 후보를 찾고 **크래시를 일으키는 입력(PoC)을 만든다.**
+## Responsible use
 
-- **허가받은 대상에만 쓴다.** 자기 코드, 명시적으로 허락받은 코드, 그리고 CyberGym처럼 알려진 취약점을
-  재현하도록 만든 벤치마크가 그 범위다.
-- **PoC는 격리된 환경에서 돌린다.** 실서빙 프로필(`harness_pool`·`harness_pool_hybrid`)은 도구와 PoC를
-  Docker 컨테이너 안에서 실행한다. Singularity는 개발 프로필 `dev_singularity`가 쓴다
-  ([tools/README.md](tools/README.md)). 생성된 입력을 컨테이너 밖 호스트에서 직접 실행하지 않는다.
-- **제3자 오픈소스에서 새 취약점을 찾으면 조율된 공개(Coordinated Vulnerability Disclosure)를 따른다.**
-  그 프로젝트의 보안 정책에 따라 유지보수자에게 먼저 비공개로 알리고, 수정이 나오기 전에는 세부 내용이나
-  PoC를 공개하지 않는다.
+This tool looks for vulnerability candidates in C/C++ code and **builds inputs that cause crashes (PoCs).**
 
-## 범위 밖
+- **Use it only on targets you are authorized to test.** That covers your own code, code you have explicit
+  permission to test, and benchmarks built to reproduce known vulnerabilities, such as CyberGym.
+- **Run PoCs in an isolated environment.** The real-serving profiles (`harness_pool`, `harness_pool_hybrid`)
+  run tools and PoCs inside Docker containers; Singularity is used by the development profile
+  `dev_singularity` ([tools/README.md](tools/README.md)). Do not run generated inputs directly on a host
+  outside a container.
+- **If you find a new vulnerability in third-party open source, follow Coordinated Vulnerability
+  Disclosure.** Report it privately to the maintainers first, following that project's security policy, and
+  do not publish details or PoCs before a fix is available.
 
-CyberGym 과제의 취약점은 이미 알려진 것이다. 그 과제 자체의 문제는 CyberGym 프로젝트에 보고한다.
+## Out of scope
+
+The vulnerabilities in CyberGym tasks are already known. Report problems with the tasks themselves to the
+CyberGym project.
