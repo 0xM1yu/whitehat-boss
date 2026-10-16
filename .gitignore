@@ -46,6 +46,10 @@ harness-tools_*.tar
 slurm_tutorial/
 slurm-2026-08-11-issues.md
 
+# 평가 데이터셋 (팀 main + injection tar.gz, 추출 GT, CWE 기록) — 대용량 바이너리,
+# 팀이 로컬 관리용으로 여기 둠(2026-09-27). PR 산출물 아니고 커밋되면 안 된다(~1.2GB).
+.claude/datasets/
+
 # 작업 계획 문서 (PR 산출물이 아니다)
 PR4-plan.md
 

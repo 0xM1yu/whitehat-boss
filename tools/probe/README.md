@@ -72,16 +72,16 @@ Qwen3-0.6B로 통일한 이유가 그것이고, 기본값 `REQUESTS=6` / `PREFIX
 
 ```bash
 tmux new -s probe                        # srun은 SSH가 끊기면 job까지 죽는다
-sinfo -p <partition>                  # 비어 있는 노드 확인
-tools/probe/slurm.sh --node <node> --out /data/<계정>/probe
+sinfo -p REDACTED-partition                  # 비어 있는 노드 확인
+tools/probe/slurm.sh --node REDACTED-node --out /data/<계정>/probe
 ```
 
-`--node`에 **기본값이 없다.** slurm의 u 노드는 고정 대상이 아니라 그때그때 비어 있는 것을
+`--node`에 **기본값이 없다.** REDACTED-cluster의 u 노드는 고정 대상이 아니라 그때그때 비어 있는 것을
 쓰고, 노드마다 카드가 다르다(u1은 6GB, u3·u4는 12GB, u8은 Prolog failure로 사용 금지).
 기본값을 두면 남이 쓰는 노드에 얹히거나 6GB 카드에서 재고도 그 사실이 산출물에 안 남는다.
-범위(`<node>[3-4]`)로 주면 `Node count specification invalid`다.
+범위(`REDACTED-node[3-4]`)로 주면 `Node count specification invalid`다.
 
-외부망에서는 접속 포트가 다르다(`ssh -p <ssh-port>`).
+외부망에서는 접속 포트가 다르다(`ssh -p REDACTED-port`).
 
 ### ATOM
 

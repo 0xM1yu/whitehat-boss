@@ -1,7 +1,7 @@
 """`src/adapters/symbol_render.py`의 렌더·정규화 순수 함수 테스트 (#95 후속, ADR 0012 결정 2).
 
-명세 문자열은 팀 Notion 「화햇대장 › 실험팀 › Scout RAG baseline」
-(#private-notion,
+명세 문자열은 팀 Notion 「실험팀 › Scout RAG baseline」
+(
 2026-09-26 판독 — 2026-09-26 판독본과 바이트 대조 통과)에서 그대로 옮겼다 — 의역하지 않는다.
 대입 주의문(라벨 3·13에만 붙는다)의 근거는 `needs_assignment_note`의 docstring과 그 옆
 상수 주석에 있다 — 원문(명세 §4.4.5 주의문 조건 문단)이 대입 블록을 "target에 들어갈 수

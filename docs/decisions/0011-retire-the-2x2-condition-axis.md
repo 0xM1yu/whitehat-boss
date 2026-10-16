@@ -1,6 +1,6 @@
 # 0011. 2×2 조건 축을 폐기한다 — Scout 오케스트레이터로 간다
 
-- 상태: **승인** (2026-09-20, @danielcho02)
+- 상태: **승인** (2026-09-20, 팀)
 - 일자: 2026-09-20
 - 관련: [evaluation.md](../evaluation.md) §2.1·§2.2, [D1](../open-questions/D/D1.md), [open-questions.md](../open-questions.md), `src/schemas/run.py`의 `CONDITION_PATTERN`, 이슈 [#59](https://github.com/0xM1yu/whitehat-boss/issues/59), [ADR 0010](0010-harness-structure-and-model-roster.md) §3
 
