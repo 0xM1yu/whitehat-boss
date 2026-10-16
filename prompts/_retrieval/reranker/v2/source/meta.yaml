@@ -22,7 +22,7 @@ render: |
   # 점수는 이 빈 think 블록 다음 위치에서 "yes"/"no" 토큰의 로짓을 비교해 뽑는다.
 based_on: v1
 description: >
-  scout 프롬프트(member/prompts/scout/cwe/v*)를 다시 참고해 v1에 빠져 있던 세 요소를
+  팀원 저장소의 scout 프롬프트(prompts/scout/cwe/v*)를 다시 참고해 v1에 빠져 있던 세 요소를
   추가(2026-09-14): ① 역할 부여 — 이 판정이 2단계 파이프라인의 어느 자리인지, 오판의 비용이
   무엇인지 명시(scout의 "You are a Scout, not the final judge" 프레이밍과 같은 목적).
   ② 명시적 절차 — "먼저 정확히 무엇이 오염값인지 특정 -> Document가 그 값과 실제로 연결되는지
