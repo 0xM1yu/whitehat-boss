@@ -870,7 +870,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5~v10은 `PovActionNamed`이고 서빙 판은 v10)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5~v10은 `PovActionNamed`, 서빙 판 v11은 그 하위 봉투 `PovDiscriminatedAction`)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -947,8 +947,10 @@ models:
     # poc/asan/gdb/build」·「`inspect(build)`를 쓰라」가 거짓·오도가 된다(`prompts/pov/v10/meta.yaml`). body·봉투·옵션 선언은 v9와 같다
     # (v9는 한 글자도 안 고쳤다 - 규칙 1). prefix.md sha256 `9c51df1d2bb33f219f859e42a9bb3b2c7abfadc5f3eae8064748c5ac4507dd6e`.
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v10을 더했다. **v10으로 돈 run은 0건 · 효과 미실측.**
-    # ⏵ 2026-10-17 — **v11**로 올렸다(이슈 #704). v11 = v10 prefix·body 바이트 동일 + 봉투 `PovDiscriminatedAction`(디코더
-    # 스키마가 액션별 판별 합 — `gen`은 `spec` 필수). run_20261016_0001(v9)의 8단계가 `spec` 없는 `gen` 6/6으로 버려졌다.
+    # ⏵ 2026-10-17 — **v11**로 올렸다(이슈 #704). v11 = v10 body 바이트 동일 + prefix 「Output」 두 줄(`gen` 예시를 스키마 키
+    # 순서로) + 봉투 `PovDiscriminatedAction`(디코더 스키마가 액션·세그먼트 kind별 판별 합 — `gen`은 `spec` 필수).
+    # run_20261016_0001(v9)의 8단계가 `spec` 없는 `gen` 6/6으로 버려졌다 — 예시 순서(`rationale` → `spec`)대로 쓰면 xgrammar가
+    # `spec` 자리를 닫는다(`prompts/pov/v11/meta.yaml`).
     # `nodes/pov._WIDE_INPUT_VERSIONS`에 v11을 더했다. **v11로 돈 run은 0건 · 효과 미실측.**
     prompt_template_version: "v11"
     fallback: null

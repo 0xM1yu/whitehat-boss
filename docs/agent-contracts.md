@@ -818,11 +818,14 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-16 — 서빙 pov 판이 **v10**이다(v9 + prefix 다섯 군데, #698). 2단계가 그 파일에서 컴파일러 오류를 잰 `build`·`asan`·`gdb`는
   요청 스키마 `tool` enum에서 빠지므로(`signals.without_tools`) v9의 「tool은 poc/asan/gdb/build 중 하나」와 `inspect(build)` 권유를
   그 경우에 맞게 고쳤다(`prompts/pov/v10/meta.yaml` · `tests/test_pov_prompt_v10.py`). body·봉투는 v9와 같다. v10으로 돈 run은 0건이다.
-  ⏵ 2026-10-17 — 서빙 pov 판이 **v11**이다(#704). v11 = v10 prefix·body **바이트 동일** + 봉투 `PovDiscriminatedAction`(`PovActionNamed`의
-  하위 클래스 — 검증은 부모 그대로, 디코더에 보내는 JSON 스키마만 액션별 판별 합: `gen`은 `spec` 필수 · `inspect`는 `tool` 필수 ·
-  `poc_sha256`은 `submit` 갈래에만). run_20261016_0001(v9)의 8단계에서 옛 봉투 문법이 `spec` 없는 `gen`을 받고 pydantic만 거절해 3 hop ·
-  6시도가 모두 버려졌다. Auditor v18(#602 · PR #699)과 같은 처방이다(`tests/test_pov_v11.py`). v11로 돈 run은 0건 · 모델이 `spec`을
-  채우는지는 미실측이다.
+  ⏵ 2026-10-17 — 서빙 pov 판이 **v11**이다(#704). 바뀐 것은 둘이다. (1) 봉투 `PovDiscriminatedAction`(`PovActionNamed`의 하위 클래스 —
+  검증은 부모 그대로, 디코더에 보내는 JSON 스키마만 판별 합: `gen`은 `spec` 필수 · `inspect`는 `tool` 필수 · `poc_sha256`은 `submit`
+  갈래에만 · 세그먼트도 kind마다 갈래 하나). (2) prefix 「Output」 두 줄 — `gen` 예시를 스키마 키 순서(action · spec · rationale)로.
+  xgrammar는 키를 스키마 순서로만 생성하게 하는데 v5~v10 예시는 `rationale`을 `spec` 앞에 적어, 예시대로 쓰면 `spec` 자리가
+  사라졌다. run_20261016_0001(v9) 8단계의 3 hop · 6시도가 그 모양(`{"action":"gen","rationale":…,"poc_sha256":null}`)으로
+  pydantic에 거절됐다. body는 v10과 같다. Auditor v18(#602 · PR #699)과 같은 처방이다(`tests/test_pov_v11.py` ·
+  `tests/test_check_decoder_schemas.py`). v11로 돈 run은 0건 · 모델이 `spec`을 채우는지는 미실측이다.
+  ⚠ **Auditor 봉투도 같은 위험이 있는지는 안 봤다** — 판별 합 봉투의 키 순서와 Auditor prefix 예시의 순서가 맞는지는 이 PR 범위 밖이다.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽

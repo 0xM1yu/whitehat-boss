@@ -704,8 +704,8 @@ def _build_pov_discriminated_action(
     context: FakeContext, produced_by: ProducedBy, history: Sequence[ChatTurn]
 ) -> PovDiscriminatedAction:
     """v11 봉투(`PovDiscriminatedAction` · 서빙 판)의 fake — 같은 액션. 판별 합은 요청 스키마의
-    일이라
-    값은 `PovActionNamed`와 같다(`tests/test_pov_v11.py`가 표본을 스키마에 대조한다)."""
+    일이라 값은 `PovActionNamed`와 같다(`tests/test_pov_v11.py`가 v11 루프에서 낸 hop을 그 스키마에
+    대조한다)."""
     return PovDiscriminatedAction(**_build_pov_action(context, produced_by, history).model_dump())
 
 

@@ -8,8 +8,8 @@ v10은 그 다섯 군데만 「`tool` 필드가 받는 값」 기준으로 고�
 1. **v9는 한 글자도 안 바뀌었다** - prefix·body sha256(`tests/test_pov_v9.py`의 값과 같다).
 2. **v10 = v9 + 이 편집 다섯** - body는 v9와 바이트 동일, prefix는 편집 목록의 결과와 바이트 동일.
 3. **봉투·홉 줄·중계 옵션 선언은 v9와 같다.**
-4. **배선** - `_WIDE_INPUT_VERSIONS`. (서빙 좌석·디스크 최신 판 핀은 ⏵ 2026-10-17
-`tests/test_pov_v11.py`로 옮겼다.)
+4. **배선** - `_WIDE_INPUT_VERSIONS`(서빙 좌석·디스크 최신 판 핀은 ⏵ 2026-10-17
+   `tests/test_pov_v11.py`로 옮겼다).
 5. **고친 문장이 코드와 맞는다** - 실제 `signals.withheld_tools`로 좁힌 봉투가 그 세 도구를 거절하고
    하네스 노트가 prefix가 인용하는 문구를 쓴다.
 
@@ -147,9 +147,8 @@ def test_v10_gets_the_same_wide_inputs_as_v9(ctx) -> None:  # noqa: ANN001, F811
     assert v10.prefix != v9.prefix and v10.prompt_version == "v10"
 
 
-# ⏵ 2026-10-17 — 「서빙 좌석이 v10을 고른다」·「디스크의 최신 판이 v10이다」 두 핀은 v11이 서빙 판이
-# 되며
-# `tests/test_pov_v11.py`로 옮겼다(이슈 #704).
+# ⏵ 2026-10-17 — 「서빙 좌석이 v10을 고른다」·「디스크의 최신 판이 v10이다」 두 핀은 v11이
+# 서빙 판이 되며 `tests/test_pov_v11.py`로 옮겼다(이슈 #704).
 
 
 # === 5. 고친 문장이 코드와 맞는다 =================================================================
