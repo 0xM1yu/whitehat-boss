@@ -246,7 +246,7 @@ def test_a_cpg_function_body_follows_the_write_window_and_the_counts_match(
     lines = _CALL_AND_HEXTOINT()
     base, _ = _source(index, tmp_path, None, lines=lines, **_WRITE_ONLY)
     got, event = _source(index, tmp_path, contexts["cpg"], lines=lines, **_ON)
-    decoder = "/* ===== apprentice_excerpt.c:44-65 ===== */"
+    decoder = "/* ===== apprentice_excerpt.c:71-92 ===== */"
     window = "/* ===== other.c:1-5 ===== */"
 
     assert decoder in got and decoder not in base
@@ -318,10 +318,10 @@ def test_a_syntax_basis_adds_no_body_and_is_counted_as_skipped(
 def test_a_range_already_carried_is_not_duplicated(
     index, tmp_path, contexts  # noqa: F811
 ) -> None:
-    """슬라이스 줄이 `eatsize` 안(47)에도 있어 그 함수가 이미 실렸다. 생산자의
+    """슬라이스 줄이 `eatsize` 안(74)에도 있어 그 함수가 이미 실렸다. 생산자의
     `identical_to_auditor_input`은 거짓인데도(= 슬라이스 자신의 함수만 가리킨다) 다시 안 붙인다."""
     assert contexts["cpg"]["identical_to_auditor_input"] is False
-    lines = {(FILE, eatsize_call_line()), (FILE, 47)}
+    lines = {(FILE, eatsize_call_line()), (FILE, 74)}
     base, _ = _source(index, tmp_path, None, lines=lines, **_WRITE_ONLY)
     got, event = _source(index, tmp_path, contexts["cpg"], lines=lines, **_ON)
     assert got == base
@@ -332,23 +332,23 @@ def test_a_range_already_carried_is_not_duplicated(
 def test_a_write_window_that_only_overlaps_the_decoder_does_not_block_it(
     index, tmp_path, contexts  # noqa: F811
 ) -> None:
-    """쓰기 지점 창이 디코더 안에 선다(디코더가 이름 `l`을 쓴다 - 47줄). 창은 함수의 일부일 뿐이라
+    """쓰기 지점 창이 디코더 안에 선다(디코더가 이름 `l`을 쓴다 - 74줄). 창은 함수의 일부일 뿐이라
     함수
     전체가 이미 든 것이 **아니다** - 완전한 함수가 붙고(창과 몇 줄 중복), 건너뜀으로 안 센다."""
     symbols = _locations(index)
     entry = next(s for s in symbols if s.symbol == "parse_op_modifier")
     ctx, events, _, _ = _unit(
         _files(), symbols, auditor_input_context=1, auditor_write_sites=6,
-        writes={"l": [Location(file=FILE, symbol="eatsize", line_start=47, line_end=47)]},
+        writes={"l": [Location(file=FILE, symbol="eatsize", line_start=74, line_end=74)]},
     )
     ref = _load(tmp_path, contexts["cpg"], points={(FILE, eatsize_call_line())})
     got = runner._auditor_source(ctx, ref, entry, "cand")
     event = events[-1]
     assert event["write_windows"] == 1, "전제 - 창이 먼저 디코더 안에 섰다"
-    assert "/* ===== apprentice_excerpt.c:44-65 ===== */" in got, "완전한 함수가 붙는다"
+    assert "/* ===== apprentice_excerpt.c:71-92 ===== */" in got, "완전한 함수가 붙는다"
     assert (event["input_context_added"], event["input_context_skipped_carried"]) == (1, 0)
     assert got.count("*p = l;") == 1 and got.count("const char *l = *p;") == 2, (
-        "창(44~50줄 쪽)과 겹친 줄은 두 번 나온다 - 중복은 받아들인다"
+        "창(71~77줄 쪽)과 겹친 줄은 두 번 나온다 - 중복은 받아들인다"
     )
 
 
@@ -435,10 +435,10 @@ def test_a_decoder_inside_a_size_dropped_window_is_not_carried(
     상한이 디코더도 못 싣게 더 조이면 `skipped_size`로 센다."""
     words = lambda text: len(text.split())  # noqa: E731
     join = "\n".join
-    entry = Location(file=FILE, line_start=13, line_end=28)
+    entry = Location(file=FILE, line_start=40, line_end=55)
     tiny = Location(file="other.c", line_start=6, line_end=8)
     wide = Location(file="other.c", line_start=5, line_end=11)
-    entry_block = runner._block(entry, join(fixture_lines(EXCERPT)[12:28]))
+    entry_block = runner._block(entry, join(fixture_lines(EXCERPT)[39:55]))
     decoder_block = runner._block(tiny, join(_SETUP_LINES[5:8]))
     window_block = runner._block(wide, join(_SETUP_LINES[4:11]))
     assert words(decoder_block) < words(window_block), "전제 - 디코더가 창보다 작다"
