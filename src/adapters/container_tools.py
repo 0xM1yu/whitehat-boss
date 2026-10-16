@@ -1469,6 +1469,9 @@ class ContainerToolRunner:
         # 폴백을 지어내지 않는다. 배선 자리가 오라클과 같아서(`poc_target_for` docstring) 카나리
         # 선행을 통과하지 않은 run에서는 여기가 비고 `poc`는 실패 Evidence가 된다.
         self.poc_target = poc_target
+        # 이 run에서 컴파일러 오류로 실패한 앞단 컴파일 → (Evidence id, 종료 코드, 사유) (#698).
+        # 잠그지 않는다 — 경합의 최악은 같은 명령이 한 번 더 도는 것이다.
+        self._compile_failures: dict[tuple[str, ...], tuple[str, int, str]] = {}
 
     # --- ToolRunner ---------------------------------------------------------
 
@@ -1622,7 +1625,27 @@ class ContainerToolRunner:
             node_argv = with_input_path(args.argv, f"{SCRATCH}/{written.name}")
         sections = [f"# node argv: {' '.join(node_argv)}", f"# runtime: {self.runtime}"]
         steps: list[Step] = []
+        memo = tool in _COMPILE_MEMO_TOOLS
         for index, command in enumerate(commands):
+            # ⏵ 2026-10-16 (#698) — 이 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일이면 다시
+            # 띄우지 않는다. 루프가 첫 실패에서 멈추므로 앞 명령까지 돈 이 자리의 결과는 그 측정과
+            # 같다.
+            # argv 조립(`plan()`)은 그대로다(ADR 0014).
+            key = _compile_key(command, sandbox.image) if memo else None
+            prior = self._compile_failures.get(key) if key is not None else None
+            if prior is not None:
+                prior_id, prior_code, reason = prior
+                error = (
+                    f"{tool}: 다시 돌리지 않았다 — 같은 컴파일 명령(-std·-I·-x·소스가 같고 "
+                    f"-O·-g·-c·-o·-fsanitize·-fno-omit-frame-pointer만 다를 수 있다)이 "
+                    f"이 run의 {prior_id}에서 "
+                    f"실패했다{reason}"
+                )
+                sections.append(f"# 실행하지 않았다: {error}")
+                return self._write(
+                    evidence_id, tool, kind, args, sections,
+                    ok=False, exit_code=prior_code, error=error,
+                )
             name = f"harness-{self.run_id}-{self._name_tag}-{evidence_id}-{index}"
             # 명령줄에 못 싣는 입력(인덱서 파일 목록)을 컨테이너가 보는 scratch에 쓴다. 호스트
             # 경로는 오류 문구에 안 싣는다 - `Evidence.error`는 관측으로 모델에 간다.
@@ -1697,6 +1720,10 @@ class ContainerToolRunner:
             )
             steps.append(Step(proc.returncode, proc.stdout, proc.stderr))
             if proc.returncode != 0:
+                # 컴파일러가 오류를 냈을 때만 남긴다 — 기동 실패는 측정이 아니다.
+                reason = compile_failure_reason(proc.stderr) if key is not None else ""
+                if reason:
+                    self._compile_failures[key] = (evidence_id, proc.returncode, reason)
                 break
         note = unexecuted_commands_note(len(steps), len(commands))
         if note is not None:
@@ -1859,6 +1886,31 @@ class ContainerToolRunner:
             crashed=crashed,
             banner=banner,
         )
+
+
+# 첫 명령이 우리 clang 컴파일인 도구 — 같은 run에서 그 컴파일의 실패를 다시 재지 않는다 (#698).
+_COMPILE_MEMO_TOOLS = frozenset({"build", "asan", "gdb"})
+_NON_FRONT_END_FLAGS = frozenset({"-c", "-g", "-fno-omit-frame-pointer"})
+
+
+def _compile_key(command: Command, image: str) -> tuple[str, ...] | None:
+    """컴파일 명령의 앞단 키 — 이미지와 `-std`·`-I`·`-x`·소스만 남긴다. clang 컴파일이 아니면
+    `None`이다.
+
+    shortcut: `-O`·`-fsanitize`는 `__OPTIMIZE__`·`__SANITIZE_ADDRESS__`를 정의해 전처리를 바꿀 수
+    있다. 잰 오류(헤더의 타입 해석)는 그것과 무관해서 뺐다 — 키가 같은데 결과가 갈리는 것이 측정되면
+    넣는다. `signals.withheld_tools`가 `build` 실패로 `asan`·`gdb`까지 빼는 것도 같은 추정이다.
+    """
+    if command.image is not None or not command.argv or command.argv[0] != "clang":
+        return None
+    kept: list[str] = []
+    rest = iter(command.argv[1:])
+    for flag in rest:
+        if flag == "-o":
+            next(rest, None)  # 산출물 경로
+        elif flag not in _NON_FRONT_END_FLAGS and not flag.startswith(("-O", "-fsanitize=")):
+            kept.append(flag)
+    return (image, *kept)
 
 
 def _require_sources(tool: str, compile_sources: list[str]) -> None:

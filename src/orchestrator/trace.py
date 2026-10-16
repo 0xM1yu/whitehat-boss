@@ -731,28 +731,29 @@ class EventKind(StrEnum):
     #   예외는 그대로 올라가 러너가 그 후보만 버린다(`target_skipped`).
     # - 조사가 예외로 못 돈 홉의 `observation_error`(예외 클래스 이름 — 예외는 그대로 올라간다).
     # - ⏵ 2026-10-13 (#600 H2ⓐ) `observation_sanitize_failed` — `lookup` 홉의 Critic용 사본을 못
-    #   만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과
-    #   어긋났다). 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고
-    #   run은 안 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가
-    #   든 홉 수). `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다. run 경고
-    #   (`runner._critic_hop_observations_warning`)가 이 키가 든 홉 수를 센다.
-    # ⚠ **이 이벤트의 부재가 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이
-    # **성공한 뒤** 나가므로(크기 거절만 예외다 - 위 `context_overflow`), 켠 run도 첫 호출이
-    # 실패하면(파싱 실패·예산 소진) 0건이다.
-    # 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
-    # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다.
-    # ⏵ 2026-10-06 — 루프 봉투가 둘이라 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이
-    # `AuditorProcedureAction`이다(`Finding`은 한 방 판 그대로). 위 `AuditorAction`은
-    # v8·v9의 이름이다.
-    # ⏵ 2026-10-09 — v11은 셋째 봉투 `AuditorProcedureNullableCweAction`이다(이슈 #525).
-    # ⏵ 2026-10-10 — v12는 넷째 봉투 `AuditorProcedureAuditAlwaysAction`이다(이슈 #578).
-    # ⏵ 2026-10-13 (이슈 #507) — **hop 0 이벤트만** `compile_note`(true)·`compile_note_tools`
-    # (`build` 실패면 `"build,asan,gdb"`, clang-tidy만이면 `"clang-tidy"` — 쉼표로 이은 문자열)를
-    # 싣는다: 2단계 `build`·`clang-tidy`가 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
+    # 만들었다(`critic_safe_observation`이 `PromptError` - 렌더 모양이 resolver 구조값과 어긋났다).
+    # 값은 그 사유 문장이다. **조사는 정상으로 돈 홉이라 `observation_error`와 다르고 run은 안
+    # 멈춘다** - 그 홉의 사본만 Critic에 안 간다(Critic 절의 사본 수 = 홉 수 − 이 키가 든 홉 수).
+    # `run(observations=None)`이면 사본을 안 만들어 이 키는 생기지 않는다. run 경고
+    # (`runner._critic_hop_observations_warning`)가 이 키가 든 홉 수를 센다. ⚠ **이 이벤트의 부재가
+    # 말하는 것은 「루프를 안 켰다」가 아니다** — 이벤트는 모델 호출이 **성공한 뒤** 나가므로(크기
+    # 거절만 예외다 - 위 `context_overflow`), 켠 run도 첫 호출이 실패하면(파싱 실패·예산 소진)
+    # 0건이다. 꺼짐은 `model_call`의 `schema`(`Finding` ↔ `AuditorAction`)로 가른다.
+    # `thresholds.auditor_tool_hops`가 0이면 이 이벤트는 0건이다. ⏵ 2026-10-06 — 루프 봉투가 둘이라
+    # 켠 run의 `schema`는 v8·v9가 `AuditorAction`, v10이 `AuditorProcedureAction`이다(`Finding`은 한
+    # 방 판 그대로). 위 `AuditorAction`은 v8·v9의 이름이다. ⏵ 2026-10-09 — v11은 셋째 봉투
+    # `AuditorProcedureNullableCweAction`이다(이슈 #525). ⏵ 2026-10-10 — v12는 넷째 봉투
+    # `AuditorProcedureAuditAlwaysAction`이다(이슈 #578). ⏵ 2026-10-13 (이슈 #507) — **hop 0
+    # 이벤트만** `compile_note`(true)·`compile_note_tools` (`build` 실패면 `"build,asan,gdb"`,
+    # clang-tidy만이면 `"clang-tidy"` — 쉼표로 이은 문자열)를 싣는다: 2단계 `build`·`clang-tidy`가
+    # 컴파일 오류로 실패해 hop0 본문 끝에 하네스 노트를 붙인
     # 호출이었다(`nodes/signals.compile_note`). **키 부재 = 노트 없음**(실패한 컴파일 Evidence가
     # 없었거나 한 방 판). 「노트 뒤 재선택률」은 **hop ≥ 0**의 `probe` 홉 `tool`이
-    # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노트가 도구를
-    # 거절하지 않아 모델이 골라도 도구는 돈다.
+    # `compile_note_tools`에 드는 비율로 잰다(hop 0의 답이 노트 뒤 첫 선택) — 노드가 도구를 거절하지
+    # 않아 모델이 고르면 홉 하나가 든다. ⏵ 2026-10-16 (#698) — 그 파일에서는 그 도구들이 요청 스키마
+    # `tool` enum에서 빠진다(`signals.without_tools`) — 서버가 strict를 집행하는 한 노트 뒤 재선택은
+    # 문법이 막고, 집행하지 않아도 하위 봉투 검증이 거절한다(그 홉은 파싱 실패).
+    # 컨테이너 어댑터도 같은 run에서 이미 실패한 앞단 컴파일을 다시 띄우지 않는다.
     # ⏵ 2026-10-13 — v15는 다섯째 봉투 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 —
     # `spec` 설명만 다르다).
     AUDITOR_HOP = "auditor_hop"

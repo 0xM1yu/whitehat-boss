@@ -201,6 +201,7 @@ def test_wired_prefix_explains_raw_observation_and_model_designation():
         "v7": ("## Scorer vul observation", "intermediate"),  # 2026-10-14 - v6과 같은 절
         "v8": ("## Scorer vul observation", "intermediate"),  # 2026-10-15 - v7과 같은 절
         "v9": ("## Scorer vul observation", "intermediate"),  # 2026-10-15 - v8과 같은 절
+        "v10": ("## Scorer vul observation", "intermediate"),  # 2026-10-16 - v9와 같은 절
     }[version]
     assert heading in prefix
     for text in ("oracle_vul exit_code=", "oracle_vul=unavailable", "fix", "submit", intermediate):
