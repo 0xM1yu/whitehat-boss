@@ -6,6 +6,9 @@
 ⏵ 2026-10-13 — **다섯이다**: v15가 `AuditorProcedureProbeInputAction`을 낸다(v12 봉투의
 서브클래스 — `probe`의 `spec` 설명만 다시 쓴다, 이 파일 맨 아래). 아래 본문의 「Auditor 경로는
 그 바이트를 도구에 안 싣는다」는 v8~v14 봉투의 서술이다.
+⏵ 2026-10-16 — **여섯이다**: v18이 `AuditorProcedureProbeInputDiscriminatedAction`을 낸다(다섯째의
+서브클래스 — 검증은 그대로고 디코더에 보내는 JSON 스키마만 `action`·`trigger_status`별 판별 합이다,
+이슈 #602 · 이 파일 맨 아래).
 액션 셋과 조사 필드는 공통 베이스가 들고 최종 답의 필드만 갈린다(`finding` ↔ `procedure`).
 
 한 방 경로(`nodes/auditor.py`의 `OUTPUT_SCHEMA = Finding`)는 그대로 남는다. 이 봉투는
@@ -43,7 +46,7 @@ v10 판은 최종 답으로 `Finding`이 아니라 `AuditProcedure`를 싣는 �
 들고, `answer`가 싣는 필드 하나(`finding` ↔ `procedure`)와 `rationale`만 갈린다.
 """
 
-from typing import ClassVar, Literal, Self, get_args
+from typing import Any, ClassVar, Literal, Self, get_args
 
 from pydantic import Field, model_validator
 
@@ -471,3 +474,144 @@ class AuditorProcedureProbeInputAction(AuditorProcedureAuditAlwaysAction):
             "조립해 도구에 싣는다. 읽는 도구는 `poc` 하나다. 생략하면 도구는 입력 없이 돈다."
         ),
     )
+
+
+# === v18: 디코더가 보는 JSON 스키마를 판별 합으로 (이슈 #602 · council 2026-10-16) ================
+#
+# ⏵ 2026-10-16 — 모든 요청이 `model_json_schema()`를 `response_format: json_schema, strict`로 보내고
+# 서버의 제약 디코더가 그것을 문법으로 집행한다. v15~v17 봉투의 스키마는 `required: [action,
+# rationale]`에 `procedure: anyOf[…, null]`이고 최상위 판별이 없어서, 문법이 `{"action": "answer",
+# "rationale": "…"}`와 `no_signal`인데 `defense.status`가 `absent`인 `procedure`를 **합법으로
+# 허용하고** pydantic(`_check_action`·`AuditProcedureAuditAlways`의 검증기)이 그 뒤에 거절해
+# 후보가 버려졌다(`run_20261016_0001` 후보 4개 중 2개 — n이 작다).
+#
+# 그래서 v18 봉투는 **디코더가 받는 스키마만** 바꾼다 — 검증기는 한 줄도 안 건드리고 백스톱으로
+# 남는다. v15~v17의 `AuditorProcedureProbeInputAction`은 고치지 않는다(그 스키마가 그 판들의 요청
+# payload다, evaluation §2.3). 새 서브클래스가 `model_json_schema`만 덮는다.
+#
+# 모양: 최상위는 `action`별 세 갈래(`anyOf`)고, `answer` 갈래의 `procedure`는 non-null이며
+# `trigger_status`별 두 갈래다 — `no_signal` 갈래는 `category` `none` · `defense.status`
+# `not_applicable` · `refutation.result` `no_candidate` · `cwe` null로 고정하고, 나머지 갈래는 그
+# 셋을 enum에서 빼고 `cwe`를 non-null로 둔다. 값은 `NO_SIGNAL_ONLY_AUDIT_VALUES`와 생성된 스키마에서
+# 읽는다 — 손으로 다시 적지 않는다.
+# 쓰는 구성은 `anyOf` · `const` · `enum` · `required` · `properties` · `additionalProperties` ·
+# `$defs`/`$ref` · `minItems`/`maxItems` 뿐이다(xgrammar가 아는 것만 — `oneOf`·`if/then`·`not`은
+# 안 쓴다). ⚠ **백엔드가 이 스키마를 컴파일하는지는 이 파일이 보장하지 않는다** — 서빙 전 스키마
+# 컴파일 게이트가 본다. 판별이 판정 분포를 바꾸는지도 안 쟀다.
+#
+# **`tool` enum을 좁히는 `signals.without_tools`와 겹쳐 선다**: 좁힌 하위 클래스는 같은 이름의 서브
+# 클래스고 이 메서드를 물려받는다. `tool`의 enum은 클래스가 이미 낸 스키마(`super()`)에서 읽으므로
+# 좁힌 enum이 `probe` 갈래에 그대로 실린다.
+def _ref(prop: dict[str, Any]) -> str:
+    return prop["$ref"].rsplit("/", 1)[1]
+
+
+def _non_null(prop: dict[str, Any]) -> dict[str, Any]:
+    """`anyOf[X, null]`에서 X만 — nullable 필드의 non-null 쪽 스키마."""
+    return next(b for b in prop["anyOf"] if b.get("type") != "null")
+
+
+def _const(prop: dict[str, Any], value: str) -> dict[str, Any]:
+    return {**{k: v for k, v in prop.items() if k != "enum"}, "const": value}
+
+
+def _without_value(prop: dict[str, Any], value: str) -> dict[str, Any]:
+    return {**prop, "enum": [v for v in prop["enum"] if v != value]}
+
+
+def _object(title: str, source: dict[str, Any], **props: dict[str, Any]) -> dict[str, Any]:
+    return {**source, "title": title, "properties": {**source["properties"], **props}}
+
+
+def _split_procedure(defs: dict[str, Any], proc_name: str) -> None:
+    """`defs`의 `procedure` 정의를 `no_signal` 갈래와 그 밖의 갈래로 쪼갠다 (제자리)."""
+    only = NO_SIGNAL_ONLY_AUDIT_VALUES
+    proc = defs.pop(proc_name)
+    block = defs.pop(_ref(proc["properties"]["audit"]))
+    defense = defs.pop(_ref(block["properties"]["defense"]))
+    refutation = defs.pop(_ref(block["properties"]["refutation"]))
+
+    for suffix, is_no_signal in (("NoSignalCase", True), ("SignalCase", False)):
+        pick = _const if is_no_signal else _without_value
+        defense_name = f"AuditDefense{suffix}"
+        refutation_name = f"AuditRefutation{suffix}"
+        block_name = f"AuditBlock{suffix}"
+        status = pick(defense["properties"]["status"], only["defense.status"])
+        defs[defense_name] = _object(defense_name, defense, status=status)
+        defs[refutation_name] = _object(
+            refutation_name,
+            refutation,
+            result=pick(refutation["properties"]["result"], only["refutation.result"]),
+        )
+        defs[block_name] = _object(
+            block_name,
+            block,
+            category=pick(block["properties"]["category"], only["category"]),
+            defense={"$ref": f"#/$defs/{defense_name}"},
+            refutation={"$ref": f"#/$defs/{refutation_name}"},
+        )
+        cwe = proc["properties"]["cwe"]
+        defs[f"{proc_name}{suffix}"] = _object(
+            f"{proc_name}{suffix}",
+            proc,
+            trigger_status=pick(proc["properties"]["trigger_status"], "no_signal"),
+            audit={"$ref": f"#/$defs/{block_name}"},
+            cwe={"title": cwe["title"], "type": "null"}
+            if is_no_signal
+            else {"title": cwe["title"], **_non_null(cwe)},
+        )
+
+
+class AuditorProcedureProbeInputDiscriminatedAction(AuditorProcedureProbeInputAction):
+    __doc__ = AuditorProcedureProbeInputAction.__doc__
+
+    @classmethod
+    def model_json_schema(cls, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """디코더에 보내는 스키마 — 위 주석의 판별 합. 검증은 부모의 것 그대로다."""
+        schema = super().model_json_schema(*args, **kwargs)
+        defs = schema["$defs"]
+        props = schema["properties"]
+        proc_name = _ref(_non_null(props["procedure"]))
+        _split_procedure(defs, proc_name)
+
+        no_extra = {"additionalProperties": False, "type": "object"}
+        empty = {
+            "requests": {"maxItems": 0, "type": "array"},
+            "tool": {"type": "null"},
+            "spec": {"type": "null"},
+            "procedure": {"type": "null"},
+        }
+        own: dict[str, dict[str, dict[str, Any]]] = {
+            "lookup": {"requests": {**props["requests"], "minItems": 1}},
+            "probe": {"tool": _non_null(props["tool"]), "spec": props["spec"]},
+            "answer": {
+                "procedure": {
+                    "anyOf": [
+                        {"$ref": f"#/$defs/{proc_name}{suffix}"}
+                        for suffix in ("NoSignalCase", "SignalCase")
+                    ]
+                }
+            },
+        }
+        required = {"lookup": "requests", "probe": "tool", "answer": "procedure"}
+        branches = []
+        for action, fields in own.items():
+            name = f"{action.capitalize()}Hop"
+            defs[name] = {
+                **no_extra,
+                "title": name,
+                "properties": {
+                    "action": {"const": action, "title": "Action", "type": "string"},
+                    **{key: fields.get(key, empty[key]) for key in empty},
+                    "rationale": props["rationale"],
+                },
+                "required": ["action", required[action], "rationale"],
+            }
+            branches.append({"$ref": f"#/$defs/{name}"})
+        return {
+            "$defs": defs,
+            "anyOf": branches,
+            "description": schema.get("description", ""),
+            "title": schema["title"],
+            "type": "object",
+        }

@@ -489,7 +489,7 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   `candidate_max`(`config/budgets.yaml`)에서 자르므로 목록은 거기서 보이지 않는다. `RunRecord.slicer`에도 목록 사용 여부가
   안 남는다. 슬라이스가 `candidate_max`를 넘으면 전체로 잘린 우선 파일 슬라이스가 컷 밖에 남을 수 있다(실 run에서 걸리는지
   **미측정** — ⏵ 2026-10-15 `candidate_max`를 256에서 **8**로 낮춰서 target(조각)이 8을 넘는 run(arvo:1065는 220조각 — [10-04 run 보고서](experiments/harness/2026-10-04-cybergym-operational-run-vastai-remote.md))이면 컷이 실제로 문다). Scout도 그 순서를 따르게 하려면 슬라이스별 tier를 싣고 `runner._order_and_cut`이 읽는 **별도 PR**이 필요하다
-  ([D97](open-questions/D/D97.md)의 선택지 (b))
+  ([D97](open-questions/D/D97.md)의 선택지 (b)). ⏵ 2026-10-16 실 run에서 걸렸다 — 실서빙 `run_20261015_0001`(166조각)에서 컷 8이 설명과 맞는 함수 `file_regexec`(이슈 #693이 과제 패치로 정답 위치라 진단했다 — 후보 선정에는 안 쓴다)를 걸친 `slice_0524`를 잘랐다(그 run의 trace `target_skipped` — `over_candidate_max` · `desc_rank` 0, 실측)
   - ⏵ 2026-10-15 D97 -> 러너는 이 목록을 여전히 안 읽는다(위 문장은 목록에 대해 참). 대신 러너 `_order_and_cut`이 **과제 설명**을 직접
     읽는 정렬 항 `-desc_rank`를 받았다 -> 키는 `(-signal_rank, -desc_rank, file, line, symbol, slice_id)`. **컷은 그 키 앞 `candidate_max`개가
     전부가 아니다** -> `desc_rank` ≥ 2인 후보 앞 `candidate_desc_reserve`개(2)는 신호와 무관하게 컷에 든다(아래 「`--description`」의 러너 쪽). 아래 「`--description`」
@@ -540,12 +540,15 @@ python tools/merge_slicer_shards.py --claim-db /work/claims.db /work/merged.db /
   ⏵ 2026-10-15 **예약** -> 신호 후보가 컷을 다 채우면 위 순서만으로는 심볼 일치(2·3) 후보가 잘린다(리허설: 신호 후보 8개가 설명과 맞는 `file_regexec`를 밀어냈다 — [기록](experiments/harness/2026-10-15-gpu-free-rehearsal-dev-docker-arvo1065-local.md)).
   그래서 심볼 일치 후보 앞 `thresholds.candidate_desc_reserve`개(2)는 신호 순위와 무관하게 컷에 들고(파일 이름만 맞은 1은 예약이 아니다), 남은 자리는 위 순서로 채운다. 남긴 목록은 다시 키 순서다.
   예약 자리는 서로 다른 `(file, symbol)`에만 쓴다(같은 함수의 슬라이스 둘이 두 자리를 다 먹지 않게 — 둘째는 나머지 경로로 들 수 있다).
+  ⏵ 2026-10-16 #693 -> 슬라이스 타깃의 `desc_rank`는 entry 이름과 슬라이스가 **걸친 함수** 이름 중 최댓값이다(걸친 함수는 이름 일치 ≥ 2만). 위 `(file, symbol)`은 설명과 맞은 함수다.
+  entry만 보던 동안 실서빙 run_20261015_0001의 trace `target_plan`이 `desc_exact_matches`·`desc_part_matches`·`desc_file_matches` 셋 다 0이었다(실측 · 166조각) — 예약이 한 일이 없었다([D97](open-questions/D/D97.md)의 셋째 ⏵).
   `target_plan.candidate_desc_reserve`·`desc_reserved`(**예약이 없었다면 잘렸을 후보** 수)·`desc_reserve_filled`(예약 몫으로 **고른** 수 — 이미 앞 순위였던 것 포함)와 `target_planned`·`target_skipped`의 `signal_rank`·`desc_rank`(·`target_planned.desc_reserved`)가 남는다. 효과는 미실측이다. 토큰 규칙은 `src/orchestrator/description_match.py`와
   이 파일 `slicer_description.py`에 두 벌이다(`tests/test_description_priority.py`가 같은 토큰을 내는지 묻는다)
 - ⚠ **효과는 미실측** -> 설명이 가리킨 곳이 정답이 아니면 다른 후보가 뒤로 밀린다. 28%는 이름 없이 증상만 쓴다([D97](open-questions/D/D97.md) 관측 2)
 - ⚠ **흔한 영어 명사가 일치를 일으킬 수 있다** -> `buffer`·`read`·`parse`·`data` 같은 낱말이 설명에 있고 저장소에 그 이름의 파일(`buffer.c`)이 있으면
   그 파일이 우선 파일이 된다. 같은 낱말이 심볼 이름의 조각(`heap_alloc`의 `heap`)과 맞으면 심볼 조각 일치(2)도 만든다 — 후보에 따라 **파일 일치(1)나 심볼 조각 일치(2) 어느 쪽이든** 만든다(후보마다 큰 쪽 하나로 센다).
-  불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_part_matches`·`desc_file_matches`가 터무니없이 크면 이것을 의심한다
+  불용어 목록을 늘려 막지 않았다(근거 없는 튜닝). 첫 run의 `target_plan.desc_part_matches`·`desc_file_matches`가 터무니없이 크면 이것을 의심한다.
+  ⏵ 2026-10-16 #693 — 슬라이스 타깃은 **걸친 함수** 이름으로도 매기므로 같은 낱말이 넓은 슬라이스에서 더 쉽게 맞는다. `target_plan.desc_spanned_matches`가 그 수다
 
 ```bash
 python tools/slicer/slicer.py --repo /work/repo --out /work/slices.json --checkpoint /work/state.db \
