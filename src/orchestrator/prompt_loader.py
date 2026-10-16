@@ -842,6 +842,8 @@ def build_facts(
 
 
 def _omitted_functions_fact(omitted: Sequence[Location]) -> dict[str, object]:
+    # 걸친 함수는 인덱스 심볼이라 보통 이름(`symbol`)이 있다. 없으면 JSON `null`로 간다 - 그 항목은
+    # 이름으로 `lookup`할 수 없고 위치만 보인다.
     shown = omitted[:_OMITTED_FUNCTIONS_SHOWN]
     return {
         "functions": [

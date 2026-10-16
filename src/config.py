@@ -856,7 +856,8 @@ class Thresholds(HarnessModel):
     # 그래서 같은 SOURCE를 받는 Critic·PoV 판이 서술할 옵션(`RELAYED_SOURCE_OPTIONS`)이 아니다.
     # 두 옵션의 서술·선언은 Auditor **v19**부터다(v18 이하를 고르고 켜면 `cli`의 run·doctor가
     # 막는다).
-    # `auditor_slice_state`와 달리 측정 결정이 아니라 결함 수정이라 `budgets.yaml`이 켠다.
+    # `auditor_slice_state`(측정 결정이라 0)와 달리 `budgets.yaml`이 켠다 - 사용자 승인(council
+    # 2026-10-17)이고 효과는 미실측이다.
     auditor_omitted_functions: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
