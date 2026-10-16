@@ -1720,9 +1720,10 @@ class ContainerToolRunner:
             )
             steps.append(Step(proc.returncode, proc.stdout, proc.stderr))
             if proc.returncode != 0:
-                # 컴파일러가 오류를 냈을 때만 남긴다 — 기동 실패는 측정이 아니다.
+                # 컴파일러 앞단이 오류를 냈을 때만 남긴다 — 기동 실패도, asan·gdb의 링크 실패도
+                # 앞단 컴파일의 측정이 아니다(키가 `-c`·`-o`를 빼서 build와 같다).
                 reason = compile_failure_reason(proc.stderr) if key is not None else ""
-                if reason:
+                if reason and _FRONT_END_ERROR.search(proc.stderr):
                     self._compile_failures[key] = (evidence_id, proc.returncode, reason)
                 break
         note = unexecuted_commands_note(len(steps), len(commands))
@@ -1888,9 +1889,12 @@ class ContainerToolRunner:
         )
 
 
-# 첫 명령이 우리 clang 컴파일인 도구 — 같은 run에서 그 컴파일의 실패를 다시 재지 않는다 (#698).
+# 첫 명령이 우리 clang 컴파일인 도구 — 같은 run에서 그 컴파일의 앞단 실패를 다시 재지 않는다 (#698).
 _COMPILE_MEMO_TOOLS = frozenset({"build", "asan", "gdb"})
 _NON_FRONT_END_FLAGS = frozenset({"-c", "-g", "-fno-omit-frame-pointer"})
+# 앞단 오류는 `파일:줄:열:`을 단다. 링커(ld의 `파일:줄:`·`ld.lld: error:`)와 드라이버
+# (`clang: error: linker command failed`)의 줄은 이 꼴이 아니다(PR #699 리뷰).
+_FRONT_END_ERROR = re.compile(r"^\S+:\d+:\d+: (?:fatal )?error:", re.MULTILINE)
 
 
 def _compile_key(command: Command, image: str) -> tuple[str, ...] | None:

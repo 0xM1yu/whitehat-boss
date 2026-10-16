@@ -753,7 +753,7 @@ class EventKind(StrEnum):
     # 않아 모델이 고르면 홉 하나가 든다. ⏵ 2026-10-16 (#698) — 그 파일에서는 그 도구들이 요청 스키마
     # `tool` enum에서 빠진다(`signals.without_tools`) — 서버가 strict를 집행하는 한 노트 뒤 재선택은
     # 문법이 막고, 집행하지 않아도 하위 봉투 검증이 거절한다(그 홉은 파싱 실패).
-    # 컨테이너 어댑터도 같은 run에서 이미 실패한 앞단 컴파일을 다시 띄우지 않는다.
+    # 컨테이너 어댑터도 같은 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일을 다시 띄우지 않는다.
     # ⏵ 2026-10-13 — v15는 다섯째 봉투 `AuditorProcedureProbeInputAction`이다(v12의 서브클래스 —
     # `spec` 설명만 다르다).
     AUDITOR_HOP = "auditor_hop"

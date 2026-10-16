@@ -39,7 +39,7 @@ from src.orchestrator.nodes.signals import COMPILE_NOTE_TOOLS, without_tools
 from src.orchestrator.prompt_loader import load_prompt
 from src.schemas.enums import Role
 
-# `signals.withheld_tools`가 낼 수 있는 집합 전부 — (build 오류 / clang-tidy 오류) 2x2.
+# `signals.withheld_tools`가 낼 수 있는 집합 전부 — build 오류·clang-tidy 오류 유무의 네 조합.
 WITHHELD_SETS: tuple[tuple[str, ...], ...] = (
     (),
     COMPILE_NOTE_TOOLS,

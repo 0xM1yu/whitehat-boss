@@ -185,8 +185,9 @@ docker run --rm --network none --pull never \
   `without_tools` — 요청이 `response_format` strict라 서버가 strict를 집행하는 한 — 같은 xgrammar 문법의 거절은 `test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise`가 잰다. 집행하지 않아도 하위 봉투 검증이 거절해 그 홉은 파싱 실패다). 2026-10-13 council (d′)의 「도구 거절
   없음」을 이 범위에서 뒤집었다 — 근거는 노트가 실린 뒤에도 컴파일 경로 probe가 2회 나왔고 둘 다 같은 오류로 끝난 것이고
   (`run_20261016_0001`, #698), 사용자가 「완벽하게 수정 · 더 이상 측정 없음」으로 enum 축소를 정했다. ② **어댑터 백스톱**:
-  같은 run에서 컴파일러 오류로 이미 실패한 앞단 컴파일 명령은 다시 띄우지 않고 그 측정(Evidence id · 건수 · 첫 오류)을
-  돌려준다(`ContainerToolRunner._execute`) — ①이 못 덮는 경우(2단계가 안 잰 파일을 한 번 실패한 뒤 다시 요청)만 남는다.
+  같은 run에서 컴파일러 앞단 오류(`파일:줄:열: error:`)로 이미 실패한 앞단 컴파일 명령은 다시 띄우지 않고 그 측정
+  (Evidence id · 건수 · 첫 오류)을 돌려준다(`ContainerToolRunner._execute`). `asan`·`gdb`의 링크 실패는 앞단의 측정이
+  아니라 넣지 않는다(PR #699 리뷰 — 키가 `-c`·`-o`를 빼서 링크하지 않는 `build`와 같다) — ①이 못 덮는 경우(2단계가 안 잰 파일을 한 번 실패한 뒤 다시 요청)만 남는다.
   ⚠ `build`의 실패로 `asan`·`gdb`까지 빼는 것과 메모의 앞단 키에서 `-O`·`-fsanitize`를 뺀 것은 **같은 추정**이다
   (`__OPTIMIZE__`·`__SANITIZE_ADDRESS__`가 전처리를 바꿀 수 있다) — 잰 오류(헤더의 타입 해석)는 그것과 무관하다고 보았고,
   키가 같은데 결과가 갈리는 것이 측정되면 키와 `withheld_tools`를 고친다(`_compile_key` docstring).
