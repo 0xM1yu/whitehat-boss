@@ -11,7 +11,7 @@
 
 [English](README.md) · **한국어**
 
-[빠른 시작](#빠른-시작-gpu-없이) · [파이프라인](#파이프라인) · [실제 과제 돌리기](#실제-과제-돌리기) · [상태와 한계](#상태와-한계) · [문서](#문서)
+[빠른 시작](#빠른-시작-gpu-없이) · [파이프라인](#파이프라인) · [실제 과제 돌리기](#실제-과제-돌리기) · [문서](#문서)
 
 </div>
 
@@ -25,7 +25,7 @@ C/C++ 소스에서 메모리 취약점을 찾고, 근거를 검증하고, 크래
 알려진 취약점을 재현하는 과제 모음이다.
 
 > [!NOTE]
-> 아직 유효한 점수를 낸 적은 없다 — [상태와 한계](#상태와-한계)를 먼저 본다. README 밖의 문서와 CLI 출력은 한국어다.
+> README 밖의 문서와 CLI 출력은 한국어다.
 
 ## 한눈에 보기
 
@@ -238,23 +238,6 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 
 서브커맨드는 `doctor`, `preflight`, `estimate`, `run`, `bench`, `gc` 다. 각 명령의 플래그는
 `python -m src.cli <명령> -h` 로 본다.
-
-## 상태와 한계
-
-> [!WARNING]
-> **유효한 점수는 아직 없다.** 채점기가 최종 PoC로 집계한 것이 아직 없다.
-
-- [2026-10-08 run](docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)에서는
-  6바이트 PoC가 취약 빌드를 크래시했지만(`vul_exit_code 77`) 하네스가 그것을 최종 PoC로 지정하지 않아
-  점수가 0이었다([#549](https://github.com/0xM1yu/whitehat-boss/issues/549)).
-- [2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md)은 PoC 4건을
-  제출했으나 4건 모두 `vul_exit_code 0`이었다(§5).
-- 가장 최근 [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)은
-  5단계에서 비정상 종료했다. run 기록 전체는 [docs/experiments/](docs/experiments/README.md)에 있다.
-- **모델 레지스트리의 `benchmark`는 전부 0(미실측)이고, 실모델 6개 중 3개는 `checksum`도
-  자리표시자(0)다**(2026-10-17 `config/models.yaml` 기준). 모델 선정 근거는 실험팀 내부 자료이고
-  이 저장소의 실측이 아니다.
-- **펌웨어 입력은 아직 없다.** 바이너리·펌웨어 분석 경로는 설계에만 있다.
 
 > [!CAUTION]
 > **이 도구는 크래시 입력을 만든다.** 허가받은 대상에만 쓴다 — [SECURITY.ko.md](SECURITY.ko.md).

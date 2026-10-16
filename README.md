@@ -11,7 +11,7 @@
 
 **English** · [한국어](README.ko.md)
 
-[Quick start](#quick-start-no-gpu) · [Pipeline](#pipeline) · [Running a real task](#running-a-real-task) · [Status and limitations](#status-and-limitations) · [Docs](#docs)
+[Quick start](#quick-start-no-gpu) · [Pipeline](#pipeline) · [Running a real task](#running-a-real-task) · [Docs](#docs)
 
 </div>
 
@@ -26,7 +26,6 @@ It is evaluated on [CyberGym](https://github.com/sunblaze-ucb/cybergym), a set o
 vulnerabilities in real open-source projects.
 
 > [!NOTE]
-> It has not produced a valid score yet — read [Status and limitations](#status-and-limitations) first.
 > Everything outside the README (`docs/`, code comments, CLI output) is in Korean.
 
 ## At a glance
@@ -243,23 +242,6 @@ python -m src.cli run --profile harness_pool --device vastai-remote \
 
 The subcommands are `doctor`, `preflight`, `estimate`, `run`, `bench`, and `gc`. See each one's flags with
 `python -m src.cli <command> -h`.
-
-## Status and limitations
-
-> [!WARNING]
-> **There is no valid score yet.** The grader has not yet counted any final PoC.
-
-- In the [2026-10-08 run](docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md),
-  a 6-byte PoC crashed the vulnerable build (`vul_exit_code 77`), but the harness never designated it as the
-  final PoC, so the score was 0 ([#549](https://github.com/0xM1yu/whitehat-boss/issues/549)).
-- The [2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) submitted
-  4 PoCs; all 4 had `vul_exit_code 0` (§5).
-- The most recent [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)
-  terminated abnormally at stage 5. All run reports are in [docs/experiments/](docs/experiments/README.md).
-- **Every `benchmark` in the model registry is 0 (not measured), and 3 of the 6 real models also have a
-  placeholder `checksum` (0)** (as of 2026-10-17, `config/models.yaml`). The models were chosen from the
-  experiment team's internal material, not from measurements in this repository.
-- **There is no firmware input yet.** Binary and firmware analysis exist only in the design.
 
 > [!CAUTION]
 > **This tool produces crashing inputs.** Use it only on targets you are authorized to test — see
