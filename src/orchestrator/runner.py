@@ -3283,8 +3283,8 @@ def _finalize_oracle(ctx: RunContext, state: _Accumulator) -> None:
 def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
-    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v9는 형제
-    `PovActionNamed`이고 서빙 판은 v9)을 내고 도구를 돌린다.
+    """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v10은 형제
+    `PovActionNamed`이고 서빙 판은 v10)을 내고 도구를 돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -3315,7 +3315,7 @@ def _run_pov_hops(
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
     (`prompts/pov/v6/prefix.md` 「Output」: 홉 줄 + `[스키마 오류]` 노트)이고 **서빙 pov 판이
     v6이었다**(`config/models.yaml` · S19 Phase 6-2) —
-    ⏵ 2026-10-14부터 서빙 판은 v7(⏵ 2026-10-15부터 v8, 같은 날 v9)이고
+    ⏵ 2026-10-14부터 서빙 판은 v7(⏵ 2026-10-15부터 v8, 같은 날 v9, ⏵ 2026-10-16부터 v10)이고
     그 prefix도 같은 서술을 든다(v6과 바이트 동일한 부분). 이 한계는 v5로 되돌린 설정에만 남는다.
     hop0 재질문은 본문 **끝**에 홉 줄+노트가 붙고, hop≥1 재질문은 둘째 줄이 도구 요약이
     아니라 노트다. v5까지의 서술은 후속 판의 몫으로 남았고 v6가 했다(행동 어휘·스키마는 불변).
@@ -3333,8 +3333,10 @@ def _run_pov_hops(
 
     ⏵ **2026-10-13 (#507) — 2단계 컴파일 실패는 hop0 본문 끝의 하네스 노트로 알린다**
     (`compile_note` — 코드를 읽는 판만 · 실패 Evidence가 없으면 `None`이고 바이트가 종전과 같다).
-    `inspect build`·`asan`·`gdb`를 거절하지는 않는다. hop 0의 `pov_hop`이 `compile_note`·
-    `compile_note_tools`를 싣는다.
+    노드는 `inspect build`·`asan`·`gdb`를 거절하지는 않는다. hop 0의 `pov_hop`이 `compile_note`·
+    `compile_note_tools`를 싣는다. ⏵ 2026-10-16 (#698) — 같은 실패로 그 대상의 요청 스키마 `tool`
+    enum에서 그 도구들을 뺀다(`open_hop(withheld=signals.withheld_tools(...))`) — 서버가 strict를
+    집행하는 한 모델이 고를 수 없고, 집행하지 않아도 하위 봉투 검증이 거절한다.
 
     ⚠ **추가형이라 finding 상태를 바꾸지 않는다.**
     ⏵ **2026-10-09 (ADR 0014) — 컨테이너 `poc`는 PoC를 먹인다**(과제 `-vul` 이미지의
@@ -3435,6 +3437,8 @@ def _run_pov_hops(
                         fuzz_entrypoint=entrypoint,
                         retry_note=retry_note,
                         compile_note=compile_note,
+                        # #698 — 2단계가 컴파일러 오류를 잰 도구는 모든 홉의 요청 스키마에서 뺀다
+                        withheld=signals.withheld_tools(compile_failures),
                         hop=hop,
                     )
                 else:
@@ -3482,7 +3486,7 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                # 형제 봉투(`PovActionNamed`)만 든다 — v5~v9(서빙 판은 v9)가 그것을 선언한다.
+                # 형제 봉투(`PovActionNamed`)만 든다 — v5~v10(서빙 판은 v10)이 그것을 선언한다.
                 named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(
@@ -5048,7 +5052,9 @@ def _auditor_target(ctx: RunContext, target: _Target) -> Location:
 # ⏵ 2026-10-14 — 서빙 판은 v16이다(v15 + prefix 다섯 군데 — body는 v15와 바이트 동일). 위
 # 상한은 다시 안 셌다.
 # ⏵ 2026-10-14 — 서빙 판은 v17이다(v16 + prefix 두 군데 — body는 v16과 바이트 동일). 옵션
-# `auditor_slice_state`는 꺼져 있어 hop0 user 턴은 v16과 같다. 위 상한은 다시 안 셌다.
+# `auditor_slice_state`는 꺼져 있어 hop0 user 턴은 v16과 같다. 위 상한은 다시 안 셌다. ⏵ 2026-10-16
+# — 서빙 판은
+# v18이다(v17 + 하네스 노트 문단 두 문장 · body는 v17과 바이트 동일, #698). 위 상한은 다시 안 셌다.
 # ⚠ 위 비 1.22~3.32는 v1 입력(한글 섞인 prefix · `qwen3.6-35b-a3b`)의 것이다 —
 # v3 스모크(영어 prefix)는 비가 2.29 이상(계산값)이라 위 상한은 영어 prefix 몫에는
 # 보수적일 수 있다(같은 항목의 ⏵).

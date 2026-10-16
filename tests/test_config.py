@@ -577,8 +577,8 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_canonical_auditor_selects_prompt_v17(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v17`을 고른다. 되돌리면
+def test_the_canonical_auditor_selects_prompt_v18(profile: str) -> None:
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v18`을 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -614,10 +614,14 @@ def test_the_canonical_auditor_selects_prompt_v17(profile: str) -> None:
     v15와 같고 v15 파일은 한 글자도 안 바뀌었다(같은 규칙 1). ⏵ **v17**(2026-10-14 · S20 Phase 14) =
     v16 + `FACTS.slice_state` 서술(이슈 #438 (b)) · 「배너 없으면 첫 블록 하나」 정정(이슈 #669) -
     새 옵션 `auditor_slice_state`(`prompts/auditor/v17/meta.yaml`)는 꺼 둔 채 선언한다. 봉투·body는
-    v16과 같고 v16 파일은 한 글자도 안 바뀌었다(같은 규칙 1)."""
+    v16과 같고 v16 파일은 한 글자도 안 바뀌었다(같은 규칙 1). ⏵ **v18**(2026-10-16 · #698) = v17 +
+    「Harness note (stage 2)」 문단 두 문장 정정 - 컨테이너 어댑터가 같은 run에서 컴파일러 오류로
+    이미 실패한
+    앞단 컴파일을 다시 띄우지 않게 되어 v17의 두 문장이 거짓이 됐다. body·봉투·옵션은 v17과
+    같다(같은 규칙 1)."""
     config = load_config(profile)
 
-    assert config.model_for("auditor").prompt_template_version == "v17"
+    assert config.model_for("auditor").prompt_template_version == "v18"
 
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
@@ -728,11 +732,12 @@ def test_the_canonical_auditor_prompt_states_the_runner_source_contract(profile:
         "v15": "is bounded: some execution-header lines are removed",
         "v16": "is bounded: some execution-header lines are removed",
         "v17": "is bounded: some execution-header lines are removed",
+        "v18": "is bounded: some execution-header lines are removed",
     }
     assert version in excerpt_sentence, f"{version}의 철자를 이 표에 더한다"
     assert excerpt_sentence[version] in flat
     has_old = "not a generated summary" in flat
-    assert has_old == (version == "v14"), "v15~v17이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
+    assert has_old == (version == "v14"), "v15~v18이 v14의 「생성 요약이 아니다」 문장을 되살렸다"
     for text in (
         "`truncated` is false",
         "line containing only `...`",
@@ -2819,12 +2824,12 @@ def test_the_new_block_options_default_to_off_in_code(key: str) -> None:
 
 def test_the_write_window_marker_is_declared_from_v16_and_turned_on_with_it() -> None:
     """#650 쓰기 창 생략 줄은 `auditor_write_window_marker` 뒤에 있고 **v16부터** 선언한다(prefix가
-    그 줄을 서술한다) - 서빙 판이 v17이고(v17은 v16의 선언을 이어받는다) `budgets.yaml`이 1이다.
+    그 줄을 서술한다) - 서빙 판이 v18이고(v17·v18은 v16의 선언을 이어받는다) `budgets.yaml`이 1이다.
     v15 이하는 선언하지 않아 그 판과 함께 켜면 `cli`가 막는다."""
     from src.cli import _undescribed_source_options
 
     config = load_config("harness_pool")
-    assert config.model_for("auditor").prompt_template_version == "v17"
+    assert config.model_for("auditor").prompt_template_version == "v18"
     assert config.thresholds.auditor_write_window_marker == 1
     assert "auditor_write_window_marker" in config.thresholds.flatten()
     declaring = {
@@ -2833,7 +2838,7 @@ def test_the_write_window_marker_is_declared_from_v16_and_turned_on_with_it() ->
         if path.is_dir()
         and "auditor_write_window_marker" in load_prompt(Role.AUDITOR, path.name).source_options
     }
-    assert {"v16", "v17"} <= declaring
+    assert {"v16", "v17", "v18"} <= declaring
     assert all(int(re.match(r"v(\d+)", name).group(1)) >= 16 for name in declaring), declaring
     older = config.model_key_for("auditor")
     entry = config.models[older].transition(prompt_template_version="v15")

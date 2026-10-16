@@ -1,8 +1,13 @@
 """이슈 #507 (d′) — 2단계가 이미 잰 「컴파일 안 됨」을 PoV·Auditor hop0 본문에 하네스 노트로 싣는다.
 
-결정(council 2026-10-13): 새 카나리도 거절도 스위치도 없다. 도구는 모델이 골라도 **종전대로 돈다**
+결정(council 2026-10-13): 새 카나리도 거절도 스위치도 없다. 노드는 모델이 고른 도구를 **종전대로
+부른다**
 (ADR 0014 — argv 불변). 노트는 `build`·`clang-tidy` Evidence가 **이미 든** 오류 문구만 옮기고,
 실패 Evidence가 없으면 아무것도 안 붙는다(요청 바이트가 종전과 같다).
+⏵ 2026-10-16 (#698 · council 2026-10-16) — 그 결정을 어댑터 범위에서 뒤집었다: 컨테이너 어댑터가
+같은 run에서
+컴파일러 오류로 이미 실패한 앞단 컴파일을 다시 안 띄운다. 노트의 「같은 컴파일 명령」 문장이 그
+사실을 적는다.
 """
 
 import dataclasses
@@ -219,7 +224,10 @@ def test_pov_trace_key_is_on_hop0_only_and_only_when_the_note_was_attached(
 def test_pov_inspect_build_after_the_note_still_runs_the_tool(
     ctx: RunContext,  # noqa: F811
 ) -> None:
-    """(d) 거절하지 않는다 — 노트를 받은 모델이 `inspect build`를 골라도 도구가 돈다(argv 불변)."""
+    """(d) 노드는 거절하지 않는다 — 노트를 받은 모델이 `inspect build`를 골라도 도구를 부른다(argv
+    불변).
+    ⏵ 2026-10-16 (#698) — 컨테이너 어댑터의 재실행 생략은 `tests/test_container_tools.py`의 #698
+    절이 문다."""
     _, hops, scripted = _pov_bodies(
         ctx, "v3", _pov_state(ctx), seeded=True,
         actions=[
@@ -306,7 +314,7 @@ def test_auditor_probe_build_after_the_note_still_runs_the_tool(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """(d) 거절하지 않는다 — 노트를 받은 뒤 `probe build`도 종전대로 돈다."""
+    """(d) 노드는 거절하지 않는다 — 노트를 받은 뒤 `probe build`도 종전대로 도구를 부른다."""
     _auditor_run(
         auditor_ctx, monkeypatch, tmp_path, auditor_ctx.models, seeded=True, probe="build"
     )
@@ -354,6 +362,8 @@ def test_a_clang_tidy_only_failure_does_not_predict_build_asan_gdb_failures() ->
     assert "clang-tidy: 컴파일 오류 3건" in note
     assert "same compile command" not in note and "asan" not in note and "gdb" not in note
     assert "build was not observed to fail" in note
+    # build는 제시되므로 「either」가 아니다(Santa 리뷰 2026-10-16 L2)
+    assert note.endswith("clang-tidy is not offered for this target in this run.")
     assert signals.compile_note_trace(tidy) == {
         "compile_note": True,
         "compile_note_tools": "clang-tidy",
@@ -361,17 +371,25 @@ def test_a_clang_tidy_only_failure_does_not_predict_build_asan_gdb_failures() ->
 
 
 def test_a_build_failure_adds_the_same_compile_command_sentence_and_the_three_tools() -> None:
+    """⏵ 2026-10-16 (#698) — 「같은 오류가 예상된다」(예측)가 아니라 하네스가 하는 일(노드가 그
+    파일의 요청 스키마 `tool` enum에서 그 도구를 뺀다 — 아래 #698 절의 `withheld_tools`)을
+    적는다."""
     both = [_build_failure(), _tidy_failure()]
     build_only = [_build_failure()]
 
     for failures in (both, build_only):
         note = signals.compile_note(failures, "parser.c")
         assert note is not None
-        assert "build, asan, gdb use the same compile command" in note
+        assert "for this target the harness does not offer build, asan or gdb in this run" in note
+        assert "expected" not in note, "예측 문구가 남았다"
+        assert "other files are not covered" in note
         assert "poc does not use this compile command." in note
         assert "task's own image" not in note, "poc_target가 배선된 run에서만 참인 주장이다"
         assert signals.compile_note_trace(failures)["compile_note_tools"] == "build,asan,gdb"
     assert "clang-tidy:" not in signals.compile_note(build_only, "parser.c")
+    # clang-tidy가 오류를 냈을 때만 그 도구도 빠진다고 적는다(`withheld_tools`와 같은 조건).
+    assert "clang-tidy is not offered" in signals.compile_note(both, "parser.c")
+    assert "clang-tidy is not offered" not in signals.compile_note(build_only, "parser.c")
 
 
 def test_the_pov_hop0_trace_names_only_clang_tidy_when_only_clang_tidy_failed(
@@ -400,7 +418,7 @@ def test_a_build_failure_without_compiler_text_does_not_read_as_build_passed() -
 
     assert note is not None
     assert "stage-2 build failed without compiler error text (not a compile measurement)." in note
-    assert "not observed to fail" not in note and "same compile command" not in note
+    assert "not observed to fail" not in note and "does not offer build" not in note
     assert signals.compile_note_trace([bare_build, _tidy_failure()])["compile_note_tools"] == (
         "clang-tidy"
     )
@@ -499,7 +517,173 @@ def test_the_note_tool_set_matches_the_tools_that_share_the_compile_command() ->
         poc_target=container_tools.PocTarget(image="n132/arvo:1065-vul", argv=("/bin/arvo",)),
     )
 
-    # clang-tidy는 같은 방언을 쓰지만 노트가 「같은 오류가 예상된다」고 짚는 대상이 아니다 —
+    # clang-tidy는 같은 방언을 쓰지만 노트가 「다시 컴파일하지 않는다」고 짚는 대상이 아니다 —
     # 그 도구의 실패는 stage-2 사실로 따로 적힌다.
     assert sharing == set(signals.COMPILE_NOTE_TOOLS) | {"clang-tidy"}
     assert all(std not in command.argv and command.image for command in poc)
+
+
+# --- #698: 2단계가 컴파일러 오류를 잰 도구는 요청 스키마에서 뺀다 ---------------------------
+# 결정: council 2026-10-16 · 사용자 지시 2026-10-16(「완벽하게 · 측정 없이」). 모든 요청이 봉투를
+# `response_format: json_schema, strict`로 보내므로(`openai_compat`) 서버가 집행하는 한 enum에 없는
+# 도구는 고를 수 없다.
+
+
+def _tool_enum(schema: type) -> set[str]:
+    prop = schema.model_json_schema()["properties"]["tool"]
+    # 값이 하나면 pydantic이 `enum` 대신 `const`로 낸다
+    branches = prop.get("anyOf", [prop])
+    return {v for b in branches for v in b.get("enum", [b["const"]] if "const" in b else [])}
+
+
+def test_withheld_tools_follow_what_stage2_measured() -> None:
+    bare_build = _failed("build", "build 실패 (exit=125)")
+
+    assert signals.withheld_tools([_build_failure()]) == ("build", "asan", "gdb")
+    assert signals.withheld_tools([_tidy_failure()]) == ("clang-tidy",)
+    assert signals.withheld_tools([_build_failure(), _tidy_failure()]) == (
+        "build", "asan", "gdb", "clang-tidy",
+    )
+    assert signals.withheld_tools([bare_build]) == (), "컴파일러 문구 없는 실패는 측정이 아니다"
+    assert signals.withheld_tools([]) == ()
+
+
+def test_without_tools_narrows_only_the_tool_enum_and_keeps_the_envelope() -> None:
+    from src.schemas.auditor import AuditorProcedureProbeInputAction as Envelope
+
+    narrowed = signals.without_tools(Envelope, ("build", "asan", "gdb"))
+
+    assert narrowed.__name__ == Envelope.__name__, "요청의 json_schema 이름·trace의 schema가 같다"
+    assert issubclass(narrowed, Envelope)
+    assert _tool_enum(narrowed) == _tool_enum(Envelope) - {"build", "asan", "gdb"}
+    assert signals.without_tools(Envelope, ()) is Envelope, "빼는 것이 없으면 바이트가 종전과 같다"
+    again = signals.without_tools(Envelope, ("build", "asan", "gdb"))
+    assert again is narrowed, "홉마다 새로 안 만든다"
+    pov_narrowed = signals.without_tools(PovAction, ("build", "asan", "gdb"))
+    assert _tool_enum(pov_narrowed) == {"poc"}
+    with pytest.raises(ValueError):
+        pov_narrowed.model_validate({"action": "inspect", "tool": "build", "rationale": "x"})
+
+
+def _without_tool(node: object) -> object:
+    """스키마에서 `tool` 속성만 자리표로 바꾼다 — 나머지(설명·필드·갈래)는 그대로 비교하려고."""
+    if isinstance(node, dict):
+        return {
+            key: (
+                {**value, "tool": "<tool>"}
+                if key == "properties" and isinstance(value, dict) and "tool" in value
+                else _without_tool(value)
+            )
+            for key, value in node.items()
+        }
+    if isinstance(node, list):
+        return [_without_tool(item) for item in node]
+    return node
+
+
+@pytest.mark.parametrize(
+    "envelope",
+    [
+        "AuditorProcedureProbeInputAction",
+        "AuditorProcedureProbeInputDiscriminatedAction",
+        "PovAction",
+        "PovActionNamed",
+    ],
+)
+def test_the_narrowed_envelope_differs_from_the_original_only_in_the_tool_enum(
+    envelope: str,
+) -> None:
+    """Santa 리뷰 2026-10-16 H1 — `create_model`이 docstring을 안 옮겨 요청 스키마의
+    `description`(모델에 가는 봉투 설명)이 0자가 됐다. 좁힌 봉투는 `tool` 말고는 원본과 **바이트가
+    같아야** 한다."""
+    import src.schemas as schemas
+
+    schema = getattr(schemas, envelope)
+    original = schema.model_json_schema()
+    narrowed = signals.without_tools(schema, (*signals.COMPILE_NOTE_TOOLS, "clang-tidy"))
+
+    assert _without_tool(narrowed.model_json_schema()) == _without_tool(original)
+    assert narrowed.model_json_schema().get("description") == original.get("description")
+
+
+def test_the_auditor_never_offers_a_measured_compile_tool_on_any_hop(
+    auditor_ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _auditor_run(auditor_ctx, monkeypatch, tmp_path, auditor_ctx.models, seeded=True)
+
+    schemas = auditor_ctx.models.schemas
+    assert len(schemas) >= 2
+    for schema in schemas:
+        assert not _tool_enum(schema) & {"build", "asan", "gdb"}, schema
+
+
+def test_the_auditor_schema_is_unchanged_without_a_measured_failure(
+    auditor_ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    _auditor_run(auditor_ctx, monkeypatch, tmp_path, auditor_ctx.models, seeded=False)
+
+    assert {"build", "asan", "gdb", "clang-tidy"} <= _tool_enum(auditor_ctx.models.schemas[0])
+
+
+def test_the_pov_never_offers_a_measured_compile_tool_on_any_hop(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    _, _, scripted = _pov_bodies(
+        ctx, "v3", _pov_state(ctx), seeded=True,
+        actions=[
+            PovAction(action="inspect", tool="poc", rationale="look"),
+            PovAction(action="submit", rationale="done"),
+        ],
+    )
+
+    schemas = scripted.models.schemas
+    assert len(schemas) >= 2, "hop0과 후속 홉 둘 다 재야 한다"
+    assert all(_tool_enum(schema) == {"poc"} for schema in schemas), schemas
+
+
+def test_the_pov_parse_retries_keep_the_withheld_tools(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """파싱 실패로 같은 자리를 다시 묻는 호출도(hop0은 `open_hop` 재호출, 뒤 홉은
+    `replace(prev, hop=…)`) 좁힌 스키마로 간다 — Santa 리뷰 2026-10-16 LOW."""
+    from src.interfaces.model_client import SchemaParseError
+
+    _, _, scripted = _pov_bodies(
+        ctx, "v3", _pov_state(ctx), seeded=True,
+        actions=[
+            SchemaParseError("bad at hop0"),
+            PovAction(action="inspect", tool="poc", rationale="look"),
+            SchemaParseError("bad mid-loop"),
+            PovAction(action="submit", rationale="done"),
+        ],
+    )
+
+    schemas = scripted.models.schemas
+    assert len(schemas) >= 4, "두 재시도까지 재야 한다"
+    assert all(_tool_enum(schema) == {"poc"} for schema in schemas), schemas
+
+
+def test_a_clang_tidy_only_failure_withholds_only_clang_tidy_on_the_auditor_path(
+    auditor_ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """clang-tidy만 컴파일러 오류를 냈으면 `build`·`asan`·`gdb`는 남고 `clang-tidy`만 빠진다(노드
+    경로)."""
+    run_ctx = auditor_ctx
+    candidate, capsule, evidences = _triage(run_ctx, VULN_TARGET)
+    _arm(run_ctx, monkeypatch, tmp_path, hops=4)
+    run_ctx.models = _AuditorScripted([_probe_action("semgrep"), _answer_action()])
+    run_ctx.compile_failures[VULN_TARGET.file] = (_tidy_failure(),)
+    auditor.run(
+        run_ctx, candidate=candidate, capsule=capsule, evidences=evidences,
+        workdir=VULN_TARGET.file,
+    )
+
+    for schema in run_ctx.models.schemas:
+        enum = _tool_enum(schema)
+        assert "clang-tidy" not in enum and {"build", "asan", "gdb"} <= enum, enum

@@ -32,7 +32,8 @@ embedding·reranker가 고른 코드가 프롬프트에 한 줄도 실리지 않
 실린 토큰을 먼저 재야 하고, 그 측정은 아직 없다. 근본 해법은 위 문단이 이미 가리킨 #67이다 (⏵
 2026-10-12 — #67은 닫혔고 v13·v14는
 Auditor FACTS의 `source` 사본만 걷었다. `related`의 2N은 hybrid에서 그대로다 · ⏵ 2026-10-13 —
-서빙 판 v15·v16·v17도 같은 선언(`facts_source: false`)이라 걷는 것이 그 사본 하나뿐인 것도 같다).
+서빙 판 v15·v16·v17·v18도 같은 선언(`facts_source: false`)이라 걷는 것이 그 사본 하나뿐인 것도
+같다).
 
 **`types`는 만들지 않는다.** knowledge-base.md §4의 구성에는 있지만 index-v1에는 타입
 데이터가 없었고, index-v2의 `types` 표는 캡슐로 싣지 않는다 — NE resolver 몫이다

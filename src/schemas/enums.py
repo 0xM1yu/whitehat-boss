@@ -84,7 +84,7 @@ class Role(StrEnum):
     # `tests/test_config.py`가 `PROMPTED_ROLES ⊆ Role`을 강제한다.
     SINGLE = "single"
     # 8단계 PoV — Auditor Finding에서 PoC를 만드는 모델-주도 툴 루프(매 홉 `PovAction` ·
-    # v5~v9는 형제 `PovActionNamed`이고 서빙 판은 v9).
+    # v5~v10은 형제 `PovActionNamed`이고 서빙 판은 v10).
     # SINGLE 주석의 함정이 그대로다: `config.PROMPTED_ROLES`·`bench.ROLE_SPEC`에 함께 넣지
     # 않으면 harness check·bench가 죽고, `prompts/pov/`도 같은 커밋에 있어야 test_config가 산다.
     POV = "pov"

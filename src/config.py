@@ -593,12 +593,13 @@ class CapsuleBudgets(HarnessModel):
 # v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가 막는다). 표지 줄은
 # #667이 옵션 0으로 들였고 v16이 선언하면서 `budgets.yaml`이 1로 켠다.
 # ⏵ 2026-10-14 — 열한째 `auditor_slice_state`(슬라이스의 정적 상태를 FACTS `slice_state`
-# 키로 보인다, 이슈 #438 (b))는 v17이 서술·선언한다(v16까지는 안 한다). `SOURCE`가 아니라
+# 키로 보인다, 이슈 #438 (b))는 v17·v18이 서술·선언한다(v16까지는 안 한다). `SOURCE`가 아니라
 # FACTS를 넓히는 옵션이지만 같은 자리(meta `source_options`)로 선언한다 - 켜면 모델 입력이
 # 달라져 프롬프트가 서술해야 하는 점이 같다. **기본은 끈다** - 켜는 것은 측정 결정이다(켠 run ↔
 # 끈 run 짝 비교).
 # v17은 v16이 선언하는 열을 전부 이어받고(`auditor_write_window_marker` ·
 # `auditor_input_context` 포함) 열한째를 더한다.
+# ⏵ 2026-10-16 v18은 v17의 열 열한 개를 그대로 선언한다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -789,7 +790,8 @@ class Thresholds(HarnessModel):
     # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
     # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
     # (`cli._undescribed_source_options`는 Auditor meta를 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
-    # `budgets.yaml`은 서빙 판(v16 · v17)이 서술해 1로 켠다. **Critic·PoV 좌석도 같은 가드다**
+    # `budgets.yaml`은 서빙 판(v16 · v17 · ⏵ 2026-10-16 v18)이 서술해 1로 켠다. **Critic·PoV 좌석도
+    # 같은 가드다**
     # (#676): 이 줄을 선언한 판(Critic v8 · PoV v7 - meta `source_options`)이 아니면서 SOURCE를
     # 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
     # (`RELAYED_SOURCE_OPTIONS` · docs/agent-contracts.md §4).
@@ -808,6 +810,7 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-09 — 서빙 판 v11(이슈 #525)도 같은 서술로 선언한다.
     # ⏵ 2026-10-10 — 서빙 판 v13(이슈 #67)도 같은 서술로 선언한다.
     # ⏵ 2026-10-11 — 서빙 판 v14(이슈 #67)도 같은 서술로 선언한다.
+    # ⏵ 2026-10-13~16 — v15·v16·v17과 서빙 판 v18(#698)도 선언한다(meta `source_options`).
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`의 쓰기 지점 창 다음 마지막 블록(#650 표지 줄 앞)으로 슬라이서의
@@ -830,8 +833,9 @@ class Thresholds(HarnessModel):
     # `auditor_source` 이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 슬라이스가 있는
     # 후보의 hop0 FACTS에 키가 붙고(Auditor 자리만 - 다른 역할의 FACTS는 그대로) 같은 값이
     # `auditor_source` 이벤트의 `slice_state_*`로 남는다. 슬라이서가 분석 사실을 안 적은
-    # 슬라이스는 `false`가 아니라 `null`이다. 서술·선언은 Auditor **v17**이 든다(v16 이하를
-    # 고르고 켜면 `cli`의 run·doctor가 막는다). **기본은 끈다 - 켜는 것은 측정 결정이다**:
+    # 슬라이스는 `false`가 아니라 `null`이다. 서술·선언은 Auditor **v17**과 ⏵ 2026-10-16 v18이
+    # 든다(v16 이하를 고르고 켜면 `cli`의 run·doctor가 막는다). **기본은 끈다 - 켜는 것은
+    # 측정 결정이다**:
     # 이슈 #438의 닫히는 조건이 켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정
     # 분포가 움직일 방향은 안 쟀다.
     auditor_slice_state: int = Field(default=0, ge=0, le=1)
@@ -891,6 +895,8 @@ class Thresholds(HarnessModel):
     # 봉투의 서브클래스 — `probe`의 `spec` 설명만 다르다). 허용집합은 여섯이다.
     # ⏵ 2026-10-14 — 서빙 판은 v16이고 봉투는 v15와 같다(새 봉투를 안 낸다 — 허용집합은 여섯
     # 그대로). ⏵ 같은 날 서빙 판은 v17이고 봉투는 같다(S20 Phase 14 — 허용집합은 여섯 그대로).
+    # ⏵ 2026-10-16 v18은 여섯째 봉투 `AuditorProcedureProbeInputDiscriminatedAction`을 낸다 —
+    # 다섯째의 서브클래스고 디코더가 받는 JSON 스키마만 판별 합이다(#602 · 허용집합은 일곱).
     #
     # **켤 때 값은 16이다.** 근거는 외부 관측 하나 — 모델이 한 세션에 gdb를 8회 불렀다는
     # 보고의 2배다(계산값). ⚠ **그 8회는 우리 하네스 실측이 아니다**: 이 루프가 서기 전의 우리
@@ -907,7 +913,8 @@ class Thresholds(HarnessModel):
     # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 · ⏵
     # 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
     # 더해져 더 길다, 글자 수는 안 쟀다 · ⏵ 2026-10-14 v16 — v15에 prefix 다섯 군데, 글자 수는 안
-    # 쟀다)을 넣으면 167,775가 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비
+    # 쟀다 · ⏵ 2026-10-16 v17·v18의 글자 수는 `nodes/auditor.py` 주석이 센다)을 넣으면 167,775가
+    # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비
     # 1.22에서 `lookup` 관측 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의
     # `_LOOKUP_MAX_CHARS`
     # 주석). 이 상한은 홉이 끝없이 쌓이는 것을 막을 뿐 창은 안 막는다 — 넘으면 서버가 크기
@@ -936,6 +943,7 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-10 — v12는 `AuditorProcedureAuditAlwaysAction`을 선언해 허용집합은 다섯이다(이슈
     # #578).
     # ⏵ 2026-10-13 — v15는 `AuditorProcedureProbeInputAction`을 선언해 허용집합은 여섯이다.
+    # ⏵ 2026-10-16 — v18은 `AuditorProcedureProbeInputDiscriminatedAction`을 선언해 일곱이다.
     auditor_tool_hops: int = Field(default=0, ge=0, le=64)
 
     def auditor_source_options_on(self) -> tuple[str, ...]:
