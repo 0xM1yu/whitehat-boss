@@ -4210,6 +4210,11 @@ def _order_and_cut(ctx: RunContext, plan: _TargetPlan, state: _Accumulator) -> N
     설명이 없거나 아무것도 안 맞으면 전부 0이라 종전 순서 그대로다. 나머지 네 항은 index.json의
     순서와 같다(`_cut_key`).
 
+    **신호·설명 순위가 같은 후보끼리는 파일 경로·줄 순이고 파일 다양성은 보지 않는다(#696, 받아들인
+    동작).** arvo:1065 `run_20261015_0001`에서 `signal_rank` 1 풀 78조각(apprentice.c 46 ·
+    cdf.c 25 · softmagic.c 5 · vasprintf.c 2)의 다섯 자리가 전부 apprentice.c였다(trace
+    `target_planned`·`target_skipped` 실측). 라운드로빈·파일당 상한은 효과가 미측정이라 넣지 않았다.
+
     **컷은 키 앞 `candidate_max`개가 전부가 아니다 — 설명 일치 예약이 있다.**
     신호 후보가 컷을 다 채우면 설명과 맞는 후보가 키 순서만으로는 잘린다(리허설: semgrep 신호
     후보 8개가 arvo:1065의 `funcs.c:file_regexec`(desc 2)를 밀어냈다). 그래서 `desc_rank` ≥ 2인
