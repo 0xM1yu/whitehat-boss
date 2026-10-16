@@ -63,7 +63,7 @@ AI TOP ATOM은 Blackwell sm_121이다. vLLM의 DGX Spark(GB10) 전용 실행 레
 
 **structured output이 ATOM에서 깨진다면 첫 번째 용의자 — reasoning 토큰.**
 
-2026-08-14 Seraph 실측 응답(`tests/fixtures/metrics/vllm_0191_chat_completion.json`)은
+2026-08-14 Slurm 클러스터 실측 응답(`tests/fixtures/metrics/vllm_0191_chat_completion.json`)은
 `response_format` 없이 나간 호출이었고, 모델이 **`<think>` 블록을 먼저 내놓았다**
 (`finish_reason: "length"`로 잘렸다). Qwen3 계열은 기본적으로 reasoning 토큰을 낸다.
 
@@ -207,7 +207,7 @@ profiles:
 거의 같게 나온다 — **8K와 32K의 값이 같다고 측정 실패가 아니다.** context에 따라 실제로
 변하는 것은 `vllm:kv_cache_usage_perc`이고, 체크리스트 3번은 그 수치로 답한다. 이 값은 counter가
 아니라 **gauge**여서 요청이 끝나면 0.0으로 돌아가므로, bench는 요청이 떠 있는 동안 폴링해
-peak을 잡는다(2026-08-14 Seraph 실측 원문에서 사후 스크레이프 값이 0.0이었다).
+peak을 잡는다(2026-08-14 Slurm 클러스터 실측 원문에서 사후 스크레이프 값이 0.0이었다).
 
 같은 이유로 이 값은 `gpu_memory_utilization`과 **함께 있어야만 의미가 있다.** 그 비율이
 다르면 같은 카드·같은 모델에서도 점유가 통째로 달라져 다른 사람이 재현할 수 없다. 그래서

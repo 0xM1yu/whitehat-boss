@@ -317,7 +317,7 @@ class AdapterSelection(HarnessModel):
     # 잘못됐는지가 스택 아래에 묻힌다.
     retriever: Literal["fake", "hybrid"]
     # docker·singularity·podman은 같은 구현(`ContainerToolRunner`)의 런타임 선택이다.
-    # Seraph는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
+    # Slurm 클러스터는 Docker 데몬 접근이 없어 singularity를 쓴다(2026-08-17 실측).
     #
     # **ATOM은 docker와 podman을 둘 다 가진다**(2026-08-21 실측: Docker 29.2.1 · podman
     # 4.9.3). 이 주석은 2026-08-17 실측을 근거로 "ATOM은 데몬 접근이 없고 singularity도

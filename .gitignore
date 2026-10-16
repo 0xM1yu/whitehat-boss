@@ -14,8 +14,8 @@ eval/datasets/*
 !eval/datasets/.gitkeep
 !eval/datasets/README.md
 
-# 이미지 이관용 tar (docker save 산출물). Seraph로 옮길 때 저장소 루트에 생기는데
-# 247MB라 한 번 들어가면 되돌리기 비싸다 (tools/README.md "Seraph 이관")
+# 이미지 이관용 tar (docker save 산출물). Slurm 클러스터로 옮길 때 저장소 루트에 생기는데
+# 247MB라 한 번 들어가면 되돌리기 비싸다 (tools/README.md "Slurm 클러스터 이관")
 harness-tools_*.tar
 
 # state DB (저장소 밖 보관이 기본값이나, 로컬 override 대비)
@@ -39,12 +39,12 @@ harness-tools_*.tar
 .claude/*.md
 .claude/**/*.md
 
-# Seraph 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
+# 클러스터 운영 메모·스크립트 (개인 계정·파티션이 박혀 있어 공유 대상 아님)
 # 검증 결과의 요약은 장비 제약·실패 사례면 docs/portability.md에, 실험 기록이면 Notion에
 # 남긴다(CLAUDE.md §6) — 원문 메모는 공유하지 않는다.
-.claude/seraph/
-seraph_tutorial/
-seraph-2026-08-11-issues.md
+.claude/*/
+*_tutorial/
+*-2026-08-11-issues.md
 
 # 평가 데이터셋 (팀 main + injection tar.gz, 추출 GT, CWE 기록) — 대용량 바이너리,
 # 팀이 로컬 관리용으로 여기 둠(2026-09-27). PR 산출물 아니고 커밋되면 안 된다(~1.2GB).

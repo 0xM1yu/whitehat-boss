@@ -362,7 +362,7 @@ _RETRIEVERS: dict[str, _Wiring] = {
     ),
 }
 
-# docker·singularity·podman은 **같은 클래스**다. 로컬과 ATOM은 docker, Seraph는 Docker 데몬
+# docker·singularity·podman은 **같은 클래스**다. 로컬과 ATOM은 docker, Slurm 클러스터는 Docker 데몬
 # 접근이 없어 singularity — 계약과 판정은 하나이고 명령 조립만 갈린다.
 #
 # (이 주석은 "ATOM은 데몬 접근도 singularity도 없어 podman"이라고 적고 있었다. 그

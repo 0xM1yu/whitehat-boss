@@ -19,7 +19,7 @@
 | `run_id` | `run_YYYYMMDD_NNNN` | — |
 | run 산출물 경로·보존 여부 | 경로 + 보존/삭제 | **`run_id`만으로는 부족하다.** `gc`가 지운 번호를 같은 날 새 run이 재사용하므로([open-questions.md](../open-questions.md) R7), 회의록에 적은 run_id가 나중에 **다른 데이터를 가리킨다** |
 | `tool_runner` | 프로필 선언값 / 실제 사용값 | 오버라이드는 [evaluation.md](../evaluation.md) §2.3 규칙 2의 예외다. 덮었다면 **왜 덮었는지**를 함께 적는다 |
-| `--device` | `atom` / `seraph` / … | 규칙 5("장비가 다른 run은 같은 비교 셀에 넣지 않는다")가 이 기록 위에 선다 |
+| `--device` | `atom` / `slurm` / … | 규칙 5("장비가 다른 run은 같은 비교 셀에 넣지 않는다")가 이 기록 위에 선다 |
 | `tool_images` digest | `sha256:…` **+ 종류** | 런타임마다 적는 값의 종류가 다르다(docker=이미지 config sha256 / singularity=SIF 파일 sha256 / podman=RepoDigest). **종류 없는 digest는 비교할 수 없다** — [portability.md](../portability.md) §5 #4 |
 | `--gpu-memory-utilization` | 값 **+ 그 시점의 분모(GiB)** | 비율만 적으면 재현되지 않는다. 이 장비의 분모는 물리 통합메모리 **119.7 GiB**이고 cgroup 상한과 다르다([README.md](README.md) 확정 #4) |
 | 동시에 떠 있던 다른 서버 | 포트 · 모델 · util | **제한 단위가 세션이 아니라 사용자다.** 계정을 공유하므로 같은 계정의 다른 서버가 `memory.high`를 밀어올린다 — 이게 없으면 "왜 이번엔 throttle이 걸렸나"를 사후에 못 가른다 |

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 측정 절반. **두 장비에서 완전히 같아야 하는 부분이 전부 여기 있다.**
 #
-# seraph.sh와 atom.sh는 이 스크립트를 부르기까지의 방식만 다르다(srun이냐 직접 실행이냐,
+# slurm.sh와 atom.sh는 이 스크립트를 부르기까지의 방식만 다르다(srun이냐 직접 실행이냐,
 # conda 활성화가 필요하냐). 서버를 어떻게 띄우고 무엇을 재는지가 갈리면 두 장비의 원문
 # 차이를 "vLLM 버전 차이"라고 말할 수 없게 된다.
 #
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 PORT="${PORT:?PORT를 넘겨라 (예: 8001)}"
-HOST_LABEL="${HOST_LABEL:?HOST_LABEL을 넘겨라 (예: seraph / atom)}"
+HOST_LABEL="${HOST_LABEL:?HOST_LABEL을 넘겨라 (예: slurm / atom)}"
 ARCH="${ARCH:?ARCH를 넘겨라 (예: sm_86 / sm_121)}"
 OUT="${OUT:?OUT을 넘겨라 (산출물 디렉터리)}"
 
@@ -23,7 +23,7 @@ OUT="${OUT:?OUT을 넘겨라 (산출물 디렉터리)}"
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-0.6B}"
 MODEL_NAME="${MODEL_NAME:-qwen3-0.6b}"
 
-# 0단계와 같은 값. 바꾸면 ATOM 원문을 Seraph 원문과 직접 대조할 수 없다.
+# 0단계와 같은 값. 바꾸면 ATOM 원문을 Slurm 클러스터 원문과 직접 대조할 수 없다.
 REQUESTS="${REQUESTS:-6}"
 PREFIX_TOKENS="${PREFIX_TOKENS:-240}"
 
@@ -101,7 +101,7 @@ vllm serve "$MODEL_PATH" \
     >"$OUT/vllm-server.log" 2>&1 &
 SERVER_PID=$!
 
-# 프로브가 실패하든 성공하든 서버를 내린다. Seraph에서는 srun이 노드를 반납하지만 ATOM은
+# 프로브가 실패하든 성공하든 서버를 내린다. Slurm 클러스터에서는 srun이 노드를 반납하지만 ATOM은
 # 직접 실행이라, 여기서 안 내리면 GPU를 물고 남아 다음 사람이 못 쓴다.
 cleanup() {
     if kill -0 "$SERVER_PID" 2>/dev/null; then

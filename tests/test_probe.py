@@ -25,8 +25,8 @@ from src.bench_metrics import METRIC_NAMES, METRIC_PREFIX_HITS, METRIC_PREFIX_QU
 from tools.probe import probe_metrics
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "metrics"
-SERAPH_METRICS = FIXTURES / "vllm_0191_seraph_sm86.txt"
-SERAPH_COMPLETION = FIXTURES / "vllm_0191_chat_completion.json"
+SLURM_METRICS = FIXTURES / "vllm_0191_slurm_sm86.txt"
+SLURM_COMPLETION = FIXTURES / "vllm_0191_chat_completion.json"
 
 ENDPOINT = "http://127.0.0.1:8001/v1"
 MODEL = "qwen3-0.6b"
@@ -34,7 +34,7 @@ MODEL = "qwen3-0.6b"
 
 def _after() -> str:
     """요청이 끝난 뒤의 원문. 카운터가 들어 있다."""
-    return SERAPH_METRICS.read_text(encoding="utf-8")
+    return SLURM_METRICS.read_text(encoding="utf-8")
 
 
 def _before() -> str:
@@ -121,7 +121,7 @@ def _served(monkeypatch: pytest.MonkeyPatch, **kwargs: Any) -> _Server:
     defaults: dict[str, Any] = {
         "models": [MODEL],
         "metrics": [_before(), _after()],
-        "completion": SERAPH_COMPLETION.read_text(encoding="utf-8"),
+        "completion": SLURM_COMPLETION.read_text(encoding="utf-8"),
     }
     return _serve(monkeypatch, **{**defaults, **kwargs})
 
@@ -214,7 +214,7 @@ def test_the_prefix_is_long_enough_to_be_worth_caching() -> None:
 
 
 def test_the_measured_defaults_match_the_committed_fixture() -> None:
-    """기본값이 바뀌면 ATOM 원문을 Seraph 원문과 직접 대조할 수 없다.
+    """기본값이 바뀌면 ATOM 원문을 Slurm 클러스터 원문과 직접 대조할 수 없다.
 
     실측 원문의 `prefix_cache_queries_total`이 1458 = 243 × 6이다.
     """
@@ -261,9 +261,9 @@ def test_the_stem_reproduces_the_committed_fixture_name() -> None:
 
     커밋된 파일 이름과 대조하므로, 명명 규칙이 바뀌면 여기서 드러난다.
     """
-    stem = probe_metrics.fixture_stem("0.19.1", "seraph", "sm_86")
+    stem = probe_metrics.fixture_stem("0.19.1", "slurm", "sm_86")
 
-    assert stem == SERAPH_METRICS.stem
+    assert stem == SLURM_METRICS.stem
     assert (FIXTURES / f"{stem}.txt").exists()
 
 
@@ -335,7 +335,7 @@ def test_r6_and_the_label_that_is_not_a_metric_are_both_reported(
 ) -> None:
     """출력에 반드시 있어야 하는 둘.
 
-    `prompt_tokens_details`는 R6 판정이고(Seraph는 null), `kv_cache_memory_bytes`는
+    `prompt_tokens_details`는 R6 판정이고(Slurm 클러스터는 null), `kv_cache_memory_bytes`는
     메트릭이 아니라 `cache_config_info`의 라벨이다 — ATOM에서 숫자로 채워지면
     `mem_gb_ctx8k`를 nvidia-smi 없이 얻는다.
     ⏵ 2026-10-08 — ATOM도 `None`이었다(2026-08-18 — `2026-08-18-serving-atom.md` §3.3).

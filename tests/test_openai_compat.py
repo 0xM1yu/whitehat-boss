@@ -1132,12 +1132,12 @@ def test_gateway_failure_carries_the_spend_and_its_own_wall_clock(
 # --- 요청 타임아웃과 행 판정 (#261) -------------------------------------------
 
 _METRICS_FIXTURE = (
-    Path(__file__).parent / "fixtures" / "metrics" / "vllm_0191_seraph_sm86.txt"
+    Path(__file__).parent / "fixtures" / "metrics" / "vllm_0191_slurm_sm86.txt"
 ).read_text("utf-8")
 
 
 def _metrics_with_generation(tokens: float) -> bytes:
-    """실측 원문(vLLM 0.19.1 Seraph)에서 생성 카운터 값만 바꾼다 — 이름·라벨은 원문 그대로다."""
+    """실측 원문(vLLM 0.19.1 Slurm 클러스터)에서 생성 카운터 값만 바꾼다 — 이름·라벨은 원문 그대로다."""
     text, count = re.subn(
         r'^(vllm:generation_tokens_total\{[^}]*\}) \S+$',
         rf"\g<1> {tokens}",

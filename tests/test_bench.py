@@ -43,14 +43,14 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 TARGET = FIXTURES / "target"
 MEASURED_AT = "2026-08-17T00:00:00Z"
 
-# 실측 원문 (2026-08-14, Seraph REDACTED-node / vLLM 0.19.1 / Qwen3-0.6B).
+# 실측 원문 (2026-08-14, Slurm 클러스터 <node> / vLLM 0.19.1 / Qwen3-0.6B).
 # 파일명에 버전·장비를 박아 둔다 — ATOM 원문이 들어오면 두 번째 파일이 되고, 그때 이름이
 # 바뀌면 `test_bench_reads_only_names_that_exist_in_every_fixture`가 잡는다.
 # ⏵ 2026-10-08 — ATOM 원문은 2026-08-18에 받았으나(`2026-08-18-serving-atom.md` §3.5) 이 디렉터리에
 #   안 들어왔고, ATOM은 2026-09-29 사용 종료(#340)다. 두 번째 파일은 아직 없다.
 METRICS_DIR = FIXTURES / "metrics"
-SERAPH_METRICS = METRICS_DIR / "vllm_0191_seraph_sm86.txt"
-SERAPH_COMPLETION = METRICS_DIR / "vllm_0191_chat_completion.json"
+SLURM_METRICS = METRICS_DIR / "vllm_0191_slurm_sm86.txt"
+SLURM_COMPLETION = METRICS_DIR / "vllm_0191_chat_completion.json"
 
 # scout만 실서빙인 config. 실제 엔드포인트를 가리키는 역할이 하나는 있어야 스텁이
 # 의미를 갖는다. (옛 `single_gpu_12g` 프로필의 모양 — `tests/conftest.py`의 합성 config.)
@@ -76,7 +76,7 @@ def completion_fixture(content: str | None = None, *, cached: int | None = None)
     `response_format` 없이 나갔기 때문이다. 스키마 파싱이 성공해야 하는 테스트만
     교체하고, **usage 봉투는 원문 그대로** 쓴다. R6를 재현하는 것은 봉투 쪽이다.
     """
-    payload = json.loads(SERAPH_COMPLETION.read_text(encoding="utf-8"))
+    payload = json.loads(SLURM_COMPLETION.read_text(encoding="utf-8"))
     if content is not None:
         payload["choices"][0]["message"]["content"] = content
     if cached is not None:
@@ -102,7 +102,7 @@ def metrics_fixture(
     `labels`는 `cache_config_info`의 라벨 값을 바꾼다(`enable_prefix_caching` 등).
     값 라인 전체를 재조립하지 않으므로 나머지 20여 개 라벨은 실측 그대로 남는다.
     """
-    text = SERAPH_METRICS.read_text(encoding="utf-8")
+    text = SLURM_METRICS.read_text(encoding="utf-8")
     for name, value in (overrides or {}).items():
         pattern = re.compile(r"^(" + re.escape(name) + r"\{[^}]*\}) .*$", re.MULTILINE)
         text, count = pattern.subn(r"\g<1> " + repr(float(value)), text)
@@ -198,7 +198,7 @@ def test_null_prompt_tokens_details_is_reported_as_r6_not_an_adapter_bug(
 ) -> None:
     """장부는 0인데 `/metrics`는 적중 — **어댑터 결함이 아니다.**
 
-    2026-08-11 Seraph 실측이 이 경우였다(적중 99.0%인데 `cached_tokens: 0`). 여기서
+    2026-08-11 Slurm 클러스터 실측이 이 경우였다(적중 99.0%인데 `cached_tokens: 0`). 여기서
     판정이 `neither`로 접히면 "prefix caching이 안 돈다"는 정반대 결론이 기록된다.
     """
     client, template, tokens = served
@@ -476,7 +476,7 @@ def test_parser_survives_the_real_metrics_document() -> None:
     히스토그램 `_bucket`(`le="+Inf"` 포함)·`_created` 게이지·`_sum`/`_count`가 섞인
     실제 문서에서 파서가 한 줄도 흘리지 않는지가 검증 대상이다.
     """
-    text = SERAPH_METRICS.read_text(encoding="utf-8")
+    text = SLURM_METRICS.read_text(encoding="utf-8")
     samples = bench_metrics.parse_prometheus(text)
 
     parsed = [name for name, _, _ in samples if name.startswith("vllm:")]
@@ -517,7 +517,7 @@ def test_measured_counters_are_internally_consistent() -> None:
     }
     queries = bench_metrics._sum_metric(samples, METRIC_PREFIX_QUERIES)
     hits = bench_metrics._sum_metric(samples, METRIC_PREFIX_HITS)
-    prompt_tokens = json.loads(SERAPH_COMPLETION.read_text(encoding="utf-8"))["usage"][
+    prompt_tokens = json.loads(SLURM_COMPLETION.read_text(encoding="utf-8"))["usage"][
         "prompt_tokens"
     ]
 
@@ -593,7 +593,7 @@ def test_cache_config_labels_carry_the_names_that_are_not_metrics(
 
     프로브가 이 이름을 문자열로 다시 적지 않게 하려고 라벨을 통째로 내보낸다. 값을
     해석하지 않는 것도 계약이다 — 실측 원문에서 이 라벨은 문자열 `"None"`이고
-    (Seraph는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
+    (Slurm 클러스터는 이 값을 채우지 않는다), float으로 바꾸려 들면 거기서 죽는다. ATOM에서
     숫자로 채워지면 그때 `mem_gb_ctx8k`를 nvidia-smi 없이 얻을 수 있다.
     ⏵ 2026-10-08 — ATOM도 `None`이었다(2026-08-18 — `2026-08-18-serving-atom.md` §3.3).
     """
@@ -858,7 +858,7 @@ def test_measured_response_envelope_makes_the_ledger_zero(
         client, Role.SCOUT, bench.sized_prompt(Role.SCOUT, template, tokens, 0), Candidate
     )
 
-    usage = json.loads(SERAPH_COMPLETION.read_text(encoding="utf-8"))["usage"]
+    usage = json.loads(SLURM_COMPLETION.read_text(encoding="utf-8"))["usage"]
     assert usage["prompt_tokens_details"] is None
     assert call.ok
     assert call.cached_tokens == 0
@@ -873,7 +873,7 @@ def test_the_measured_content_is_not_schema_valid(served: tuple) -> None:
     토큰을 먼저 내놓는다는 사실이 여기 박혀 있다 — ATOM에서 B가 실패하면 첫 용의자다.
     ⏵ 2026-10-08 — ATOM은 2026-09-29 사용 종료(#340). 지금 실측 장비는 vast다(D81).
     """
-    payload = json.loads(SERAPH_COMPLETION.read_text(encoding="utf-8"))
+    payload = json.loads(SLURM_COMPLETION.read_text(encoding="utf-8"))
     content = payload["choices"][0]["message"]["content"]
 
     assert payload["choices"][0]["finish_reason"] == "length"

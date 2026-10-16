@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Seraph(REDACTED-cluster) 래퍼. **잡 실행 방식만 감싼다** — 측정은 run_probe.sh가 한다.
+# Slurm 클러스터 래퍼. **잡 실행 방식만 감싼다** — 측정은 run_probe.sh가 한다.
 #
 # 로그인 노드에서 돌린다. srun 하나가 컴퓨트 노드에서 vLLM과 프로브를 **함께** 띄우므로
 # endpoint는 그 노드 안의 127.0.0.1이다. 무거운 작업을 로그인 노드에서 하지 말라는 규정
@@ -8,22 +8,22 @@
 # 사용:
 #
 #   tmux new -s probe                        # ← 먼저 tmux. 아래 주의 참조
-#   sinfo -p REDACTED-partition                  # ← idle 노드 확인. u 노드는 고정이 아니다
-#   tools/probe/seraph.sh --node REDACTED-node --out /data/<계정>/probe
+#   sinfo -p <partition>                  # ← idle 노드 확인. u 노드는 고정이 아니다
+#   PARTITION=<partition> tools/probe/slurm.sh --node <node> --out /data/<account>/probe
 #
 # **--node에 기본값을 두지 않는다.** 비어 있는 노드를 그때그때 쓰는 것이 이 클러스터의
 # 운용 방식이고, 노드마다 카드가 다르다(u1은 6GB, u3·u4는 12GB, u8은 Prolog failure로
 # 사용 금지). 기본값을 두면 남이 쓰는 노드에 얹히거나 6GB 카드에서 재고도 그 사실이
-# 산출물에 안 남는다. 범위(`REDACTED-node-range`)로 주면 `Node count specification invalid`다.
+# 산출물에 안 남는다. 범위(`<node>[a-b]`)로 주면 `Node count specification invalid`다.
 #
 # **tmux 안에서 돌려라.** srun은 SSH가 끊기면 job까지 죽는다. 교외에서는 접속 포트가
-# 다르다(`ssh -p REDACTED-port`). 끝나면 srun이 노드를 반납한다.
+# 다르다(`ssh -p <ssh-port>`). 끝나면 srun이 노드를 반납한다.
 set -euo pipefail
 
-PARTITION="${PARTITION:-REDACTED-partition}"
+PARTITION="${PARTITION:?PARTITION을 넘겨라 (Slurm 파티션 이름 — sinfo로 확인)}"
 # A2000. u3·u4에서 실측한 값이다.
 ARCH="${ARCH:-sm_86}"
-HOST_LABEL="${HOST_LABEL:-seraph}"
+HOST_LABEL="${HOST_LABEL:-slurm}"
 
 # 홈 디렉터리 용량 규정이 있어 캐시를 /data/ 아래로 보낸다. 안 그러면 모델을 내려받다가
 # 쿼터에 걸려 죽는다.
@@ -58,7 +58,7 @@ if [ ! -f "$CONDA_SH" ]; then
     exit 2
 fi
 
-echo "[seraph] ${PARTITION} / ${NODE} / port ${PORT} → ${OUT}"
+echo "[slurm] ${PARTITION} / ${NODE} / port ${PORT} → ${OUT}"
 
 # 인용에 주의: 바깥에서 확장할 값은 그대로 두고, 노드 안에서 확장할 값만 \$로 막는다.
 srun --partition="$PARTITION" --nodes=1 --nodelist="$NODE" \
@@ -80,7 +80,7 @@ export PIP_CACHE_DIR="$DATA_ROOT/.cache/pip"
 export HF_HOME="$DATA_ROOT/.cache/huggingface"
 mkdir -p "\$PIP_CACHE_DIR" "\$HF_HOME"
 
-echo "[seraph] node=\$(hostname)  python=\$(command -v python)"
+echo "[slurm] node=\$(hostname)  python=\$(command -v python)"
 # 어느 카드에서 쟀는지를 로그에 남긴다 — u 노드는 고정이 아니라 6GB일 수도 있다.
 nvidia-smi --query-gpu=name,compute_cap,memory.total --format=csv,noheader || true
 
@@ -88,5 +88,5 @@ PORT="$PORT" HOST_LABEL="$HOST_LABEL" ARCH="$ARCH" OUT="$OUT" \\
     bash "$REPO_ROOT/tools/probe/run_probe.sh"
 EOF
 
-echo "[seraph] 끝났다. srun이 노드를 반납했다."
-echo "[seraph] 산출물: $OUT"
+echo "[slurm] 끝났다. srun이 노드를 반납했다."
+echo "[slurm] 산출물: $OUT"

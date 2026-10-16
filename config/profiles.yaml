@@ -107,8 +107,8 @@ profiles:
     budget: dev_container
 
   dev_singularity:
-    description: "Docker 데몬 접근이 없는 환경(Seraph 등). 도구는 Singularity로 실행."
-    # REDACTED-node에서 /usr/bin/docker는 permission denied이고 singularity 3.7.3만 돈다
+    description: "Docker 데몬 접근이 없는 환경(Slurm 클러스터 등). 도구는 Singularity로 실행."
+    # <node>에서 /usr/bin/docker는 permission denied이고 singularity 3.7.3만 돈다
     # (2026-08-13 실측). dev_docker와 다른 점은 런타임 하나뿐이고, cpu_limit·memory_mb는
     # 이 런타임이 강제하지 못한다(SLURM 소관, container_tools.UNENFORCED).
     production: false

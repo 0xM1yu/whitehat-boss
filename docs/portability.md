@@ -126,7 +126,7 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
 | 프로브가 `pip install` 없이 돈다 | import 그래프를 따라가며 `sys.stdlib_module_names` 밖을 찾는다(`tests/test_probe.py`) | stdlib 밖 0건. `src/__init__.py`까지 따라간다 |
 | 측정 절차가 장비 사이에서 같다 | `tools/probe/run_probe.sh` 하나를 두 래퍼가 공유한다 | 래퍼는 잡 실행·접속만 감싼다 |
 
-**주석에 남은 장비명은 의도된 것이다.** `2026-08-14 Seraph 실측`처럼 어떤 사실이 어디서
+**주석에 남은 장비명은 의도된 것이다.** `2026-08-14 Slurm 클러스터 실측`처럼 어떤 사실이 어디서
 나왔는지를 밝히는 출처 표기이고, 지우면 수치의 근거가 사라진다. 코드가 그 값을 읽지 않는
 한 종속이 아니다.
 
@@ -151,14 +151,14 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
 `RunRecord.tool_runner`에 기록으로 남는다. 주 장비가 상시 예외 상태면 그 기록이
 "이 run은 특별했다"를 뜻하지 못하게 된다.
 
-`dev_singularity`가 이미 그 논법이다. Seraph에서 돌리려고 만든 프로필이므로 런타임을
+`dev_singularity`가 이미 그 논법이다. Slurm 클러스터에서 돌리려고 만든 프로필이므로 런타임을
 직접 선언하고, 그 장비에서는 오버라이드가 필요 없다.
 
 | 프로필 | 선언 | 주 장비 | 오버라이드가 필요한 곳 |
 | --- | --- | --- | --- |
-| `harness_pool` · `harness_pool_hybrid` (2026-09-24 전에는 지운 `local_balanced` · `local_balanced_hybrid` · `b1_single`) | `docker` | **ATOM** — 이 프로필들이 부르는 모델이 그 급의 가속기를 요구한다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Seraph) 이 프로필은 거기서 기동하지 않는다. ⚠ **어느 모델을 부르는지는 로스터가 정하고 그 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다** — 로스터가 바뀌면 이 칸의 근거도 §5 #1에서 다시 센다 | 없음 |
+| `harness_pool` · `harness_pool_hybrid` (2026-09-24 전에는 지운 `local_balanced` · `local_balanced_hybrid` · `b1_single`) | `docker` | **ATOM** — 이 프로필들이 부르는 모델이 그 급의 가속기를 요구한다(§5 #1). 다른 장비도 모델을 서빙하지만(§6 Slurm 클러스터) 이 프로필은 거기서 기동하지 않는다. ⚠ **어느 모델을 부르는지는 로스터가 정하고 그 정본은 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이다** — 로스터가 바뀌면 이 칸의 근거도 §5 #1에서 다시 센다 | 없음 |
 | `dev_docker` | `docker` | GPU 없는 팀원 노트북 | ATOM에서는 **이제 필요 없다**(2026-08-21 이후 docker 존재). 그전에는 `--tool-runner podman`이었고, 그 사례가 [decisions/0005](decisions/0005-tool-runner-override.md)의 근거다 |
-| `dev_singularity` | `singularity` | Seraph | 없음 |
+| `dev_singularity` | `singularity` | Slurm 클러스터 | 없음 |
 
 ✅ **조건 비교용 실서빙 프로필이 전부 `docker`다(2026-08-28).** 2026-08-17~08-28
 사이에는 `local_balanced`·`b1_single`만 `podman`이라 이 표에 두 값이 섞여 있었고,
@@ -205,7 +205,7 @@ python -m src.cli run --profile harness_pool --device vastai-remote --condition 
 ```bash
 python -m src.cli run    --profile harness_pool --target <경로> --slices <slices.json> --device atom --condition B3prime@pipeline
 python -m src.cli bench  --profile harness_pool --apply --device atom
-python -m src.cli doctor --profile harness_pool --device seraph
+python -m src.cli doctor --profile harness_pool --device slurm
 ```
 
 ## 5. 이식성 결함 목록
@@ -264,7 +264,7 @@ podman      sha256:3a63ba2eb504b1b1fd9378fe5df9b682418b79f86eb2b6650c2ee4c2d635a
 | 라벨 | 아키텍처 | 컨테이너 런타임 | 확인된 것 |
 | --- | --- | --- | --- |
 | `atom` | Blackwell (sm_121), CUDA 13.0, **aarch64** — NVIDIA DGX OS(Ubuntu 24.04), Arm 20코어. 할당: 통합메모리 128 GB 중 **공식 할당 80 GiB**(34→64(2026-08-25 PL 공식 — cgroup `memory.max`=64와 일치, `memory.high`=58, 2026-08-19·08-20 실측)→80으로 2026-08-31 확장 — cgroup `memory.max`=85,899,345,920=80 GiB 실측 확인(2026-09-01T04:39:13Z 읽기 전용 재확인에서 같은 값). `memory.high`는 **이번 확장과 별개로 8/25~8/26 사이에 58에서 `max`로 이미 풀렸고**(8/25 실측 58 → 8/26·8/28 run이 `max`를 두 번 확인) **소프트 스로틀이 없어 상한에 닿는 순간 예고 없이 OOM kill — 방어선을 직접 잡는다**. 별도 VRAM이 없어 모델과 데이터가 이 안에서 함께 돈다. 공용 계정이라 팀 합산), GPU **공유**, CPU는 `cpu.max=max`라 **강제 없음**(nproc 20 전부 사용 가능), 디스크 1 TiB NVMe Gen5 전용 파티션<br><br>⚠ **2026-08-31에 바뀐 값이다.** 그전까지 이 칸은 "PL 공식 할당 64 GiB, `memory.high`=58"이었고 그것은 **2026-08-19·08-20 실측**이 근거였다. `memory.high`는 그와 별개로 **8/25~8/26 사이에 58→`max`로 풀렸다** — 8/25 실측은 아직 58이었고 8/26·8/28 run이 `max`를 두 번 확인했다. | **docker 29.2.1 + podman 4.9.3**(rootless) 공존. singularity 없음.<br><br>⚠ **2026-08-21에 바뀐 값이다.** 그전까지 이 칸은 "podman만, Docker 데몬 접근 없음"이었고 그것은 **2026-08-17 실측**이 근거였다(`32e2fb5`가 `src/config.py` 주석에, `075544e`가 이 표에 넣었다). 4일 뒤 `ssh atom 'podman --version; docker --version'`이 둘 다 내놓았고, 이후 실행 기록이 그쪽을 따른다 — **2026-08-25·26·27 ATOM run이 전부 docker로 돌았다**(`run_20260827_0004` 완주, `doctor … --tool-runner docker` → `/usr/bin/docker` 확인). **podman으로 도구를 돌린 run은 아래 8/17 한 건뿐이다.** | 2026-08-17 harness-tools:v1 **arm64 현지 빌드** → `dev_docker --tool-runner podman` **완주**(후보 2/Finding 2, `run_20260817_0001`) — 이 저장소의 유일한 podman 도구 실행 기록이다. **semgrep fingerprint가 로컬 x86_64/docker 산출물과 일치** — 아키텍처가 다른 첫 대조다([STATUS.md](../STATUS.md) §5, [decisions/0005](decisions/0005-tool-runner-override.md)). **R1 커널 호환성 통과**: vLLM 0.27.1 + torch 2.13.0+cu130이 `(12, 1)`·`NVIDIA GB10`을 인식. **모델 서빙 확인**: 로컬 TCP 차단이 같은 날 풀린 뒤 `qwen3-4b`(fp8)가 `127.0.0.1:8001`에서 떴다 — `VLLM_USE_DEEP_GEMM=0` 필요(§5 #5), 실측은 `config/models.yaml` |
-| `seraph` | Ampere (sm_86), **x86_64**(로컬 x86 이미지 tar를 그대로 변환해 돌린 것이 근거 — STATUS.md §5), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
+| `slurm` | Ampere (sm_86), **x86_64**(로컬 x86 이미지 tar를 그대로 변환해 돌린 것이 근거 — STATUS.md §5), CUDA 12.2 상한, vLLM 0.19.1까지 | Singularity 3.7.3 (podman 없음, 2026-08-17 실측) | 2026-08-11 구조화 출력·prefix cache, 2026-08-13 Singularity 도구 실행, 2026-08-14 `/metrics` 원문 |
 
 **`atom`의 로컬 TCP 차단 — 2026-08-17 발생, 같은 날 해소.** 테넌트에서 로컬 주소로의 TCP
 접속이 막혀 있었다. 같은 프로세스에서 `bind('127.0.0.1', p)` → `listen` → `connect`가

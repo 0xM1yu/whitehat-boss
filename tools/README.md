@@ -20,7 +20,7 @@
 
 | 스크립트 | 답하는 질문 | 관련 |
 | --- | --- | --- |
-| `atom.sh`·`seraph.sh`·`run_probe.sh`·`probe_metrics.py` | vLLM `/metrics`가 우리가 읽는 이름으로 값을 내주는가. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 | R6 |
+| `atom.sh`·`slurm.sh`·`run_probe.sh`·`probe_metrics.py` | vLLM `/metrics`가 우리가 읽는 이름으로 값을 내주는가. 산출물이 그대로 `tests/fixtures/metrics/`의 fixture가 된다 | R6 |
 | `d67_required_schema.py` | 구조화 출력 스키마를 `required`로 올리면 Auditor가 `path`·`evidence_refs`를 **채우는가**. 보존된 run의 프롬프트를 원문 그대로 재생하고 **스키마만** 바꾼다 | [D67](../docs/open-questions/D/D67.md) · #172 |
 | `gpt_oss_structured.py` | `gpt-oss-20b`의 structured output 정답률이 **serve 설정**으로 갈리는가. 프로브를 고정하고 `vllm serve` 인자만 바꿔 팔을 만든다 | [2026-09-09 보고서](../docs/experiments/harness/2026-09-09-gpt-oss-20b-onboarding-atom.md) §5 · R8 |
 | `critic_output_budget.py` | 보존된 run의 Finding에서 Critic 프롬프트를 재구성해 **출력 토큰이 무엇을 먹는가**(추론 대 본문)를 가른다 | #79 · #172 |
@@ -171,12 +171,12 @@ podman은 docker CLI 호환이라 `container_argv`가 바이너리 이름만 갈
 (docs/portability.md §5 #4).
 
 825MB(arm64) 이미지가 `dev_docker --tool-runner podman`으로 완주했고(후보 2 / Finding 2,
-`run_20260817_0001`), 이는 Seraph의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은
+`run_20260817_0001`), 이는 Slurm 클러스터의 singularity 결과와 같다 — 세 런타임이 같은 표본에 같은
 판정을 낸다. **그 run이 이 저장소의 유일한 podman 도구 실행 기록이다**(docs/portability.md §6).
 
-### Seraph 이관 (Singularity)
+### Slurm 클러스터 이관 (Singularity)
 
-REDACTED-node에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
+<node>에는 `/usr/bin/docker`가 있지만 permission denied이고(사용자가 docker 그룹이 아니다)
 `/usr/local/bin/singularity` 3.7.3만 쓸 수 있다. **무거운 작업은 반드시 컴퓨트 노드에서
 한다 — 로그인 노드에서 빌드하지 않는다.**
 
@@ -189,8 +189,8 @@ buildx가 만든 tar(manifest list + attestation manifest 포함)를 그대로 �
 레지스트리를 쓸 수 있는 경우:
 
 ```bash
-export SINGULARITY_CACHEDIR=/data/REDACTED-user/.cache/singularity
-srun -p REDACTED-partition -w REDACTED-node singularity build /data/REDACTED-user/sif/harness-tools_v3.sif docker://<레지스트리>/harness-tools:v3
+export SINGULARITY_CACHEDIR=/data/<account>/.cache/singularity
+srun -p <partition> -w <node> singularity build /data/<account>/sif/harness-tools_v3.sif docker://<레지스트리>/harness-tools:v3
 ```
 
 레지스트리를 못 쓰는 경우 (로컬에서 tar로 내보내 옮긴다):
@@ -200,11 +200,11 @@ docker save harness-tools:v3 -o harness-tools_v3.tar
 ```
 
 ```bash
-scp harness-tools_v3.tar <계정>@seraph:/data/REDACTED-user/
+scp harness-tools_v3.tar <account>@<cluster-host>:/data/<account>/
 ```
 
 ```bash
-srun -p REDACTED-partition -w REDACTED-node --mem=8G singularity build /data/REDACTED-user/sif/harness-tools_v3.sif docker-archive:///data/REDACTED-user/harness-tools_v3.tar
+srun -p <partition> -w <node> --mem=8G singularity build /data/<account>/sif/harness-tools_v3.sif docker-archive:///data/<account>/harness-tools_v3.tar
 ```
 
 `--mem=8G`는 변환이 레이어를 푸는 동안 쓰는 메모리다. 실행 자체에는 그만큼 필요 없다 —
@@ -215,7 +215,7 @@ SIF 경로 규칙은 `harness-tools:v3` → `{sif_dir}/harness-tools_v3.sif`이�
 환경변수 `HARNESS_SIF_DIR`, 없으면 `{artifacts_root}/sif`다.
 
 ```bash
-export HARNESS_SIF_DIR=/data/REDACTED-user/sif
+export HARNESS_SIF_DIR=/data/<account>/sif
 ```
 
 **SIF가 없어도 자동으로 받아오지 않는다.** 실행 중에 네트워크를 쓰면 `network=False` 정책과

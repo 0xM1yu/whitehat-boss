@@ -407,11 +407,11 @@ def test_every_registry_block_has_the_line_apply_needs(tmp_path: Path) -> None:
         path,
         {key: {"tok_s_single": 1.0} for key in every_model},
         MEASURED_AT,
-        measured_on="seraph",
+        measured_on="slurm",
     )
 
     assert set(outcome["updated"]) == set(every_model)
-    assert path.read_text(encoding="utf-8").count('measured_on: "seraph"') == len(every_model)
+    assert path.read_text(encoding="utf-8").count('measured_on: "slurm"') == len(every_model)
 
 
 # --- --device ----------------------------------------------------------------
@@ -464,19 +464,19 @@ def test_a_run_without_a_device_is_excluded_from_the_comparison_table(tmp_path: 
 
 
 def test_the_device_label_lands_in_the_run_record(tmp_path: Path) -> None:
-    """외부 사용자가 Seraph에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
+    """외부 사용자가 Slurm 클러스터에서 낸 결과와 팀의 ATOM 결과가 섞이면 안 된다.
 
     `model_checksums`는 설계상 장비 불변이고 endpoint는 애초에 기록되지 않는다 — 이
     필드가 없으면 두 run이 기록만으로는 완전히 같아 보인다.
     """
     code = cli.main(
         ["run", "--profile", "dev_fake", "--target", str(TARGET),
-         "--artifacts-root", str(tmp_path), "--device", "seraph"]
+         "--artifacts-root", str(tmp_path), "--device", "slurm"]
     )
 
     assert code == 0
     record = json.loads(_manifest_path(tmp_path).read_text("utf-8"))
-    assert record["device"] == "seraph"
+    assert record["device"] == "slurm"
 
 
 def test_the_profile_name_lands_in_the_run_manifest(tmp_path: Path) -> None:
@@ -509,7 +509,7 @@ def test_doctor_says_nothing_about_the_device_when_none_is_given() -> None:
 
 
 def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -> None:
-    """registry가 ATOM 기준인데 Seraph에서 doctor를 치면 그 사실이 드러나야 한다."""
+    """registry가 ATOM 기준인데 Slurm 클러스터에서 doctor를 치면 그 사실이 드러나야 한다."""
     for name in ("profiles.yaml", "budgets.yaml"):
         (tmp_path / name).write_text((CONFIG_DIR / name).read_text("utf-8"), encoding="utf-8")
     path = _models_copy(tmp_path)
@@ -518,7 +518,7 @@ def test_doctor_warns_when_the_registry_was_measured_elsewhere(tmp_path: Path) -
     )
 
     same = doctor_lines(device="atom", config_dir=tmp_path)
-    other = doctor_lines(device="seraph", config_dir=tmp_path)
+    other = doctor_lines(device="slurm", config_dir=tmp_path)
 
     assert not [line for line in same if "다른 장비 기준" in line]
     mismatch = [line for line in other if "다른 장비 기준" in line]
