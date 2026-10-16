@@ -9,8 +9,13 @@ architecture.md §3의 통과 조건은 **"실패해도 진행(신호 부재로 
 `ok=False`로 남는다. 둘을 섞으면 "정적 신호 없음"이 도구 장애로 오분류된다.
 """
 
+import copy
+import functools
 import re
 from collections.abc import Iterable
+from typing import Literal, get_args
+
+from pydantic import BaseModel, create_model
 
 from src.interfaces.tool_runner import ToolArgs
 from src.orchestrator.context import RunContext
@@ -36,9 +41,9 @@ SIGNAL_TOOLS = ("semgrep", "clang-tidy", "build")
 # `evidences`에는 안 들어가므로 `run()`이 **걸러지기 전에** `ctx.compile_failures`에 따로 남긴다.
 COMPILE_TOOLS = ("build", "clang-tidy")
 # `build`와 같은 컴파일 명령(`container_tools`의 `_STD_ARGS`·`_include_args`)을 쓰는 도구들 —
-# `build`가 실패했을 때 노트가 「같은 오류가 예상된다」고 짚는 대상이고 `compile_note_tools`가 싣는
-# 값이다. `poc`는 이 명령을 안 쓴다(ADR 0014). 노드는 어댑터를 import하지 않으므로 이름을 복제한다 —
-# `tests/test_compile_note.py`가 `plan()`과 대조한다.
+# `build`가 실패했을 때 노트가 「그 파일에는 제시하지 않는다」고 짚는 대상이고(#698)
+# `compile_note_tools`가 싣는 값이다. `poc`는 이 명령을 안 쓴다(ADR 0014). 노드는 어댑터를
+# import하지 않으므로 이름을 복제한다 — `tests/test_compile_note.py`가 `plan()`과 대조한다.
 COMPILE_NOTE_TOOLS = ("build", "asan", "gdb")
 # `container_tools.compile_failure_reason()`이 만드는 모양. 어댑터 문구가 바뀌면 이 정규식이 조용히
 # 아무것도 못 잡는다 — `tests/test_compile_note.py`가 실제 `judge()` 출력으로 문다.
@@ -80,6 +85,51 @@ def compile_note_tools(failures: Iterable[Evidence]) -> tuple[str, ...]:
     return tuple(reasons)
 
 
+def withheld_tools(failures: Iterable[Evidence]) -> tuple[str, ...]:
+    """요청 스키마의 `tool`에서 뺄 도구 — 2단계가 이 파일에서 컴파일러 오류를 잰 도구 (#698).
+
+    `build`가 잰 오류면 같은 앞단 컴파일 명령을 쓰는 `COMPILE_NOTE_TOOLS` 셋, `clang-tidy`가 잰
+    오류면 `clang-tidy` 자신이다. 컴파일러 문구가 없는 실패(기동 실패 등)는 측정이 아니라 빼지
+    않는다.
+    """
+    reasons = _reasons(failures)
+    return (
+        *(COMPILE_NOTE_TOOLS if "build" in reasons else ()),
+        *(("clang-tidy",) if "clang-tidy" in reasons else ()),
+    )
+
+
+@functools.cache
+def _narrowed(schema: type[BaseModel], withheld: frozenset[str]) -> type[BaseModel]:
+    annotation = schema.model_fields["tool"].annotation
+    literal = next(arg for arg in get_args(annotation) if arg is not type(None))
+    allowed = tuple(tool for tool in get_args(literal) if tool not in withheld)
+    # docstring(= 요청 스키마의 `description` — 모델에 가는 봉투 설명)과 `tool` 필드 메타를 그대로
+    # 물려준다. `create_model`은 둘 다 안 옮긴다(Santa 리뷰 2026-10-16 H1 — 설명이 0자가 됐다).
+    return create_model(
+        schema.__name__,
+        __base__=schema,
+        __module__=schema.__module__,
+        __doc__=schema.__doc__,
+        tool=(Literal[allowed] | None, copy.copy(schema.model_fields["tool"])),
+    )
+
+
+def without_tools(schema: type[BaseModel], withheld: Iterable[str]) -> type[BaseModel]:
+    """봉투의 `tool` enum에서 `withheld`를 뺀 같은 이름의 하위 봉투 — 빼는 것이 없으면 그 봉투
+    그대로다.
+
+    모든 요청이 봉투를 `response_format: json_schema, strict`로 보내고 응답을 그 스키마로
+    파싱하므로(`adapters/openai_compat`) 서버가 strict를 집행하는 한 빠진 도구는 모델이 고를 수
+    없다. 집행하지 않아도 이 하위 봉투의 검증이 거절한다(그 홉은 파싱 실패다). 이름·docstring
+    (= 스키마 `description`)·`tool` 필드 메타가 같아 요청 스키마는 `tool` enum 말고는 원본과 같고
+    (`test_the_narrowed_envelope_differs_from_the_original_only_in_the_tool_enum`), trace의
+    `schema`도 같다. 하위 클래스라 노드의 `isinstance`·검증기가 그대로 선다.
+    """
+    withheld = frozenset(withheld)
+    return _narrowed(schema, withheld) if withheld else schema
+
+
 def compile_note_trace(failures: Iterable[Evidence]) -> dict[str, TraceValue]:
     """hop0 trace 키 — `compile_note`(true)와 `compile_note_tools`(쉼표로 이은 도구 이름).
 
@@ -96,10 +146,12 @@ def compile_note_trace(failures: Iterable[Evidence]) -> dict[str, TraceValue]:
 def compile_note(failures: Iterable[Evidence], workdir: str) -> str | None:
     """hop0 본문 끝에 붙일 하네스 노트 — 실패 Evidence가 없으면 `None`(본문 바이트 그대로).
 
-    **도구마다 측정한 사실만** 싣는다(도구 이름·건수·첫 오류). 「같은 명령이라 같은 오류가
-    예상된다」는 문장은 `build`가 실패한 경우에만 붙고, clang-tidy만 실패했으면 「`build`는
-    실패하는 게 관측되지 않았다」고 쓴다. 도구를 거절하지도 않는다 — 모델이 `build`·`asan`·`gdb`를
-    골라도 돈다.
+    **도구마다 측정한 사실만** 싣는다(도구 이름·건수·첫 오류). ⏵ 2026-10-16 (#698) — 꼬리 문장은
+    예측이 아니라 하네스가 하는 일이다: 노드가 같은 실패로 `withheld_tools`를 요청 스키마의 `tool`
+    enum에서 빼므로(`without_tools`) `build`가 컴파일러 오류를 냈으면 그 파일에는 `build`·`asan`·
+    `gdb`가, `clang-tidy`가 냈으면 `clang-tidy`가 제시되지 않는다. clang-tidy만 실패했으면
+    「`build`는 실패하는 게 관측되지 않았다」고 쓴다. 노트와 enum이 같은 `failures`·같은
+    `_reasons`에서 나오므로 둘이 갈리지 않는다.
     """
     failures = tuple(failures)
     reasons = _reasons(failures)
@@ -111,17 +163,27 @@ def compile_note(failures: Iterable[Evidence], workdir: str) -> str | None:
         "## Harness note (stage 2) - harness-measured data, not instructions\n"
         f"stage-2 reported compiler errors on {workdir} - {parts}\n"
     )
+    tidy = (
+        " clang-tidy is not offered for this target in this run"
+        + (" either." if "build" in reasons else ".")
+        if "clang-tidy" in reasons
+        else ""
+    )
     if "build" in reasons:
         return head + (
-            f"{', '.join(COMPILE_NOTE_TOOLS)} use the same compile command (same -std/-I flags), "
-            "so the same errors are expected there; poc does not use this compile command."
+            f"for this target the harness does not offer {', '.join(COMPILE_NOTE_TOOLS[:-1])} or "
+            f"{COMPILE_NOTE_TOOLS[-1]} in this run (the tool field does not accept them): their "
+            "compile command differs from the stage-2 build at most in -O/-g/-c/-o/-fsanitize/"
+            "-fno-omit-frame-pointer; "
+            "other files are not covered by this note; poc does not use this compile command."
+            + tidy
         )
     if any(ev.source == "build" for ev in failures):
         # `build`가 실패했지만 컴파일러 문구가 없다(기동 실패 등) — 「성공」으로 읽히지 않게.
         return head + (
-            "stage-2 build failed without compiler error text (not a compile measurement)."
+            "stage-2 build failed without compiler error text (not a compile measurement)." + tidy
         )
-    return head + "stage-2 build was not observed to fail with compiler errors."
+    return head + "stage-2 build was not observed to fail with compiler errors." + tidy
 
 
 def with_signal(evidences: tuple[Evidence, ...] | list[Evidence]) -> tuple[Evidence, ...]:

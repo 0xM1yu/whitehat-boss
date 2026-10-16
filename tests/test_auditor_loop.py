@@ -60,6 +60,7 @@ from src.schemas.auditor import (
     AuditorProcedureAuditAlwaysAction,
     AuditorProcedureNullableCweAction,
     AuditorProcedureProbeInputAction,
+    AuditorProcedureProbeInputDiscriminatedAction,
     AuditProcedure,
     AuditProcedureAuditAlways,
     AuditProcedureNullableCwe,
@@ -2485,6 +2486,8 @@ def test_the_allowed_schemas_are_the_one_shot_finding_plus_exactly_the_loop_enve
     # ⏵ 2026-10-09 — 셋째 봉투(v11의 `AuditorProcedureNullableCweAction`, 이슈 #525)가 더해졌다.
     # ⏵ 2026-10-10 — 넷째 봉투(v12의 `AuditorProcedureAuditAlwaysAction`, 이슈 #578)가 더해졌다.
     # ⏵ 2026-10-13 — 다섯째 봉투(v15의 `AuditorProcedureProbeInputAction`, 이슈 #419)가 더해졌다.
+    # ⏵ 2026-10-16 — 여섯째 봉투(v18의 `AuditorProcedureProbeInputDiscriminatedAction`, 이슈 #602)가
+    # 더해졌다.
     assert allowed == {
         Finding,
         AuditorAction,
@@ -2492,6 +2495,7 @@ def test_the_allowed_schemas_are_the_one_shot_finding_plus_exactly_the_loop_enve
         AuditorProcedureNullableCweAction,
         AuditorProcedureAuditAlwaysAction,
         AuditorProcedureProbeInputAction,
+        AuditorProcedureProbeInputDiscriminatedAction,
     }
     assert allowed - set(auditor._LOOP_ENVELOPES) == {auditor.OUTPUT_SCHEMA}
     assert AuditProcedure not in allowed
@@ -2511,7 +2515,8 @@ def test_the_one_shot_sentence_names_every_loop_envelope_and_the_declared_schema
     assert "Finding(한 방)을 선언하는데" in problem
     assert (
         "AuditorAction · AuditorProcedureAction · AuditorProcedureNullableCweAction · "
-        "AuditorProcedureAuditAlwaysAction · AuditorProcedureProbeInputAction 판에서만 돈다"
+        "AuditorProcedureAuditAlwaysAction · AuditorProcedureProbeInputAction · "
+        "AuditorProcedureProbeInputDiscriminatedAction 판에서만 돈다"
         in problem
     )
 

@@ -86,11 +86,12 @@ prefix의 도구 목록은 `asan`·`build`·`poc` 셋 그대로였고, v3가 그
 ## body의 마지막 ```json 펜스
 
 **그 블록이 모델이 읽는 사실 전부다**(S1 계약). ⏵ 2026-10-10 — `facts_source: false` 판(Auditor
-v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17도)은 그 블록에 `source`가 없고 body 머리 문장도
-「전부」라 하지 않는다 — 분석 대상 코드는 산문 SOURCE 블록이 든다(위 「meta의 `facts_source`」, 이슈
-#67). ⏵ 2026-10-15 — 「전부」라 하지 않는 body는 그 판들만이 아니다. **PoV v7~v9**는
-`facts_source: false`가 아니면서도 「JSON의 Finding 데이터는 `finding_id`뿐」이라 적는다(CWE·제목·
-경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649). **Critic v4~v8**은 「전부」를 「추가 사실
+v13·v14 · ⏵ 2026-10-13 v15 · 2026-10-14 v16·v17 · 2026-10-16 v18도)은 그 블록에 `source`가 없고
+body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드는 산문 SOURCE 블록이 든다(위 「meta의
+`facts_source`」, 이슈 #67). ⏵ 2026-10-15 — 「전부」라 하지 않는 body는 그 판들만이 아니다.
+**PoV v7~v10**는 `facts_source: false`가 아니면서도 「JSON의 Finding 데이터는
+`finding_id`뿐」이라 적는다(CWE·제목·경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649).
+**Critic v4~v8**은 「전부」를 「추가 사실
 (additional facts)의 전부」로 좁힌다(CLAIM·PATH·EVIDENCE는 산문 블록이다). 「전부」를 그대로
 선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2 · scout_* v2 ·
 single v2다(2026-10-15 `prompts/*/*/body.md`를 전부 읽어 센 값 — scout_* v3·v4는 선언하지 않는다).
@@ -141,8 +142,8 @@ FACTS_TOKEN = "FACTS"
 #   - `slice_state` — **Auditor만, `auditor_slice_state`가 켜졌고 슬라이스가 있는 후보에만**(이슈
 #     #438 (b) · 아래 그 항목의 주석).
 # **opt-out은 하나다**(⏵ 2026-10-10) — `source`: meta `facts_source: false`인 판
-# (v13·v14·v15·v16·v17)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가 생기기
-# 전과 **글자가 같다** — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
+# (v13·v14·v15·v16·v17·v18)이 뺀다. 나머지 일곱은 늘 실린다. 안 주는 역할의 프롬프트는 그 키가
+# 생기기 전과 **글자가 같다** — 그래서 이 튜플은 「허용」 목록이지 「늘 있는」 목록이 아니다.
 FACT_KEYS = (
     "run_id",
     "ids",
@@ -702,8 +703,8 @@ def build_facts(
 
     `include_source`는 반대 방향의 opt-in이다 — 기본(`True`)은 종전처럼 `source` 키를 싣고, 판이
     `facts_source: false`를 선언한 경우(Auditor v13·v14 — 이슈 #67 · ⏵ 2026-10-13 v15 · 2026-10-14
-    v16·v17도 — 서빙 판)에만 노드가 `False`를 준다. 그때 키가 **없다** — `""`나 `null`로
-    남기지 않는다.
+    v16·v17 · 2026-10-16 v18도 — 서빙 판)에만 노드가 `False`를 준다. 그때 키가 **없다** —
+    `""`나 `null`로 남기지 않는다.
     빈 문자열은 「원문이 비었다」로, `null`은 「원문을 못 읽었다」로 읽히는데 실제로는 원문이 산문
     SOURCE 블록에 있다. 다른 역할·판은 바이트 그대로다.
 
@@ -729,9 +730,9 @@ def build_facts(
         # **종류 이름만이 아니라 본문까지 싣는다** (W1). body.md가 "아래 JSON이 참조
         # 가능한 사실 전부다"라고 못박으므로, 여기 없는 것은 모델이 무시해도 되는 값이
         # 된다 — `{{SOURCE}}`가 산문과 여기 양쪽에 실리는 것과 같은 이유다.
-        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17)은 `source`를 여기
+        # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13·v14·v15·v16·v17·v18)은 `source`를 여기
         # 안 싣고 body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은
-        # 그 판도 싣는다. ⏵ 2026-10-15 — 「전부」라 못박는 body는 모든 판이 아니다: PoV v7~v9는
+        # 그 판도 싣는다. ⏵ 2026-10-15 — 「전부」라 못박는 body는 모든 판이 아니다: PoV v7~v10은
         # 하지 않고(이슈 #649) Critic v4~v8은 「추가 사실의 전부」로 좁힌다(모듈 docstring
         # 「body의 마지막 json 펜스」).
         "capsule_sections": [

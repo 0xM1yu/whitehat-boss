@@ -674,7 +674,11 @@ models:
     # 서술 · 「배너 없으면 `SOURCE`는 첫 블록 하나」 정정(prefix 두 군데 - `prompts/auditor/v17/meta.yaml`). 새 옵션 `auditor_slice_state`는
     # `config/budgets.yaml`에서 **꺼져 있다**(켜는 것은 측정 결정 - 켠 run ↔ 끈 run 짝 비교)이고 v17이 서술·선언한다. body·봉투·도구·
     # 다른 옵션 열(표지 줄 · 입력 맥락 포함)은 v16과 같다(v16은 한 글자도 안 고쳤다 - 규칙 1). 이 판으로 돈 run은 0건이다. 이 판은 PR #668(v16 · 입력 맥락 블록) 위에 선다.
-    prompt_template_version: "v17"
+    # ⏵ 2026-10-16 — **v18**로 올렸다(이슈 #698 · council 2026-10-16). v18 = v17 + 「Harness note (stage 2)」 문단 두 문장 정정
+    # (`prompts/auditor/v18/meta.yaml`): 2단계가 그 파일에서 컴파일러 오류를 잰 도구가 요청 스키마 `tool` enum에서 빠지게 되어
+    # (`signals.withheld_tools`·`without_tools`) v17의 「같은 오류가 예상된다」·「it refuses no tool」이 거짓이 됐다. body·봉투·도구·옵션 열은 v17과 같다(v17은 한 글자도 안 고쳤다 -
+    # 규칙 1). 위 v17 줄의 「이 판으로 돈 run은 0건」은 낡았다 — v17은 `run_20261016_0001`에서 돌았다(#698). v18로 돈 run은 0건이다.
+    prompt_template_version: "v18"
     fallback: null
     benchmark:
       measured_at: null
@@ -862,7 +866,7 @@ models:
   # 켜지므로, Auditor와 같은 손잡이 넷을 아래에 선언한다 — reasoning_effort·sampling·
   # thinking_token_budget(28,672)·request_timeout_s(7,500) · 출력 상한은 `output_max_by_role.pov`
   # 32,768(`config/budgets.yaml`). 그래야 사고가 답을 밀어내 스키마가 깨지지 않는다.
-  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5~v9는 `PovActionNamed`이고 서빙 판은 v9)이고, `gen`이 싣는
+  # ⚠ **PoV 출력 길이는 안 쟀다** — 「작다」는 미실측이다. 매 홉 출력은 `PovAction`(v5~v10은 `PovActionNamed`이고 서빙 판은 v10)이고, `gen`이 싣는
   # `PovSpec`이 스키마(`src/schemas/pov.py`)상 PoC 8 MiB · `hex` 필드 16 Mi자까지 받는다. 답 몫은
   # Auditor에서 물려받은 4,096토큰(= 32,768 − 28,672, 계산값)이라 사고가 예산을 다 쓰면 큰 스펙은 거기서
   # 잘릴 수 있다. 답 몫을 PoV 기준으로 따로 정할지는 설정 결정이다. 값은 실측 뒤 조정.
@@ -934,7 +938,12 @@ models:
     # 모델에 줘 Level 1 입력 밖 정보였다. 그 줄만 일반화했다(`prompts/pov/v9/meta.yaml`). prefix.md sha256
     # `1a56e83831e14f0ea1f4eb3cfd9e3969324f77a075bf94a4befee507cd0792f8`. `nodes/pov._WIDE_INPUT_VERSIONS`에 v9를 더했다.
     # **v9로 돈 run은 0건 · 효과 미실측.**
-    prompt_template_version: "v9"
+    # ⏵ 2026-10-16 — **v10**으로 올렸다(이슈 #698). v10 = v9 − 「도구가 항상 넷」 서술 다섯 군데: 2단계가 `build` 컴파일러 오류를 잰 타깃에서는
+    # 노드가 요청 스키마의 `tool` enum에서 `build`·`asan`·`gdb`를 빼므로(`signals.withheld_tools`) v9의 「`tool` is one of
+    # poc/asan/gdb/build」·「`inspect(build)`를 쓰라」가 거짓·오도가 된다(`prompts/pov/v10/meta.yaml`). body·봉투·옵션 선언은 v9와 같다
+    # (v9는 한 글자도 안 고쳤다 - 규칙 1). prefix.md sha256 `9c51df1d2bb33f219f859e42a9bb3b2c7abfadc5f3eae8064748c5ac4507dd6e`.
+    # `nodes/pov._WIDE_INPUT_VERSIONS`에 v10을 더했다. **v10으로 돈 run은 0건 · 효과 미실측.**
+    prompt_template_version: "v10"
     fallback: null
     # **request_timeout_s — 계획값, 미실측**: Auditor와 같이 32,768 cap을 decode로 나눈 값이다
     # (32,768 ÷ 4.5 tok/s ≈ 7,282 s → 7,500). 서빙 역할은 이 손잡이를 선언해야 하고
