@@ -495,6 +495,13 @@ class EventKind(StrEnum):
     # 있다는 것이 정의가 있다는 뜻은 아니라 끝줄 값이나 주석의 언급만이어도 같게 세므로, 그 경우
     # 정의가 SOURCE에 없는데도 `definitions_dropped`가 과소 집계될 수 있다 — 수정 전과 같은 침묵)도
     # 실린다.
+    # `auditor_desc_first`가 1이고 걸친 함수의 설명 일치 순위가 entry보다 높은 슬라이스면(이슈
+    # #702) `desc_symbol`(그 함수 `파일:이름` — 걸친 함수 중 맨 앞에 실으려 한 것)·
+    # `desc_carried`(상한 안에 실렸나 · entry 함수 자신이면 이미 맨 앞이라 `true` · entry 범위 안의
+    # 다른 심볼이면 이미 보여도 `false`다 — 위치가 같아야 센다)가 더 실린다. 그 밖에는 두 필드가
+    # 없다.
+    # `auditor_omitted_functions`(빠진 걸친 함수를 FACTS로 — #702)는 새 필드를 안 낸다: 실은 목록
+    # 길이가 늘 `dropped`와 같다(FACTS는 그중 앞 100개 + `more`).
     # `auditor_source_tokens`가 양수면 `tokens`(SOURCE 토큰 수)·`token_counter`(`model` = Auditor
     # 토크나이저 · `estimate` = 글자 근사)가 더 실린다 — 상한이 토큰일 때 무엇으로 셌는지 남긴다.
     # `auditor_entry_trim`이 1이면 `entry_over_cap`(entry 함수가 상한을 넘었나)·

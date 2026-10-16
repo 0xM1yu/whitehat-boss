@@ -594,13 +594,17 @@ class CapsuleBudgets(HarnessModel):
 # v16이 서술·선언한다(v15까지는 안 한다 — v15를 고르고 켜면 `cli`의 run·doctor가 막는다). 표지 줄은
 # #667이 옵션 0으로 들였고 v16이 선언하면서 `budgets.yaml`이 1로 켠다.
 # ⏵ 2026-10-14 — 열한째 `auditor_slice_state`(슬라이스의 정적 상태를 FACTS `slice_state`
-# 키로 보인다, 이슈 #438 (b))는 v17·v18이 서술·선언한다(v16까지는 안 한다). `SOURCE`가 아니라
+# 키로 보인다, 이슈 #438 (b))는 v17~v19가 서술·선언한다(v16까지는 안 한다). `SOURCE`가 아니라
 # FACTS를 넓히는 옵션이지만 같은 자리(meta `source_options`)로 선언한다 - 켜면 모델 입력이
 # 달라져 프롬프트가 서술해야 하는 점이 같다. **기본은 끈다** - 켜는 것은 측정 결정이다(켠 run ↔
 # 끈 run 짝 비교).
 # v17은 v16이 선언하는 열을 전부 이어받고(`auditor_write_window_marker` ·
 # `auditor_input_context` 포함) 열한째를 더한다.
 # ⏵ 2026-10-16 v18은 v17의 열 열한 개를 그대로 선언한다.
+# ⏵ 2026-10-17 — 열두째 `auditor_desc_first`(설명 일치 함수를 걸친 함수 맨 앞에)와 열셋째
+# `auditor_omitted_functions`(상한에 빠진 걸친 함수 목록을 FACTS로)는 v19가 서술·선언한다
+# (이슈 #702).
+# v18 이하를 고르고 켜면 `cli`의 run·doctor가 막는다. `budgets.yaml`이 둘 다 켠다.
 AUDITOR_SOURCE_OPTIONS = (
     "auditor_callee_hops",
     "auditor_definitions",
@@ -614,6 +618,8 @@ AUDITOR_SOURCE_OPTIONS = (
     "auditor_write_window_marker",
     "auditor_input_context",
     "auditor_slice_state",
+    "auditor_desc_first",
+    "auditor_omitted_functions",
 )
 
 # `AUDITOR_SOURCE_OPTIONS` 중 **같은 `SOURCE` 문자열을 받는 Critic·PoV 판**
@@ -791,7 +797,7 @@ class Thresholds(HarnessModel):
     # `pov._WIDE_INPUT_VERSIONS`) 그 프롬프트는 이 줄을 모른다. 그래서 필드 기본은 0이다 — 이 줄을
     # 서술·선언하는 Auditor 판(v16부터)이 아닌 판과 함께 켜면 `cli`의 run·doctor가 막는다
     # (`cli._undescribed_source_options`는 Auditor meta를 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
-    # `budgets.yaml`은 서빙 판(v16 · v17 · ⏵ 2026-10-16 v18)이 서술해 1로 켠다. **Critic·PoV 좌석도
+    # `budgets.yaml`은 서빙 판(v16~v18 · ⏵ 2026-10-17 v19)이 서술해 1로 켠다. **Critic·PoV 좌석도
     # 같은 가드다**
     # (#676): 이 줄을 선언한 판(Critic v8 · PoV v7 - meta `source_options`)이 아니면서 SOURCE를
     # 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
@@ -811,7 +817,7 @@ class Thresholds(HarnessModel):
     # ⏵ 2026-10-09 — 서빙 판 v11(이슈 #525)도 같은 서술로 선언한다.
     # ⏵ 2026-10-10 — 서빙 판 v13(이슈 #67)도 같은 서술로 선언한다.
     # ⏵ 2026-10-11 — 서빙 판 v14(이슈 #67)도 같은 서술로 선언한다.
-    # ⏵ 2026-10-13~16 — v15·v16·v17과 서빙 판 v18(#698)도 선언한다(meta `source_options`).
+    # ⏵ 2026-10-13~16 — v15~v18과 서빙 판 v19(#702)도 선언한다(meta `source_options`).
     # ⚠ PoV(`pov._WIDE_INPUT_VERSIONS` 판)도 같은 SOURCE를 받아 이 블록이 PoV 프롬프트에도 든다.
     auditor_guards: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`의 쓰기 지점 창 다음 마지막 블록(#650 표지 줄 앞)으로 슬라이서의
@@ -834,12 +840,25 @@ class Thresholds(HarnessModel):
     # `auditor_source` 이벤트가 이 옵션이 생기기 전과 바이트 동일이다. 1이면 슬라이스가 있는
     # 후보의 hop0 FACTS에 키가 붙고(Auditor 자리만 - 다른 역할의 FACTS는 그대로) 같은 값이
     # `auditor_source` 이벤트의 `slice_state_*`로 남는다. 슬라이서가 분석 사실을 안 적은
-    # 슬라이스는 `false`가 아니라 `null`이다. 서술·선언은 Auditor **v17**과 ⏵ 2026-10-16 v18이
+    # 슬라이스는 `false`가 아니라 `null`이다. 서술·선언은 Auditor **v17**과 ⏵ v18·v19가
     # 든다(v16 이하를 고르고 켜면 `cli`의 run·doctor가 막는다). **기본은 끈다 - 켜는 것은
     # 측정 결정이다**:
     # 이슈 #438의 닫히는 조건이 켠 run ↔ 끈 run 짝 비교를 요구하고, 입력이 길어지는 정도와 판정
     # 분포가 움직일 방향은 안 쟀다.
     auditor_slice_state: int = Field(default=0, ge=0, le=1)
+    # 이슈 #702 — 1이면 슬라이스가 걸친 함수 중 과제 설명이 entry 함수보다 더 잘 맞히는 함수
+    # (`desc_symbol` — 이름 일치 순위 2 이상, #693)를 entry 함수(·GUARDS) 바로 뒤 맨 앞에 싣는다
+    # (`runner._auditor_source`). 상한 **안**에서 순서만 바꾼다 — 넘치면 다른 함수처럼 통째로
+    # 빠진다. 0이면 (파일, 시작 줄) 순 그대로다.
+    auditor_desc_first: int = Field(default=0, ge=0, le=1)
+    # 이슈 #702 — 1이면 상한에 걸려 빠진 **걸친 함수**의 위치·이름을 hop0 FACTS
+    # `source_omitted_functions`로 싣는다(`prompt_loader.build_facts`). SOURCE 문자열은 안 바뀐다 —
+    # 그래서 같은 SOURCE를 받는 Critic·PoV 판이 서술할 옵션(`RELAYED_SOURCE_OPTIONS`)이 아니다.
+    # 두 옵션의 서술·선언은 Auditor **v19**부터다(v18 이하를 고르고 켜면 `cli`의 run·doctor가
+    # 막는다).
+    # `auditor_slice_state`(측정 결정이라 0)와 달리 `budgets.yaml`이 켠다 - 사용자 승인(council
+    # 2026-10-17)이고 효과는 미실측이다.
+    auditor_omitted_functions: int = Field(default=0, ge=0, le=1)
     # Scout 슬라이스 렌더가 그 자리 창(`context_limit` − `output_max` − 여유)을 넘으면 entry에
     # 가까운 줄부터 남기고 빼는가(#353 (b)). 0이면 지금처럼 통째로 보내고, 넘으면 서빙이 크기
     # 거절해 그 후보만 빠진다(`runner._is_size_rejection`). 1이면 `scout._fit_slice`가 줄인다 —
@@ -914,7 +933,7 @@ class Thresholds(HarnessModel):
     # v11 — 56,872자, 이슈 #525 · ⏵ 2026-10-10 v13 — prefix는 v11에서 한 조각만 빠졌다, 이슈 #67 · ⏵
     # 2026-10-11 v14 — prefix는 v12에서 한 조각만 빠졌다 · ⏵ 2026-10-13 v15 — 계약 문장 여섯이
     # 더해져 더 길다, 글자 수는 안 쟀다 · ⏵ 2026-10-14 v16 — v15에 prefix 다섯 군데, 글자 수는 안
-    # 쟀다 · ⏵ 2026-10-16 v17·v18의 글자 수는 `nodes/auditor.py` 주석이 센다)을 넣으면 167,775가
+    # 쟀다 · ⏵ 2026-10-16~17 v17~v19의 글자 수는 `nodes/auditor.py` 주석이 센다)을 넣으면 167,775가
     # 남지만(계산값) **16홉이 그 몫을 다 채울 수 있다**: 최악 글자/토큰 비
     # 1.22에서 `lookup` 관측 16개만 196,736이라 몫을 넘는다(산수와 비의 출처는 `nodes/auditor.py`의
     # `_LOOKUP_MAX_CHARS`

@@ -345,7 +345,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 >
 > ⏵ **2026-09-29 — 교대 프로필은 run이 스스로 본다.** 교대마다 올린 키를 `check_startup()`으로 다시 읽어 이름이 없거나 `max_model_len`이 registry `context_limit`과 다르면 run을 멈춘다(`src/adapters/model_swap.py` — [ADR 0009](decisions/0009-stage-unit-execution-and-model-swap.md) 「2026-09-29 제안」 절, 제안). **교대를 선언하지 않은 프로필(서버를 사람이 띄운다)은 그대로 위 프리플라이트가 유일하다** — 교대를 선언한 프로필은 `harness_pool` 하나다(`harness_pool_hybrid`는 검색 역할 때문에 선언할 수 없다).
 >
-> ⏵ 2026-10-16 (#698 · #602) — **디코더 스키마 게이트도 run 전에 돈다.** 요청 스키마(Auditor v18 판별 합 · `tool` enum 축소 변형)를
+> ⏵ 2026-10-16 (#698 · #602) — **디코더 스키마 게이트도 run 전에 돈다.** 요청 스키마(Auditor v18 판별 합 — ⏵ 2026-10-17 서빙 판 v19도 같은 봉투 · `tool` enum 축소 변형)를
 > 서빙 vLLM의 xgrammar가 못 옮기면 그 좌석의 요청이 전부 HTTP 400이다. **서빙 박스**(vLLM이 쓰는 그 xgrammar가 깔린 곳)의 저장소
 > 사본에서 `python tools/check_decoder_schemas.py <프로필>`이 `FAIL 0`이어야 run한다 — 마지막 줄이 xgrammar 버전을 찍는다.
 > 오케스트레이터의 `doctor`도 같은 검사를 하지만 xgrammar가 없으면 WARN으로 건너뛰므로 그것으로 갈음하지 않는다.

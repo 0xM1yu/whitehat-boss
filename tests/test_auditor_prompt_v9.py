@@ -91,6 +91,9 @@ def test_the_served_config_turns_guards_on_and_its_prompt_declares_it() -> None:
         "auditor_guards(auditor/v8)",
         "auditor_write_window_marker(auditor/v8)",
         "auditor_input_context(auditor/v8)",
+        # ⏵ 2026-10-17 - v19부터 서술하는 둘(#702)도 짚힌다.
+        "auditor_desc_first(auditor/v8)",
+        "auditor_omitted_functions(auditor/v8)",
     ]
 
 
