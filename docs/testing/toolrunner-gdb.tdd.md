@@ -156,7 +156,7 @@ Windows는 `TextIOWrapper(newline=None)`). 그래서 이름 자리 `[^\n]{0,64}`
   `tests/test_model_checksum.py` 두 건이다. ⏵ `origin/main` 병합 뒤 전체 실행의 skip은 46이다 —
   `tests/test_serve_scripts.py` 40·`tests/test_run_signals.py` 4·`tests/test_model_checksum.py` 2
   (2026-10-01 `pytest -rs`로 확인). 어느 경우에도 gdb 테스트는 skip되지 않았다.
-- Podman은 ATOM에서 직접 실측했다. Singularity/Apptainer는 로컬 실행 파일이 없고 Slurm
+- Podman은 ATOM에서 직접 실측했다. Singularity/Apptainer는 로컬 실행 파일이 없고 Slurm 클러스터
   접속 경로도 열리지 않아 **0회/미실측**이다. D92는 이 조건 때문에 열림이다.
 - Docker 실측은 gdb가 새 자식 프로세스를 실행하는 배치 모드만 보증한다. 기존 프로세스에
   attach하는 모드와 pwndbg는 범위 밖이다.

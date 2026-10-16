@@ -1,6 +1,6 @@
 """vLLM `/metrics` 원문을 같은 절차로 받아 내는 장비 무관 프로브.
 
-2026-08-14 Slurm에서 손으로 조립해 돌린 절차를 그대로 코드화한 것이다. 그 절차가
+2026-08-14 Slurm 클러스터에서 손으로 조립해 돌린 절차를 그대로 코드화한 것이다. 그 절차가
 대화에만 있었기 때문에 ATOM에서 같은 것을 하려면 사람이 명령을 다시 조립해야 했고,
 그러면 **두 장비의 원문이 같은 절차에서 나왔다고 보장할 수 없다.** 원문 차이가 순수하게
 vLLM 버전 차이로 분리되려면 모델·프롬프트·요청 수가 같아야 한다.
@@ -73,7 +73,7 @@ CHARS_PER_TOKEN = 4
 
 # 0단계 실측과 같은 값. 원문 `vllm:prefix_cache_queries_total`이 1458 = 243 × 6이고
 # 적중이 1120이었다(`tests/fixtures/metrics/vllm_0191_slurm_sm86.txt`). 이 둘을 바꾸면
-# ATOM 원문을 Slurm 원문과 직접 대조할 수 없다.
+# ATOM 원문을 Slurm 클러스터 원문과 직접 대조할 수 없다.
 DEFAULT_REQUESTS = 6
 DEFAULT_PREFIX_TOKENS = 240
 
@@ -261,7 +261,7 @@ def probe(
         "metrics_delta": counter_delta(before, after, calls_ok=len(ok_calls)),
         "cache_config": labels,
         "cache_config_reason": labels_error,
-        # 응답이 prefix cache 적중을 장부로 주는가(R6). Slurm는 null이었다.
+        # 응답이 prefix cache 적중을 장부로 주는가(R6). Slurm 클러스터는 null이었다.
         "prompt_tokens_details": usage.get("prompt_tokens_details", None),
         "usage_first_ok": usage,
         "before_metrics_reason": before_error,
@@ -355,7 +355,7 @@ def render(report: dict[str, Any], written: dict[str, str]) -> list[str]:
         f"prefix caching: enable_prefix_caching={labels.get('enable_prefix_caching')}"
         f"  gpu_memory_utilization={labels.get('gpu_memory_utilization')}",
         # ATOM에서 이 값이 숫자면 mem_gb_ctx8k를 nvidia-smi 없이 얻을 수 있다.
-        # Slurm는 문자열 "None"이었다.
+        # Slurm 클러스터는 문자열 "None"이었다.
         # ⏵ 2026-10-08 — ATOM도 None이었다(2026-08-18-serving-atom.md §3.3).
         f"kv_cache_memory_bytes: {labels.get('kv_cache_memory_bytes')}",
         f"prompt_tokens_details: {details}"

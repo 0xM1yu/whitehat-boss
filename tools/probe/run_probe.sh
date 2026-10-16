@@ -23,7 +23,7 @@ OUT="${OUT:?OUT을 넘겨라 (산출물 디렉터리)}"
 MODEL_PATH="${MODEL_PATH:-Qwen/Qwen3-0.6B}"
 MODEL_NAME="${MODEL_NAME:-qwen3-0.6b}"
 
-# 0단계와 같은 값. 바꾸면 ATOM 원문을 Slurm 원문과 직접 대조할 수 없다.
+# 0단계와 같은 값. 바꾸면 ATOM 원문을 Slurm 클러스터 원문과 직접 대조할 수 없다.
 REQUESTS="${REQUESTS:-6}"
 PREFIX_TOKENS="${PREFIX_TOKENS:-240}"
 
@@ -101,7 +101,7 @@ vllm serve "$MODEL_PATH" \
     >"$OUT/vllm-server.log" 2>&1 &
 SERVER_PID=$!
 
-# 프로브가 실패하든 성공하든 서버를 내린다. Slurm에서는 srun이 노드를 반납하지만 ATOM은
+# 프로브가 실패하든 성공하든 서버를 내린다. Slurm 클러스터에서는 srun이 노드를 반납하지만 ATOM은
 # 직접 실행이라, 여기서 안 내리면 GPU를 물고 남아 다음 사람이 못 쓴다.
 cleanup() {
     if kill -0 "$SERVER_PID" 2>/dev/null; then
