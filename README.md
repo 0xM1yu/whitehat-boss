@@ -85,7 +85,7 @@ Finding은 모델이 매긴 점수가 아니라 쌓인 근거로만 올라간다
 | `config/` | 모델 레지스트리, 프로필, 예산, 장비별 서빙 설정 |
 | `tools/slicer/` | 오프라인 Joern 슬라이서. 표준 라이브러리만 쓴다 |
 | `prompts/` | 역할별 프롬프트 |
-| `eval/` | CyberGym 연동과 데이터 누출 검사 유틸. 데이터셋 자체는 들어 있지 않다 |
+| `eval/` | 데이터 누출 검사 유틸과 CyberGym 과제 받기 안내. 데이터셋 자체는 들어 있지 않다 |
 | `docs/` | 아키텍처, 결정 ADR, 결함 D와 R, 실험 기록, 조사 |
 
 ## 요구 사항
@@ -131,14 +131,14 @@ docker build -t harness-tools:v3 tools/harness-tools/
 # 2) 슬라이싱. 번들을 푼 디렉터리(src-vul/의 부모)를 --repo로 준다 —
 #    run이 슬라이스 경로를 그 디렉터리 기준으로 찾는다
 mkdir -p /work/task && tar -xzf eval/datasets/arvo-1065/repo-vul.tar.gz -C /work/task
-./joern-cli/joern -J-Xmx16g --server --server-host 127.0.0.1 --server-port 16242 &
+./joern-cli/joern -J-Xss64m -J-Xmx16g --server --server-host 127.0.0.1 --server-port 16242 &
 python tools/slicer/slicer.py --repo /work/task \
   --joern-endpoint http://127.0.0.1:16242 \
   --joern-version-command ./joern-cli/joern \
   --out slices.json
 
 # 3) 역할 모델을 vLLM으로 서빙한다. 모델과 기동 인자는 config/models.yaml 와
-#    config/serving/<device>.yaml 에 있다
+#    config/serving/<device>.yaml 에 있다. --device 값은 그 파일 이름이다(atom · vastai · vastai-remote)
 
 # 4) 채점 준비. 채점기(CyberGym 저자 서버)는 조작자가 따로 띄운다. 그 장비가 sanitizer를
 #    제대로 돌리는지 카나리로 재 두고, 그 보고서가 없거나 pass가 아니면 run이 제출 전에 거부한다
@@ -146,7 +146,7 @@ python tools/oracle_canary.py arvo:1065 --out canary.json
 export CYBERGYM_API_KEY=<채점 서버 키>
 
 # 5) 실서빙 프로필로 채점기까지 돌린다. 실서빙 프로필은 --condition 없이 시작하지 않는다
-python -m src.cli run --profile harness_pool --device <device-label> \
+python -m src.cli run --profile harness_pool --device vastai-remote \
   --condition <조건 라벨> \
   --task-dir eval/datasets/arvo-1065 --task-work-dir /work/run-empty \
   --slices slices.json \
@@ -161,9 +161,12 @@ python -m src.cli run --profile harness_pool --device <device-label> \
 
 ## 상태와 한계
 
-- **유효한 점수는 아직 없다.** 실서빙 run의 채점기 점수는 지금까지 0이다
-  ([2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md) §5 — PoC 4건 제출,
-  4건 모두 `vul_exit_code 0`). 가장 최근
+- **유효한 점수는 아직 없다.** 채점기가 최종 PoC로 집계한 것이 아직 없다.
+  [2026-10-08 run](docs/experiments/harness/2026-10-08-first-real-serving-run-arvo1065-vastai-remote.md)에서는
+  6바이트 PoC가 취약 빌드를 크래시했지만(`vul_exit_code 77`) 하네스가 그것을 최종 PoC로 지정하지 않아
+  점수가 0이었다(#549).
+  [2026-10-12 run](docs/experiments/harness/2026-10-12-serving-run-arvo1065-vastai-remote.md)은 PoC 4건을
+  제출했으나 4건 모두 `vul_exit_code 0`이었다(§5). 가장 최근
   [2026-10-16 run](docs/experiments/harness/2026-10-16-serving-run-arvo1065-vastai-remote.md)은 5단계에서
   비정상 종료했다. run 기록 전체는 [docs/experiments/](docs/experiments/README.md)에 있다.
 - **모델 레지스트리의 `benchmark`는 전부 0(미실측)이고, 실모델 6개 중 3개는 `checksum`도
@@ -186,5 +189,5 @@ python -m src.cli run --profile harness_pool --device <device-label> \
 
 ## 라이선스
 
-[MIT](LICENSE). 평가 데이터셋인 CyberGym 과제와 정답은 라이선스와 대회 규정에 따라 이 저장소에
-넣지 않는다.
+[MIT](LICENSE). 평가 데이터셋인 CyberGym 과제와 정답은 이 저장소에 넣지 않는다. 과제는 Hugging Face에서
+직접 받는다([eval/cybergym/README.md](eval/cybergym/README.md)).

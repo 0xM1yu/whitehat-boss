@@ -20,7 +20,7 @@
 # 다르다(`ssh -p <ssh-port>`). 끝나면 srun이 노드를 반납한다.
 set -euo pipefail
 
-PARTITION="${PARTITION:?PARTITION을 넘겨라 (Slurm 파티션 이름 — sinfo로 확인)}"
+PARTITION="${PARTITION:-}"
 # A2000. u3·u4에서 실측한 값이다.
 ARCH="${ARCH:-sm_86}"
 HOST_LABEL="${HOST_LABEL:-slurm}"
@@ -43,6 +43,9 @@ while [ $# -gt 0 ]; do
         *) echo "[ERROR] 모르는 인자: $1" >&2; exit 2 ;;
     esac
 done
+
+# 파티션에 기본값을 두지 않는다 — 자리표시자가 srun에 그대로 넘어가 엉뚱한 오류를 냈다.
+: "${PARTITION:?PARTITION을 넘겨라 (Slurm 파티션 이름 — sinfo로 확인)}"
 
 if [ -z "$NODE" ]; then
     echo "[ERROR] --node가 필요하다. 기본값을 두지 않는 이유는 이 파일 머리에 있다." >&2
