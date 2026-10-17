@@ -410,6 +410,14 @@ class OpenAICompatModelClient:
                 last_error.errors(include_url=False, include_input=False)
             ),
             raw_texts=tuple(raw_texts),
+            # ⏵ 2026-10-17 (#613) — `input_value` 없이 (type, loc, msg)만. `msg`에 남는 모델 값의
+            # 정규화는 여기서 안 한다 — `runner._pov_parse_fingerprint` 한 곳에서만 한다.
+            rejection_keys=tuple(
+                (e["type"], ".".join(map(str, e["loc"])), e["msg"])
+                for e in last_error.errors(
+                    include_url=False, include_input=False, include_context=False
+                )
+            ),
         )
 
     def _request_payload(

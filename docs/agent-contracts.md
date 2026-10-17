@@ -740,8 +740,11 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   hop 0 재질문이 파싱 실패를 **살리는지는 미실측이다**(같은 자리 재시도가 이슈 #550 본문의 find_0005에서
   2/2 실패했다, n=1). `pov_skipped(parse_failed)`는 **마지막 홉**(`pov_tool_hops`)의 실패이거나, ⏵ 2026-10-12부터는 그 호출의
   **모든 시도가 `finish_reason == "length"`로 끝났을 때**다 — 후자는 재질문 없이 서고 종단 `pov_hop`이
-  `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). 연속 파싱 실패 횟수의 상한은
-  없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
+  `parse_truncated`를 싣는다(일부만 `length`이거나 못 쟀으면 재질문한다). ⏵ 2026-10-17부터는 **직전 홉도
+  파싱 실패였고 거절 지문(오류별 `(type, loc, msg)` — `input_value` 제외, 따옴표 값·숫자 열은 자리표시자로
+  정규화, `extra_forbidden`의 모델이 지은 키 이름은 남는다)이 같을 때**도 서고 종단 `pov_hop`이
+  `parse_repeat`를 싣는다(실패 홉마다 `parse_fingerprint`). 지문이 번갈아 바뀌는 연속 실패의 횟수 상한은
+  아직 없다 — 이슈 #613(근거 이슈 #550). 게이트웨이 예외는 그 홉에서 곧장 선다. 모델이 읽는
   `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —

@@ -231,6 +231,7 @@ class SchemaParseError(RuntimeError):
         attempt_log: "tuple[AttemptRecord, ...]" = (),
         model_error_text: str = "",
         raw_texts: tuple[str | None, ...] = (),
+        rejection_keys: tuple[tuple[str, str, str], ...] = (),
     ) -> None:
         super().__init__(message)
         # 마지막 시도의 오류를 응답 원문(`input_value`)·URL 없이 만든 텍스트 — 모델에게 다시 보여도
@@ -250,6 +251,12 @@ class SchemaParseError(RuntimeError):
         # 시도별 응답 원문 — 실패 경로만 든다. 상위가 응답 파일로 남긴다(#603).
         # 칸이 `None`이면 그 시도는 받은 문자열이 없다(`content: null`) — 빈 응답(`""`)이 아니다.
         self.raw_texts = raw_texts
+        # ⏵ 2026-10-17 (#613) — 마지막 시도의 pydantic 오류를 `(type, loc, msg)`로만 든 것이다.
+        # `input_value`·`ctx`·URL은 없지만 `msg`·`loc`에는 모델 값이 남을 수 있다(따옴표 값·숫자·
+        # 세그먼트 인덱스·`extra_forbidden`의 키 이름) — PoV 루프가 그것을 정규화해 「같은 거절의
+        # 연속」을 가른다(`runner._pov_parse_fingerprint`). 비면(Fake·옛 예외) 안 잰 것이다 — 만드는
+        # 쪽(`openai_compat`)이 채운다.
+        self.rejection_keys = rejection_keys
 
 
 class Prompt(HarnessModel):
