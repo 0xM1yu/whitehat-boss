@@ -1720,10 +1720,11 @@ def _pov_targets(
     맨 뒤(3)에 두지만
     (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
     **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
-    **같은 Auditor 결론 계단 안에서** uphold **뒤** 미경유·판정 호출 실패 **뒤**로
+    uphold **뒤** 미경유·판정 호출 실패 **뒤**로
     낮춘다(아래 정렬 키 · `_designation_key`의 **둘째** 계단이다 —
     ⏵ 2026-10-14 첫 계단은 후보 자기 `vul` 응답 코드가 됐다(이슈 #637). 그래서 보류 PoC도 크래시를
-    냈으면 앞선다).
+    냈으면 앞선다). ⏵ 2026-10-17 — 이 풀 정렬에서는 그 낮춤이 **같은 Auditor 결론 계단 안에서만**
+    선다(Auditor 계단이 판정 계단 앞이다). `_designation_key`에는 Auditor 계단이 없다.
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -2936,14 +2937,22 @@ def _trigger_rank(trigger_status: str | None) -> int:
     2 = guarded·no_reach · 3 = no_signal**. 추가 PoV 풀 정렬(`_pov_targets`)의 **첫** 계단이다
     (⏵ 2026-10-17 - 2026-10-16 run에서 `no_signal` uphold가 1순위가 된 결함, `_pov_targets`).
 
-    순서는 Auditor가 **취약하다 쪽에 얼마나 가까이 섰나**다(정의는 `prompts/auditor/v10` 이상
-    step 3). `triggerable`은 정상 실행에서 트리거되는 경로를 세웠다. `reachability_unknown`은 위험
-    연산은 있는데 결정적 코드(동시성·권한·암호 설정·누수·경합)가 `SOURCE`에 없어 트리거 여부를
-    못 갈랐다(「모른다」). `guarded`(구체적 방어가 막는다)·`no_reach`(그 경로가 실행될 수 없다)는
-    「막혔다」다 - 둘 다 Auditor가 취약하지 않다 쪽 근거를 댄 것이고 둘 사이의 우열 근거가 없어
-    같은 계단이다. `no_signal`은 위험 연산 자체를 못 세웠다(`audit: null`).
+    순서는 Auditor가 **취약하다 쪽에 얼마나 가까이 섰나**다. 정의는 `prompts/auditor/v19/prefix.md`
+    step 3 「Set `trigger_status`」 목록(184~189행)으로 인용한다 - 다섯 값의 뜻은 v10 이후 판에서
+    같고, 판마다 다른 것은 `audit`를 채우는 규칙이다(v10·v11·v13은 `no_signal`이면 `audit: null`,
+    v12와 v14 이상은 「`audit` is never null」 - v19 195행. 2026-10-16 run은 Auditor v17이라
+    `no_signal` 넷 모두 `audit`가 있다). `triggerable`은 정상 실행에서 트리거되는 경로를
+    세웠다(항목 6).
+    `reachability_unknown`은 위험 연산은 있는데 결정적 코드(동시성·권한·암호 설정·누수·경합)가
+    `SOURCE`에 없어 트리거 여부를 못 갈랐다(항목 2 - 「모른다」). `guarded`(구체적 방어가 막는다,
+    항목 3)·`no_reach`(그 경로가 실행될 수 없다, 항목 5)는 「막혔다」다 - 둘 다 Auditor가 취약하지
+    않다 쪽 근거를 댄 것이고 둘 사이의 우열 근거가 없어 같은 계단이다. ⚠ 다만 프롬프트는
+    `guarded`를 다른 후보가 `no_reach`·`reachability_unknown`으로 끝나지 않았을 때만 쓰게 한다
+    (v19 181행) - `no_reach`를 `guarded` 앞에 둘 근거로 읽을 여지는 있다(순서는 안 바꿨다).
+    `no_signal`은 위험 연산을 세우지 못했거나, 유일한 촉발이 제외된 호출 실패이거나 실현
+    불가능하다(항목 1·4).
     ⚠ 프롬프트가 **보고할 결론을 고르는** 순서(triggerable → no_reach → reachability_unknown →
-    guarded → no_signal, step 3 「Selection」 뒤)와 다르다 - 그쪽은 후보 여럿 중 무엇을 적을지의
+    guarded → no_signal, v19 181행)와 다르다 - 그쪽은 후보 여럿 중 무엇을 적을지의
     규칙이고 이 계단은 적힌 결론이 취약 쪽에 얼마나 가까운지다.
 
     `None`(이 필드를 안 시킨 프롬프트 판 · 시켰는데 안 낸 것)과 다섯 밖의 값

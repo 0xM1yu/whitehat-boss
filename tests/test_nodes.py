@@ -1334,7 +1334,8 @@ def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing
 def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutted_ones(
     ctx: RunContext,
 ) -> None:
-    """보류(`need_evidence`)는 풀에 들되 정렬 키 앞의 판정 계단에서 uphold·미경유 **뒤**다 -
+    """보류(`need_evidence`)는 풀에 들되 판정 계단(Auditor 계단이 같을 때)에서 uphold·미경유
+    **뒤**다 -
     상한 1에 `confidence`가 더 높은 보류가 F-9 uphold의 자리를 못 가져간다. 반박된 Finding은
     풀 밖이라 그 자리는 보류가 받는다."""
     held = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
@@ -1471,18 +1472,20 @@ def _serving_run_20261016_state() -> runner._Accumulator:
     판정 여섯 - `state.db`(`objects`의 `finding`·`decision`)에서 옮긴 값이다(⏵ 2026-10-17 대조).
     VALIDATED 0건이라 PoV 대상은 추가 풀뿐이었다
     (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 PoV).
-    run의 `rebut` 셋은 `evidence_refs`가 비었지만 `rebuttal_axis`로 근거가 섰다(v8) - 여기서는
-    `grounded=True`(인용 있음)로 같은 「근거 있는 반박」을 만든다."""
+    판정은 run 그대로 Critic **v8**이고 `evidence_refs`가 전부 비었다 - `rebut` 셋은
+    `rebuttal_axis`(arithmetic · guard · reachability)로만 근거가 서고, v8은 축만 근거로 센다
+    (`AXIS_ONLY_GROUNDING_VERSIONS`). 그래서 `gate.normalize`가 `rebut`을 그대로 두고
+    `_critic_set_aside`가 뺀다(재생 테스트가 그 전제를 문다)."""
     state = runner._Accumulator()
-    for finding_id, finding_state, trigger_status, confidence, verdict in (
-        ("find_0002", FindingState.QUEUED, "guarded", 0.2, Verdict.REBUT),
-        ("find_0004", FindingState.QUEUED, "reachability_unknown", 0.5, Verdict.NEED_EVIDENCE),
-        ("find_0005", FindingState.QUEUED, "triggerable", 0.8, Verdict.REBUT),
-        ("find_0008", FindingState.HYPOTHESIZED, "no_signal", 0.3, Verdict.UPHOLD),
-        ("find_0009", FindingState.QUEUED, "no_signal", 0.1, Verdict.NEED_EVIDENCE),
-        ("find_0010", FindingState.QUEUED, "guarded", 0.2, Verdict.REBUT),
-        ("find_0012", FindingState.QUEUED, "no_signal", 0.2, None),
-        ("find_0013", FindingState.QUEUED, "no_signal", 0.2, None),
+    for finding_id, finding_state, trigger_status, confidence in (
+        ("find_0002", FindingState.QUEUED, "guarded", 0.2),
+        ("find_0004", FindingState.QUEUED, "reachability_unknown", 0.5),
+        ("find_0005", FindingState.QUEUED, "triggerable", 0.8),
+        ("find_0008", FindingState.HYPOTHESIZED, "no_signal", 0.3),
+        ("find_0009", FindingState.QUEUED, "no_signal", 0.1),
+        ("find_0010", FindingState.QUEUED, "guarded", 0.2),
+        ("find_0012", FindingState.QUEUED, "no_signal", 0.2),
+        ("find_0013", FindingState.QUEUED, "no_signal", 0.2),
     ):
         state.update(
             _finding(
@@ -1492,8 +1495,26 @@ def _serving_run_20261016_state() -> runner._Accumulator:
                 trigger_status=trigger_status,
             )
         )
-        if verdict is not None:
-            state.decisions[finding_id] = (_critic_decision(finding_id, verdict, grounded=True),)
+    for decision_id, finding_id, verdict, axes in (
+        ("dec_0001", "find_0005", Verdict.REBUT, ["arithmetic"]),
+        ("dec_0002", "find_0004", Verdict.NEED_EVIDENCE, []),
+        ("dec_0003", "find_0008", Verdict.UPHOLD, []),
+        ("dec_0004", "find_0002", Verdict.REBUT, ["guard"]),
+        ("dec_0005", "find_0010", Verdict.REBUT, ["reachability"]),
+        ("dec_0006", "find_0009", Verdict.NEED_EVIDENCE, []),
+    ):
+        state.decisions[finding_id] = (
+            Decision(
+                decision_id=decision_id,
+                run_id=RUN_ID,
+                finding_id=finding_id,
+                verdict=verdict,
+                rebuttal_axis=axes,
+                rationale="근거 서술",
+                evidence_refs=[],
+                produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v8"),
+            ),
+        )
     return state
 
 
@@ -1518,9 +1539,13 @@ def test_the_extra_pov_pool_reads_the_auditor_conclusion_first_on_the_20261016_r
     키(Critic 계단 → `confidence` → id)가 그대로 가른다.
     반박 셋(`find_0005`는 `triggerable` · 0.8이다)은 `_critic_set_aside`가 여전히 뺀다 - 이 PR은
     풀 필터를 안 바꾼다(반박의 뜻은 이슈 #706)."""
+    state = _serving_run_20261016_state()
+    assert {
+        fid for fid in state.findings if runner._critic_set_aside(state, fid)
+    } == {"find_0002", "find_0005", "find_0010"}, "전제 - v8 축 근거 반박이 `rebut`으로 남는다"
     _with_top_n(ctx, limit)
 
-    targets = runner._pov_targets(ctx, _serving_run_20261016_state(), [])
+    targets = runner._pov_targets(ctx, state, [])
 
     assert [f.finding_id for f in targets] == expected
 
