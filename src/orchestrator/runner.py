@@ -1716,10 +1716,11 @@ def _pov_targets(
 
     **왜 빼나.** 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출이 될
     수 있다** — 다른 후보가 없으면(`sole_candidate`) 그것이 최종이고, 상한이 남으면 반박도 풀에
-    든다. 정렬 키(판정 계단 → `confidence` → `finding_id`)는 반박을 맨 뒤(3)에 두지만
+    든다. 정렬 키(Auditor 결론 계단 → 판정 계단 → `confidence` → `finding_id`)의 판정 계단은 반박을
+    맨 뒤(3)에 두지만
     (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
     **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
-    uphold **뒤** 미경유·판정 호출 실패 **뒤**로
+    **같은 Auditor 결론 계단 안에서** uphold **뒤** 미경유·판정 호출 실패 **뒤**로
     낮춘다(아래 정렬 키 · `_designation_key`의 **둘째** 계단이다 —
     ⏵ 2026-10-14 첫 계단은 후보 자기 `vul` 응답 코드가 됐다(이슈 #637). 그래서 보류 PoC도 크래시를
     냈으면 앞선다).
@@ -1742,6 +1743,8 @@ def _pov_targets(
     `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
     풀은 그것을 거르지 않는다(결정 대기). **그런 Finding에서 PoV가 낼 PoC가 있는지는
     미측정이다**. 출처는 위 보고서 §4·결과 표다.
+    ⏵ 2026-10-17 — 여전히 거르지 않지만 정렬에서는 `no_signal`이 맨 뒤 계단이다(아래 정렬 키 ·
+    `_trigger_rank`). 그 run처럼 풀이 전부 `no_signal`이면 순서는 종전과 같다.
 
     ⏵ 2026-10-12 — `pov_attempt_top_n`(8 — `config/budgets.yaml`)을 켠 실모델 run은 이미 있다.
     그중 8단계가 돌아 PoV가 채점기에 PoC를 낸 run은 둘이다.
@@ -1764,9 +1767,19 @@ def _pov_targets(
     과제 이미지에 먹이게 됐지만 **게이트 전이는 별건이다**(`p4`가 종료 코드까지 본다 — #232).
     이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
 
-    자르는 순서는 Critic 판정(uphold → 미경유·판정 호출 실패 → 보류) 다음
+    자르는 순서는 Auditor 결론 계단(`_trigger_rank` — triggerable → reachability_unknown·결론 없음
+    → guarded·no_reach → no_signal), Critic 판정(uphold → 미경유·판정 호출 실패 → 보류) 다음
     `critic.select`와 **같은 키**다 — `confidence` 내림차순,
     동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
+    ⏵ 2026-10-17 — Auditor 결론 계단을 맨 앞에 붙였다. 2026-10-16 arvo:1065 run
+    (`run_20261016_0001` · `8e843c45`)에서 Auditor `no_signal`을 Critic이 `uphold`한 — 둘 다
+    「취약하지 않다」인 — `find_0008`이 판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다.
+    Critic 계단은 Critic이 **Auditor의 결론을** 지지했는가이지 취약한가가 아니라서다(Critic 입력에
+    `trigger_status`가 없다 —
+    `docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3). 그 run의 풀은
+    이제 `find_0004`(`reachability_unknown`)가 1순위다(`tests/test_nodes.py`의 재생 테스트).
+    이 계단은 **추가 풀 정렬에만** 선다 — 풀 필터(`_critic_set_aside`)와 최종 지정
+    (`_designation_key`)은 안 읽는다. 반박의 뜻은 이슈 #706 몫이다.
     ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한 값이 아니다** — 그래서 이것은
     등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
     건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
@@ -1782,7 +1795,12 @@ def _pov_targets(
             for f in state.findings.values()
             if f.finding_id not in already and not _critic_set_aside(state, f.finding_id)
         ),
-        key=lambda f: (verdicts[f.finding_id], -f.confidence, f.finding_id),
+        key=lambda f: (
+            _trigger_rank(f.trigger_status),
+            verdicts[f.finding_id],
+            -f.confidence,
+            f.finding_id,
+        ),
     )
     return [*validated, *rest[:limit]]
 
@@ -2871,6 +2889,8 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
     2 = 보류(`need_evidence`) · 3 = 반박(`rebut`)**이다. 이슈 #604 (b)가 제안한 순서
     (`uphold > 미경유·판정 호출 실패 > need_evidence`) 그대로고 반박이 맨 뒤다.
     추가 풀 정렬(`_pov_targets`)과 최종 지정(`_designation_key`)이 **같은 값**을 읽는다.
+    ⏵ 2026-10-17 — 추가 풀 정렬에서는 이 계단이 **둘째**다: 그 앞에 Auditor 결론 계단
+    (`_trigger_rank`)이 선다. 최종 지정은 이 계단을 그대로 읽고 Auditor 계단은 안 읽는다.
     판정은 `gate.normalize` 뒤 값이고, 키 집합은 `_grades_by_finding`과 같다(`state.findings` 전수).
 
     ⏵ 2026-10-12 - 앞 판은 미경유를 uphold와 같은 0에 두었다(@sumin0218 리뷰): 미경유는 6단계 E0
@@ -2899,6 +2919,39 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
             else 1
         )
     return ranks
+
+
+# Auditor 결론(`Finding.trigger_status`)의 계단 - `_trigger_rank`가 읽는다.
+_TRIGGER_RANKS = {
+    "triggerable": 0,
+    "reachability_unknown": 1,
+    "guarded": 2,
+    "no_reach": 2,
+    "no_signal": 3,
+}
+
+
+def _trigger_rank(trigger_status: str | None) -> int:
+    """Auditor 결론 계단 - **0 = triggerable · 1 = reachability_unknown(결론 없음 포함) ·
+    2 = guarded·no_reach · 3 = no_signal**. 추가 PoV 풀 정렬(`_pov_targets`)의 **첫** 계단이다
+    (⏵ 2026-10-17 - 2026-10-16 run에서 `no_signal` uphold가 1순위가 된 결함, `_pov_targets`).
+
+    순서는 Auditor가 **취약하다 쪽에 얼마나 가까이 섰나**다(정의는 `prompts/auditor/v10` 이상
+    step 3). `triggerable`은 정상 실행에서 트리거되는 경로를 세웠다. `reachability_unknown`은 위험
+    연산은 있는데 결정적 코드(동시성·권한·암호 설정·누수·경합)가 `SOURCE`에 없어 트리거 여부를
+    못 갈랐다(「모른다」). `guarded`(구체적 방어가 막는다)·`no_reach`(그 경로가 실행될 수 없다)는
+    「막혔다」다 - 둘 다 Auditor가 취약하지 않다 쪽 근거를 댄 것이고 둘 사이의 우열 근거가 없어
+    같은 계단이다. `no_signal`은 위험 연산 자체를 못 세웠다(`audit: null`).
+    ⚠ 프롬프트가 **보고할 결론을 고르는** 순서(triggerable → no_reach → reachability_unknown →
+    guarded → no_signal, step 3 「Selection」 뒤)와 다르다 - 그쪽은 후보 여럿 중 무엇을 적을지의
+    규칙이고 이 계단은 적힌 결론이 취약 쪽에 얼마나 가까운지다.
+
+    `None`(이 필드를 안 시킨 프롬프트 판 · 시켰는데 안 낸 것)과 다섯 밖의 값
+    (`Finding.trigger_status`는 `str | None`이다 - `schemas/finding.py` 주석)은 **결론이 없다**라
+    「모른다」와 같은 1이다. 그래서
+    `trigger_status`가 전부 `None`인 run에서는 이 계단이 전부 같아 순서가 종전 그대로다.
+    ⚠ 이 계단은 Auditor 모델이 적은 범주값이고 게이트가 계산한 값이 아니다 - 순서 규칙이다."""
+    return _TRIGGER_RANKS.get(trigger_status or "", 1)
 
 
 # 최종 PoC 지정 사슬의 단계 이름. **`_designation_key`가 내는 튜플과 자리가 하나씩 맞다** — 앞에서
