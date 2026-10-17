@@ -78,10 +78,12 @@ def test_the_serving_pov_seat_selects_the_pinned_version_and_it_gets_the_wide_in
     (`tests/test_pov_v9.py`가 v8과의 바이트 등식으로 묶는다) 그 한 줄 밖은 v8의 핀이 덮는다.
     ⏵ 2026-10-16 — 서빙 판 v10도 예외로 받는다: v10 = v9 + 도구 서술 다섯 군데 정정이라
     (`tests/test_pov_prompt_v10.py`가 v9와의 바이트 등식으로 묶는다) 그 다섯 밖은 v9의 핀이 덮는다.
-    v11 이상이 배선되면 이 경보기가 다시 운다."""
+    ⏵ 2026-10-17 — 서빙 판 v11도 예외로 받는다: v11 = v10 + 「Output」 두 줄(예시 키 순서)이라
+    (`tests/test_pov_v11.py`가 v10과의 바이트 등식으로 묶는다) 그 두 줄 밖은 v10의 핀이 덮는다.
+    v12 이상이 배선되면 이 경보기가 다시 운다."""
     selected = load_config(profile).model_for(Role.POV.value).prompt_template_version
 
-    assert selected in (PINNED_VERSION, "v7", "v8", "v9", "v10"), (
+    assert selected in (PINNED_VERSION, "v7", "v8", "v9", "v10", "v11"), (
         f"서빙 판이 {selected}로 올라갔다 - 이 파일의 핀은 {PINNED_VERSION}의 문장이다. "
         f"{selected}/prefix.md를 읽고 `PINNED_VERSION`·`_PINNED_BLOCKS`·`_PINNED_HEADINGS`·"
         "`_DEFECT_EDITS`를 의도적으로 다시 만든다"

@@ -3350,7 +3350,8 @@ def _run_pov_hops(
     ctx: RunContext, state: _Accumulator, finding: Finding, capsule: ContextCapsule
 ) -> tuple[bytes | None, PovStopReason]:
     """8단계 PoV 툴 루프 (Option C) — 모델이 매 홉 `PovAction`(v5~v10은 형제
-    `PovActionNamed`이고 서빙 판은 v10)을 내고 도구를 돌린다.
+    `PovActionNamed`, v11은 그 하위 봉투 `PovDiscriminatedAction`이고 서빙 판은 v11)을 내고 도구를
+    돌린다.
 
     `_run_ne_hops`를 미러한다. `gen`은 `PovSpec`을 실어 순수 `assemble_poc`가 인프로세스로
     바이트를 만들고(모델-작성 코드 실행 없음), 그 PoC를 도구(poc)로 검증해 결과 Evidence를
@@ -3572,7 +3573,7 @@ def _run_pov_hops(
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
-                # 형제 봉투(`PovActionNamed`)만 든다 — v5~v10(서빙 판은 v10)이 그것을 선언한다.
+                # 형제 봉투(`PovActionNamed`)와 그 하위 봉투(v11)만 든다 — v5~v11(서빙 판은 v11).
                 named = getattr(action, "poc_sha256", None)
                 named_poc, submit_digest = _resolve_submit_digest(named, seen)
                 _emit_pov_hop(

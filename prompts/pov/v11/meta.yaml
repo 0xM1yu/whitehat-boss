@@ -1,0 +1,26 @@
+# 2026-10-17 — v10을 잇는 새 판(이슈 #704). 바뀐 것은 둘이다.
+# (1) 봉투 — `output_schema`가 `PovActionNamed`에서 그 하위 봉투 `PovDiscriminatedAction`으로 바뀐다. 검증은 부모 그대로이고
+#     디코더에 보내는 JSON 스키마만 판별 합이다(`gen`은 `spec` 필수 · `inspect`는 `tool` 필수 · `poc_sha256`은 `submit`에만 ·
+#     세그먼트도 kind마다 갈래 하나).
+# (2) prefix 「Output」의 두 줄 — `gen` 예시의 키 순서를 스키마 순서(action · spec{segments · rationale} · rationale)로 바꾸고
+#     「Shapes」 줄에 「write the keys in the order shown」을 더했다. xgrammar는 키를 스키마 순서로만 생성하게 하는데 v5~v10 예시는
+#     `rationale`을 `spec` 앞에 적어, 예시대로 쓰면 `spec` 자리가 사라졌다. run_20261016_0001(v9) 8단계의 6/6
+#     `{"action":"gen","rationale":…,"poc_sha256":null}`이 그 모양이다(옛 문법은 그 뒤에 `poc_sha256`·닫기만 허용).
+#     편집 밖은 v10과 바이트 동일, body는 v10과 바이트 동일이다(`tests/test_pov_v11.py`가 편집 목록으로 바이트 등식을 묻는다).
+# Auditor v18(PR #699 · #602)과 같은 처방이다.
+# 🔴 `nodes/pov._WIDE_INPUT_VERSIONS`에 이 판을 넣었다(빠지면 넓은 입력이 조용히 꺼진다).
+# 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
+#   prefix.md sha256 `0981756dca5085a590ab5f93b2d0e314db7c3255895c2d0834b4a32541bd9e8f`
+#   body.md   sha256 `962b7fe89e6fcbdd26d77ee96cb16571e9ec04d60bb467f15b4ed6cebaa22443`
+# ⚠ 이 판은 어느 run에도 안 쓰였다. 모델이 `spec`을 채우는지는 **미실측**이다. 요청 스키마·prefix가 바뀌었으므로 v10 이하와
+# 8단계를 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
+role: pov
+version: v11
+output_schema: PovDiscriminatedAction
+hop_header: true
+description: >-
+  PoV v10의 봉투를 판별 합으로 바꾸고 출력 예시의 키 순서를 그 스키마 순서에 맞춘 판입니다. 디코더 문법이 `spec` 없는 `gen`·
+  `tool` 없는 `inspect`·필수 필드 없는 세그먼트를 거절하고 `poc_sha256`은 `submit`에만 열립니다(이슈 #704). 이 판으로 돈 run이
+  0건이라 효과는 미실측입니다.
+# v10과 같다 - prefix 「How to reach the vulnerable path」 머리 문단을 안 바꿨다.
+source_options: [auditor_write_window_marker, auditor_input_context]

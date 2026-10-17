@@ -823,6 +823,15 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   ⏵ 2026-10-16 — 서빙 pov 판이 **v10**이다(v9 + prefix 다섯 군데, #698). 2단계가 그 파일에서 컴파일러 오류를 잰 `build`·`asan`·`gdb`는
   요청 스키마 `tool` enum에서 빠지므로(`signals.without_tools`) v9의 「tool은 poc/asan/gdb/build 중 하나」와 `inspect(build)` 권유를
   그 경우에 맞게 고쳤다(`prompts/pov/v10/meta.yaml` · `tests/test_pov_prompt_v10.py`). body·봉투는 v9와 같다. v10으로 돈 run은 0건이다.
+  ⏵ 2026-10-17 — 서빙 pov 판이 **v11**이다(#704). 바뀐 것은 둘이다. (1) 봉투 `PovDiscriminatedAction`(`PovActionNamed`의 하위 클래스 —
+  검증은 부모 그대로, 디코더에 보내는 JSON 스키마만 판별 합: `gen`은 `spec` 필수 · `inspect`는 `tool` 필수 · `poc_sha256`은 `submit`
+  갈래에만 · 세그먼트도 kind마다 갈래 하나). (2) prefix 「Output」 두 줄 — `gen` 예시를 스키마 키 순서(action · spec · rationale)로.
+  xgrammar는 키를 스키마 순서로만 생성하게 하는데 v5~v10 예시는 `rationale`을 `spec` 앞에 적어, 예시대로 쓰면 `spec` 자리가
+  사라졌다. run_20261016_0001(v9) 8단계의 3 hop · 6시도가 그 모양(`{"action":"gen","rationale":…,"poc_sha256":null}`)으로
+  pydantic에 거절됐다. body는 v10과 같다. Auditor v18(#602 · PR #699)과 같은 처방이다(`tests/test_pov_v11.py` ·
+  `tests/test_check_decoder_schemas.py`). v11로 돈 run은 0건 · 모델이 `spec`을 채우는지는 미실측이다.
+  Auditor v19도 같은 위험이 있는지 봤다(2026-10-17): 액션 예시 셋과 `procedure` 예시(audit·defense·refutation 포함)의 키 순서가 판별 합
+  봉투(`AuditorProcedureProbeInputDiscriminatedAction`)의 키 순서와 같다 — 어긋남 없음.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽
@@ -1302,7 +1311,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 1. 모든 프롬프트는 파일로 버전 관리하고 `prompt_version`을 결과에 기록한다. 버전이 바뀌면 이전 실행 결과와 직접 비교하지 않는다.
    ⏵ 2026-10-11 — pov v5는 요청 스키마도 갈랐다: v5만 형제 `PovActionNamed`를 meta `output_schema`로 선언하고(Auditor 봉투와 같은 방식) v2~v4가 요청하는 `PovAction`의 JSON 스키마는 sha256 핀으로 고정한다.
 
-   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v8도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v9도 `PovActionNamed`를 선언하고 서빙 pov 판이다.
+   ⏵ 2026-10-13 — v6도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-14 — v7도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v8도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-15 — v9도 `PovActionNamed`를 선언하고 서빙 pov 판이다. ⏵ 2026-10-17 — v11은 그 하위 봉투 `PovDiscriminatedAction`을 선언하고 서빙 pov 판이다(#704 — 요청 스키마가 판별 합이라 v5~v10의 `PovActionNamed` 스키마와 다르다. 그 스키마는 sha256 핀으로 그대로다).
 
 > ### ⚠ 이 규칙이 발화하지 못한 건이 둘 있다 — `prompts/critic/v1`·`v2`(2026-09-12, PR #182)와
 > ### Scout v4의 SOURCE 모양(2026-10-13, #529 — 아래 ⏵ 2026-10-13 단락)
@@ -1335,7 +1344,11 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 >
 > ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 현재 판은 Critic v8 · PoV v8이다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >
-> ⏵ **2026-10-16 — PoV v9 → v10 (#698).** 현재 판은 Critic v8 · PoV v10이다. v10 = v9 + prefix 다섯 군데: 2단계가 그 파일에서
+> ⏵ **2026-10-17 — PoV v10 → v11 (#704).** 현재 판은 Critic v8 · PoV v11이다. v11 = v10 body 그대로 + prefix 「Output」 두 줄(`gen` 예시를
+> 스키마 키 순서로 · 「write the keys in the order shown」) + 봉투 `PovDiscriminatedAction`(디코더 스키마가 액션·세그먼트 kind별 판별 합).
+> v10은 한 글자도 안 바뀌었다(규칙 1 · `tests/test_pov_v11.py`).
+>
+> ⏵ **2026-10-16 — PoV v9 → v10 (#698).** 그날의 판은 Critic v8 · PoV v10이었다. v10 = v9 + prefix 다섯 군데: 2단계가 그 파일에서
 > 컴파일러 오류를 잰 `build`·`asan`·`gdb`는 요청 스키마 `tool` enum에서 빠질 수 있다는 서술(「tool은 poc/asan/gdb/build 중 하나」 정정 ·
 > `inspect(build)` 권유에 예외 · 「네 도구」 → 「도구」). body·봉투는 v9와 바이트 동일이다(`tests/test_pov_prompt_v10.py`).
 >
@@ -1456,7 +1469,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 노트 문구와 요청 스키마가 이 변경 전과 다르다. 「v17은 한 글자도 안 바뀌었다」는 **prompt 파일**의 바이트 이야기이고 그 판의
 > 요청 전체가 아니다. 그 판들의 prefix(「같은 오류가 예상된다 · it refuses no tool」)는 새 노트와 어긋난다. 그래서 **옛 판 +
 > 컴파일 실패가 있는 run은 이 변경 전 run과 직접 비교하지 않는다**(`docs/evaluation.md` §2.3 규칙 4와 같은 이유). 서빙 판은
-> v18(⏵ 2026-10-17 v19 — 같은 노트 문단) · PoV v10이라 그 어긋남은 서빙 run에서는 없다.
+> v18(⏵ 2026-10-17 v19 — 같은 노트 문단) · PoV v10(⏵ 2026-10-17 v11 — v10 문장을 물려받는다)이라 그 어긋남은 서빙 run에서는 없다.
 
 > ⏵ **2026-10-17 — v18 → v19 (이슈 #702 · council 2026-10-17).** v19 = v18 + prefix 두 군데. body·봉투(디코더 스키마 포함)·도구는
 > v18과 같다(`tests/test_auditor_v19.py`가 묶는다). ① 「Original-source input contract」의 걸친 함수 항목 끝 — 과제 설명이 entry 함수보다

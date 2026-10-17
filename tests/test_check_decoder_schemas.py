@@ -109,3 +109,48 @@ def test_the_compiled_grammar_enforces_what_the_v18_and_narrowed_schemas_promise
     probe = next(s for s in _valid_samples().values() if s.get("action") == "probe")
     assert accepts(narrowed, {**probe, "tool": "poc"})
     assert not accepts(narrowed, {**probe, "tool": "build"})
+
+
+def test_the_compiled_grammar_enforces_what_the_pov_v11_schema_promises() -> None:
+    """#704의 근거 — 같은 xgrammar로 컴파일한 v11 문법이 관측된 실패 모양(`spec` 없는 `gen`)과 필수
+    필드가 빠진 세그먼트를 거절하고, pydantic이 받는 표본은 받는다. **키 순서도 본다**: v10 prefix의
+    `gen` 예시 순서(`rationale` → `spec`)는 옛 문법·새 문법 모두 거절하고(그래서 6/6이 `spec` 없이
+    닫혔다), v11 prefix의 예시는 받는다. 서버의 실제 집행은 아니다(합성 어휘 · 같은 문법)."""
+    import json
+
+    xgr = pytest.importorskip("xgrammar")
+    from src.orchestrator.nodes import signals
+    from src.schemas.pov import PovActionNamed
+    from src.schemas.pov import PovDiscriminatedAction as Envelope
+    from tests.test_pov_v11 import _OBSERVED, _gen, _valid_samples, prefix_examples
+
+    compiler = gate.make_compiler(xgr)
+
+    def accepts(schema, sample) -> bool:  # noqa: ANN001
+        text = sample if isinstance(sample, str) else json.dumps(sample)
+        return gate.grammar_accepts(schema, text, xgr, compiler)
+
+    for name, sample in _valid_samples().items():
+        assert accepts(Envelope, sample), name
+    for example in prefix_examples():
+        assert accepts(Envelope, example), example
+    v10_order = (
+        '{"action":"gen","rationale":"r","spec":{"rationale":"w",'
+        '"segments":[{"kind":"literal","hex":"4142"}]}}'
+    )
+    assert not accepts(PovActionNamed, v10_order)
+    assert not accepts(Envelope, v10_order)
+    assert accepts(PovActionNamed, _OBSERVED)
+    assert not accepts(Envelope, _OBSERVED)
+    for refused in (
+        {"action": "gen", "spec": None, "rationale": "r"},
+        {"action": "inspect", "rationale": "r"},
+        {"action": "inspect", "tool": "poc", "rationale": "r", "poc_sha256": "abcdef12"},
+        _gen({"kind": "literal"}),
+        _gen({"kind": "literal", "hex": "abc"}),
+        _gen({"kind": "repeat", "byte": 65}),
+    ):
+        assert not accepts(Envelope, refused), refused
+    narrowed = signals.without_tools(Envelope, signals.COMPILE_NOTE_TOOLS)
+    assert accepts(narrowed, {"action": "inspect", "tool": "poc", "rationale": "r"})
+    assert not accepts(narrowed, {"action": "inspect", "tool": "build", "rationale": "r"})

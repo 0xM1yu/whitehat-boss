@@ -47,7 +47,7 @@ def test_the_serving_combination_passes_every_source_option_check() -> None:
     config = load_config("harness_pool")
     seats = ("auditor", "critic", "pov")
     versions = {role: config.model_for(role).prompt_template_version for role in seats}
-    assert versions == {"auditor": "v19", "critic": "v8", "pov": "v10"}, "전제 - 서빙 조합"
+    assert versions == {"auditor": "v19", "critic": "v8", "pov": "v11"}, "전제 - 서빙 조합"
     on = config.thresholds.auditor_source_options_on()
     assert {MARKER, CONTEXT} <= set(on), "전제 - 두 옵션이 켜져 있다"
     assert cli._undescribed_source_options(config) == []
@@ -141,13 +141,14 @@ def _declaring(role: str) -> list[str]:
     )
 
 
-def test_only_critic_v8_and_pov_v7_to_v10_declare_exactly_the_relayed_pair() -> None:
+def test_only_critic_v8_and_pov_v7_to_v11_declare_exactly_the_relayed_pair() -> None:
     # ⏵ 2026-10-15 - PoV v8(= v7 + Hop budget 한 줄)도 같은 선언을 물려받았다
     # ⏵ 2026-10-15 - PoV v9(= v8 − 과제 고유 사실 한 줄)도 그렇다
     # ⏵ 2026-10-16 - PoV v10(= v9 + 도구 서술 다섯 군데 정정 · 이슈 #698)도 그렇다
-    assert _declaring("critic") == ["v8"] and _declaring("pov") == ["v10", "v7", "v8", "v9"]
+    # ⏵ 2026-10-17 - PoV v11(= v10 + Output 두 줄 · 판별 합 봉투 · 이슈 #704)도 그렇다
+    assert _declaring("critic") == ["v8"] and _declaring("pov") == ["v10", "v11", "v7", "v8", "v9"]
     for role, version in (("critic", "v8"), ("pov", "v7"), ("pov", "v8"), ("pov", "v9"),
-                          ("pov", "v10")):
+                          ("pov", "v10"), ("pov", "v11")):
         assert load_prompt(Role(role), version).source_options == RELAYED_SOURCE_OPTIONS
 
 
@@ -159,6 +160,7 @@ def test_only_critic_v8_and_pov_v7_to_v10_declare_exactly_the_relayed_pair() -> 
         ("pov", "v8", ("functions the slicer picked", "+N more write windows not shown")),
         ("pov", "v9", ("functions the slicer picked", "+N more write windows not shown")),
         ("pov", "v10", ("functions the slicer picked", "+N more write windows not shown")),
+        ("pov", "v11", ("functions the slicer picked", "+N more write windows not shown")),
     ],
 )
 def test_a_declaring_prefix_really_describes_both_blocks(
