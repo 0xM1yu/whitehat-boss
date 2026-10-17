@@ -3312,8 +3312,15 @@ def _run_pov_hops(
     싣는다 — 같은 프롬프트가 같은 상한에 닿는 것이 체계적일 수 있어서다(그 가능성은 이슈 #550의
     find_0005 한 건에서 봤고 재질문이 절단을 살리는 비율은 측정한 run이 0이다). 일부 시도만
     `length`이거나 못 쟀으면(`None`·빈 `attempt_log`) 절단으로 치지 않고 재질문한다.
-    ⚠ **연속 파싱 실패의 횟수 상한은 없다** — 비절단 실패는 매 홉 이어질 수 있어
-    `pov_tool_hops + 1`번까지 묻는다(이슈 #613이 쫓는다).
+    ⏵ **2026-10-17 (#613) — 셋째로, 직전 홉도 파싱 실패였고 두 실패의 거절 지문
+    (`_pov_parse_fingerprint`)이 같으면 선다**(종단 `POV_HOP`이 `parse_repeat: true`). 재질문이
+    같은 거절을 다시 받은 것은 그 노트가 모델을 못 움직였다는 관측이라 셋째 질문의 근거가 없다 —
+    run_20261016_0001 find_0008이 3홉 × 2시도 전부 같은 사유(`gen 액션은 spec가 필요하다`)로 재질문
+    회복 0/2였고 홉당 15~20분이었다. 「2연속」은 **규칙의 정의**(직전 하나와 견준다)이지 조절할
+    임계값이 아니다 — 설정값을 두지 않는다. 지문이 다르거나, 사이에 성공한 홉이 있거나(리셋),
+    지문을 못 쟀으면(Fake·옛 예외 — `None`) 종전대로 다시 묻는다.
+    ⚠ **다른 지문이 번갈아 이어지는 실패의 횟수 상한은 여전히 없다** — `pov_tool_hops + 1`번까지
+    묻는다(일반 상한의 값은 다음 run 실측 뒤 — 이슈 #613).
     게이트웨이 예외(`GATEWAY_ERROR`·`CONTEXT_OVERFLOW`)는 그 홉에서 곧장 선다.
     ⚠ **한계 — v5 prefix는 이 재질문 턴을 서술하지 않는다**(`prompts/pov/v5/prefix.md` 「홉 예산」:
     — 요지: 관측의 첫 줄은 홉 줄이고 hop 0에는 그 줄이 없다). ⏵ 2026-10-13 — v6 prefix는 서술한다
@@ -3386,6 +3393,8 @@ def _run_pov_hops(
         observation = ""
         # hop0 호출이 파싱에 실패했을 때 다시 열면서 본문 끝에 붙일 오류 노트(#550).
         retry_note: str | None = None
+        # 직전 홉이 파싱 실패였으면 그 거절 지문(#613) — 성공한 홉이 오면 `None`으로 리셋한다.
+        last_rejection: str | None = None
         prev: pov.PovHop | None = None
         hop = 0
         # 퍼즈 진입점 조회 결과 — hop0에서 채우고 **hop0 이벤트에만** 싣는다. 루프 밖에서 먼저
@@ -3456,9 +3465,18 @@ def _run_pov_hops(
                     raise
                 latency_s = (ctx.monotonic_ms() - started) / 1000.0
                 truncated = _pov_parse_truncated(exc)
-                if reason is PovStopReason.PARSE_FAILED and hop < pov_hops and not truncated:
+                rejection = _pov_parse_fingerprint(exc)
+                # 못 잰 지문(`None`)끼리는 같다고 치지 않는다(#613).
+                repeated = rejection is not None and rejection == last_rejection
+                if (
+                    reason is PovStopReason.PARSE_FAILED
+                    and hop < pov_hops
+                    and not truncated
+                    and not repeated
+                ):
                     # 파싱 실패는 **홉 하나를 쓴 것**이다(#550) — `stop_reason` 없이 이벤트를 내고
                     # 같은 자리를 다시 묻는다. `last_poc`·`seen`·`prev`는 그대로다.
+                    last_rejection = rejection
                     _emit_pov_hop(
                         ctx, finding, hop=hop, failed=(exc, latency_s),
                         fuzz=fuzz if hop == 0 else None,
@@ -3485,8 +3503,10 @@ def _run_pov_hops(
                     failed=(exc, latency_s), fuzz=fuzz if hop == 0 else None,
                     hop0_note=note_trace if hop == 0 else None,
                     parse_truncated=truncated,
+                    parse_repeat=repeated,
                 )
                 return _pov_finish_and_record(ctx, state, finding, reason, last_poc)
+            last_rejection = None  # 성공한 홉 — 「연속」이 끊겼다(#613)
             action = current.action
             if action.action == "submit":
                 # 지명이 없거나 못 찾으면 마지막 gen이다(종전 동작).
@@ -3744,6 +3764,24 @@ def _pov_parse_truncated(exc: Exception) -> bool:
     return bool(log) and all(a.finish_reason == "length" for a in log)
 
 
+def _pov_parse_fingerprint(exc: Exception) -> str | None:
+    """파싱 실패의 **거절 지문** — 같은 거절의 연속을 가르는 키다(⏵ 2026-10-17 · #613).
+
+    정의: 마지막 시도의 pydantic 오류 각각의 `(type, loc, msg)`를 오류 순서대로 늘어놓은 것의
+    sha256 앞 12자(hex). 어댑터가 `include_input=False`·`include_context=False`로 뽑아
+    `SchemaParseError.rejection_keys`에 싣는다 — 응답 조각(`input_value`)·URL이 빠져 모델 출력이
+    달라도 같은 거절이면 같다(run_20261016_0001의 `error_detail`은 `input_value`만 달랐다).
+    메시지 문자열을 정규화하지 않는 이유는 그 문자열(`str(exc)`)이 응답 조각을 들기 때문이다.
+    키가 없으면(Fake·옛 예외) `None` — 안 잰 것을 「같다」로 쓰지 않는다(CLAUDE.md §0).
+    ⚠ 한계: `json_invalid`의 `msg`는 위치(`line N column M`)를 들어 깨진 자리가 다르면 다른 지문이다
+    — 전 시도 절단이면 이 규칙 전에 `_pov_parse_truncated`가 선다.
+    """
+    keys = exc.rejection_keys if isinstance(exc, SchemaParseError) else ()
+    if not keys:
+        return None
+    return hashlib.sha256(json.dumps(keys, ensure_ascii=False).encode()).hexdigest()[:12]
+
+
 def _pov_observation(
     action: str,
     evidence: Evidence,
@@ -3827,7 +3865,8 @@ def _pov_classify_exception(exc: Exception) -> PovStopReason | None:
     `BudgetExhausted`는 여기 안 온다 — 루프가 안 잡고 올려 보낸다.
     ⏵ 2026-10-10 도구 호출(`run_tool`)에서 난 것만은 루프가 그 홉의 이벤트를 낸 뒤 올린다(#394).
     ⏵ 2026-10-11 이 함수는 **사유만** 가른다 — `PARSE_FAILED`로 실제 서는지는 루프가 홉 여유를 보고
-    정한다(마지막 홉이거나, ⏵ 2026-10-12부터는 전 시도가 절단일 때도 선다 · `_run_pov_hops`, #550).
+    정한다(마지막 홉이거나, ⏵ 2026-10-12부터는 전 시도가 절단일 때도 선다 · `_run_pov_hops`, #550 ·
+    ⏵ 2026-10-17부터는 직전 홉과 거절 지문이 같을 때도 선다 — #613).
 
     ⚠ NE 루프와 다르다: 크기 아닌 400(체계적 거절)을 NE는 `_rejects_every_request`로 올려 보내
     run을 멈추지만(#296), pov는 추가형이라 `_is_droppable`(400 포함)로 **흡수해** finding만
@@ -3858,6 +3897,7 @@ def _emit_pov_hop(
     hop0_note: Mapping[str, TraceValue] | None = None,
     submit_digest: str | None = None,
     parse_truncated: bool = False,
+    parse_repeat: bool = False,
     inspect_repeat_of: tuple[str, int] | None = None,
     inspect_without_poc: bool = False,
 ) -> None:
@@ -3888,6 +3928,10 @@ def _emit_pov_hop(
     `inspect_without_poc`는 돌릴 PoC가 없어 `poc` 도구를 **안 돌린** `inspect` 홉(#572)이라
     `tool`(요청한 도구 - `inspect_repeat_of`와 같은 뜻)과 `inspect_without_poc: true`만 싣는다 —
     `tool_ok`·`exit_code`·`evidence_kind`는 이 홉에서 잰 값이 아니라 없다.
+
+    ⏵ 2026-10-17 (#613) — 파싱 실패 홉은 거절 지문(`parse_fingerprint` — `_pov_parse_fingerprint`,
+    못 쟀으면 키 없음)을 싣고, 직전 홉과 지문이 같아 선 종단 홉은 `parse_repeat: true`를 싣는다
+    (사실 키다 — 마지막 홉·절단과 겹치면 그 키들도 같이 실린다).
     """
     data: dict[str, TraceValue] = {"hop": hop}
     if fuzz is not None:
@@ -3920,8 +3964,13 @@ def _emit_pov_hop(
             data["latency_s"] = latency_s
         data["error"] = type(exc).__name__
         data["error_detail"] = error_detail(exc)
+        rejection = _pov_parse_fingerprint(exc)
+        if rejection is not None:
+            data["parse_fingerprint"] = rejection
     if parse_truncated:
         data["parse_truncated"] = True
+    if parse_repeat:
+        data["parse_repeat"] = True
     ctx.trace.emit(
         EventKind.POV_HOP,
         stage=Stage.VALIDATE,
