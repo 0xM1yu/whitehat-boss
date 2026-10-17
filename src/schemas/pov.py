@@ -281,11 +281,13 @@ class PovActionNamed(PovAction):
 # `spec` 안의 세그먼트도 같은 기제를 가진다 — `PovSegment`는 필드가 모두 선택이고 kind별 필수는
 # `_check_kind`가 생성 뒤에 본다(`{"kind": "literal"}`이 문법상 합법이다). 그래서 세그먼트도
 # kind마다 갈래 하나로 바꾼다(`LiteralSegment`: `hex` 필수 + 짝수 길이 16진 패턴 · `RepeatSegment`:
-# `byte`·`count` 필수 · `IntSegment`: `value`·`size`·`endian` 필수). 문법이 못 거는 것은 `int`의
-# 「값이 size바이트에 담긴다」와 총 바이트 상한(`PovSpec._check_total_size`)뿐이고, 둘은 pydantic이
-# 그대로 본다.
-# **의도한 차이 하나**: 부모는 `submit` 밖의 `poc_sha256` 문자열을 거절하지 않고 무시한다. 문법은
-# 그것을 막는다 — `submit` 밖에서는 읽히지 않는 값이다.
+# `byte`·`count` 필수 · `IntSegment`: `value`·`size`·`endian` 필수).
+# 문법이 못 거는 것은 셋이고 pydantic이 그대로 본다: `int`의 「값이 size바이트에 담긴다」 · 총
+# 바이트 상한(`PovSpec._check_total_size`) · `hex` 길이 상한(xgrammar는 `pattern`과 `maxLength`를
+# 같이 못 받아 길이를 무시하고 경고한다 — 그래서 이 갈래에서는 `maxLength`를 뺀다).
+# **의도한 차이 둘**(문법이 pydantic보다 좁다): ① `submit` 밖의 `poc_sha256` 문자열 — 부모는
+# 거절하지 않고 무시한다(`submit` 밖에서는 읽히지 않는 값이다). ② 공백이 낀 `hex`(`"41 42"`) —
+# `bytes.fromhex`는 받지만 패턴은 거절한다. 둘 다 러너가 쓰지 않는 모양이다.
 # 이름·docstring(= 요청 스키마 `description`)은 부모와 같다. 이 봉투로 모델이 `spec`을 채우는지는
 # **미실측**이다.
 class PovDiscriminatedAction(PovActionNamed):
@@ -333,8 +335,8 @@ class PovDiscriminatedAction(PovActionNamed):
         }
 
 
-# `literal`의 `hex` — `PovSegment._check_kind`가 `bytes.fromhex`로 보는 것
-# (비지 않은 짝수 길이 16진).
+# `literal`의 `hex` — 비지 않은 짝수 길이 16진. `PovSegment._check_kind`(`bytes.fromhex`)보다 하나
+# 좁다: 바이트 사이 공백을 안 받는다(위 「의도한 차이」 ②).
 _HEX_PATTERN = "^([0-9a-fA-F]{2})+$"
 
 
@@ -352,7 +354,8 @@ def _segment_branches(defs: dict[str, Any], segment: dict[str, Any]) -> list[dic
             if key not in fields:
                 body[key] = {"type": "null"}
             elif key == "hex":
-                body[key] = {**_non_null(props[key]), "pattern": _HEX_PATTERN}
+                plain = {k: v for k, v in _non_null(props[key]).items() if k != "maxLength"}
+                body[key] = {**plain, "pattern": _HEX_PATTERN}
             else:
                 body[key] = _non_null(props[key])
         defs[name] = {
