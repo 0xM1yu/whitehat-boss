@@ -1075,7 +1075,8 @@ def test_pov_runs_outside_validated_when_the_threshold_is_set(ctx: RunContext) -
 
 
 def test_the_extra_pov_targets_are_cut_by_confidence_then_finding_id(ctx: RunContext) -> None:
-    """판정이 없는 시나리오다 — 그러면 정렬 키의 첫 성분(Critic 판정 계단)이 전부 같아(미경유 1)
+    """판정도 `trigger_status`도 없는 시나리오다 — 그러면 정렬 키의 앞 두 성분(Auditor 결론 계단 ·
+    Critic 판정 계단)이 전부 같아(결론 없음 1 · 미경유 1 — ⏵ 2026-10-17 Auditor 계단이 맨 앞이다)
     자르는 순서는 `critic.select`와 **같은 키**다 — `confidence` 내림차순, 동점은 `finding_id`.
 
     `confidence` 0.9 둘 + 0.3 하나를 넣고 상한을 1로 둔다. 넣는 순서를 **0.3 → 큰 id → 작은
@@ -1142,7 +1143,8 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 # --- 추가 대상 풀에서 Critic이 밀어 낸 Finding을 뺀다 (적대적 리뷰 #490 MEDIUM-2) ---------------
 #
 # 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출**이 될 수 있다 -
-# 다른 후보가 없으면 그것이 최종이다. 정렬 키(판정 계단 → `confidence` → id)는 반박을 맨 뒤(3)에
+# 다른 후보가 없으면 그것이 최종이다. 정렬 키(⏵ 2026-10-17 Auditor 결론 계단 → 판정 계단 →
+# `confidence` → id)의 판정 계단은 반박을 맨 뒤(3)에
 # 두지만 계단은 순서일 뿐 거르지 못하므로, 아래 검사들은 **상한에 자리가 남는 모양**으로 필터
 # 자체를 문다(⏵ 2026-10-12 - 전엔 상한 1에서 `confidence` 순서가 필터를 대신 시험했다).
 # 풀은 「validated 밖에서 Critic이 밀어 내지 않은 것」이다 - Critic이
@@ -1332,7 +1334,8 @@ def test_a_rebutted_finding_cannot_take_the_slot_of_a_finding_held_for_a_missing
 def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutted_ones(
     ctx: RunContext,
 ) -> None:
-    """보류(`need_evidence`)는 풀에 들되 정렬 키 앞의 판정 계단에서 uphold·미경유 **뒤**다 -
+    """보류(`need_evidence`)는 풀에 들되 판정 계단(Auditor 계단이 같을 때)에서 uphold·미경유
+    **뒤**다 -
     상한 1에 `confidence`가 더 높은 보류가 F-9 uphold의 자리를 못 가져간다. 반박된 Finding은
     풀 밖이라 그 자리는 보류가 받는다."""
     held = _finding("find_0001", state=FindingState.QUEUED, confidence=0.99)
@@ -1440,6 +1443,153 @@ def test_analyze_runs_pov_on_the_held_finding_and_not_on_the_rebutted_one(ctx: R
     runner._analyze(ctx, [], state, int(Stage.VALIDATE))
 
     assert _pov_subjects(ctx) == [held.finding_id]
+
+
+@pytest.mark.parametrize(
+    ("trigger_status", "rank"),
+    [
+        pytest.param("triggerable", 0, id="triggerable"),
+        pytest.param("reachability_unknown", 1, id="reachability_unknown"),
+        pytest.param(None, 1, id="none_reads_as_unknown"),
+        pytest.param("not_a_status", 1, id="unknown_value_reads_as_unknown"),
+        pytest.param("guarded", 2, id="guarded"),
+        pytest.param("no_reach", 2, id="no_reach"),
+        pytest.param("no_signal", 3, id="no_signal"),
+    ],
+)
+def test_the_auditor_ranks_are_triggerable_then_unknown_then_blocked_then_no_signal(
+    trigger_status: str | None, rank: int
+) -> None:
+    """Auditor 결론 계단 - `triggerable 0 < reachability_unknown 1 < guarded·no_reach 2 <
+    no_signal 3`(⏵ 2026-10-17). `None`과 다섯 밖의 값(`Finding.trigger_status`는 `str | None`)은
+    「Auditor가 결론을 안 적었다」라 「모른다」와 같은 1이다 - 뒤(3)에 두면 이 필드를 안 시킨
+    판의 Finding이 전부 `no_signal`과 묶이고, 앞(0)에 두면 `triggerable`과 동점이 된다."""
+    assert runner._trigger_rank(trigger_status) == rank
+
+
+def _serving_run_20261016_state() -> runner._Accumulator:
+    """2026-10-16 arvo:1065 실서빙 run(`run_20261016_0001`, 커밋 `8e843c45`)의 Finding 여덟과 Critic
+    판정 여섯 - `state.db`(`objects`의 `finding`·`decision`)에서 옮긴 값이다(⏵ 2026-10-17 대조).
+    VALIDATED 0건이라 PoV 대상은 추가 풀뿐이었다
+    (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 PoV).
+    판정은 run 그대로 Critic **v8**이고 `evidence_refs`가 전부 비었다 - `rebut` 셋은
+    `rebuttal_axis`(arithmetic · guard · reachability)로만 근거가 서고, v8은 축만 근거로 센다
+    (`AXIS_ONLY_GROUNDING_VERSIONS`). 그래서 `gate.normalize`가 `rebut`을 그대로 두고
+    `_critic_set_aside`가 뺀다(재생 테스트가 그 전제를 문다)."""
+    state = runner._Accumulator()
+    for finding_id, finding_state, trigger_status, confidence in (
+        ("find_0002", FindingState.QUEUED, "guarded", 0.2),
+        ("find_0004", FindingState.QUEUED, "reachability_unknown", 0.5),
+        ("find_0005", FindingState.QUEUED, "triggerable", 0.8),
+        ("find_0008", FindingState.HYPOTHESIZED, "no_signal", 0.3),
+        ("find_0009", FindingState.QUEUED, "no_signal", 0.1),
+        ("find_0010", FindingState.QUEUED, "guarded", 0.2),
+        ("find_0012", FindingState.QUEUED, "no_signal", 0.2),
+        ("find_0013", FindingState.QUEUED, "no_signal", 0.2),
+    ):
+        state.update(
+            _finding(
+                finding_id,
+                state=finding_state,
+                confidence=confidence,
+                trigger_status=trigger_status,
+            )
+        )
+    for decision_id, finding_id, verdict, axes in (
+        ("dec_0001", "find_0005", Verdict.REBUT, ["arithmetic"]),
+        ("dec_0002", "find_0004", Verdict.NEED_EVIDENCE, []),
+        ("dec_0003", "find_0008", Verdict.UPHOLD, []),
+        ("dec_0004", "find_0002", Verdict.REBUT, ["guard"]),
+        ("dec_0005", "find_0010", Verdict.REBUT, ["reachability"]),
+        ("dec_0006", "find_0009", Verdict.NEED_EVIDENCE, []),
+    ):
+        state.decisions[finding_id] = (
+            Decision(
+                decision_id=decision_id,
+                run_id=RUN_ID,
+                finding_id=finding_id,
+                verdict=verdict,
+                rebuttal_axis=axes,
+                rationale="근거 서술",
+                evidence_refs=[],
+                produced_by=ProducedBy(role=Role.CRITIC, model="fake", prompt_version="v8"),
+            ),
+        )
+    return state
+
+
+@pytest.mark.parametrize(
+    ("limit", "expected"),
+    [
+        pytest.param(1, ["find_0004"], id="the_single_attempt_goes_to_reachability_unknown"),
+        pytest.param(
+            8,
+            ["find_0004", "find_0008", "find_0012", "find_0013", "find_0009"],
+            id="the_whole_pool",
+        ),
+    ],
+)
+def test_the_extra_pov_pool_reads_the_auditor_conclusion_first_on_the_20261016_run(
+    ctx: RunContext, limit: int, expected: list[str]
+) -> None:
+    """2026-10-16 run 재생이다. 전 판(`8e843c45`)의 순서는 `find_0008 → 0012 → 0013 → 0004 →
+    0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한(둘 다 「취약하지 않다」) `find_0008`이
+    PoV의 유일한 시도를 가져갔다. 이제 Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
+    `no_signal` 밖 결론인 `find_0004`(`reachability_unknown`)가 1순위다. `no_signal` 넷 사이는 종전
+    키(Critic 계단 → `confidence` → id)가 그대로 가른다.
+    반박 셋(`find_0005`는 `triggerable` · 0.8이다)은 `_critic_set_aside`가 여전히 뺀다 - 이 PR은
+    풀 필터를 안 바꾼다(반박의 뜻은 이슈 #706)."""
+    state = _serving_run_20261016_state()
+    assert {
+        fid for fid in state.findings if runner._critic_set_aside(state, fid)
+    } == {"find_0002", "find_0005", "find_0010"}, "전제 - v8 축 근거 반박이 `rebut`으로 남는다"
+    _with_top_n(ctx, limit)
+
+    targets = runner._pov_targets(ctx, state, [])
+
+    assert [f.finding_id for f in targets] == expected
+
+
+def test_the_auditor_rank_comes_before_the_critic_rank_but_after_the_pool_filter(
+    ctx: RunContext,
+) -> None:
+    """계단 단위 - 판정 계단과 `confidence`가 Auditor 계단과 **거꾸로** 서게 둔다. Auditor 계단이
+    Critic 계단 뒤에 있거나(`no_signal` uphold가 이긴다) 아예 없으면 순서가 바뀌어 빨개진다.
+    `None`은 `reachability_unknown`과 같은 계단이라 그 안에서는 Critic 계단이 가르고, `guarded`와
+    `no_reach`도 한 계단이라 `confidence`가 높은 `guarded`가 uphold `no_reach` 뒤다. `triggerable`
+    반박(`find_0007` · 0.99)은 계단과 무관하게 풀 밖이다."""
+    state = runner._Accumulator()
+    for finding_id, trigger_status, confidence, verdict in (
+        ("find_0001", "no_signal", 0.99, Verdict.UPHOLD),
+        ("find_0002", "no_reach", 0.9, Verdict.UPHOLD),
+        ("find_0003", "guarded", 0.95, None),
+        ("find_0004", None, 0.1, Verdict.UPHOLD),
+        ("find_0005", "reachability_unknown", 0.8, Verdict.NEED_EVIDENCE),
+        ("find_0006", "triggerable", 0.05, Verdict.NEED_EVIDENCE),
+        ("find_0007", "triggerable", 0.99, Verdict.REBUT),
+    ):
+        state.update(
+            _finding(
+                finding_id,
+                state=FindingState.QUEUED,
+                confidence=confidence,
+                trigger_status=trigger_status,
+            )
+        )
+        if verdict is not None:
+            state.decisions[finding_id] = (_critic_decision(finding_id, verdict, grounded=True),)
+    _with_top_n(ctx, 8)
+
+    targets = runner._pov_targets(ctx, state, [])
+
+    assert [f.finding_id for f in targets] == [
+        "find_0006",
+        "find_0004",
+        "find_0005",
+        "find_0002",
+        "find_0003",
+        "find_0001",
+    ]
 
 
 def test_a_stage_7_rebuttal_keeps_the_finding_out_of_the_extra_pov_pool(
@@ -4452,10 +4602,12 @@ def _finding(
     state: FindingState = FindingState.HYPOTHESIZED,
     confidence: float = 0.6,
     signal: str = "AddressSanitizer: heap-buffer-overflow at parse_header",
+    trigger_status: str | None = None,
 ) -> Finding:
     backed = state in {FindingState.VALIDATED, FindingState.PROVEN, FindingState.REPORTED}
     return Finding(
         finding_id=finding_id,
+        trigger_status=trigger_status,
         run_id=RUN_ID,
         candidate_id="cand_0001",
         title="parse_header에서 검증 없는 memcpy",
