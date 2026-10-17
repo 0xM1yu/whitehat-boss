@@ -1339,7 +1339,11 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 >
 > ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 현재 판은 Critic v8 · PoV v8이다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >
-> ⏵ **2026-10-16 — PoV v9 → v10 (#698).** 현재 판은 Critic v8 · PoV v10이다. v10 = v9 + prefix 다섯 군데: 2단계가 그 파일에서
+> ⏵ **2026-10-17 — PoV v10 → v11 (#704).** 현재 판은 Critic v8 · PoV v11이다. v11 = v10 body 그대로 + prefix 「Output」 두 줄(`gen` 예시를
+> 스키마 키 순서로 · 「write the keys in the order shown」) + 봉투 `PovDiscriminatedAction`(디코더 스키마가 액션·세그먼트 kind별 판별 합).
+> v10은 한 글자도 안 바뀌었다(규칙 1 · `tests/test_pov_v11.py`).
+>
+> ⏵ **2026-10-16 — PoV v9 → v10 (#698).** 그날의 판은 Critic v8 · PoV v10이었다. v10 = v9 + prefix 다섯 군데: 2단계가 그 파일에서
 > 컴파일러 오류를 잰 `build`·`asan`·`gdb`는 요청 스키마 `tool` enum에서 빠질 수 있다는 서술(「tool은 poc/asan/gdb/build 중 하나」 정정 ·
 > `inspect(build)` 권유에 예외 · 「네 도구」 → 「도구」). body·봉투는 v9와 바이트 동일이다(`tests/test_pov_prompt_v10.py`).
 >
@@ -1460,7 +1464,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 노트 문구와 요청 스키마가 이 변경 전과 다르다. 「v17은 한 글자도 안 바뀌었다」는 **prompt 파일**의 바이트 이야기이고 그 판의
 > 요청 전체가 아니다. 그 판들의 prefix(「같은 오류가 예상된다 · it refuses no tool」)는 새 노트와 어긋난다. 그래서 **옛 판 +
 > 컴파일 실패가 있는 run은 이 변경 전 run과 직접 비교하지 않는다**(`docs/evaluation.md` §2.3 규칙 4와 같은 이유). 서빙 판은
-> v18(⏵ 2026-10-17 v19 — 같은 노트 문단) · PoV v10이라 그 어긋남은 서빙 run에서는 없다.
+> v18(⏵ 2026-10-17 v19 — 같은 노트 문단) · PoV v10(⏵ 2026-10-17 v11 — v10 문장을 물려받는다)이라 그 어긋남은 서빙 run에서는 없다.
 
 > ⏵ **2026-10-17 — v18 → v19 (이슈 #702 · council 2026-10-17).** v19 = v18 + prefix 두 군데. body·봉투(디코더 스키마 포함)·도구는
 > v18과 같다(`tests/test_auditor_v19.py`가 묶는다). ① 「Original-source input contract」의 걸친 함수 항목 끝 — 과제 설명이 entry 함수보다

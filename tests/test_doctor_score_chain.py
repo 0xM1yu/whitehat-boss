@@ -140,7 +140,7 @@ def test_missing_prompt_keeps_existing_load_error(monkeypatch, tmp_path):
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v6"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v7"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v8"),
-    # v9는 서빙 판이었고(2026-10-15) v10이 지금 서빙 판이다(2026-10-16)
+    # v9는 서빙 판이었고(2026-10-15) v10도 그랬다(2026-10-16). 지금 서빙 판은 v11이다(2026-10-17)
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v9"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v10"),
     ("pov", pov, "_WIDE_INPUT_VERSIONS", "v11"),  # 2026-10-17 - 서빙 판
