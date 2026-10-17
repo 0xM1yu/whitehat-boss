@@ -774,6 +774,9 @@ class EventKind(StrEnum):
     # ⏵ 2026-10-12 — 그 호출의 모든 시도가 `finish_reason == "length"`로 끝난 실패(재질문 없이
     # 선다)다 — 뒤쪽만 `parse_truncated: true`를 단다(모델 호출의 `attempt_finish_reasons`와 같은
     # 사실의 홉 요약 — 서버의 말이고 키가 없으면 절단이 아니거나 못 쟀다).
+    # ⏵ 2026-10-17 (#613) — 파싱 실패 홉은 거절 지문 `parse_fingerprint`(오류별 (type, loc, msg)의
+    # sha256 앞 12자 — `runner._pov_parse_fingerprint`, 못 쟀으면 키 없음)를 싣고, 직전 홉과 지문이
+    # 같아 선 종단 홉은 `parse_repeat: true`를 단다(`stop_reason`은 그대로 `parse_failed`).
     # hop 0이 실패했다가 다시 열려 살아나면 `fuzz_*` 키는 첫 성공 홉이 아니라 **실패한 hop-0
     # 이벤트**에 있다.
     # **gen 홉은 그 홉이 조립한 PoC의 `poc_sha256`도 싣는다**(맨 hex — 종단 이벤트의 `poc_sha256`과

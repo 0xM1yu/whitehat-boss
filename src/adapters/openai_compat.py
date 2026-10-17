@@ -410,6 +410,13 @@ class OpenAICompatModelClient:
                 last_error.errors(include_url=False, include_input=False)
             ),
             raw_texts=tuple(raw_texts),
+            # ⏵ 2026-10-17 (#613) — 응답 조각 없이 (type, loc, msg)만. `ctx`는 `msg`에 이미 들었다.
+            rejection_keys=tuple(
+                (e["type"], ".".join(map(str, e["loc"])), e["msg"])
+                for e in last_error.errors(
+                    include_url=False, include_input=False, include_context=False
+                )
+            ),
         )
 
     def _request_payload(

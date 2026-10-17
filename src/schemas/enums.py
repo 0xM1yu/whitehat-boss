@@ -380,7 +380,8 @@ class PovStopReason(StrEnum):
     · `MAX_HOP`(홉 상한 소진). 홉 호출 예외 셋(`_pov_classify_exception`이 가른다, pov 추가형
     계약대로) — `PARSE_FAILED`(스키마 파싱 실패 · ⏵ 2026-10-11 **마지막 홉에서 선다** · ⏵ 2026-10-12
     **또는 전 시도가 `finish_reason == "length"`로 끝난 홉에서도 선다** — 그 밖의 앞 홉 실패는 홉
-    하나를 쓰고 루프가 다시 묻는다, #550. 둘은 값이 같고 이벤트의 `parse_truncated` 키로 가른다)
+    하나를 쓰고 루프가 다시 묻는다, #550. 둘은 값이 같고 이벤트의 `parse_truncated` 키로 가른다 ·
+    ⏵ 2026-10-17 **직전 홉과 거절 지문이 같은 실패도 선다** — `parse_repeat` 키, #613)
     · `CONTEXT_OVERFLOW` (크기 거절) · `GATEWAY_ERROR`(버릴 수 있는 게이트웨이).
     **서버 쪽 사건(status 없음·5xx)과 예산 소진은 흡수하지 않고 올려 보낸다** — run의 사실이라
     여기 값이 없다(`NeStopReason`이 `BUDGET_EXHAUSTED`를 흡수한 것과 다른 점: pov는 추가형이라
