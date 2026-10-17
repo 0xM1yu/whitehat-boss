@@ -745,7 +745,9 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `prompts/pov/v5/prefix.md`는 이 재질문 턴을 아직 서술하지 않는다 — 후속 판의 몫이다 — 미정), 서버 쪽 사건(상태 없음·5xx·버릴 수
   없는 4xx — 401·404·429 등)·예산 소진(`BudgetExhausted`)은 흡수하지 않고 run으로 올린다.
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
-  `runner._pov_targets`). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
+  `runner._pov_targets`. ⏵ 2026-10-17 — 그 추가 대상의 순서는 Auditor 결론 계단(`trigger_status`:
+  triggerable → reachability_unknown·`null` → guarded·no_reach → no_signal) → Critic 판정 계단(uphold →
+  미경유·판정 호출 실패 → 보류) → `confidence` 내림차순 → `finding_id`다). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
   run은, 오라클에 이미 낸 후보나 구제된 중간 gen(`OracleLedger.pool`)이 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
   ⏵ 2026-10-15(@danielcho02 승인) — **낸 PoC나 구제된 중간 gen(`OracleLedger.pool`)이 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
