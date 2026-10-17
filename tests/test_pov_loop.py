@@ -3224,11 +3224,13 @@ class _Wire:
     """`OpenAICompatModelClient._post`를 갈아 끼우는 스텁 — 모델이 `spec`에 문자열을 낸 응답."""
 
     @staticmethod
-    def client(monkeypatch: pytest.MonkeyPatch, spec: str = "A" * 80):  # noqa: ANN205
+    def client(  # noqa: ANN205
+        monkeypatch: pytest.MonkeyPatch, response: dict[str, object] | None = None
+    ):
         from src.adapters.openai_compat import OpenAICompatModelClient, PostedResponse
 
         def fake_post(self, payload: dict) -> PostedResponse:  # noqa: ANN001, ARG001
-            raw = json.dumps({"action": "gen", "spec": spec, "rationale": "r"})
+            raw = json.dumps(response or {"action": "gen", "spec": "A" * 80, "rationale": "r"})
             return PostedResponse(
                 content=raw,
                 usage=Usage(input_tokens=1, output_tokens=1, cached_tokens=0),
@@ -3375,25 +3377,117 @@ def test_truncation_still_stops_at_its_own_hop_regardless_of_the_rule(
     assert hop.data["parse_truncated"] is True and "parse_repeat" not in hop.data
 
 
-def test_the_adapter_fingerprint_ignores_the_model_output(
+def test_a_success_then_the_same_rejection_twice_stops_on_the_continue_path(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """hop≥1 재질문(`continue_hop`) 갈래도 지문을 기억한다 — gen 뒤 같은 실패 둘이면 hop 2에서 선다.
+    hop0(`open_hop`) 갈래만 기억하는 변이를 문다(리뷰 santa C)."""
+    over = RuntimeError("같은 거절이 연속됐는데 또 물었다")
+    scripted, (poc, reason) = _parse_run(
+        ctx, [_gen(count=8), _rejected(_NO_SPEC), _rejected(_NO_SPEC), over], pov_hops=16
+    )
+
+    assert reason is PovStopReason.PARSE_FAILED
+    assert poc == b"A" * 8
+    hops = _hops(scripted)
+    assert [h.data["hop"] for h in hops] == [0, 1, 2]
+    assert hops[2].data["stop_reason"] == PovStopReason.PARSE_FAILED.value
+    assert hops[2].data["parse_repeat"] is True
+
+
+def test_same_type_and_loc_but_a_different_message_keeps_asking(
+    ctx: RunContext,  # noqa: F811
+) -> None:
+    """모델 단위 `value_error`는 `loc`가 전부 `()`다 — `msg`가 달라야 다른 거절이다. 지문에서
+    `msg`를 빼거나 `type`만 쓰는 변이를 문다(리뷰 santa B)."""
+    no_tool = ("value_error", "", "Value error, inspect 액션은 tool가 필요하다")
+    scripted, (_, reason) = _parse_run(
+        ctx, [_rejected(_NO_SPEC), _rejected(no_tool), _gen(count=8), _SUBMIT]
+    )
+
+    assert reason is PovStopReason.SUBMITTED
+    assert not any("parse_repeat" in h.data for h in _hops(scripted))
+
+
+def _wire_rejection(
+    monkeypatch: pytest.MonkeyPatch, response: dict[str, object]
+) -> SchemaParseError:
+    """실어댑터(`errors(include_url=False, include_input=False, include_context=False)`)가 던진
+    파싱 실패."""
+    with pytest.raises(SchemaParseError) as caught:
+        _Wire.client(monkeypatch, response).complete(
+            role=Role.POV,
+            prompt=Prompt(prefix="p", body="b", prompt_version="v5"),
+            schema=PovAction,
+        )
+    return caught.value
+
+
+def _bad_hex(hex_text: str, at: int = 1) -> dict[str, object]:
+    segments = [{"kind": "literal", "hex": "41"}] * at + [{"kind": "literal", "hex": hex_text}]
+    return {"action": "gen", "rationale": "r", "spec": {"rationale": "r", "segments": segments}}
+
+
+@pytest.mark.parametrize(
+    "responses",
+    [
+        pytest.param(
+            (
+                {"action": "gen", "spec": "A" * 80, "rationale": "r"},
+                {"action": "gen", "spec": "B" * 33, "rationale": "r"},
+            ),
+            id="model_type-input-only",
+        ),
+        # msg가 모델 값을 든다(`hex …: 'abc'`) — 따옴표 값 정규화가 없으면 다른 지문이었다.
+        pytest.param((_bad_hex("abc"), _bad_hex("zz1")), id="hex-value-in-msg"),
+        # 세그먼트 인덱스는 loc의 숫자 — 정규화한다(runner `_pov_parse_fingerprint` docstring).
+        pytest.param((_bad_hex("abc", at=1), _bad_hex("zz1", at=3)), id="segment-index-in-loc"),
+    ],
+)
+def test_the_adapter_fingerprint_ignores_model_values(
+    monkeypatch: pytest.MonkeyPatch,
+    responses: tuple[dict[str, object], dict[str, object]],
+) -> None:
+    """실어댑터의 같은 거절은 모델 값(응답 조각·msg 속 따옴표 값·숫자)이 달라도 같은 지문이다."""
+    first, second = (_wire_rejection(monkeypatch, r) for r in responses)
+
+    for exc in (first, second):
+        assert exc.rejection_keys and all(len(k) == 3 for k in exc.rejection_keys)
+        assert "input_value" not in repr(exc.rejection_keys)
+    assert "AAAA" not in repr(first.rejection_keys)
+    fp = runner._pov_parse_fingerprint(first)
+    assert fp is not None and fp == runner._pov_parse_fingerprint(second)
+
+
+def test_the_adapter_fingerprint_separates_rejections_that_differ_only_in_loc(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """실어댑터의 `rejection_keys`는 (type, loc, msg)만 든다 — 응답 조각(`input_value`)이 달라도
-    지문이 같고, 키 어디에도 응답 원문이 없다."""
-    fingerprints = []
-    for spec in ("A" * 80, "B" * 33):
-        client = _Wire.client(monkeypatch, spec=spec)
-        with pytest.raises(SchemaParseError) as caught:
-            client.complete(
-                role=Role.POV,
-                prompt=Prompt(prefix="p", body="b", prompt_version="v5"),
-                schema=PovAction,
-            )
-        keys = caught.value.rejection_keys
-        assert keys and all(len(k) == 3 for k in keys)
-        assert spec not in repr(keys)
-        fingerprints.append(runner._pov_parse_fingerprint(caught.value))
-    assert fingerprints[0] is not None and fingerprints[0] == fingerprints[1]
+    """같은 `type`·`msg`(`extra_forbidden`)이고 `loc`만 다르면 다른 지문이다 — 어댑터 키에서 loc를
+    버리는 변이를 문다(리뷰 santa C)."""
+    spec = {"rationale": "r", "segments": [{"kind": "literal", "hex": "41"}]}
+    top = _wire_rejection(monkeypatch, {"action": "gen", "rationale": "r", "spec": spec, "x": 1})
+    nested = _wire_rejection(
+        monkeypatch,
+        {"action": "gen", "rationale": "r",
+         "spec": {**spec, "segments": [{"kind": "literal", "hex": "41", "x": 1}]}},
+    )
+
+    assert [k[0] for k in top.rejection_keys] == [k[0] for k in nested.rejection_keys]
+    assert runner._pov_parse_fingerprint(top) != runner._pov_parse_fingerprint(nested)
+
+
+def test_two_different_bad_hex_values_through_the_adapter_stop_the_loop(
+    ctx: RunContext,  # noqa: F811
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """실어댑터 경로의 `'abc'`·`'zz1'` 두 거절은 같은 지문이라 둘째 홉에서 선다(santa B 재현)."""
+    first = _wire_rejection(monkeypatch, _bad_hex("abc"))
+    second = _wire_rejection(monkeypatch, _bad_hex("zz1"))
+    over = RuntimeError("같은 거절이 연속됐는데 또 물었다")
+    scripted, (_, reason) = _parse_run(ctx, [first, second, over], pov_hops=16)
+
+    assert reason is PovStopReason.PARSE_FAILED
+    assert _hops(scripted)[1].data["parse_repeat"] is True
 
 
 # --- #619 — 같은 (도구, 입력) inspect는 다시 돌리지 않는다 ---------------------------------
