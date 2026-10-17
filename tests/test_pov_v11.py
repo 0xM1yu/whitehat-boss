@@ -263,7 +263,10 @@ def test_each_branch_requires_its_own_field() -> None:
     assert defs["LiteralSegment"]["required"] == ["kind", "hex"]
     assert defs["RepeatSegment"]["required"] == ["kind", "byte", "count"]
     assert defs["IntSegment"]["required"] == ["kind", "value", "size", "endian"]
-    for name in ("GenHop", "InspectHop", "SubmitHop", "LiteralSegment", "RepeatSegment"):
+    branches = (
+        "GenHop", "InspectHop", "SubmitHop", "LiteralSegment", "RepeatSegment", "IntSegment",
+    )
+    for name in branches:
         assert defs[name]["additionalProperties"] is False, name
 
 
