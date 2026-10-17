@@ -3767,19 +3767,41 @@ def _pov_parse_truncated(exc: Exception) -> bool:
 def _pov_parse_fingerprint(exc: Exception) -> str | None:
     """파싱 실패의 **거절 지문** — 같은 거절의 연속을 가르는 키다(⏵ 2026-10-17 · #613).
 
-    정의: 마지막 시도의 pydantic 오류 각각의 `(type, loc, msg)`를 오류 순서대로 늘어놓은 것의
-    sha256 앞 12자(hex). 어댑터가 `include_input=False`·`include_context=False`로 뽑아
-    `SchemaParseError.rejection_keys`에 싣는다 — 응답 조각(`input_value`)·URL이 빠져 모델 출력이
-    달라도 같은 거절이면 같다(run_20261016_0001의 `error_detail`은 `input_value`만 달랐다).
-    메시지 문자열을 정규화하지 않는 이유는 그 문자열(`str(exc)`)이 응답 조각을 들기 때문이다.
+    정의: 마지막 시도의 pydantic 오류 각각의 `(type, loc, msg)`에서 `loc`·`msg`를 정규화하고
+    (따옴표로 둘러싼 값 → `<v>`, 숫자 열 → `<n>` — `_REJECTION_VALUE`), 오류 순서대로 늘어놓은
+    JSON의 sha256 앞 12자(hex). 원 키는 어댑터가 `include_input=False`·`include_context=False`로
+    뽑아 `SchemaParseError.rejection_keys`에 싣는다(`input_value`·URL 없음 — run_20261016_0001의
+    `error_detail`은 `input_value`만 달랐다). 정규화는 **여기 한 곳**에서만 한다.
+    ⏵ 2026-10-17 (PR #708 리뷰) — `msg` 자체도 모델 값을 든다(`schemas/pov.py`의
+    `hex …: 'abc'`·`value N는 M바이트…`·`총 바이트 N`, `json_invalid`의 `line N column M`, `loc`의
+    세그먼트 인덱스). 정규화가 없으면 같은 거절이 값마다 다른 지문이 됐다. `msg`를 빼고
+    `(type, loc)`만 쓰지 않는 이유는 모델 단위 `value_error`의 `loc`가 전부 `()`라 `gen…spec`와
+    `inspect…tool` 같은 다른 거절이 합쳐지기 때문이다.
+    정규화 뒤에도 남거나 합쳐지는 것:
+    ⚠ `extra_forbidden`의 `loc`에는 모델이 지은 키 이름이 따옴표 없이 남는다(키가 다르면 다른
+    지문 → 다시 묻는 쪽, 종전 동작).
+    ⚠ 세그먼트 인덱스(`spec.segments.3.hex`)는 `loc`의 숫자라 **정규화한다**(`<n>`) — 몇 번째
+    세그먼트가 틀렸는지는 모델 출력의 함수이고 거절의 종류가 아니다. 대가로 같은 종류의 거절이
+    다른 세그먼트에서 나도 같은 지문이다.
+    ⚠ `json_invalid`는 위치(`line N column M`)가 정규화되어 깨진 **종류**(`EOF while parsing …`·
+    `expected value` 등)만 남는다. 전 시도 절단이면 이 규칙 전에 `_pov_parse_truncated`가 선다.
+    ⚠ 메시지 상수 숫자·따옴표 목록만 다른 두 거절도 합쳐진다(같은 모양의 다른 값).
     키가 없으면(Fake·옛 예외) `None` — 안 잰 것을 「같다」로 쓰지 않는다(CLAUDE.md §0).
-    ⚠ 한계: `json_invalid`의 `msg`는 위치(`line N column M`)를 들어 깨진 자리가 다르면 다른 지문이다
-    — 전 시도 절단이면 이 규칙 전에 `_pov_parse_truncated`가 선다.
     """
     keys = exc.rejection_keys if isinstance(exc, SchemaParseError) else ()
     if not keys:
         return None
-    return hashlib.sha256(json.dumps(keys, ensure_ascii=False).encode()).hexdigest()[:12]
+    shape = [(kind, _rejection_shape(loc), _rejection_shape(msg)) for kind, loc, msg in keys]
+    return hashlib.sha256(json.dumps(shape, ensure_ascii=False).encode()).hexdigest()[:12]
+
+
+# 거절 메시지 안의 모델 값 — 따옴표 값(이스케이프 포함)과 숫자 열(#613 · PR #708 리뷰).
+_REJECTION_VALUE = re.compile(r"'(?:\\.|[^'\\])*'|\"(?:\\.|[^\"\\])*\"|\d+")
+
+
+def _rejection_shape(text: str) -> str:
+    """`_pov_parse_fingerprint`의 정규화 — 따옴표 값은 `<v>`, 숫자 열은 `<n>`."""
+    return _REJECTION_VALUE.sub(lambda m: "<n>" if m[0][0].isdigit() else "<v>", text)
 
 
 def _pov_observation(
