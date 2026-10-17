@@ -9,11 +9,14 @@ run_20261016_0001 8단계 3 hop · 6시도가 전부 이 모양이었고 pydanti
 Auditor v18(PR #699 · #602)과 같은 처방(검증은 부모 그대로, 디코더 스키마만 판별 합)에 예시 순서를
 더한다. 묶는 것은 일곱이다.
 
-1. **v2~v10 봉투의 스키마는 한 글자도 안 바뀌었다** - sha256 핀. v11 봉투도 핀이다.
+1. **v2~v10 봉투의 스키마는 한 글자도 안 바뀌었다** - sha256 핀 둘(정렬한 JSON = 내용, 삽입 순서
+   그대로의 JSON = 키 순서까지). xgrammar가 키 순서를 집행하므로 순서도 핀이다. v11 봉투도 같은 두
+   핀이다.
 2. **문법이 거절한다** - `spec` 없는/null인 `gen`(관측 모양) · `tool` 없는 `inspect` · 다른 액션의
    필드 · kind별 필수 필드가 빠진 세그먼트 · 16진이 아닌 `hex`.
 3. **과하게 조이지 않는다** - 모든 액션·도구·세그먼트 kind의 pydantic-유효 표본을 스키마가 받는다.
-   예외는 하나 - `submit` 밖의 `poc_sha256` 문자열(pydantic은 무시하고 받는다, 문법은 거절한다).
+   예외는 둘(문법이 더 좁다) - `submit` 밖의 `poc_sha256` 문자열(pydantic은 무시하고 받는다) ·
+   공백이 낀 `hex`(`bytes.fromhex`는 받는다).
 4. **모든 갈래에 닿는다** - 표본마다 정확히 한 갈래에 맞는다.
 5. **`tool` enum 좁히기와 겹쳐 선다** - `signals.without_tools`가 만든 하위 봉투도 판별 합이다.
 6. **배선** - v11 = v10 body 바이트 동일 + prefix 편집 둘 + 이 봉투 · 서빙 좌석 ·
@@ -57,17 +60,32 @@ _TOOLS = ("asan", "build", "gdb", "poc")
 
 # 이 변경 **전에** 잰 값이다(`json.dumps(sort_keys=True)`의 sha256). 이 둘이 v2~v4·v5~v10의 요청
 # payload다(evaluation §2.3).
+# 값 둘은 (정렬한 JSON, 삽입 순서 JSON)의 sha256이다.
 _FLAT_SCHEMA_SHA256 = {
-    PovAction: "a9a83131d344632392aa3aeb1d7269920d9df843c2ddfe4f6bd3c49bc95b0a3e",
-    PovActionNamed: "4610392e7937684d2ad38749d1ea8442aca8aaf872078e636aa28e6faa66ad4d",
+    PovAction: (
+        "a9a83131d344632392aa3aeb1d7269920d9df843c2ddfe4f6bd3c49bc95b0a3e",
+        "42ef1b62d88a6342479ba75fe6d3c82e7b7d3a0a96631f13d5499ed7019fa1a4",
+    ),
+    PovActionNamed: (
+        "4610392e7937684d2ad38749d1ea8442aca8aaf872078e636aa28e6faa66ad4d",
+        "0e44688844ded657028ec360d2ddd5d5b57134ee70658ae7d51c80b1f22eb829",
+    ),
 }
 # v11의 요청 payload - 봉투를 고치면 이 값이 바뀌고, 그때는 새 판을 세운다
 # (agent-contracts §4 규칙 1).
-_V11_SCHEMA_SHA256 = "251d298731bc55273b042fbfcc5ee1b6a25987adaea13e529150cecfc4ee16a4"
+_V11_SCHEMA_SHA256 = (
+    "d511fbd786589bdad58336a975eb6a784fa49bf82e7545e37fb931bf045b9e3b",
+    "b67fa631658fcbaec4d0492ad312e4d771883bd38d1e273f9122ce8e25805f7f",
+)
 
 
-def _schema_sha(schema: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(schema, sort_keys=True).encode()).hexdigest()
+def _schema_sha(schema: dict[str, Any]) -> tuple[str, str]:
+    """(내용 핀, 키 순서 핀) — 앞은 정렬한 JSON, 뒤는 삽입 순서 그대로의 JSON의 sha256."""
+
+    def digest(text: str) -> str:
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    return digest(json.dumps(schema, sort_keys=True)), digest(json.dumps(schema))
 
 
 @pytest.mark.parametrize("envelope", list(_FLAT_SCHEMA_SHA256), ids=lambda e: e.__name__)
@@ -461,3 +479,21 @@ def test_the_prefix_examples_are_legal_and_valid() -> None:
         sample = json.loads(example)
         ENVELOPE.model_validate(sample)
         _validator(ENVELOPE).validate(sample)
+
+
+def test_a_hex_with_spaces_is_refused_by_the_schema_but_not_by_pydantic() -> None:
+    """의도한 차이 ② - `bytes.fromhex`는 바이트 사이 공백을 받지만 문법의 패턴은 안 받는다."""
+    sample = _gen({"kind": "literal", "hex": "41 42"})
+
+    ENVELOPE.model_validate(sample)
+    assert not _validator(ENVELOPE).is_valid(sample)
+
+
+def test_the_hex_branch_carries_no_max_length_for_the_grammar() -> None:
+    """xgrammar는 `pattern`과 `maxLength`를 같이 못 받아 길이를 무시하고 경고한다 — 문법용 갈래에서
+    빼고, 길이 상한은 pydantic(`PovSegment.hex` `max_length`)이 본다."""
+    hex_schema = ENVELOPE.model_json_schema()["$defs"]["LiteralSegment"]["properties"]["hex"]
+
+    assert "maxLength" not in hex_schema and "pattern" in hex_schema
+    parent = PovActionNamed.model_json_schema()["$defs"]["PovSegment"]["properties"]["hex"]
+    assert parent["anyOf"][0]["maxLength"]  # 부모(검증)는 그대로 길이 상한을 든다

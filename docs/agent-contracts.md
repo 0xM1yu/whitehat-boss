@@ -825,7 +825,8 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   사라졌다. run_20261016_0001(v9) 8단계의 3 hop · 6시도가 그 모양(`{"action":"gen","rationale":…,"poc_sha256":null}`)으로
   pydantic에 거절됐다. body는 v10과 같다. Auditor v18(#602 · PR #699)과 같은 처방이다(`tests/test_pov_v11.py` ·
   `tests/test_check_decoder_schemas.py`). v11로 돈 run은 0건 · 모델이 `spec`을 채우는지는 미실측이다.
-  ⚠ **Auditor 봉투도 같은 위험이 있는지는 안 봤다** — 판별 합 봉투의 키 순서와 Auditor prefix 예시의 순서가 맞는지는 이 PR 범위 밖이다.
+  Auditor v19도 같은 위험이 있는지 봤다(2026-10-17): 액션 예시 셋과 `procedure` 예시(audit·defense·refutation 포함)의 키 순서가 판별 합
+  봉투(`AuditorProcedureProbeInputDiscriminatedAction`)의 키 순서와 같다 — 어긋남 없음.
 - 산출물: 루프가 서면(`_pov_finish`) **마지막 `gen`의 PoC**(⏵ 2026-10-11: `submit`의 `poc_sha256`이 앞선 gen을 지명했으면 그 gen)가 `{run_dir}/pov_poc/NNNN.poc`로 남고(루프당 최대
   한 파일 — 기록·회수만 하며 Evidence로 승격하지 않는다), 종단 이벤트(`pov_generated`·`pov_skipped`)가
   `poc_ref`·`poc_digest`를 싣는다. 쓰기가 실패해도 run은 간다(`poc_write_error`). 예산 소진·서버 쪽

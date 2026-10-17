@@ -145,7 +145,7 @@ def test_only_critic_v8_and_pov_v7_to_v11_declare_exactly_the_relayed_pair() -> 
     # ⏵ 2026-10-15 - PoV v8(= v7 + Hop budget 한 줄)도 같은 선언을 물려받았다
     # ⏵ 2026-10-15 - PoV v9(= v8 − 과제 고유 사실 한 줄)도 그렇다
     # ⏵ 2026-10-16 - PoV v10(= v9 + 도구 서술 다섯 군데 정정 · 이슈 #698)도 그렇다
-    # ⏵ 2026-10-17 - PoV v11(= v10 prefix·body 그대로 + 판별 합 봉투 · 이슈 #704)도 그렇다
+    # ⏵ 2026-10-17 - PoV v11(= v10 + Output 두 줄 · 판별 합 봉투 · 이슈 #704)도 그렇다
     assert _declaring("critic") == ["v8"] and _declaring("pov") == ["v10", "v11", "v7", "v8", "v9"]
     for role, version in (("critic", "v8"), ("pov", "v7"), ("pov", "v8"), ("pov", "v9"),
                           ("pov", "v10"), ("pov", "v11")):
