@@ -112,7 +112,7 @@ def _facts(body: str) -> dict:
 # --- (a) 홉이 돈 Finding - 관측이 실리고 FACTS에 수가 든다 -------------------------------
 
 
-@pytest.mark.parametrize("version", ["v6", "v7", "v8"])
+@pytest.mark.parametrize("version", ["v6", "v7", "v8", "v9"])
 def test_a_hopped_finding_puts_its_observations_and_the_hop_count_in_the_critic_prompt(
     ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
@@ -159,7 +159,7 @@ def _pre_change_critic_body(ctx, finding, decision_id: str):  # noqa: ANN001, AN
     )
 
 
-@pytest.mark.parametrize("version", ["v6", "v7", "v8"])
+@pytest.mark.parametrize("version", ["v6", "v7", "v8", "v9"])
 @pytest.mark.parametrize("shape", ["one_shot", "answer_at_hop0"])
 def test_a_finding_without_hops_renders_the_critic_prompt_exactly_as_before(
     ctx, monkeypatch, tmp_path, shape, version  # noqa: ANN001
@@ -187,7 +187,7 @@ def test_a_finding_without_hops_renders_the_critic_prompt_exactly_as_before(
 # --- (c) 판이 문이다 - content-aware만 받는다 ----------------------------------------------
 
 
-@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"])
+@pytest.mark.parametrize("version", ["v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8", "v9"])
 def test_only_content_aware_critic_versions_render_the_observations(
     ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
@@ -236,7 +236,7 @@ def _hop_events_after_critic(ctx, finding, sink, *, context_limit, version="v6")
     return _events(ctx, EventKind.CRITIC_HOP_OBSERVATIONS)
 
 
-@pytest.mark.parametrize("version", ["v6", "v7", "v8"])
+@pytest.mark.parametrize("version", ["v6", "v7", "v8", "v9"])
 def test_observations_that_can_exceed_the_seat_share_are_recorded_not_cut(
     ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:
@@ -298,7 +298,7 @@ def test_a_fake_seat_has_no_window_so_it_records_no_estimate_and_no_warning(
 # --- (f) 러너 - 5단계가 모으고 7단계가 넘긴다 -----------------------------------------------
 
 
-@pytest.mark.parametrize("version", ["v6", "v7", "v8"])
+@pytest.mark.parametrize("version", ["v6", "v7", "v8", "v9"])
 def test_the_runner_keeps_the_hop_observations_per_finding_and_hands_them_to_critic(
     ctx, monkeypatch, tmp_path, version  # noqa: ANN001
 ) -> None:

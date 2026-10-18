@@ -819,6 +819,8 @@ def test_no_profile_selects_a_prompt_whose_meta_says_disk_only(profile: str) -> 
         ("critic", "gpt-oss-20b", "v7", []),
         # 같은 문형의 서빙 판(2026-10-14 v8) - 배선된 판이라 빈 목록이다.
         ("critic", "gpt-oss-20b", "v8", []),
+        # 같은 문형의 서빙 판(2026-10-18 v9 · #706) - 배선된 판이라 빈 목록이다.
+        ("critic", "gpt-oss-20b", "v9", []),
         # 실물 형제 문형 — prompts/auditor/v3/meta.yaml:5-6 「지금은 어느 registry 엔트리도
         # 이 버전을 고르지 않는다」. 구절이 주석 줄바꿈으로 갈리니 줄바꿈을 접고 읽어야 한다.
         ("auditor", "qwen3.8-27b", "v3", ["auditor/v3"]),
@@ -908,6 +910,7 @@ def test_the_unselected_claim_reader_flags_the_known_unselected_metas(
         # 음성 통제 — prompts/critic/v7/meta.yaml:1-2는 배선된 판의 문형이다(2026-10-14 v7 배선).
         ("critic", "v7", set()),
         ("critic", "v8", set()),  # 2026-10-14 서빙 판
+        ("critic", "v9", set()),  # 2026-10-18 서빙 판
         # prompts/auditor/v3/meta.yaml:5-6 — 셋째 철자가 주석 줄바꿈으로 갈린다.
         ("auditor", "v3", {"어느 registry 엔트리도 이 버전을 고르지 않는다"}),
         # prompts/auditor/v4/meta.yaml:4-5 — v6 배선으로 미선택이 되어 v3와 같은 철자를 쓰고,

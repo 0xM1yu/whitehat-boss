@@ -1537,7 +1537,7 @@ def test_two_pocs_from_one_finding_are_separated_by_the_smaller_bytes() -> None:
 # 맨 앞은 이제 ⓿ 후보 자기 `vul` 응답 코드이고 판정은 그 바로 뒤다, 아래 「지정 키의 첫 계단」 절
 # · #637).
 # 0 = uphold, 1 = 판정 없음(미경유·판정 호출 실패), 2 = 보류
-# (이슈 #604 (b)의 순서 - 반박은 3이고 풀 밖이다).
+# (이슈 #604 (b)의 순서 - 반박은 3이다. ⏵ 2026-10-18 이슈 #706 - 전엔 풀 밖이었고 이제 풀에 든다).
 
 
 def test_an_upheld_poc_is_designated_over_a_held_poc_with_a_higher_confidence() -> None:
@@ -2281,3 +2281,24 @@ def test_a_run_without_a_canary_reference_leaves_the_summary_keys_as_they_were(
 
     assert result.record.oracle is not None
     assert not {"canary_path", "canary_sha256"} & result.record.oracle.keys()
+
+
+def test_a_rebutted_poc_loses_on_the_same_crash_tier_but_wins_when_it_alone_crashed() -> None:
+    """반박(3)은 판정 계단 맨 뒤다 - ⏵ 2026-10-18 (이슈 #706) 반박도 추가 PoV 풀에 들어 그 PoC가
+    후보가 된다. 판정 계단은 자기 `vul` 응답 코드 계단 **뒤**라, 둘 다 크래시면 E4 반박이 E0 보류에
+    지고(`critic_verdict`) 반박만 크래시를 냈으면 반박이 이긴다(`vul_crash`)."""
+    rebutted = _coded("f_rebut", b"\x01rebut", 1)
+    held_crashed = _coded("f_held", b"\x02held", 1)
+    held_clean = _coded("f_held", b"\x02held", 0)
+    grades = {"f_rebut": EvidenceGrade.E4, "f_held": EvidenceGrade.E0}
+    verdicts = {"f_rebut": 3, "f_held": 2}
+
+    both = runner._designate_final(
+        _ledger_of(rebutted, held_crashed), grades, _flat(*grades), verdicts
+    )
+    alone = runner._designate_final(
+        _ledger_of(held_clean, rebutted), grades, _flat(*grades), verdicts
+    )
+
+    assert both == (held_crashed, "critic_verdict", None)
+    assert alone == (rebutted, "vul_crash", None)

@@ -140,6 +140,7 @@ profiles:
     # - **Critic = §1의 `gpt-oss-20b`**(reasoning_effort: high). 프롬프트는 v8이다(2026-10-14 — #497이 2026-10-05에 v6으로 배선했고
     #   S20 Phase 11이 v7로, Phase 14가 v8로 올렸다. v7은 SOURCE로 직접 검증하는 5-check 절차이고 v8은 거기에 SOURCE 새 블록 둘 · Auditor 도구 관측 절 · `auditor_hops`의 서술을 더하고 그 절과 어긋나는 한 문장을 고쳤다 — 입력은 v6과 같다).
     #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
+    #   ⏵ 2026-10-18 — **v9로 올렸다**(이슈 #706). v9는 v8의 `rebut` 정의 한 줄과 축 문단 하나만 바꿨다(입력은 v8과 같다).
     # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
     #   registry가 근거 본문 배선과 함께 `v3`를 골랐다(auditor/v3는 2026-09-22 #237로 디스크에 있었고,
     #   올린 것은 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS` 배선과 같은 PR이다). 같은 날 #328 머지 뒤
