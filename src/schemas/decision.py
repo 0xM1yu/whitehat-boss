@@ -22,7 +22,7 @@ REBUT_IDS_ONLY = "rebut_ids_only"
 # 노드의 `_CONTENT_AWARE_VERSIONS`와 같은 이름 목록 패턴이다(meta 선언은 `prompts/`를 건드려야 해서
 # 안 썼다). ⚠ 판이 늘 때 여기를 잊으면 새 판에서 ID-only `rebut`이 **조용히** 근거가 된다 -
 # `tests/test_critic_v8.py`가 `prompts/critic/`의 v8 이상 디렉터리가 이 집합에 드는지 문다.
-AXIS_ONLY_GROUNDING_VERSIONS = frozenset({"v8"})
+AXIS_ONLY_GROUNDING_VERSIONS = frozenset({"v8", "v9"})
 
 
 class Decision(HarnessModel):

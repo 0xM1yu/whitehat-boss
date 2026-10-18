@@ -9,10 +9,11 @@
 > 판정 B(점수): **없음.** `poc_records` 0행. #695로 GT 슬라이스(`slice_0524`)가 컷에 들었지만, Auditor `SOURCE` 조립이 GT 함수를 상한 밖으로
 > 밀어(#702 → PR #703에서 수정) Auditor가 GT를 보지 못했다. Finding 8개 중 GT 함수(`file_regexec`)를 다룬 것은 0이다. Critic이 근거로 「취약하다」고 쓴 Finding 둘은
 > `rebut`으로 빠졌다 — 하나는 모델이 근거와 반대로 판정했고, 하나는 Critic의 「Auditor 판단 반박」을 하네스가 「취약점 기각」으로 읽었다(§3 Critic · #706).
+> ⏵ 2026-10-18 — **이 둘째 해석은 틀렸다.** 둘 다 모델이 근거와 반대로 판정한 것이다(§3 Critic의 ⏵ 정정).
 > PoV는 사고(reasoning)에서는 6/6 GT 경로를 다뤘지만 `spec` 없는 `gen`만 냈다(#704).
 >
 > ⚠ **이 run은 수정 전 코드다.** `8e843c45` 기준이다. 이 run이 드러낸 결함 중 #698·#602(PR #699 · Auditor v18)와 #702(PR #703 · Auditor v19)는
-> 2026-10-17 main(`d61f3c51`)에서 고쳐졌다. 남은 코드 결함은 #704(PoV 스키마) · #706(Critic `rebut` 방향) · PoV 대상 순위(§3 PoV) · #613(연속 파싱 실패 상한)이다.
+> 2026-10-17 main(`d61f3c51`)에서 고쳐졌다. 남은 코드 결함은 #704(PoV 스키마) · #706(Critic `rebut` 방향 - ⏵ 2026-10-18 방향 문제가 아니라 판정–근거 불일치로 정정됐다) · PoV 대상 순위(§3 PoV) · #613(연속 파싱 실패 상한)이다.
 > 재실행과 디코더 스키마 게이트는 §7에 있다.
 
 ## 메타
@@ -52,7 +53,7 @@
 | #695 효과 | ✅ 8번째 타깃이 `slice_0524`(`desc_symbol: file_regexec` · `desc_reserved: true`)로 바뀌었다. 1~7번은 10-16 run과 같다 [실측, trace `target_planned`] |
 | GT 분석 | 🔴 **안 됐다.** `slice_0524`의 Auditor `SOURCE`에 `file_regexec`·`softmagic.c`가 없었고(#702), Auditor 후보 셋 중 GT를 lookup한 것은 0이다 |
 | Auditor | 후보 13 · 호출 39 · Finding 8(triggerable 1) · **스키마 실패로 소실 5**(#602) · 컴파일 경로 probe 3/3 실패(#698) |
-| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706) |
+| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706). ⏵ 2026-10-18 — 정정: 원인은 같다, 둘 다 판정–근거 불일치다 |
 | PoV | 대상 풀 5건 중 1순위 `find_0008`(「취약하지 않다」로 굳은 Finding)만 시도했다 [계산값, 코드] · 3 hop 6시도 모두 `gen`에 `spec` 없음 → hop 3 프롬프트(`0073_pov_hop3.md`)를 쓴 뒤 운영자 중단(#704) |
 | 판정 B — 점수 | **없음.** 채점기 제출 0 · `poc_records` 0행 [실측, `poc.db`] |
 
@@ -151,6 +152,21 @@
 - Critic 프롬프트·입력에 `trigger_status`는 없다(`prompts/critic/v8` · `nodes/critic.py`에서 0건) [코드 확인].
 - ADR 0015는 「근거 없는 `rebut`」을 다룬다. 이 건들은 근거가 있는 `rebut`의 방향 문제라 그 결정 밖이다.
 
+⏵ 2026-10-18 — **정정**(council 2026-10-18 4/4 · 이슈 #706). 위 둘째·셋째 불릿 — 「`dec_0004`는 정의대로 쓴 `rebut`이다」 ·
+「`rebut`의 뜻은 Auditor 결론과 반박 축을 함께 봐야 정해진다」 — 는 **틀렸다.** v8 prefix 13행(「as the Auditor decided」)만 읽고 같은
+파일 5절을 대조하지 않았다(CLAUDE.md §2.1). 5절은 축마다 「약점이 필요로 하는 조건」을 정의하고(`guard` = *no guard blocks every triggering
+value*) `rebut`은 그 조건이 성립 못 한다는 것이다 — Auditor 결론과 무관한 **절대값**이고, Critic은 그 결론(`trigger_status`)을 보지도 않는다
+(넷째 불릿). 그래서:
+
+- `dec_0004`의 rationale(「가드가 음수 `off`를 막지 못한다」)은 5절대로면 `uphold`의 근거다 — `dec_0001`과 **같은 판정–근거 불일치**다.
+- `dec_0005`는 대조군이 아니라 정의대로 쓴 `rebut`이다(`reachability` 조건이 성립 못 한다 → 취약하지 않다).
+- 이 run의 근거 있는 `rebut` 3건 중 2건이 판정–근거 불일치다(n=1). policy가 `rebut`을 Auditor 결론과 무관하게 `QUEUED`로 보내는 것은
+  정의와 맞다 — 하네스가 「잘못 읽은」 것이 아니다.
+
+후속은 이 정정을 넣은 PR이 한다: Critic v9(13행 문구를 「the weakness named in CLAIM」로 고치고 반박 축이 단언하는 것을 한 문단 더함) ·
+근거 있는 `rebut`도 추가 PoV 풀에 든다(정렬 계단 3 · ADR 0015 결정 4 ⏵ 2026-10-18). 이 run에 그 판정을 다시 놓으면 PoV의 1순위는
+`find_0005`(`triggerable` · `dec_0001`)다(`tests/test_nodes.py`의 재생 테스트) [계산값, 코드].
+
 ### PoV (8단계 · `feyospace-v1-small` · v9)
 
 | hop | 시도별 출력 토큰 | finish | 벽시계 | 결과 |
@@ -209,7 +225,7 @@
 | 우선순위 | 항목 | 현황 |
 | --- | --- | --- |
 | 높음 | PoV 디코더 스키마를 판별 합으로 | 이슈 #704 (새로 올림) |
-| 높음 | Critic `rebut`의 뜻을 Auditor 결론·반박 축과 함께 읽기 | #706 (선택지만 적었다) |
+| 높음 | Critic `rebut`의 뜻을 Auditor 결론·반박 축과 함께 읽기 | #706 (선택지만 적었다). ⏵ 2026-10-18 — 전제 정정(§3 Critic ⏵) · Critic v9 + 반박도 PoV 풀에 든다 |
 | 높음 | PoV 대상 순위에 Auditor 결론 반영 | §3 PoV가 근거 |
 | 높음 | main(Auditor v19 — PR #699·#703 포함)으로 같은 과제 재실행 | 미착수. PoV 스키마 판이 바뀌면 그 뒤 run의 8단계는 이 run과 바로 비교할 수 없다 |
 | 중간 | 연속 파싱 실패 상한 | #613 (측정 코멘트 추가) |

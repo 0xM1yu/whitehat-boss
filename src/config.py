@@ -653,9 +653,11 @@ class Thresholds(HarnessModel):
     # Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`). ⏵ 2026-10-15 — 판정 호출이
     # 실패해 버려진 것은 이제 든다(ADR 0015 결정 4 ⏵).
     # ⏵ 2026-10-11 — 보류(`need_evidence`)는 들고 정렬·지정에서 뒤다(이슈 #604).
+    # ⏵ 2026-10-18 — 반박(F-6)도 든다(이슈 #706 · @danielcho02 승인 · ADR 0015 결정 4 ⏵
+    # 2026-10-18). 풀은 `validated` 밖 Finding 전부이고 판정은 정렬 계단(반박 3 · 맨 뒤)만 정한다.
     # 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
-    # ⚠ **이 필터는 이 기능이 처음 겨냥한 run의 풀을 바꾸지 않는다** — 그 run(`run_20261003_0003`)의
+    # ⚠ **풀은 이 기능이 처음 겨냥한 run의 Finding을 거르지 않는다** — 그 run(`run_20261003_0003`)의
     # Finding 셋은 Critic을 안 거쳤고 전부 Auditor가 스스로 낸 부정 결론(`no_signal` ·
     # `confidence` 0.10·0.10·0.05)이다. 풀은 그것을 거르지 않고(결정 대기), 그런 Finding에서
     # PoV가 낼 PoC가 있는지는 미측정이다(출처: `docs/experiments/harness/2026-10-04-cybergym-
