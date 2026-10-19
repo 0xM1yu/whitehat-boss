@@ -110,7 +110,9 @@ def test_v9_prefix_is_the_v8_prefix_with_exactly_the_two_recorded_edits() -> Non
 
 
 def test_v9_no_longer_ties_rebut_to_the_auditor_decision() -> None:
-    """Critic은 Auditor 결론을 못 본다 - 그것에 기대 `rebut`을 정의하는 문장이 남으면 안 된다."""
+    """Critic 입력에 `trigger_status` 필드는 없다 - Auditor의 판단에 기대 `rebut`을 정의하는 문장이
+    남으면 안 된다(`no_signal`은 CLAIM의 「CWE 없음」으로 드러날 수 있지만 `rebut`의 뜻은
+    5절 정의다)."""
     assert "as the Auditor decided" not in _text(_V9 / "prefix.md")
 
 

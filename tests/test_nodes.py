@@ -1353,6 +1353,11 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
     )
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == ["find_0001"]
+    _with_top_n(ctx, 2)
+    assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == [
+        "find_0001",
+        "find_0003",
+    ], "상한 2면 반박도 든다(⏵ 2026-10-18 이슈 #706) - 보류 뒤다"
 
 
 def _ladder_state() -> runner._Accumulator:
@@ -1540,7 +1545,7 @@ def test_the_extra_pov_pool_reads_the_auditor_conclusion_first_on_the_20261016_r
 ) -> None:
     """2026-10-16 run 재생이다. 전 판(`8e843c45`)의 순서는 `find_0008 → 0012 → 0013 → 0004 →
     0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이 판정 계단 0으로
-    PoV의 유일한 시도를 가져갔다(Critic은 `trigger_status`를 안 본다 - 이슈 #706). 이제
+    PoV의 유일한 시도를 가져갔다(Critic 입력에 `trigger_status` 필드는 없다 - 이슈 #706). 이제
     Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
     `no_signal` 밖 결론인 `find_0004`(`reachability_unknown`)가 1순위였다. `no_signal` 넷 사이는
     종전 키(Critic 계단 → `confidence` → id)가 그대로 가른다.

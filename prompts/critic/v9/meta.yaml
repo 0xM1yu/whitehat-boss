@@ -12,7 +12,7 @@
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 #   prefix.md sha256 `c9c53207a6da6710f897f95eeb33af899219bf51ea3431f91120aa5edc83deb6`
 #   body.md   sha256 `44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2` (v8·v7 body와 같다)
-# ⚠ 이 판은 어느 run에도 안 쓰였다. 이 두 문장이 판정–근거 불일치(rationale은 「취약」인데 `rebut`)를 줄이는지는 미실측이다(n=1 run의 2/3이 근거의 전부다).
+# ⚠ 이 판은 어느 run에도 안 쓰였다(2026-10-18 기준). 이 두 문장이 판정–근거 불일치(rationale은 「취약」인데 `rebut`)를 줄이는지는 미실측이다(n=1 run의 2/3이 근거의 전부다).
 # v8 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
 role: critic
 version: v9
