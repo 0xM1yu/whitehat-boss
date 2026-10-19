@@ -5,9 +5,9 @@
 F-8(`validated` `critic_upheld`)이 같은 사유로 다른 상태에 간다.
 
 **Auditor의 원문 추론을 전달하지 않는다**(agent-contracts.md §2.3). 프롬프트에 실리는
-것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)이고, v6·v7은
-Auditor가 본 SOURCE도 싣는다. `rca_draft`는 넘기지 않는다 — 앞 모델의 설명을 보여 주면
-반박이 아니라 재진술이 돌아온다.
+것은 주장·경로·근거(ID·kind·ok·source, content-aware 판은 본문·위치도)이고, v6~v9는
+Auditor가 본 SOURCE도 싣는다(`_SOURCE_INPUT_VERSIONS`). `rca_draft`는 넘기지 않는다 — 앞
+모델의 설명을 보여 주면 반박이 아니라 재진술이 돌아온다.
 
 ⏵ 2026-10-13 (#600 H2ⓐ, 저자 결정 2026-10-10) — **Auditor 도구 루프의 홉 관측은 싣는다.** 가리는
 것은 Auditor의 *추론*(응답 턴·`rca_draft`)이고, 하네스가 렌더한 조회·도구의 *출력*(`lookup`이 푼

@@ -806,8 +806,8 @@ class Thresholds(HarnessModel):
     # (`cli._undescribed_source_options`는 Auditor meta를 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
     # `budgets.yaml`은 서빙 판(v16~v18 · ⏵ 2026-10-17 v19)이 서술해 1로 켠다. **Critic·PoV 좌석도
     # 같은 가드다**
-    # (#676): 이 줄을 선언한 판(Critic v8 · PoV v7 - meta `source_options`)이 아니면서 SOURCE를
-    # 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
+    # (#676): 이 줄을 선언한 판(Critic v8·v9 · PoV v7~v11 - meta `source_options`)이 아니면서
+    # SOURCE를 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
     # (`RELAYED_SOURCE_OPTIONS` · docs/agent-contracts.md §4).
     auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).

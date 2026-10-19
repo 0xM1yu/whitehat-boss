@@ -1529,7 +1529,7 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > `config.RELAYED_SOURCE_OPTIONS`를 **SOURCE를 받는 판**(`critic._SOURCE_INPUT_VERSIONS` · `pov._WIDE_INPUT_VERSIONS`)의
 > 선언과 맞춘다. 선언이 없으면(Critic v7 이하 · PoV v6 이하) 「서술하지 않는다」로 읽어 `옵션(critic/v7)` 꼴로 이름을
 > 대고 run은 시작하지 않으며 doctor는 ERROR를 낸다. SOURCE를 안 받는 판(Critic v5 이하 · PoV v2) · Fake 좌석 · run이 닿지
-> 않는 단계의 좌석 · 꺼진 옵션은 막지 않는다. 이 둘이 아닌 옵션(`auditor_guards` 등)은 이 가드에 안 든다 - Critic v6·v7이
+> 않는 단계의 좌석 · 꺼진 옵션은 막지 않는다. 이 둘이 아닌 옵션(`auditor_guards` 등)은 이 가드에 안 든다 - Critic v6·v7(⏵ 2026-10-18 v8·v9도 같은 문장이다)이
 > 가드 문맥·정의·피호출 본문·호출자 창·쓰기 창을 한 문장으로 서술하고 PoV 판은 SOURCE 블록 종류를 열거하지 않아 서술이
 > 거짓이 되는 판이 없다(2026-10-15 prefix를 읽어 확인한 값).
 2. 공통 system prompt + weakness checklist + output schema는 **prefix로 고정**한다(prefix cache 적중 목적). 후보별 가변부는 항상 prefix 뒤에 붙인다.
