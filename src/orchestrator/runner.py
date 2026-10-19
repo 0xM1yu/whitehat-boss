@@ -1710,12 +1710,13 @@ def _pov_targets(
     빼면 그런 Finding의 PoV 기회가 영영 없고, 들이면 상한 안의 자리를 쓴다 - Auditor 결론 계단이
     먼저라 `triggerable` 반박은 1순위도 된다(아래 대가).
     ⚠ **대가 - 반박된 Finding의 PoC도 최종 제출이 될 수 있다.** `_designation_key`에서 판정 계단은
-    셋째다(자기 `vul` 응답 코드 · 제출 여부 다음). 앞 두 계단이 같은 후보끼리는 반박 PoC가 지므로,
-    최종이 되는 것은 그 두 계단에서 앞설 때(혼자 크래시를 냈다)와 후보가 그것뿐일 때
-    (`sole_candidate`)다. 그리고 이 풀 정렬에서는 Auditor 결론 계단이 판정 계단 **앞**이라
-    (⏵ 2026-10-17) 반박이 맨 뒤인 것은 **같은 Auditor 결론 계단 안에서만**이다 - `triggerable`인
-    반박 Finding은 `guarded`인 uphold Finding보다 앞선다. `_designation_key`에는 Auditor 계단이
-    없다.
+    셋째다(자기 `vul` 응답 코드 계단 크래시 < 모름 < 크래시 아님 · 제출 여부 다음). 앞 두 계단이
+    같은 다른 판정의 후보에게는 반박 PoC가 진다. 이기는 것은 그 두 계단에서 앞설 때(자기는 크래시 ·
+    상대가 크래시 아님인데 자기는 모름 · 자기는 제출이고 상대는 구제된 중간 gen)와 후보가 전부
+    반박일 때(등급 이하가 가른다 - 유일 후보 `sole_candidate` 포함)다. 그리고 이 풀 정렬에서는
+    Auditor 결론 계단이 판정 계단 **앞**이라 (⏵ 2026-10-17) 반박이 맨 뒤인 것은 **같은 Auditor 결론
+    계단 안에서만**이다 - `triggerable`인 반박 Finding은 `guarded`인 uphold Finding보다 앞선다.
+    `_designation_key`에는 Auditor 계단이 없다.
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`

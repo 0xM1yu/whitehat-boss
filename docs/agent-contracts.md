@@ -750,7 +750,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   `thresholds.pov_attempt_top_n`이 양수면 `validated` 밖의 대상도 같은 루프에서 돈다(풀 —
   `runner._pov_targets`. ⏵ 2026-10-17 — 그 추가 대상의 순서는 Auditor 결론 계단(`trigger_status`:
   triggerable → reachability_unknown·`null` → guarded·no_reach → no_signal) → Critic 판정 계단(uphold →
-  미경유·판정 호출 실패 → 보류) → `confidence` 내림차순 → `finding_id`다). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
+  미경유·판정 호출 실패 → 보류 → 반박 - ⏵ 2026-10-18 반박도 풀에 든다, #706) → `confidence` 내림차순 → `finding_id`다). 그렇게 올라온 `BudgetExhausted`·`ModelGatewayError`(위와 같은 범위)로 끊긴
   run은, 오라클에 이미 낸 후보나 구제된 중간 gen(`OracleLedger.pool`)이 있거나 끊긴 곳이 그 **추가 대상**이면 낸 PoC의 최종
   지정(`fix` 다리·판정 조회)은 하고 끝난다(#532).
   ⏵ 2026-10-15(@danielcho02 승인) — **낸 PoC나 구제된 중간 gen(`OracleLedger.pool`)이 있으면 예외 종류를 가리지 않는다.** PoV 루프를 끊은 것이 어떤
@@ -848,7 +848,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   때문이다([연구](research/2026-09-29-cybergym-pov-design.md) 1.3절). **지정 근거는 아홉이다**(⏵ 2026-10-11 — `critic_verdict`가 붙었다 · ⏵ 2026-10-14 — `vul_crash`가 맨 앞에 붙었다 · ⏵ 2026-10-15 — `submitted_over_rescued`가 그 바로 뒤에 붙었다) — 후보가 하나뿐이라 고를 것이 없었거나(`sole_candidate`), 후보는
   여럿인데 **PoC 바이트가 전부 같아** 선택이 없었거나(`sole_poc`), 전순서가
   갈랐다(`vul_crash`·`submitted_over_rescued`·`critic_verdict`·`top_grade`·`top_confidence`·`smallest_poc`·`poc_digest` — ⓿후보 자기 `vul` 제출 응답 코드의 계단(크래시 → 모름 → 크래시 아님, 이슈 #637 · [ADR 0013](decisions/0013-no-auto-promotion-of-intermediate-gens.md) 결정 2 개정) ⓿′제출된 후보 → 구제된 중간 gen(⏵ 2026-10-15) ⓪Critic 판정
-  (uphold → 미경유·판정 호출 실패 → 보류 순 ⏵ 2026-10-12) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
+  (uphold → 미경유·판정 호출 실패 → 보류 순 ⏵ 2026-10-12 · ⏵ 2026-10-18 맨 뒤에 반박 - #706) ①내부 근거 등급 ②`confidence` ③작은 바이트 ④PoC 해시 순이고, 찍히는 이름이 **실제로 가른 단계**다 — 한 코드 계단 안에서는 구제가 없는 run에서 ⓪~④가 개정 전과 같은 순서를 낸다). 등급·`confidence`·Critic 판정(⏵ 2026-10-11 — 셋)을
   모르는 후보가 있으면 지정하지 않고 `fix` 다리·판정 조회는 안 돈다(`oracle_final`은
   `status=none` · `reason`이 `grade_unknown` — 이름은 등급 미상에서 굳었지만 셋을 같이 본다. 현
   러너로는 닿지 않는 방어 분기다): **위치(처음·마지막)나 채점기 점수로는 고르지 않는다** — 2026-10-03에 @danielcho02가

@@ -1065,8 +1065,8 @@ def test_a_gate_refusal_leaves_the_task_work_dir_free_for_the_retry(
         monkeypatch.setattr(
             cli, "_undescribed_source_options", lambda config: ["bogus(auditor/v4)"]
         )
-    # Critic·PoV 좌석 가드(PR #676)도 같은 논법이다 - 저장소 설정(Critic v8 · PoV v7)은 서술하는
-    # 판이라 검출을 갈아끼워 게이트가 **서는 자리**를 본다.
+    # Critic·PoV 좌석 가드(PR #676)도 같은 논법이다 - 저장소 설정(Critic v9 · PoV v11 -
+    # 2026-10-18)은 서술하는 판이라 검출을 갈아끼워 게이트가 **서는 자리**를 본다.
     if defect == "undescribed-relayed":
         monkeypatch.setattr(
             cli, "_undescribed_relayed_options", lambda config, **_: ["bogus(critic/v7)"]

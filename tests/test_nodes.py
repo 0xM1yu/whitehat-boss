@@ -1341,7 +1341,9 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
 
-    rebutted = _finding("find_0003", state=FindingState.QUEUED, confidence=0.5)
+    # 반박의 `confidence`를 보류(0.99)보다 높여 계단 값만으로 가르게 한다 - 0.5면 반박을
+    # 계단 2에 두는 변이도 `confidence`로 같은 결과가 나왔다.
+    rebutted = _finding("find_0003", state=FindingState.QUEUED, confidence=1.0)
     state2 = runner._Accumulator()
     state2.update(held)
     state2.update(rebutted)
@@ -1537,8 +1539,9 @@ def test_the_extra_pov_pool_reads_the_auditor_conclusion_first_on_the_20261016_r
     ctx: RunContext, limit: int, expected: list[str]
 ) -> None:
     """2026-10-16 run 재생이다. 전 판(`8e843c45`)의 순서는 `find_0008 → 0012 → 0013 → 0004 →
-    0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한(둘 다 「취약하지 않다」) `find_0008`이
-    PoV의 유일한 시도를 가져갔다. 이제 Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
+    0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이 판정 계단 0으로
+    PoV의 유일한 시도를 가져갔다(Critic은 `trigger_status`를 안 본다 - 이슈 #706). 이제
+    Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
     `no_signal` 밖 결론인 `find_0004`(`reachability_unknown`)가 1순위였다. `no_signal` 넷 사이는
     종전 키(Critic 계단 → `confidence` → id)가 그대로 가른다.
     ⏵ 2026-10-18 (이슈 #706) - 반박 셋도 풀에 든다. 그래서 1순위는 Auditor `triggerable` · Critic

@@ -17,6 +17,6 @@
 role: critic
 version: v9
 output_schema: DecisionDraft
-description: Critic v8에서 rebut의 정의 한 줄을 Auditor 결론과 무관한 절대값으로 고치고, 반박 축이 단언하는 것과 조건이 성립한다는 근거는 uphold 쪽이라는 한 문단을 더한 판입니다. 판정 절차·출력 규칙·축 어휘는 v8과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
+description: Critic v8에서 rebut의 정의 한 줄을 Auditor 결론에 대한 상대값으로 읽히지 않게 고치고(v8의 rebut도 5절 정의로는 절대값이다), 반박 축이 단언하는 것과 조건이 성립한다는 근거는 uphold 쪽이라는 한 문단을 더한 판입니다. 판정 절차·출력 규칙·축 어휘는 v8과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
 # v8과 같은 선언이다(PR #676 가드 - `cli._undescribed_relayed_options`가 읽는다). v9 prefix의 SOURCE 서술은 v8과 바이트 동일이다.
 source_options: [auditor_write_window_marker, auditor_input_context]
