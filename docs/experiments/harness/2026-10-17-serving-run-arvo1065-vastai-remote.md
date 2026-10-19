@@ -53,7 +53,7 @@
 | #695 효과 | ✅ 8번째 타깃이 `slice_0524`(`desc_symbol: file_regexec` · `desc_reserved: true`)로 바뀌었다. 1~7번은 10-16 run과 같다 [실측, trace `target_planned`] |
 | GT 분석 | 🔴 **안 됐다.** `slice_0524`의 Auditor `SOURCE`에 `file_regexec`·`softmagic.c`가 없었고(#702), Auditor 후보 셋 중 GT를 lookup한 것은 0이다 |
 | Auditor | 후보 13 · 호출 39 · Finding 8(triggerable 1) · **스키마 실패로 소실 5**(#602) · 컴파일 경로 probe 3/3 실패(#698) |
-| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706). ⏵ 2026-10-18 — 정정: 원인은 같다, 둘 다 판정–근거 불일치다 |
+| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706). ⏵ 2026-10-18 — 정정: 분류는 같다(둘 다 판정–근거 불일치 - rationale은 「취약」인데 `rebut`). 모델이 왜 그렇게 냈는지는 미측정이다 |
 | PoV | 대상 풀 5건 중 1순위 `find_0008`(「취약하지 않다」로 굳은 Finding — ⏵ 2026-10-18 — 「동의」로 단정할 수 없다: `uphold`는 CLAIM의 약점이 SOURCE상 성립한다는 판정이고 Critic 입력에 `trigger_status` 필드는 없다. 다만 `no_signal`은 `cwe`가 null이면 CLAIM에 「CWE 없음」으로 드러날 수 있어, 이 건의 `uphold`가 무엇을 지지했는지는 판정 원문(`state.db` · 이 장비에 없다) 없이 가르지 못한다(§3 Critic의 ⏵ 정정))만 시도했다 [계산값, 코드] · 3 hop 6시도 모두 `gen`에 `spec` 없음 → hop 3 프롬프트(`0073_pov_hop3.md`)를 쓴 뒤 운영자 중단(#704) |
 | 판정 B — 점수 | **없음.** 채점기 제출 0 · `poc_records` 0행 [실측, `poc.db`] |
 

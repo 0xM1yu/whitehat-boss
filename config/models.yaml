@@ -245,7 +245,7 @@ models:
     # v7의 값이다. v8 prefix는 21,471자다(`len(prefix)`로 직접 센 값 · ⏵ 2026-10-15 Auditor 도구 관측 절·`auditor_hops` 서술과 「별도 호출」 문장 정정 뒤) -
     # **토큰 수는 미실측**이다.
     # ⏵ 2026-10-18 — v8에서 **v9**로 올렸다(이슈 #706 · council 2026-10-18 · @danielcho02 승인). v9 = v8 + prefix 두 자리 -
-    # ① `rebut` 정의 13행의 「as the Auditor decided」(Auditor 결론에 대한 상대값으로 읽힌다 - Critic 입력에 `trigger_status` 필드가 없다)를
+    # ① `rebut` 정의 13행의 「as the Auditor decided」(Auditor 결론에 대한 상대값으로 읽힐 수 있다 - Critic 입력에 `trigger_status` 필드는 없다. 다만 `no_signal`은 CLAIM의 「CWE 없음」으로 드러날 수 있다)를
     # 「the weakness named in CLAIM」로 ② 5절 축 목록 뒤에 반박 축이 단언하는 것(`["guard"]` = 가드가 모든 트리거 값을 막는다)과
     # 조건이 성립한다는 근거는 `uphold` 쪽이라는 한 문단. body·판정 절차·출력 규칙·축 어휘는 v8과 같다(`prompts/critic/v9/meta.yaml`).
     # 위 「v8로 돈 이 저장소 run은 0건」은 그 날의 서술이다 - v8은 2026-10-16 `run_20261016_0001`에서 한 번 돌았고(rebut 3 중 2건이

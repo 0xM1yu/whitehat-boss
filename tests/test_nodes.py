@@ -1357,7 +1357,7 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
     assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == [
         "find_0001",
         "find_0003",
-    ], "상한 2면 반박도 든다(⏵ 2026-10-18 이슈 #706) - 보류 뒤다"
+    ], "상한 2면 반박도 든다(⏵ 2026-10-18 이슈 #706) - 같은 Auditor 계단 안에서 보류 뒤다"
 
 
 def _ladder_state() -> runner._Accumulator:
@@ -1419,7 +1419,8 @@ def test_the_extra_pov_pool_orders_upheld_then_uncritiqued_then_held_then_rebutt
     ctx: RunContext, limit: int, expected: list[str]
 ) -> None:
     """상한이 차는 쪽에서 자르는 순서다 - `confidence`는 거꾸로(0.1 · 0.3 · 0.85)여도 판정 계단이
-    앞선다. 반박(`find_0004` · 0.99)은 맨 뒤다(⏵ 2026-10-18 이슈 #706 - 전엔 풀 밖이었다). 미경유를
+    앞선다. 반박(`find_0004` · 0.99)은 Auditor 계단이 같은 이 사다리에서 맨 뒤다(⏵ 2026-10-18
+    이슈 #706 - 전엔 풀 밖이었다). 미경유를
     보류와 같은 계단에 두거나(`not any(UPHOLD)`) uphold와 같은 계단에 두는 변이는 상한 1·2에서,
     반박을 보류 앞에 두는 변이는 상한 3에서 빨개진다."""
     _with_top_n(ctx, limit)
@@ -1614,7 +1615,7 @@ def test_the_auditor_rank_comes_before_the_critic_rank(
     ]
 
 
-def test_a_stage_7_rebuttal_puts_the_finding_last_in_the_extra_pov_pool(
+def test_a_stage_7_rebuttal_ranks_after_an_upheld_finding_in_the_same_auditor_tier(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**실제 7단계가 쓴 `state.decisions`가 풀 정렬에 읽힌다** - 위 검사들은 `decisions`를 손으로

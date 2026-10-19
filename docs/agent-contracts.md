@@ -1337,10 +1337,10 @@ v10의 스키마·산문은 안 고쳤다(요청 바이트가 그대로다). 「
 > 위 2026-09-29·10-03의 Critic v1 서술은 각 날짜의 이력이고 2026-10-05의 현재 판은 v6이었다.
 > 규칙 5·재측정은 이번에도 돌지 않았다(실모델 v6 관측 0회). 입력 누락을 먼저 해소했다.
 >
-> ⏵ **2026-10-14 — Critic v6 → v7**(S20 Phase 11). 현재 판은 v7이다. 입력은 그대로이고 지시가 SOURCE 직접 검증(5-check)으로
+> ⏵ **2026-10-14 — Critic v6 → v7**(S20 Phase 11). 그날의 판은 v7이었다. 입력은 그대로이고 지시가 SOURCE 직접 검증(5-check)으로
 > 바뀌었다. 규칙 1이 걸린다 — v7 뒤 run은 v6 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v7 run 0건, 미실측).
 >
-> ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 그날의 판은 Critic v8 · PoV v7이었다. 입력 데이터는 그대로이고 **서술만** 더하거나 고쳤다 - Critic v8은 v7 prefix에 편집 넷을 했다: SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고, 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절(Evidence도 SOURCE도 아닌 맥락)과 FACTS `auditor_hops`의 서술을 더했고(편집 둘), 「별도 호출」 문장이 그 절과 어긋나 고쳤다(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
+> ⏵ **2026-10-14 — Critic v7 → v8 · PoV v6 → v7**(S20 Phase 14 · 이슈 #669·#649). 그날의 판은 Critic v8 · PoV v7이었다. 입력 데이터는 그대로이고 **서술만** 더하거나 고쳤다 - Critic v8은 v7 prefix에 편집 넷을 했다: SOURCE 계약 절의 블록 목록에 입력 맥락 함수와 쓰기 지점 창 표지 줄(`/* ... +N more write windows not shown ... */` - 하네스 생성 텍스트)을 더했고, 신뢰 경계 절에 EVIDENCE 끝 Auditor 도구 관측 절(Evidence도 SOURCE도 아닌 맥락)과 FACTS `auditor_hops`의 서술을 더했고(편집 둘), 「별도 호출」 문장이 그 절과 어긋나 고쳤다(body는 v7과 바이트 동일 · 판정 절차·출력 규칙은 한 글자도 안 바꿨다), PoV v7은 위 PoV 절(「2026-10-14 — 서빙 pov 판이 v7」)의 세 곳을 고쳤다. 규칙 1이 걸린다 - v8·v7 뒤 run은 이전 판 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8·v7 run 0건, 미실측 - ⏵ 2026-10-18 v8은 2026-10-16 run에서 한 번 돌았다, n=1). Auditor v16의 같은 블록 서술(`prompts/auditor/v16/prefix.md`)과 말을 맞췄다.
 >
 > ⏵ **2026-10-15 — PoV v7 → v8**(S20 Phase 15 · ADR 0013 2026-10-15 개정). 그날의 판은 Critic v8 · PoV v8이었다. v8은 v7 prefix 「Hop budget」에 한 줄(submit 없이 끝난 Finding의 구제 가능성과 「기대지 말라」)만 더했다 - body·봉투·나머지는 v7과 바이트 동일이다(`tests/test_pov_v8.py`). 규칙 1이 걸린다 - v8 뒤 run은 v7 이하 run과 직접 비교하지 않는다. 규칙 5·재측정은 돌지 않았다(이 저장소의 v8 run 0건, 미실측).
 >

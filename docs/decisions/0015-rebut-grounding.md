@@ -1,7 +1,7 @@
 # 0015. 근거 없는 `rebut`은 `need_evidence`로 간다 - 근거는 인용 ID 또는 닫힌 어휘의 반박 축이다
 
 - 상태: **제안** - 승인은 @danielcho02
-- ⏵ 2026-10-15 - 맨 아래 2026-10-15 개정(결정 2·4)은 @danielcho02가 승인했다. 위 상태 줄은 원 결정(2026-10-13)의 것이라 그대로 둔다.
+- ⏵ 2026-10-15 - 맨 아래 2026-10-15 개정(결정 2·4)은 @danielcho02가 승인했다. ⏵ 2026-10-18 - 맨 아래 2026-10-18 재개정(결정 4 · 이슈 #706)도 @danielcho02가 승인했다. 위 상태 줄은 원 결정(2026-10-13)의 것이라 그대로 둔다.
 - 일자: 2026-10-13
 - 관련: [PR #588](https://github.com/0xM1yu/whitehat-boss/pull/588)(Critic v7 - 미머지, 디스크만) ·
   이슈 [#604](https://github.com/0xM1yu/whitehat-boss/issues/604)(`need_evidence` 5/5가 PoV 풀을 비움 - 닫힘) ·
@@ -252,7 +252,7 @@ v7이 서빙 중이므로 `normalize`를 `UPHOLD`로 되돌리는 것은 서빙�
 - **왜.** `rebut`은 모델의 자기 신고이고 하네스는 인용한 코드가 SOURCE에 있는지 안 본다(P0b 보류). 2026-10-16 arvo:1065 run(`run_20261016_0001` · Critic v8)의 근거 있는 `rebut` 3건 중 2건(dec_0001 arithmetic · dec_0004 guard)은 rationale로 「취약하다」를 쓰고 `rebut`을 냈다(`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 · n=1). 빼면 그런 Finding의 PoV 기회가 영영 없고, 들이면 `pov_attempt_top_n` 안의 자리를 쓴다(아래 대가 - `triggerable` 반박은 1순위도 된다).
 - **이슈 #706의 전제는 정정됐다.** 이슈는 v8 `rebut`을 Auditor 결론에 대한 **상대값**으로 읽고 policy가 `(trigger_status, rebuttal_axis)`로 뜻을 정하는 안 (a)를 들었다. council(4/4)은 그 전제를 기각했다 - v8 prefix 5절은 축마다 「약점이 필요로 하는 조건」을 정의하고 `rebut`은 그 조건이 성립 못 한다는 **절대값**이다(`guard` 축 `rebut` = 가드가 모든 트리거 값을 막는다). Critic 입력에 `trigger_status` 필드는 없다(`nodes/critic._describe_claim` - CLAIM은 제목·CWE). 다만 `no_signal`은 Auditor가 `cwe`를 null로 내면 CLAIM에 「CWE 없음」으로 드러날 수 있다(⏵ 2026-10-18 Santa 2라운드 정정 - 처음 판은 「`trigger_status`도 없다」에서 「결론을 못 본다」로 넘어갔다). 그래서 dec_0004는 「정의대로 쓴 `rebut`」이 아니라 dec_0001과 같은 판정–근거 불일치이고, (a)는 정당한 `guarded`+`guard` 기각을 보류 쪽으로 새게 만들어 기각했다. 상대값으로 읽힐 수 있는 v8 13행 문구는 Critic v9가 고쳤다(`prompts/critic/v9/meta.yaml`).
 - **불변식은 그대로다.** 「Critic은 반박을 못 해서 Finding을 승격시키지 않는다」 - 이 개정은 상태를 안 바꾼다. 정책 F-6(`queued` · `critic_rebutted`)·게이트·`validate` 루프는 그대로이고 PoV는 추가형이다(`_run_pov`).
-- **대가 - 반박된 Finding의 PoC도 최종 제출이 될 수 있다.** `_designation_key`에서 판정 계단은 셋째다(자기 `vul` 응답 코드 · 제출 여부 다음). 반박 PoC가 다른 판정의 후보를 이기는 것은 (i) 자기 `vul` 응답 코드 계단이 상대보다 앞설 때(크래시 < 모름 < 크래시 아님 - 둘 다 크래시면 같은 계단이라 이 계단으로는 못 이긴다), (ii) 같은 계단에서 자기는 제출이고 상대는 구제된 중간 gen일 때뿐이다. 앞 두 계단이 같으면 판정 계단에서 진다. 후보가 전부 반박이면 등급 이하가 가른다(유일 후보 `sole_candidate` 포함). 추가 풀 정렬에서는 Auditor 결론 계단(`_trigger_rank`)이 판정 계단 앞이라 `triggerable` 반박은 `guarded` uphold보다 앞선다.
+- **대가 - 반박된 Finding의 PoC도 최종 제출이 될 수 있다.** `_designation_key`에서 판정 계단은 셋째다(자기 `vul` 응답 코드 · 제출 여부 다음). 반박 PoC가 다른 판정의 후보를 이기는 것은 (i) 자기 `vul` 응답 코드 계단이 상대보다 앞설 때(크래시 < 모름 < 크래시 아님 - 둘 다 크래시면 같은 계단이라 이 계단으로는 못 이긴다), (ii) 같은 계단에서 자기는 제출이고 상대는 구제된 중간 gen일 때뿐이다. 앞 두 계단이 같으면 판정 계단에서 진다. 후보가 전부 반박이면 판정 계단이 동점이라 앞 두 계단 다음에 등급 이하가 가르고, 후보가 하나면 그것이 최종이다(`sole_candidate`). 추가 풀 정렬에서는 Auditor 결론 계단(`_trigger_rank`)이 판정 계단 앞이라 `triggerable` 반박은 `guarded` uphold보다 앞선다.
 - **지표가 바뀐다.** 그 날 앞뒤 run은 PoV 시도 수·대상 열을 한 열에 놓지 않는다(`docs/evaluation.md` 단계별 후보 제거율 행). `_pov_pool_empty_reason`의 다섯 칸은 K>0에서 전부 0이고 K=0에서만 정보다.
 - **v9도 축만 근거로 센다.** `AXIS_ONLY_GROUNDING_VERSIONS`는 `{"v8", "v9"}`이고 위 「되돌리기」 ⏵의 안전 조건은 「서빙을 **v9·v8·v7**에서 v6으로 되돌린 뒤」다.
-- **미측정.** 반박된 Finding발 PoC가 채점기에 닿은 run 0건 · v9 run 0건. 되돌리기는 이 개정을 넣은 PR의 `runner.py`·테스트 변경을 되돌린다 - `_critic_set_aside` 함수와 `_pov_targets`의 필터, 빈 풀 문장, 풀 판정표 테스트다.
+- **미측정.** 반박된 Finding발 PoC가 채점기에 닿은 run 0건 · v9 run 0건. 되돌리기는 이 개정을 넣은 PR(#711)과 그 후속 정정 PR의 `runner.py`·테스트 변경을 되돌린다 - `_critic_set_aside` 함수와 `_pov_targets`의 필터, 빈 풀 문장, 풀 판정표 테스트다.
