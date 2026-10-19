@@ -69,7 +69,7 @@ def test_every_disk_version_from_the_aware_floor_up_is_in_the_set(role):
 
 
 def test_critic_prefix_describes_facts_source_exactly_for_source_input_versions():
-    """양방향. 양성 v6·v7(prefix가 `FACTS.source`를 서술), 음성 v1~v5(안 서술) - 전부 저장소 실물.
+    """양방향. 양성 v6~v9(prefix가 `FACTS.source`를 서술), 음성 v1~v5(안 서술) - 전부 저장소 실물.
     ⚠ 철자 pin이다: `FACTS.source`라는 글자가 prefix에 있는지만 묻고 계약의 뜻은 못 묻는다."""
     described = {
         f"v{n}"

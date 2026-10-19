@@ -1146,7 +1146,7 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 # 판정 없음 1 < 보류 2 < 반박 3 · ⏵ 2026-10-17부터 그 앞에 Auditor 결론 계단). 전엔 반박(F-6)을
 # 풀에서 뺐다(#490 MEDIUM-2 - 반박 PoC가 최종 제출이 되지 않게). ⏵ 2026-10-11 보류(이슈 #604) ·
 # ⏵ 2026-10-15 판정 호출 실패 · ⏵ 2026-10-18 반박 순으로 들였다. 아래 검사들은 **상한에 자리가
-# 남는 모양**으로 반박이 실제로 들고 맨 뒤에 서는지를 문다.
+# 남는 모양**으로 반박이 실제로 들고 같은 Auditor 계단 안에서 맨 뒤에 서는지를 문다.
 
 
 def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> Decision:
