@@ -1,7 +1,7 @@
 # 2026-10-18 - v8을 잇는 새 판(이슈 #706 · council 2026-10-18 · @danielcho02 승인). `rebut`의 뜻을 바꾸지 않고 **읽히는 방향**만 고정한다.
 # v8의 `rebut`은 이미 절대값이다 - 5절이 축마다 「약점이 필요로 하는 조건」을 정의하고(`guard` = *no guard blocks every triggering value*)
 # `rebut`은 그 조건이 성립 못 한다는 것이다. 그런데 Role 절 13행의 「cannot occur as the Auditor decided」는 Auditor 결론에 대한 상대값으로
-# 읽힐 수 있고(Critic 입력에 `trigger_status`는 없다 - `nodes/critic._describe_claim`), 2026-10-16 arvo:1065 run(`run_20261016_0001`)의
+# 읽힐 수 있고(Critic 입력에 `trigger_status` 필드는 없다 - `nodes/critic._describe_claim` · 다만 `no_signal`은 CLAIM의 「CWE 없음」으로 드러날 수 있다), 2026-10-16 arvo:1065 run(`run_20261016_0001`)의
 # `rebut` 3건 중 2건(dec_0001 arithmetic · dec_0004 guard)이 rationale로는 「취약하다」를 쓰고 `rebut`을 냈다
 # (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 Critic).
 # - body는 v8과 바이트 동일이다. prefix는 두 자리만 v8과 다르다. (1) 13행 - 「the weakness at the PATH sink step cannot occur as the Auditor

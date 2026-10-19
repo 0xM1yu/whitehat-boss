@@ -655,7 +655,8 @@ class Thresholds(HarnessModel):
     # 실패해 버려진 것은 이제 든다(ADR 0015 결정 4 ⏵).
     # ⏵ 2026-10-11 — 보류(`need_evidence`)는 들고 정렬·지정에서 뒤다(이슈 #604).
     # ⏵ 2026-10-18 — 반박(F-6)도 든다(이슈 #706 · @danielcho02 승인 · ADR 0015 결정 4 ⏵
-    # 2026-10-18). 풀은 `validated` 밖 Finding 전부이고 판정은 정렬 계단(반박 3 · 맨 뒤)만 정한다.
+    # 2026-10-18). 풀은 `validated` 밖 Finding 전부이고 판정은 정렬 계단(반박 3 · 같은 Auditor
+    # 결론 계단 안에서 맨 뒤)만 정한다.
     # 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
     # ⚠ **풀은 이 기능이 처음 겨냥한 run의 Finding을 거르지 않는다** — 그 run(`run_20261003_0003`)의

@@ -2,7 +2,7 @@
 
 v8의 `rebut`은 이미 절대값이다(5절: 축마다 약점이 필요로 하는 조건 · `rebut`은 그 조건이 성립
 못 한다). 그런데 Role 절의 「cannot occur as the Auditor decided」는 Auditor 결론에 대한 상대값으로
-읽힐 수 있다 - Critic 입력에 `trigger_status`가 없는데도(`critic._describe_claim`).
+읽힐 수 있다 - Critic 입력에 `trigger_status` 필드가 없는데도(`critic._describe_claim`).
 묶는 것은 넷이다.
 
 1. **v8은 한 글자도 안 바뀌었다** - prefix·body sha256(`prompts/critic/v8/meta.yaml`의 기록).

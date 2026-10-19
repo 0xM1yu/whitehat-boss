@@ -1769,8 +1769,9 @@ def _pov_targets(
     (`run_20261016_0001` · `8e843c45`)에서 Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이
     판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다. Critic 입력에 `trigger_status` 필드는
     없다(`nodes/critic._describe_claim` - CLAIM은 제목·CWE). 다만 `no_signal`은 Auditor가 `cwe`를
-    null로 내면 CLAIM에 「CWE 없음」으로 드러날 수 있다 - 그래서 Critic 계단은 Auditor 결론 계단을
-    대신하지 못한다(`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3).
+    null로 내면 CLAIM에 「CWE 없음」으로 드러날 수 있다. Critic 계단이 Auditor 결론 계단을 대신하지
+    못하는 것은 Critic의 판정 대상이 CLAIM의 약점이 성립하는가라서다
+    (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3).
     ⏵ 2026-10-18 (이슈 #706) - 전 판의 「Critic 계단은 Critic이 Auditor의 결론을 지지했는가」는
     `rebut`·`uphold`를 Auditor 결론에 대한 상대값으로 읽은 서술이라 지웠다 - Critic v8 prefix
     5절의 판정은 CLAIM의 약점이 성립하는가다. 그 run의 풀은 반박도 들면서 `find_0005`

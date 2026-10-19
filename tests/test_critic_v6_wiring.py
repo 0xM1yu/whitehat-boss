@@ -229,7 +229,7 @@ def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
     ("path", "required"),
     [
         ("PROJECT-CONTEXT.md", "Critic v9 · 근거 본문·SOURCE"),
-        ("config/profiles.yaml", "프롬프트는 v8이다"),
+        ("config/profiles.yaml", "프롬프트는 v9다"),
         ("config/budgets.yaml", "v1 metadata-only 경로의 수"),
         ("docs/agent-contracts.md", "Critic v1 → v6"),
         ("docs/build-plan.md", "#497 — Critic v6"),

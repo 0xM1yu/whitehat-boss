@@ -284,7 +284,7 @@ agent:
   보여 주면 인용이 느는가」는 여전히 0회다 — 그 축이 #563이다. content-aware 판의 프롬프트 바이트는 바뀌고(FACTS의 evidence
   항목마다 `location` 키), content-aware가 아닌 판(v1 등)은 바이트 동일이다. 2026-10-05 서빙 프로필(`harness_pool`·
   `harness_pool_hybrid`)의 Auditor와 Critic 모두 content-aware 판이다. 서빙 Critic
-  (`gpt-oss-20b`)은 본문·위치·SOURCE를 받는다(2026-10-05에 v6으로 바뀌었고 ⏵ 2026-10-14에 v7로 올렸다) — 손으로 쓴 판 번호이니 `config/models.yaml`이 정본이다.
+  (`gpt-oss-20b`)은 본문·위치·SOURCE를 받는다(2026-10-05에 v6으로 바뀌었고 ⏵ 2026-10-14에 v7로 올렸다 · 같은 날 v8 · ⏵ 2026-10-18 v9, #706) — 손으로 쓴 판 번호이니 `config/models.yaml`이 정본이다.
   ⏵ 2026-09-29 — registry의 Auditor(`qwen3.8-27b`)가 v3라 그 본문이 실린다. v3 prefix는 `body` 필드를
   이름으로 부르지 않는다 — 모델이 그 본문을 쓰는지는 미측정이다.
   ⏵ 2026-09-29 — 같은 날 v4로 올렸다. v4도 `_CONTENT_AWARE_VERSIONS`에 들어 본문이 실린다. v4 prefix도
