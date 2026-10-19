@@ -1406,10 +1406,14 @@ def test_the_model_serving_port_table_matches_the_registry() -> None:
 
     rows = {key: int(port) for port, key in _PORT_ROW.findall(_read(_MODEL_SERVING))}
     models = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"]
+    # LoRA 어댑터는 base와 같은 포트로 뜨고(swap.sh `--enable-lora`), 그 base는 독립 서빙이 아니므로
+    # 포트 표에 안 든다 — `source`가 다른 엔트리의 `lora_base`인 모델을 뺀다(2026-10-19).
+    lora_bases = {e.get("lora_base") for e in models.values() if e.get("lora_base")}
     served = {
         key: urlparse(str(entry["endpoint"])).port
         for key, entry in models.items()
         if not str(entry["endpoint"]).startswith("fake://")
+        and entry.get("source") not in lora_bases
     }
 
     assert rows == served, f"포트 표 {rows} ≠ registry {served}"

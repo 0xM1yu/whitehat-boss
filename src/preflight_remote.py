@@ -336,7 +336,10 @@ def _hf_pairs(
     pairs: dict[tuple[str, str], list[str]] = {}
     unpinned: list[str] = []
     for key in serving.servers:
-        source = config.models[key].source or ""
+        entry = config.models[key]
+        # LoRA 어댑터 좌석은 base(`lora_base`) 가중치를 캐시한다 — source(file:// 어댑터)가 아니다.
+        # `prefetch_weights.targets`·`tools/serve/swap.sh`와 같은 규칙.
+        source = entry.lora_base or entry.source or ""
         found = _HF_SOURCE.fullmatch(source)
         if found:
             pairs.setdefault((found["repo"], found["rev"]), []).append(key)

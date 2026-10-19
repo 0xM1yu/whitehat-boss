@@ -2659,7 +2659,7 @@ def test_a_served_role_with_a_placeholder_checksum_is_named(tmp_path: Path) -> N
     warnings = _checksum_warnings(record, served)
 
     assert warnings, "실서빙 역할이 전부 자리표시자인데 경고가 없다"
-    assert "auditor(qwen3.8-27b)" in warnings[0]
+    assert "auditor(qwen3.8-27b-sft1-1)" in warnings[0]
     assert "비교표에서 제외" in warnings[0]
 
 

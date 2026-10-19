@@ -39,7 +39,7 @@
 | 4단계 · `scout_memory` (CWE-401·404·415·416·457·476·562·590·761·762·772·775·824·825) | `qwen3-14b` | ✅ |
 | 4단계 · `scout_boundary` (CWE-119·120·121·122·124·125·126·127·129·131·170·190·191·193·194·195·197·369·680·681·787·805) | `qwen3-14b` | ✅ |
 | 4단계 · `scout_injection` (CWE-77·78·88·89·94·116·134) | `qwen3-14b` | ✅ |
-| 5단계 · Auditor | `qwen3.8-27b` (`reasoning_effort: xhigh`) | ✅ |
+| 5단계 · Auditor | `qwen3.8-27b-sft1-1` (`reasoning_effort: xhigh`) | ✅ |
 | 7단계 · Critic | `gpt-oss-20b` (`reasoning_effort: high`) | ✅ |
 | 8단계 · `pov` | `feyospace-v1-small` (`reasoning_effort: xhigh`) | ✅ |
 
@@ -99,7 +99,7 @@ boundary가 그날 합류했다. 그 전에는 memory·boundary가 `seccoderx-8b
 | 3단계 · 임베딩 | `qwen3-embedding-0.6b` | fp16 | 1.76 GiB | 해당 없음 | — |
 | 3단계 · 리랭커 | `qwen3-reranker-4b` | bf16 | 8.12~8.15 GiB | 해당 없음 | — |
 | 4단계 · Scout 셋(memory·boundary·injection) | `qwen3-14b` | bf16 | 28.27 GiB | 사고 모드로 돈다 — 출력의 약 2/3가 `<think>` 구간이다 | 등급이 없다. 길이 예산(`thinking_token_budget`)은 이 모델에 안 먹는다 — dense라 V2 러너로 돌고 V2가 그 필드를 거절한다 |
-| 5단계 · Auditor | `qwen3.8-27b`(dense 27.8B · GDN hybrid · VLM) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값, HF safetensors 크기 합) | **사고를 켰다**(2026-09-26) — `reasoning_effort: xhigh` · ⏵ **2026-10-03 사고 상한 57,344 · 출력 상한 65,536**(그 전 28,672·32,768 — @danielcho02 승인 · 근거와 한계는 `config/models.yaml` 예산 절의 그 ⏵. 속도 근거가 외부 보고 4.5에서 vast 실측 16.2 tok/s로 바뀐 것이 올린 조건이다). 우리 장비에서 사고 켠 판을 띄운 적은 없다 | 등급이 있다 — `xhigh`(기본)·`medium`·`low`(`high`는 템플릿이 예외를 낸다). reasoning parser(`qwen3`)를 걸어야 사고가 살고 `thinking_token_budget`도 받는다(hybrid라 V1 러너 — vLLM 0.27.1 소스 판독, 미실측) |
+| 5단계 · Auditor | `qwen3.8-27b-sft1-1`(sft_1-1 LoRA 어댑터 · base `qwen3.8-27b` dense 27.8B · GDN hybrid · VLM) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값, HF safetensors 크기 합) | **사고를 켰다**(2026-09-26) — `reasoning_effort: xhigh` · ⏵ **2026-10-03 사고 상한 57,344 · 출력 상한 65,536**(그 전 28,672·32,768 — @danielcho02 승인 · 근거와 한계는 `config/models.yaml` 예산 절의 그 ⏵. 속도 근거가 외부 보고 4.5에서 vast 실측 16.2 tok/s로 바뀐 것이 올린 조건이다). 우리 장비에서 사고 켠 판을 띄운 적은 없다 | 등급이 있다 — `xhigh`(기본)·`medium`·`low`(`high`는 템플릿이 예외를 낸다). reasoning parser(`qwen3`)를 걸어야 사고가 살고 `thinking_token_budget`도 받는다(hybrid라 V1 러너 — vLLM 0.27.1 소스 판독, 미실측) |
 | 7단계 · Critic | `gpt-oss-20b` | MXFP4(원래 형식) | 14.65 GiB | `reasoning_effort: high` | 등급 low·medium·high가 harmony system message에 실제로 들어간다. 길이 예산은 못 쓴다 |
 | 8단계 · PoV | `feyospace-v1-small`(Qwen3.8-27B 사이버 post-train · Auditor와 같은 베이스) | bf16 | **미실측** — 가중치만 51.75 GiB(계산값 — 파라미터 BF16 27,781,427,952 × 2 B ÷ 2³⁰ = 51.747 GiB. 12개 파일의 크기 합은 안 쟀다 — Auditor 행의 51.75는 그쪽 18개 파일 합이다) | **사고를 켰다** — `reasoning_effort: xhigh` · 사고 상한 28,672 · 출력 상한 32,768(Auditor 손잡이 물려받음) · 우리 장비 미실측 | Auditor와 같다 — `xhigh`(기본)·`medium`·`low` · parser(`qwen3`) 걸어야 사고가 살고 `thinking_token_budget`을 받는다(hybrid V1 러너) |
 
@@ -118,6 +118,7 @@ parser 없음이면 budget 거절) · `vllm/entrypoints/openai/chat_completion/p
 | --- | --- |
 | `fake` | 인프라. `dev_*` 다섯 프로필의 전 역할 |
 | `fake_v2` | 인프라. Scout 풀 팬아웃(v2 전용 풀 프롬프트)을 GPU 없이 테스트하는 fake 키. `test_pipeline_e2e`가 in-test로 조립한다 |
+| `qwen3.8-27b` | Auditor `qwen3.8-27b-sft1-1`(sft_1-1 LoRA)의 base. 어댑터는 base 없이 못 돌아 `lora_base`로 가리키므로 registry에 남긴다 (2026-10-19 — 그 전엔 이 키가 Auditor 좌석이었다) |
 
 > ~~**registry 키는 지우지 않는다.**~~ ADR 0010 「되돌리는 비용」 — *"모델은 registry 키를 지우지 않으므로 프로필 한 줄이다."*
 > 로스터 교체가 **삭제가 아니라 프로필 재배선**인 이유였고, 그래서 되돌리기가 쌌다.

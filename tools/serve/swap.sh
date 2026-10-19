@@ -315,11 +315,20 @@ row = load_serving(device).servers.get(key)
 if row is None:
     sys.exit(f"장비 파일 {device}.yaml에 {key} 행이 없다")
 entry = yaml.safe_load((CONFIG_DIR / "models.yaml").read_text(encoding="utf-8"))["models"][key]
-repo, _, rev = (entry.get("source") or "").removeprefix("hf://").partition("@")
+lora_base = entry.get("lora_base")
+if lora_base:
+    # 어댑터 엔트리: base를 띄우고(아래 launch가 --enable-lora로 이 key를 얹는다) adapter는 레포 내 경로.
+    repo, _, rev = lora_base.removeprefix("hf://").partition("@")
+    adapter = str((CONFIG_DIR.parent / (entry.get("source") or "").removeprefix("file://")).resolve())
+else:
+    repo, _, rev = (entry.get("source") or "").removeprefix("hf://").partition("@")
+    adapter = ""
 values = {
     "port": urlparse(entry["endpoint"]).port,
     "repo": repo,
     "rev": rev,
+    "adapter": adapter,
+    "lora": "1" if lora_base else "",
     "util": row.util,
     "seqs": row.max_num_seqs,
     "maxlen": row.max_model_len,
@@ -359,9 +368,17 @@ PY
 
 launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 때까지 본다. 안 되면 ATTEMPTS까지 다시.
   local attempt logf pid start t0 now window
-  local -a args=(serve "$repo" --revision "$rev" --served-model-name "$key" --host 127.0.0.1
-    --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
-    --max-num-seqs "$seqs" "${extra[@]}")
+  local -a args
+  if [ -n "$lora" ]; then
+    # 어댑터 엔트리: base를 `$key-base`로 띄우고 그 위에 `$key` LoRA를 얹는다. 요청 model=$key가 어댑터를 탄다.
+    args=(serve "$repo" --revision "$rev" --served-model-name "$key-base" --host 127.0.0.1
+      --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
+      --max-num-seqs "$seqs" --enable-lora --max-lora-rank 16 --lora-modules "$key=$adapter" "${extra[@]}")
+  else
+    args=(serve "$repo" --revision "$rev" --served-model-name "$key" --host 127.0.0.1
+      --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
+      --max-num-seqs "$seqs" "${extra[@]}")
+  fi
   str "server/$key/args" "${args[*]}"
   str "server/$key/revision" "$rev"
   num "server/$key/util" "$util"
@@ -452,7 +469,11 @@ for key in "$@"; do
   spec=$(row "$key") || fail "장비 파일·registry에서 $key를 못 읽었다(위 stderr)"
   eval "$spec"
   [ "$probe" = chat ] || fail "$key: 준비 판정 $probe는 교대 대상이 아니다 — 검색 모델은 교대하지 않는다"
-  [ -n "$rev" ] || fail "$key: registry source에 @rev가 없다 — revision 없이 띄우지 않는다"
+  [ -n "$rev" ] || fail "$key: registry source(또는 lora_base)에 @rev가 없다 — revision 없이 띄우지 않는다"
+  if [ -n "$lora" ]; then
+    [ -n "$adapter" ] || fail "$key: lora_base는 있는데 source(어댑터 경로)가 비었다"
+    [ -d "$adapter" ] || fail "$key: 어댑터 경로가 없다: $adapter (레포 번들에 models/가 들어왔는지 확인)"
+  fi
   read -r pg start < <(ours | awk -v k="$key" '$1 == k {print $2, $3}') || pg=""
   if [ -n "$pg" ]; then
     if probe_chat; then
