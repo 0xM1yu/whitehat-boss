@@ -329,17 +329,29 @@ def _served_max_model_len(entries: Sequence[object], model_key: str) -> int | No
 
     **`model_key`의 항목만 본다.** 한 서버가 여러 모델을 서빙하면 항목마다 값이 다를 수
     있고, 아무 항목이나 집으면 다른 모델의 상한으로 이 모델의 스윕을 자르게 된다.
+
+    ⚠ **LoRA 카드는 `max_model_len`을 안 싣고 `parent`(base 카드)만 싣는다**(vLLM 0.27.1 —
+    `serving.py`의 LoRA `ModelCard`에 창 필드가 없다). 그래서 해당 항목이 창을 안 가졌고
+    `parent`가 있으면 그 base 카드의 창을 쓴다. 안 그러면 LoRA 좌석이 창 검사에서 `None`으로
+    떨어진다(swap.sh `served_window` · `model_swap._verify`).
     """
-    for item in entries:
-        if not isinstance(item, dict) or str(item.get("id", "")) != model_key:
-            continue
-        value = item.get("max_model_len")
-        if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+
+    def window(key: str, seen: frozenset[str]) -> int | None:
+        for item in entries:
+            if not isinstance(item, dict) or str(item.get("id", "")) != key:
+                continue
+            value = item.get("max_model_len")
+            if not isinstance(value, bool) and isinstance(value, int) and value > 0:
+                return value
+            parent = item.get("parent")  # LoRA 카드 → base 카드로 한 번 거슬러 본다
+            if isinstance(parent, str) and parent and parent not in seen:
+                return window(parent, seen | {key})
             # 문자열·`None`·0 이하를 상한으로 쓰면 스윕이 통째로 건너뛰어진다. 못 읽은
             # 것과 "상한이 0"은 다르고, 전자면 종전 동작이 맞다.
             return None
-        return value
-    return None
+        return None
+
+    return window(model_key, frozenset())
 
 
 def measure_structured_output(

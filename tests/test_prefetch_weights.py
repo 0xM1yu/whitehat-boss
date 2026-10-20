@@ -32,7 +32,9 @@ def _registry_hf_pairs(config_dir: Path = CONFIG_DIR) -> set[tuple[str, str]]:
     config = load_config(PROFILE, config_dir)
     pairs = set()
     for key in set(config.profile.roles.values()):
-        source = config.models[key].source
+        entry = config.models[key]
+        # LoRA 어댑터 좌석은 base(`lora_base`)를 선취한다 — prefetch_weights.targets()와 같은 규칙.
+        source = entry.lora_base or entry.source
         found = _HF.match(source or "")
         if found:
             pairs.add((found["repo"], found["rev"]))

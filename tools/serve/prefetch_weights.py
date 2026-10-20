@@ -1,6 +1,7 @@
 """가중치 선취 대상 — 프로필 역할 모델의 `source: hf://<repo>@<rev>`를 `<repo> <rev>` 줄로 낸다.
 
-`prefetch-weights.sh`가 부른다. `file://`·`null` 소스는 건너뛴다(내려받을 곳이 없다).
+`prefetch-weights.sh`가 부른다. `file://`·`null` 소스는 건너뛴다(내려받을 곳이 없다). LoRA 어댑터
+좌석(`lora_base` 있음)은 `source`(file:// 어댑터) 대신 `lora_base`의 base 가중치를 선취한다.
 같은 (repo, rev)는 한 번만 낸다. `--total-bytes`는 같은 대상의 받을 크기 합(바이트)을 HF API로 낸다.
 """
 
@@ -48,7 +49,11 @@ def targets(
     models = config.models
     out: list[tuple[str, str]] = []
     for role in wanted:
-        source = models[mapping[role]].source
+        entry = models[mapping[role]]
+        # LoRA 어댑터 좌석(`lora_base` 있음)은 선취 대상이 base 가중치다(`lora_base`의 hf://repo@rev).
+        # 어댑터(304MB)는 로컬에 있으면 쓰고 없으면 기동 때 swap.sh가 `lora_adapter_hf`에서 받는다
+        # (`ensure_adapter`) — 선취 목록엔 안 넣는다.
+        source = entry.lora_base or entry.source
         if source is None or source.startswith("file://"):
             continue
         found = _HF.match(source)

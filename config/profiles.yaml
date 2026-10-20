@@ -125,7 +125,7 @@ profiles:
       state_store: sqlite
     budget: dev_container
 
-  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
+  # --- 로스터 canonical 배선(PROJECT-CONTEXT.md §1 정본) — Scout qwen3-14b + Auditor qwen3.8-27b-sft1-1 + Critic gpt-oss + 리랭커 4b, 단계 단위 실행 ----
   harness_pool:
     # **§1 정본의 로스터를 배선한 canonical 프로필이다. checksum·처리량 검증 전.**
     # 2026-09-24 `local_balanced_pool`에서 이름을 바꿨다(@danielcho02 — 로스터 확정에 따라 프로필 배선).
@@ -141,7 +141,8 @@ profiles:
     #   S20 Phase 11이 v7로, Phase 14가 v8로 올렸다. v7은 SOURCE로 직접 검증하는 5-check 절차이고 v8은 거기에 SOURCE 새 블록 둘 · Auditor 도구 관측 절 · `auditor_hops`의 서술을 더하고 그 절과 어긋나는 한 문장을 고쳤다 — 입력은 v6과 같다).
     #   근거 본문·위치·캐시 SOURCE를 받는다. v3는 디스크 전용이며 확인 run 선행은 유지하지 않는다.
     #   ⏵ 2026-10-18 — **v9로 올렸다**(이슈 #706). v9는 v8의 `rebut` 정의 한 줄과 축 문단 하나만 바꿨다(입력은 v8과 같다).
-    # - **Auditor = §1의 `qwen3.8-27b`**(2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
+    # - **Auditor = §1의 `qwen3.8-27b-sft1-1`**(sft_1-1 LoRA 어댑터를 base `qwen3.8-27b`에 얹음 — 2026-10-19 배선.
+    #   그 전엔 base `qwen3.8-27b`였고 2026-09-26 `qwen3.6-35b-a3b`에서 바꿨다). ⏵ 2026-09-29 —
     #   registry가 근거 본문 배선과 함께 `v3`를 골랐다(auditor/v3는 2026-09-22 #237로 디스크에 있었고,
     #   올린 것은 `nodes/auditor.py`의 `_CONTENT_AWARE_VERSIONS` 배선과 같은 PR이다). 같은 날 #328 머지 뒤
     #   `v4`로 다시 올렸다(v4도 그 집합에 든다). ⏵ **2026-10-03 — v6로 올렸다**(프롬프트 #418 ·
@@ -213,15 +214,15 @@ profiles:
     #   본문을 받는다(#529).
     #   `production: false`가 실제로
     #   하는 일은 `cli._check_benchmarks`의 미측정 ERROR를 WARN으로 내리는 것뿐이다. 서빙 세 키
-    #   (`qwen3-14b`·`qwen3.8-27b`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
+    #   (`qwen3-14b`·`qwen3.8-27b-sft1-1`·`feyospace-v1-small`)의 `checksum`이 0이라 이 프로필로
     #   돈 run은 비교표에서 제외된다(CLAUDE.md §0).
-    description: "로스터 canonical 배선(§1 정본: Scout 풀 qwen3-14b + Auditor qwen3.8-27b + Critic gpt-oss + PoV feyospace + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
+    description: "로스터 canonical 배선(§1 정본: Scout 풀 qwen3-14b + Auditor qwen3.8-27b-sft1-1 + Critic gpt-oss + PoV feyospace + 리랭커 4b), 단계 단위 실행 — checksum·처리량 검증 전"
     production: false
     roles:
       scout_memory: qwen3-14b
       scout_boundary: qwen3-14b
       scout_injection: qwen3-14b
-      auditor: qwen3.8-27b
+      auditor: qwen3.8-27b-sft1-1
       critic: gpt-oss-20b
       pov: feyospace-v1-small
       embedding: qwen3-embedding-0.6b
@@ -313,7 +314,7 @@ profiles:
       scout_memory: qwen3-14b
       scout_boundary: qwen3-14b
       scout_injection: qwen3-14b
-      auditor: qwen3.8-27b
+      auditor: qwen3.8-27b-sft1-1
       critic: gpt-oss-20b
       pov: feyospace-v1-small
       embedding: qwen3-embedding-0.6b

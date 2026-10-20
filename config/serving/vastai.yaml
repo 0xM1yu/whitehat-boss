@@ -80,9 +80,13 @@ servers:
     probe: chat
     ready_timeout_s: 550
 
-  # --- 5단계 Auditor — 단독 ---
-  qwen3.8-27b:
-    # **실측(2026-09-29)** — util 0.90 · `--max-model-len 262144` · 아래 parser·xgrammar·eager · 공통 환경 ·
+  # --- 5단계 Auditor — 단독 (sft_1-1 LoRA 어댑터 · base Qwen3.8-27B) ---
+  # swap.sh가 `lora_base`(base)를 띄우고 `--enable-lora --max-lora-rank 16 --lora-modules`로 이 키를 얹는다
+  # (registry `qwen3.8-27b-sft1-1`). 아래 값은 base 기준(2026-09-26 실측) 그대로 — LoRA는 연산·메모리에 거의
+  # 안 더한다. ⚠ base 52GB 다운로드 캐시가 컨테이너 overlay에 안 들어갈 수 있다(2026-10-19 스모크에서 overlay
+  # 52GB가 꽉 참) — `HF_HUB_CACHE`를 큰 볼륨/램디스크로 돌린다.
+  qwen3.8-27b-sft1-1:
+    # **실측(2026-09-29 · base)** — util 0.90 · `--max-model-len 262144` · 아래 parser·xgrammar·eager · 공통 환경 ·
     # `--revision`으로 떴다. 기동부터 서버 준비까지 4분 04초(다운로드 55.6 GB ≈45 s 포함) · 가중치 읽기 9.13 s ·
     # 모델 로딩 51.1 GiB / 54.8 s · init engine 93.41 s · KV 29.84 GiB = 483,182 토큰(262,144 동시 1.84건) ·
     # `/v1/models` max_model_len 262144 · 정상 상태 생성 16.2 tok/s.

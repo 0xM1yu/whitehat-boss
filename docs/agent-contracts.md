@@ -1009,7 +1009,7 @@ Critic의 `need_evidence`는 `FixedThresholdPolicy._critic_verdict`(`policy.py`)
   "evidence_refs": ["ev_static_0007", "ev_san_0031"],
   "missing_evidence": ["mev_0002"],
   "repro_spec": null,
-  "produced_by": {"role": "auditor", "model": "qwen3.8-27b", "prompt_version": "v19"}
+  "produced_by": {"role": "auditor", "model": "qwen3.8-27b-sft1-1", "prompt_version": "v19"}
 }
 ```
 

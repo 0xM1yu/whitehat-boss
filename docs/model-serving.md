@@ -169,6 +169,19 @@ models:
 보고, 같은 키(B1)는 정의상 허용한다. **값이 비어 있으면 통과가 아니라 실패다** — 판정할 근거가
 없는 것이지 다른 것이 아니다.
 
+**`lora_base`는 LoRA 어댑터 엔트리의 base를 가리킨다** (2026-10-19). 보통 엔트리는 `source`가 곧 서빙
+대상이지만, `lora_base: hf://<base repo>@<rev>`가 있으면 그 엔트리는 **어댑터**다 — `tools/serve/swap.sh`가
+base를 `--served-model-name <key>-base`로 띄우고 `--enable-lora --max-lora-rank <r> --lora-modules <key>=<어댑터 경로>`로
+그 `<key>`를 얹어, 요청 `model=<key>`가 어댑터를 탄다(`<r>`은 어댑터 `adapter_config.json`의 `r`을 읽는다).
+그래서 어댑터 엔트리의 `source`는 서빙 대상이 아니라 **어댑터의 로컬 위치**(`file://`, checksum 근거)이고,
+`@rev` 강제는 `lora_base` 쪽에 건다. **로컬 어댑터가 없는 장비**(`vastai-remote` — `vast-bootstrap.sh`가
+git archive로 코드만 보내 `models/`가 없고 그 LFS 파일은 포인터다)에서는 swap.sh가 `lora_adapter_hf`
+(`hf://repo@rev[/subfolder]`)에서 받아 쓴다(`ensure_adapter`). 그래서 `/v1/models`의 LoRA 카드는
+`max_model_len`을 안 싣고 `parent`(base 카드)만 싣는데(vLLM 0.27.1), `check_startup`이 그 `parent`의 창을
+쓴다(`src/bench._served_max_model_len`). 첫 사용은 Auditor `qwen3.8-27b-sft1-1`(base `qwen3.8-27b` +
+sft_1-1 어댑터)이다 — vLLM 0.27.1이 이 GDN-hybrid base에 LoRA를 얹어 서빙함을 2026-10-19 vast 스모크로
+확인했다([experiments](experiments/README.md)).
+
 **아래 예시의 모델 키는 구조를 보이려고 든 것이지 현재 로스터가 아니다** — 로스터의 정본은
 [PROJECT-CONTEXT.md](../PROJECT-CONTEXT.md) §1이고, 실제로 배선된 값은 `config/profiles.yaml`이다.
 
@@ -294,7 +307,7 @@ Orchestrator → ModelClient 인터페이스 → LiteLLM (routing / fallback / b
 > | 포트 | 어느 프로필이 어느 이름을 보내나 |
 > | --- | --- |
 > | **8000** | `qwen3-14b` ← 풀 둘(scout_memory·scout_boundary·scout_injection) |
-> | **8001** | `qwen3.8-27b` ← `harness_pool`·`_hybrid`(auditor) |
+> | **8001** | `qwen3.8-27b-sft1-1` ← `harness_pool`·`_hybrid`(auditor · base+LoRA 한 서버) |
 > | **8002** | `gpt-oss-20b` ← `harness_pool`·`_hybrid`(critic) |
 > | **8003** | `qwen3-embedding-0.6b` ← `harness_pool_hybrid`(embedding — `retriever: hybrid`일 때만 뜬다) |
 > | **8004** | `qwen3-reranker-4b` ← `harness_pool_hybrid`(reranker — 같은 조건) |

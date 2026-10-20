@@ -65,8 +65,10 @@ servers:
     probe: chat
     ready_timeout_s: 550
 
-  # --- 5단계 Auditor — 단독 ---
-  qwen3.8-27b:
+  # --- 5단계 Auditor — 단독 (sft_1-1 LoRA 어댑터 · base Qwen3.8-27B) ---
+  # swap.sh가 base를 띄우고 `--enable-lora --lora-modules`로 이 키를 얹는다(registry `qwen3.8-27b-sft1-1`).
+  # 아래 값은 base 기준 그대로 — LoRA는 거의 안 더한다. ⚠ ATOM은 2026-09-29 종료(과거 기록).
+  qwen3.8-27b-sft1-1:
     # 여유(계산값): 가중치 51.1 GiB(2026-09-29 vast 실측 — 같은 bf16 체크포인트)
     # + 창 262,144 × 64 KiB/토큰(registry 주석의 계산) = 16 GiB → 67 GiB < util 몫 0.80 × 119.7 = 95.8 GiB.
     # 가장 가까운 실측: 2026-09-28 ATOM에서 util 0.80으로 떴다(정상 표본 스모크 §5 — 창은 보고서에 없다).

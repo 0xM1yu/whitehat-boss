@@ -83,8 +83,8 @@ def test_the_served_config_turns_guards_on_and_its_prompt_declares_it() -> None:
     assert config.thresholds.auditor_guards == 1
     assert _undescribed_source_options(config) == []
 
-    entry = config.models["qwen3.8-27b"].transition(prompt_template_version="v8")
-    on_v8 = config.transition(models={**config.models, "qwen3.8-27b": entry})
+    entry = config.models["qwen3.8-27b-sft1-1"].transition(prompt_template_version="v8")
+    on_v8 = config.transition(models={**config.models, "qwen3.8-27b-sft1-1": entry})
     # ⏵ 2026-10-14 - `auditor_write_window_marker`·`auditor_input_context`는 v16부터 서술하므로 v8을
     # 고르면 그것들도 짚힌다.
     assert _undescribed_source_options(on_v8) == [

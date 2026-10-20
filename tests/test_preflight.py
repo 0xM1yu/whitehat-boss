@@ -309,9 +309,14 @@ def _weights_ssh(world: World) -> str:
 
 
 def _seat_key(rev_pair: tuple[str, str]) -> str:
+    # preflight `_hf_pairs`와 같은 규칙으로 (repo, rev)를 좌석 키로 되돌린다 — 장비 파일 서빙 키만
+    # 보고, LoRA 좌석은 `lora_base`(base)가, 보통 좌석은 `source`가 그 pair다.
     models = load_config(PROFILE).models
+    want = f"{rev_pair[0]}@{rev_pair[1]}"
     return next(
-        k for k, m in models.items() if (m.source or "").endswith(f"{rev_pair[0]}@{rev_pair[1]}")
+        k
+        for k in load_serving(DEVICE).servers
+        if ((models[k].lora_base or models[k].source) or "").endswith(want)
     )
 
 
@@ -356,7 +361,10 @@ def test_a_seat_without_a_pinned_rev_is_a_warn_naming_it_not_a_silent_skip(world
 def test_the_not_applicable_ok_is_only_for_zero_hf_sources(world: World) -> None:
     config, serving = load_config(PROFILE), load_serving(DEVICE)
     models = {
-        k: m.model_copy(update={"source": "file:///x"}) if k in serving.servers else m
+        # hf 소스를 0으로 만들려면 `lora_base`도 비운다 — `_hf_pairs`가 그것도 본다.
+        k: m.model_copy(update={"source": "file:///x", "lora_base": None})
+        if k in serving.servers
+        else m
         for k, m in config.models.items()
     }
     config = config.model_copy(update={"models": models})

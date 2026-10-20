@@ -578,7 +578,7 @@ def test_every_profile_can_load_the_prompt_version_it_selects(profile: str) -> N
 
 @pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
 def test_the_canonical_auditor_selects_prompt_v19(profile: str) -> None:
-    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b`)가 `v19`를 고른다. 되돌리면
+    """§1 정본 — `harness_pool`·`_hybrid`의 auditor(`qwen3.8-27b-sft1-1`)가 `v19`를 고른다. 되돌리면
     이 핀이 빨개진다.
 
     판 이력: v1 → v3(2026-09-29, #256 항목 4) → v4(#328 머지 뒤) → **v6**(2026-10-03 ·
@@ -2428,9 +2428,15 @@ def test_no_two_served_models_share_a_port() -> None:
     (8001·8002·8005) — 지금은 그 대안이 없으므로 포트 하나에 키 하나다.
     """
     models = load_config("harness_pool").models
+    # LoRA 어댑터는 자기 base와 같은 서버·포트로 뜬다(swap.sh `--enable-lora`). 그래서 어떤 엔트리의
+    # `source`가 다른 엔트리의 `lora_base`이면 그 base는 독립 서빙이 아니라 LoRA로 뜨므로 포트
+    # 유일성 집합에서 뺀다(2026-10-19 `qwen3.8-27b` ↔ `qwen3.8-27b-sft1-1`).
+    lora_bases = {e.lora_base for e in models.values() if e.lora_base}
     by_port: dict[int | None, list[str]] = {}
     for key, entry in models.items():
         if entry.endpoint.startswith("fake://"):
+            continue
+        if entry.source in lora_bases:
             continue
         by_port.setdefault(_port(entry), []).append(key)
 

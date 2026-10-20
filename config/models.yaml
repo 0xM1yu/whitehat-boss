@@ -698,6 +698,45 @@ models:
       mem_gb_ctx8k: 0
       prefix_hit_ratio_batch32: null
 
+  qwen3.8-27b-sft1-1:
+    # 5단계 Auditor — sft_1-1 LoRA 어댑터(epoch3)를 base `Qwen/Qwen3.8-27B`에 얹은 FT Auditor.
+    # 어댑터는 PR #710이 `models/sft_1-1/epoch3`에 올린 304MB 델타(풀 모델 아님) · HF 미러 `Melibee/sft-qwen27b-1-1`.
+    # `lora_base`가 base를 가리키고 `source`는 어댑터 위치다(`src/config.py`의 `ModelEntry.lora_base` 주석).
+    # swap.sh가 base를 `--served-model-name qwen3.8-27b-sft1-1-base`로 띄우고
+    # `--enable-lora --max-lora-rank 16 --lora-modules qwen3.8-27b-sft1-1=<adapter>`로 이 키를 얹는다.
+    # 창·정밀도·사고 손잡이는 base와 같아 `qwen3.8-27b` 엔트리를 그대로 복제했다.
+    # ⚠ checksum·benchmark 미실측(0) — 어댑터+base 묶음의 해시·처리량을 안 쟀다(§0). base보다 나은지도
+    #   미측정이다(별도 실서빙 run). 2026-10-19 vast 스모크는 **서빙 배관만** 확인했다 — vLLM 0.27.1이
+    #   이 base(GDN hybrid)에 LoRA를 얹어 `/v1/models`에 base·LoRA 둘 다, LoRA 이름으로 추론 1건.
+    endpoint: "http://127.0.0.1:8001/v1"
+    context_limit: 262144
+    quantization: "bf16"
+    license: "Apache-2.0"
+    checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+    source: "file://models/sft_1-1/epoch3"
+    lora_base: "hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    # 로컬 어댑터가 없는 장비(vastai-remote — git archive가 models/를 안 보내고 LFS는 포인터)용 HF 폴백.
+    lora_adapter_hf: "hf://Melibee/sft-qwen27b-1-1@4623fbd63c12b1b9ecb5c6362d24c2c5f5ceaa73/sft_1-1_epoch3"
+    family: "qwen"
+    reasoning_effort: "xhigh"
+    sampling:
+      temperature: 1.0
+      top_p: 0.95
+      top_k: 20
+      min_p: 0.0
+      presence_penalty: 0.0
+    thinking_token_budget: 57344
+    request_timeout_s: 7500
+    prompt_template_version: "v19"
+    fallback: null
+    benchmark:
+      measured_at: null
+      measured_on: null
+      tok_s_single: 0
+      tok_s_batch32: 0
+      mem_gb_ctx8k: 0
+      prefix_hit_ratio_batch32: null
+
   qwen3-14b:
     # 로스터 Scout memory·boundary·injection 세 자리 (프롬프트 v4). Qwen/Qwen3-14B — dense 14.8B.
     # ⏵ 2026-10-15 — 이 머리줄은 「Scout injection·memory (프롬프트 v3)」였다(boundary가 옮겨 오기 전).
