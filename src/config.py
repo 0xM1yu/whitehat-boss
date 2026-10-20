@@ -207,6 +207,10 @@ class ModelEntry(HarnessModel):
     # `@rev`는 `lora_base`에 건다. 2026-10-19 vast 스모크로 vLLM 0.27.1 지원 확인(GDN hybrid base
     # + LoRA가 `/v1/models`에 둘 다 · 추론 1건 — docs/experiments/harness).
     lora_base: NonEmptyStr | None = None
+    # **어댑터가 로컬(`source` file://)에 없을 때 받아올 HF 위치** — `hf://repo@rev[/subfolder]`.
+    # `vastai-remote`는 `vast-bootstrap.sh`가 git archive로 코드만 보내 `models/`가 없고 그 LFS는
+    # 포인터라, swap.sh가 이 값에서 어댑터를 받는다(`ensure_adapter`). 로컬에 실물이 있으면 안 쓴다.
+    lora_adapter_hf: NonEmptyStr | None = None
     # **베이스 가중치의 제작사** — 양자화한 조직이 아니라 가중치가 나온 조직이다
     # (ADR 0010 §4). 그 구별이 필요한 실물이 바로 위 `source`에 있다: `feyospace-v1-small`의
     # 출처는 `hf://feyospace/…`지만 가중치의 베이스는 Qwen3.8-27B이므로 계열은 `qwen`이다.

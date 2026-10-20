@@ -45,8 +45,12 @@ vllm serve Qwen/Qwen3.8-27B \
   --enforce-eager --host 127.0.0.1 --port 8000
 ```
 
-이 모양이 `tools/serve/swap.sh`가 LoRA 엔트리(`lora_base` 있음)에 대해 조립하는 인자와 같다 — base를
-`--served-model-name <key>-base`로 띄우고 `--lora-modules <key>=<어댑터>`로 그 키를 얹는다.
+LoRA **플래그 셋**(`--enable-lora`·`--max-lora-rank`·`--lora-modules <key>=<어댑터>` · `--served-model-name <key>-base`)은
+`tools/serve/swap.sh`가 LoRA 엔트리에 조립하는 것과 같다. ⚠ 단 나머지는 production 기동과 다르다 —
+`--max-model-len`(스모크 8,192 ↔ 서빙 262,144) · util(0.92 ↔ 0.90) · extra(스모크는 `--enforce-eager`만 ↔
+서빙은 `--reasoning-parser qwen3`·`--structured-outputs-config.backend xgrammar`·`--max-num-seqs 8`도) · 어댑터 출처
+(스모크는 HF 미러 ↔ 서빙은 로컬 `models/` 또는 `lora_adapter_hf`). 그래서 reasoning parser·구조화 출력이 LoRA
+요청에서 도는지, 262,144 창에서의 메모리는 이 스모크로 말할 수 없다(§5 미측정).
 
 ## 3. 해석
 

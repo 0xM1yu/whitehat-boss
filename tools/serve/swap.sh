@@ -53,6 +53,7 @@ D="${SERVE_DIR:-$HOME/harness-serve}"
 SERVERS="$D/servers" # 한 줄에 "KEY PGID RUN_ID STARTTIME"
 OWNER="$D/guard.owner" # "감시자PID RUN_ID" — 그 감시자가 지키는 run
 VLLM="${VLLM_BIN:-vllm}"
+HF_BIN="${HF_BIN:-hf}" # LoRA 어댑터가 로컬에 없을 때 받는다(vllm 이미지에 huggingface_hub가 있다)
 PY="${HARNESS_PYTHON:-python3}"
 RUN_ID="${HARNESS_RUN_ID:-}"
 DEVICE="${HARNESS_DEVICE:-}"
@@ -328,6 +329,7 @@ values = {
     "repo": repo,
     "rev": rev,
     "adapter": adapter,
+    "adapter_hf": (entry.get("lora_adapter_hf") or "") if lora_base else "",
     "lora": "1" if lora_base else "",
     "util": row.util,
     "seqs": row.max_num_seqs,
@@ -366,6 +368,31 @@ print(served["max_model_len"])
 PY
 }
 
+ensure_adapter() { # LoRA 좌석: 로컬 어댑터가 실물이면 그대로, 아니면 lora_adapter_hf에서 받는다. 전역 adapter·maxrank 세팅.
+  local sz body repo2 rest rev2 sub2 dest
+  # 로컬이 실물인가 — git-lfs 포인터(수백 B)는 실물이 아니다(vast-bootstrap은 git archive라 포인터만 보낸다).
+  sz=$(stat -c %s "$adapter/adapter_model.safetensors" 2>/dev/null || echo 0)
+  if [ ! -f "$adapter/adapter_config.json" ] || [ "$sz" -le 1048576 ]; then
+    [ -n "$adapter_hf" ] || fail "$key: 로컬 어댑터가 없고($adapter) lora_adapter_hf도 없다 — 어댑터를 둘 데가 없다"
+    body=${adapter_hf#hf://}; repo2=${body%%@*}; rest=${body#*@}; rev2=${rest%%/*}
+    sub2=${rest#*/}; [ "$sub2" = "$rev2" ] && sub2=""   # @rev 뒤 경로가 없으면 서브폴더 없음
+    dest="$D/lora/$key"; rm -rf "$dest"; mkdir -p "$dest"
+    log "lora $key: 로컬 어댑터 없음 → HF에서 받는다 ($repo2@${rev2}${sub2:+/$sub2})"
+    if [ -n "$sub2" ]; then
+      "$HF_BIN" download "$repo2" --revision "$rev2" --include "$sub2/*" --local-dir "$dest" > "$D/logs/lora.$key.dl.log" 2>&1 \
+        || { tail -5 "$D/logs/lora.$key.dl.log" >&2; fail "$key: 어댑터 HF 다운로드 실패 ($repo2@$rev2)"; }
+      adapter="$dest/$sub2"
+    else
+      "$HF_BIN" download "$repo2" --revision "$rev2" --local-dir "$dest" > "$D/logs/lora.$key.dl.log" 2>&1 \
+        || { tail -5 "$D/logs/lora.$key.dl.log" >&2; fail "$key: 어댑터 HF 다운로드 실패 ($repo2@$rev2)"; }
+      adapter="$dest"
+    fi
+  fi
+  [ -f "$adapter/adapter_config.json" ] || fail "$key: 어댑터에 adapter_config.json이 없다: $adapter"
+  # --max-lora-rank는 어댑터 r 이상이어야 로드된다. r을 읽어 쓴다(못 읽으면 16).
+  maxrank=$("$PY" -c "import json,sys;print(int(json.load(open(sys.argv[1]))['r']))" "$adapter/adapter_config.json" 2>/dev/null || echo 16)
+}
+
 launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 때까지 본다. 안 되면 ATTEMPTS까지 다시.
   local attempt logf pid start t0 now window
   local -a args
@@ -373,7 +400,7 @@ launch() { # 전역 key·port·…(row의 대입문)으로 띄우고 준비될 �
     # 어댑터 엔트리: base를 `$key-base`로 띄우고 그 위에 `$key` LoRA를 얹는다. 요청 model=$key가 어댑터를 탄다.
     args=(serve "$repo" --revision "$rev" --served-model-name "$key-base" --host 127.0.0.1
       --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
-      --max-num-seqs "$seqs" --enable-lora --max-lora-rank 16 --lora-modules "$key=$adapter" "${extra[@]}")
+      --max-num-seqs "$seqs" --enable-lora --max-lora-rank "$maxrank" --lora-modules "$key=$adapter" "${extra[@]}")
   else
     args=(serve "$repo" --revision "$rev" --served-model-name "$key" --host 127.0.0.1
       --port "$port" --gpu-memory-utilization "$util" --max-model-len "$maxlen"
@@ -471,8 +498,9 @@ for key in "$@"; do
   [ "$probe" = chat ] || fail "$key: 준비 판정 $probe는 교대 대상이 아니다 — 검색 모델은 교대하지 않는다"
   [ -n "$rev" ] || fail "$key: registry source(또는 lora_base)에 @rev가 없다 — revision 없이 띄우지 않는다"
   if [ -n "$lora" ]; then
-    [ -n "$adapter" ] || fail "$key: lora_base는 있는데 source(어댑터 경로)가 비었다"
-    [ -d "$adapter" ] || fail "$key: 어댑터 경로가 없다: $adapter (레포 번들에 models/가 들어왔는지 확인)"
+    [ -n "$adapter" ] || [ -n "$adapter_hf" ] \
+      || fail "$key: lora_base는 있는데 어댑터(source file:// 또는 lora_adapter_hf)가 없다"
+    ensure_adapter   # 로컬 실물이면 그대로, 아니면 HF에서 받는다 — adapter·maxrank를 세운다
   fi
   read -r pg start < <(ours | awk -v k="$key" '$1 == k {print $2, $3}') || pg=""
   if [ -n "$pg" ]; then

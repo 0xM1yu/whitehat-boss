@@ -709,6 +709,8 @@ models:
     checksum: "sha256:0000000000000000000000000000000000000000000000000000000000000000"
     source: "file://models/sft_1-1/epoch3"
     lora_base: "hf://Qwen/Qwen3.8-27B@1d4bf0f2ff6012fd82039f2fa52739d0dd7c60c0"
+    # 로컬 어댑터가 없는 장비(vastai-remote — git archive가 models/를 안 보내고 LFS는 포인터)용 HF 폴백.
+    lora_adapter_hf: "hf://Melibee/sft-qwen27b-1-1@4623fbd63c12b1b9ecb5c6362d24c2c5f5ceaa73/sft_1-1_epoch3"
     family: "qwen"
     reasoning_effort: "xhigh"
     sampling:

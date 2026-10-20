@@ -50,8 +50,9 @@ def targets(
     out: list[tuple[str, str]] = []
     for role in wanted:
         entry = models[mapping[role]]
-        # LoRA 어댑터 좌석(`lora_base` 있음)은 선취 대상이 base 가중치(수십 GB)다 — 어댑터(source file://)는
-        # 레포 번들에 있고 작아서 따로 안 받는다. base는 `lora_base`의 hf://repo@rev다.
+        # LoRA 어댑터 좌석(`lora_base` 있음)은 선취 대상이 base 가중치다(`lora_base`의 hf://repo@rev).
+        # 어댑터(304MB)는 로컬에 있으면 쓰고 없으면 기동 때 swap.sh가 `lora_adapter_hf`에서 받는다
+        # (`ensure_adapter`) — 선취 목록엔 안 넣는다.
         source = entry.lora_base or entry.source
         if source is None or source.startswith("file://"):
             continue

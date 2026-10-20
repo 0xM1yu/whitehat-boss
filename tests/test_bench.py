@@ -365,6 +365,25 @@ def test_startup_reports_no_max_model_len_when_the_server_omits_it(
     assert result["max_model_len"] is None
 
 
+def test_served_max_model_len_falls_back_to_the_lora_cards_parent() -> None:
+    """vLLM 0.27.1은 LoRA 카드에 `max_model_len`을 안 싣고 `parent`(base 카드)만 싣는다.
+    그 창을 못 읽으면 LoRA 좌석이 swap.sh·`model_swap._verify` 창 검사에서 `None`으로 떨어진다.
+    """
+    entries = [
+        {"id": "qwen3.8-27b-sft1-1-base", "max_model_len": 262144},
+        {"id": "qwen3.8-27b-sft1-1", "parent": "qwen3.8-27b-sft1-1-base"},  # LoRA 카드: 창 없음
+    ]
+    assert bench._served_max_model_len(entries, "qwen3.8-27b-sft1-1") == 262144
+    # parent가 없으면 종전대로 None, 순환이면 멈춘다
+    assert bench._served_max_model_len([{"id": "x"}], "x") is None
+    assert (
+        bench._served_max_model_len(
+            [{"id": "a", "parent": "b"}, {"id": "b", "parent": "a"}], "a"
+        )
+        is None
+    )
+
+
 # --- B: 구조화 출력 ----------------------------------------------------------
 
 
