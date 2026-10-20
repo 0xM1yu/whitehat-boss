@@ -12,7 +12,8 @@ Auditor `SOURCE` 문자열은 Critic에도 간다(`runner.finding_sources` ·
    각 `_OLD` 자리에 넣은 결과와 바이트 동일이다.
 3. **문장이 코드·Auditor v16과 맞는다** - 표지 줄 철자는 러너 상수와 v16 prefix가 같고
    입력 맥락 함수 서술은 v16의 말을 따른다(더 센 주장을 안 한다).
-4. **배선** - 두 집합 · 서빙 좌석 · doctor · v7과 같은 입력(SOURCE의 두 블록이 그대로 간다).
+4. **배선** - 두 집합 · v7과 같은 입력(SOURCE의 두 블록이 그대로 간다). ⏵ 2026-10-18 - 서빙 좌석·
+   doctor·「디스크 최신 판 = 서빙 판」 핀은 `test_critic_v9.py`로 옮겼다(서빙 판이 v9다).
 
 ⚠ 철자·구조 핀이다 - Critic이 디코더 블록을 슬라이스 코드로 오인하는지·표지 줄을 코드로
 읽는지는 미측정이다.
@@ -25,8 +26,6 @@ from pathlib import Path
 
 import pytest
 
-from src import cli
-from src.config import load_config
 from src.orchestrator import runner
 from src.orchestrator.context import RunContext
 from src.orchestrator.nodes import auditor, critic
@@ -288,17 +287,6 @@ def test_v8_gets_the_same_request_as_v7_apart_from_the_prefix(ctx) -> None:
     assert v8.prompt_version == "v8"
 
 
-@pytest.mark.parametrize("profile", ["harness_pool", "harness_pool_hybrid"])
-def test_the_serving_critic_seat_selects_v8_and_the_doctor_has_nothing_to_say(profile: str) -> None:
-    config = load_config(profile)
-    version = config.model_for("critic").prompt_template_version
-
-    assert version == "v8"
-    assert cli._check_prompt_version(config, "critic", version) == [], (
-        "내용 인식 ERROR도 디스크 새 판 WARN도 없다"
-    )
-
-
 def test_every_critic_version_from_v8_on_grounds_a_rebut_by_its_axis_only() -> None:
     """ADR 0015 ⏵ 2026-10-15 - `Decision.ungrounded_reason`은 이 이름 집합으로 판을 가른다(meta 선언
     대신 - `prompts/`를 안 건드렸다). 판이 늘 때 집합을 잊으면 새 판에서 ID-only `rebut`이
@@ -312,12 +300,3 @@ def test_every_critic_version_from_v8_on_grounds_a_rebut_by_its_axis_only() -> N
 
     assert on_disk and on_disk <= AXIS_ONLY_GROUNDING_VERSIONS
     assert AXIS_ONLY_GROUNDING_VERSIONS <= critic._CONTENT_AWARE_VERSIONS
-
-
-def test_no_critic_version_newer_than_the_served_one_is_on_disk() -> None:
-    numbers = sorted(
-        int(p.name[1:])
-        for p in (PROMPTS_DIR / "critic").iterdir()
-        if p.is_dir() and p.name[1:].isdecimal()
-    )
-    assert numbers[-1] == 8

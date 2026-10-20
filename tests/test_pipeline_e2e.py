@@ -4958,20 +4958,38 @@ def _critic_rebuts_every_finding(monkeypatch: pytest.MonkeyPatch) -> None:
 _EMPTY_POOL_WARNING = (
     "PoV 대상 0건 — validated 0 · Critic 반박 2 · 보류(파서 폴백·정규화된 반박 포함) 0"
     " · 판정 실패 0"
-    " · Critic 미경유 0 · pov_attempt_top_n 8. 8단계 PoV는 한 건도 시도되지 않았다"
-    "(validated 밖 후보도 Critic이 모두 밀어 냈거나 없다)"
+    " · Critic 미경유 0 · pov_attempt_top_n 0. 8단계 PoV는 한 건도 시도되지 않았다"
+    "(pov_attempt_top_n이 0이라 validated 밖은 후보가 아니다(상한 0))"
 )
 
 
-def test_a_real_run_whose_critic_rebuts_every_finding_says_why_the_pov_pool_is_empty(
+def _no_extra_pov_pool(config):  # noqa: ANN001, ANN202
+    return config.transition(thresholds=config.thresholds.transition(pov_attempt_top_n=0))
+
+
+def test_a_real_run_whose_critic_rebuts_every_finding_still_tries_pov_on_them(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`_pov_targets`를 갈지 않고 **Critic 판정**만으로 만든 빈 풀 — 모든 판정이 근거 있는 반박
-    (F-6 → `QUEUED`)이면 validated가 0이고 상한 8의 추가 풀에서도 전부 빠져 경고가 오른다.
-    (보류는 안 쓴다: 보류를 풀에서 빼는지는 `_critic_set_aside`가 정하고 바뀔 수 있다.)"""
+    """모든 판정이 근거 있는 반박(F-6 → `QUEUED`)이어도 상한 8의 추가 풀에 들어 PoV가 돈다 -
+    빈 풀 경고가 없다(⏵ 2026-10-18 이슈 #706 - 전엔 전부 빠져 경고가 올랐다)."""
     _critic_rebuts_every_finding(monkeypatch)
 
     result, trace_path = _run(tmp_path, name="pov_pool_rebutted", before=_with_index())
+
+    assert _of(_events(trace_path), "pov_generated"), "반박된 Finding도 PoV가 돈다"
+    assert not any(w.startswith("PoV 대상 0건") for w in result.warnings), result.warnings
+
+
+def test_a_real_run_with_no_extra_pool_says_why_the_pov_pool_is_empty(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_pov_targets`를 갈지 않고 만든 빈 풀 — 모든 판정이 근거 있는 반박이라 validated가 0이고
+    상한이 0이라 추가 풀도 없다. 경고가 반박 둘과 상한 0을 센다."""
+    _critic_rebuts_every_finding(monkeypatch)
+
+    result, trace_path = _run(
+        tmp_path, name="pov_pool_none", before=_with_index(), configure=_no_extra_pov_pool
+    )
 
     assert not _of(_events(trace_path), "pov_generated"), "전제 — pov가 안 돌았다"
     assert any(w.startswith(_EMPTY_POOL_WARNING) for w in result.warnings), result.warnings
@@ -4986,7 +5004,11 @@ def test_the_empty_pool_warning_stays_true_when_the_oracle_leg_runs_the_validate
     _critic_rebuts_every_finding(monkeypatch)
 
     result, trace_path = _run(
-        tmp_path, name="pov_pool_rebutted_oracle", before=_with_index(), oracle=FakeOracle()
+        tmp_path,
+        name="pov_pool_rebutted_oracle",
+        before=_with_index(),
+        oracle=FakeOracle(),
+        configure=_no_extra_pov_pool,
     )
 
     events = _events(trace_path)

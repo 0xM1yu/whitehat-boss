@@ -76,7 +76,8 @@ def test_critic_prefix_describes_facts_source_exactly_for_source_input_versions(
         for n in _disk_versions("critic")
         if "FACTS.source" in (PROMPTS_DIR / "critic" / f"v{n}" / "prefix.md").read_text("utf-8")
     }
-    assert {"v6", "v7", "v8"} <= described and described.isdisjoint({"v1", "v2", "v3", "v4", "v5"})
+    assert {"v6", "v7", "v8", "v9"} <= described
+    assert described.isdisjoint({"v1", "v2", "v3", "v4", "v5"})
     assert described == critic._SOURCE_INPUT_VERSIONS, (
         f"prefix가 FACTS.source를 서술하는 판 {sorted(described)} != "
         f"_SOURCE_INPUT_VERSIONS {sorted(critic._SOURCE_INPUT_VERSIONS)} - "

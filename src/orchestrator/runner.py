@@ -1695,36 +1695,27 @@ def _pov_targets(
     하고 원 예외를 올린다(`KeyboardInterrupt`·`SystemExit` 제외). 후보가 0건인 그 밖의 예외는 안
     돈다.
 
-    **추가 대상 풀 — `validated` 밖에서 Critic이 밀어 내지 않은 Finding.** 하나를 **뺀다.**
-    **Critic이 반박(F-6)으로 판정한 것** — `gate.normalize` 뒤 판정이 `rebut`인 것이다(근거 없는
-    반박은 `need_evidence`로 정규화돼 보류(F-7)와 같은 길을 가므로 **든다** - ⏵ 2026-10-13, ADR
-    0015: 전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는
-    **든다** — 「아니다」가 아니라 「모르겠다」라서다(⏵ 2026-10-11, 이슈 #604: 전엔 같이 뺐고 보류
-    5/5인 run의 풀이 비었다). Critic 응답의 verdict를 못 읽으면 `to_decision`이 `need_evidence`로
-    보내므로(`critic_verdict_unmapped` trace) 그 Finding도 보류로 풀에 든다 — 2026-10-11
-    `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라 파서 폴백 0건 —
-    파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지 입력 구조 탓인지는
-    미실측).
-    **든다:** **판정 호출이 실패해 버려진 것**(`_drop_finding` - 스키마 파싱 실패 · 크기 거절,
-    `state.critic_failed_ids`) — 판정이 없으니 Critic을 안 거친 것과
-    같다(`_verdict_ranks_by_finding`의 계단 1). 「Critic이 아니라고 했다」가 아니라 「Critic이 못
-    봤다」라서다.
-    ⏵ 2026-10-15 - 전엔 이것도 반박처럼 뺐다(@danielcho02 승인). 풀 필터는 반박에만 선다. 그 밖에
-    **든다:** Critic을 **안 거친** Finding(`critic_top_n`에 잘린 것 · 6단계가 E0로 `QUEUED`한 F-2),
-    재현 명세가 없어 멈춘 것(F-9), 근거가 약해 `hypothesized`에 둔 것(F-3 · 등급 미달의
-    `critic_upheld`). 판정표는 `tests/test_nodes.py`의 `test_the_extra_pov_pool_excludes_…`다.
+    **추가 대상 풀 — `validated` 밖 Finding 전부.** Critic 판정으로 **거르지 않고 정렬만** 한다
+    (⏵ 2026-10-18, 이슈 #706 · @danielcho02 승인 — 전엔 반박(F-6)을 뺐다). 판정 계단은 uphold 0 <
+    판정 없음 1(Critic 미경유 · 판정 호출 실패 `critic_failed_ids`) < 보류 2(`need_evidence` F-7 ·
+    근거 없어 정규화된 반박 · verdict 파서 폴백) < 반박 3이다(`_verdict_ranks_by_finding` · 판정은
+    `gate.normalize` 뒤 값). 보류는 ⏵ 2026-10-11(이슈 #604), 판정 호출 실패는 ⏵ 2026-10-15에 먼저
+    풀에 들였다 - 「아니다」가 아니라 「모르겠다」·「못 봤다」라서다. 판정표는
+    `tests/test_nodes.py`의 `test_the_extra_pov_pool_…`다.
 
-    **왜 빼나.** 풀에 두면 **하네스 Critic이 「아니다」라고 한 Finding의 PoC가 공식 최종 제출이 될
-    수 있다** — 다른 후보가 없으면(`sole_candidate`) 그것이 최종이고, 상한이 남으면 반박도 풀에
-    든다. 정렬 키(Auditor 결론 계단 → 판정 계단 → `confidence` → `finding_id`)의 판정 계단은 반박을
-    맨 뒤(3)에 두지만
-    (`_verdict_ranks_by_finding`) 계단은 **순서**일 뿐 거르지 못한다 — 그래서 이 필터가 먼저고 3은
-    **지금 닿지 않는 값**이다(⏵ 2026-10-12). 이 논거는 반박에만 선다. 보류는 풀에 들되 자리를
-    uphold **뒤** 미경유·판정 호출 실패 **뒤**로
-    낮춘다(아래 정렬 키 · `_designation_key`의 **둘째** 계단이다 —
-    ⏵ 2026-10-14 첫 계단은 후보 자기 `vul` 응답 코드가 됐다(이슈 #637). 그래서 보류 PoC도 크래시를
-    냈으면 앞선다). ⏵ 2026-10-17 — 이 풀 정렬에서는 그 낮춤이 **같은 Auditor 결론 계단 안에서만**
-    선다(Auditor 계단이 판정 계단 앞이다). `_designation_key`에는 Auditor 계단이 없다.
+    **왜 반박도 들이나.** `rebut`은 모델의 자기 신고이고 하네스는 그 근거가 SOURCE에 있는지 안
+    본다(ADR 0015 P0b 보류). 2026-10-16 run(`run_20261016_0001`)의 `rebut` 3건 중 2건은 rationale로
+    「취약하다」를 쓰고 `rebut`을 냈다
+    (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 · n=1).
+    빼면 그런 Finding의 PoV 기회가 영영 없고, 들이면 상한 안의 자리를 쓴다 - Auditor 결론 계단이
+    먼저라 `triggerable` 반박은 1순위도 된다(아래 대가).
+    ⚠ **대가 - 반박된 Finding의 PoC도 최종 제출이 될 수 있다.** `_designation_key`에서 판정 계단은
+    셋째다(자기 `vul` 응답 코드 · 제출 여부 다음). 앞 두 계단이 같은 후보끼리는 반박 PoC가 지므로,
+    최종이 되는 것은 그 두 계단에서 앞설 때(혼자 크래시를 냈다)와 후보가 그것뿐일 때
+    (`sole_candidate`)다. 그리고 이 풀 정렬에서는 Auditor 결론 계단이 판정 계단 **앞**이라
+    (⏵ 2026-10-17) 반박이 맨 뒤인 것은 **같은 Auditor 결론 계단 안에서만**이다 - `triggerable`인
+    반박 Finding은 `guarded`인 uphold Finding보다 앞선다. `_designation_key`에는 Auditor 계단이
+    없다.
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -1737,8 +1728,8 @@ def _pov_targets(
     PoC가 없으면 채점 점수가 없다(`oracle.final`이 `no_poc`). 그래서 등급이 못 올라간 Finding에도
     PoV를 시도할 길을 뒀다.
 
-    ⚠ **이 필터는 그 run의 풀을 바꾸지 않는다.** 필터는 반박된 Finding의 PoC가 최종 제출이 되는
-    것을 막지만, 이 기능이 처음 겨냥한 run(`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳐
+    ⚠ **그 run의 Finding은 Auditor의 부정 결론이었다.** 이 기능이 처음 겨냥한 run
+    (`run_20261003_0003`)의 Finding 셋은 Critic을 안 거쳐
     `state.decisions`가 비어 있고(그래서 전부 풀에 든다), 셋 다 **Auditor가 스스로 낸 부정
     결론**이다 — `trigger_status=no_signal` · `confidence` 0.10·0.10·0.05(같은 날 WSL
     `run_20261003_0002`의 다섯은 `reachability_unknown` 3 · `no_signal` 2, 전부 E0·Critic 0회).
@@ -1769,20 +1760,21 @@ def _pov_targets(
     이 함수가 바꾸는 것은 **채점기에 낼 후보가 생기는가**이고 내부 등급이 아니다.
 
     자르는 순서는 Auditor 결론 계단(`_trigger_rank` — triggerable → reachability_unknown·결론 없음
-    → guarded·no_reach → no_signal), Critic 판정(uphold → 미경유·판정 호출 실패 → 보류) 다음
+    → guarded·no_reach → no_signal), Critic 판정(uphold → 미경유·판정 호출 실패 → 보류 → 반박) 다음
     `critic.select`와 **같은 키**다 — `confidence` 내림차순,
     동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
     ⏵ 2026-10-17 — Auditor 결론 계단을 맨 앞에 붙였다. 2026-10-16 arvo:1065 run
-    (`run_20261016_0001` · `8e843c45`)에서 Auditor `no_signal`을 Critic이 `uphold`한 — 둘 다
-    「취약하지 않다」인 — `find_0008`이 판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다.
-    Critic 계단은 Critic이 **Auditor의 결론을** 지지했는가이지 취약한가가 아니라서다(Critic 입력에
-    `trigger_status`가 없다 —
-    `docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3). 그 run의 풀은
-    이제 `find_0004`(`reachability_unknown`)가 1순위다(`tests/test_nodes.py`의 재생 테스트).
-    이 계단은 **추가 풀 정렬에만** 선다 — 풀 필터(`_critic_set_aside`)와 최종 지정
-    (`_designation_key`)은 안 읽는다. 반박의 뜻은 이슈 #706 몫이다.
+    (`run_20261016_0001` · `8e843c45`)에서 Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이
+    판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다. Critic 입력에 `trigger_status`가
+    없어(`nodes/critic._describe_claim` - CLAIM은 제목·CWE뿐) Critic 계단은 Auditor 결론을 담지
+    않는다(`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3).
+    ⏵ 2026-10-18 (이슈 #706) - 전 판의 「Critic 계단은 Critic이 Auditor의 결론을 지지했는가」는
+    `rebut`·`uphold`를 Auditor 결론에 대한 상대값으로 읽은 서술이라 지웠다 - Critic v8 prefix
+    5절의 판정은 CLAIM의 약점이 성립하는가다. 그 run의 풀은 반박도 들면서 `find_0005`
+    (`triggerable` · 반박)가 1순위다(`tests/test_nodes.py`의 재생 테스트).
+    이 계단은 **추가 풀 정렬에만** 선다 — 최종 지정(`_designation_key`)은 안 읽는다.
     ⚠ **`confidence`는 모델이 적은 수고 게이트가 계산한 값이 아니다** — 그래서 이것은
-    등급 규칙이 아니라 **순서 규칙**이다. 상한은 **위 풀을 거른 뒤**에
+    등급 규칙이 아니라 **순서 규칙**이다. 상한은 **정렬한 뒤**에
     건다. 상한이 0이면 이 정렬은 아예 돌지 않는다.
     """
     limit = ctx.config.thresholds.pov_attempt_top_n
@@ -1791,11 +1783,7 @@ def _pov_targets(
     already = {finding.finding_id for finding in validated}
     verdicts = _verdict_ranks_by_finding(state)
     rest = sorted(
-        (
-            f
-            for f in state.findings.values()
-            if f.finding_id not in already and not _critic_set_aside(state, f.finding_id)
-        ),
+        (f for f in state.findings.values() if f.finding_id not in already),
         key=lambda f: (
             _trigger_rank(f.trigger_status),
             verdicts[f.finding_id],
@@ -1804,33 +1792,6 @@ def _pov_targets(
         ),
     )
     return [*validated, *rest[:limit]]
-
-
-def _critic_set_aside(state: _Accumulator, finding_id: str) -> bool:
-    """7단계가 이 Finding을 **밀어 냈나** — Critic이 반박(F-6)으로 판정했다. 그것뿐이다.
-    보류(`need_evidence`, F-7)와 판정 호출 실패(`critic_failed_ids`)는 안 밀어 낸 것이다 — 풀에 들고
-    정렬·지정에서 뒤로 간다(`_verdict_ranks_by_finding`). 판정 실패는 판정이 없어 **Critic을 안 거친
-    Finding과 같은 계단(1)** 이다 — 「Critic이 아니라고 했다」가 아니라 「Critic이 못 봤다」.
-
-    ⏵ 2026-10-11 — 전엔 보류도 뺐다(이슈 #604). ⏵ 2026-10-15 — 전엔 판정 호출 실패도
-    뺐다(@danielcho02
-    승인 - 스키마 파싱 실패·크기 거절로 판정을 못 받았다고 PoV 기회까지 잃을 이유가 없다).
-    `critic_failed` trace·경고는 그대로다.
-
-    판정은 `gate.normalize` 뒤 값으로 읽는다 — 정책(`_critic_verdict`)이 읽는 값과 같아야
-    `QUEUED`(F-6)와 이 판정이 어긋나지 않는다. Critic 응답의 verdict를 못 읽으면 `to_decision`이
-    `need_evidence`로 보내므로(`critic_verdict_unmapped` trace) 그 Finding은 보류로 풀에 든다.
-    2026-10-11 `run_20261011_0001`의 5/5 보류(이슈 #604)는 `critic_verdict_unmapped` 0건이라
-    파서 폴백이 아니라 모델이 낸 값이다(trace 계수 2026-10-11 · 모델 판단인지 입력 구조 탓인지는
-    미실측).
-
-    ⚠ **판정은 지금 Finding당 하나다**(`state.decisions[...] = (decision,)`가 7단계 루프의 한 곳에서
-    **대입**이라 항상 1-튜플이다). 복수가 되면 게이트의 읽는 법(`gate.evaluate`의 `upheld`는
-    `any(normalize == UPHOLD)`)과 이 `any(normalize == REBUT)`가 갈릴 수 있다 — 그때 맞출 것."""
-    return any(
-        gate.normalize(decision) is Verdict.REBUT
-        for decision in state.decisions.get(finding_id, ())
-    )
 
 
 def _auditor_zero_probe_warning(trace: TraceWriter) -> str | None:
@@ -2068,13 +2029,12 @@ def _auditor_overflow_warnings(trace: TraceWriter) -> list[str]:
 
 def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list[Finding]) -> str:
     """좌석은 있는데 8단계 대상이 0건일 때의 한 문장 (이슈 #357 잔여) — `validated` 밖 Finding이
-    왜 대상이 못 됐는지 다섯 칸으로 센다. 반박 하나는 `_critic_set_aside`가 밀어 내는 쪽,
-    판정 실패·판정 없음·업홀드 미승격은 들이는 쪽이다(판정은 `gate.normalize` 뒤 값). 보류 칸은
-    모델이 낸 `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된
-    반박**(ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. 보류는 K>0에서 풀에 들므로
-    (PR #608 · `_critic_set_aside`) 보류 칸은 K>0에서 항상 0이고 K=0에서만 정보 칸이다.
-    ⏵ 2026-10-15 - 판정 실패 칸도 같다: 전엔 `_critic_set_aside`가 밀어 냈지만 이제 K>0에서
-    풀에 든다. `_critic_set_aside`와 독립으로 센다(K>0일 때만 불린다). K = `pov_attempt_top_n`.
+    왜 대상이 못 됐는지 다섯 칸으로 센다(판정은 `gate.normalize` 뒤 값). 보류 칸은 모델이 낸
+    `need_evidence`·verdict 파서 폴백에 더해 **근거 없어 `need_evidence`로 정규화된 반박**
+    (ADR 0015 - 전엔 업홀드 미승격 칸이었다)을 센다. K = `pov_attempt_top_n`.
+    ⏵ 2026-10-18 (이슈 #706) - K>0이면 `validated` 밖 Finding이 **판정과 무관하게 전부** 풀에
+    들므로 풀이 비는 것은 Finding이 0건일 때뿐이고 다섯 칸은 전부 0이다. 칸은 K=0에서만 정보다
+    (보류는 PR #608, 판정 실패는 2026-10-15, 반박은 2026-10-18부터 K>0에서 든다).
 
     ⚠ **「8단계 PoV는 한 건도 시도되지 않았다」는 PoV 시도 0건이다 — 8단계 span의 부재가 아니다.**
     채점기를 붙인 run은 대상이 0건이어도 `_finalize_oracle`이 8단계 span 안에서 `oracle_final`을
@@ -2104,7 +2064,7 @@ def _pov_pool_empty_reason(ctx: RunContext, state: _Accumulator, validated: list
     why = (
         "pov_attempt_top_n이 0이라 validated 밖은 후보가 아니다(상한 0)"
         if limit <= 0
-        else "validated 밖 후보도 Critic이 모두 밀어 냈거나 없다"
+        else "validated 밖 Finding이 없다"
     )
     return (
         f"PoV 대상 0건 — validated {len(validated)} · Critic 반박 {rebut}"
@@ -2465,7 +2425,7 @@ def _pov_shortfall_warning(results: Mapping[str, str]) -> str | None:
     """
     # 빈 맵은 「`_run_pov`가 한 번도 사유를 못 적었다」다. 이유는 셋이고 이 맵만으로는 못 가른다:
     # ① 8단계 앞에서 멈췄다 ② `_pov_targets`가 0건이라 `_run_pov`가 안 불렸다(VALIDATED가 0건이고
-    # `pov_attempt_top_n`이 0이거나, 양수인데 Critic이 밀어 내지 않은 추가 대상이 0건이다)
+    # `pov_attempt_top_n`이 0이거나, 양수인데 `validated` 밖 Finding이 0건이다 - ⏵ 2026-10-18 #706)
     # ③ 프로필에 pov
     # 좌석이 없다(`REQUIRED_ROLES`에 pov가 없어 스키마상 합법이다. 다만 지금 커밋된 프로필은 전부
     # 좌석을 든다 — 2026-10-03 `config/profiles.yaml`을 `load_config`로 확인했다). 「좌석이 있는데
@@ -2898,13 +2858,13 @@ def _verdict_ranks_by_finding(state: _Accumulator) -> dict[str, int]:
     `QUEUED`와 `critic_top_n` 절단분이라 Critic이 **보증한** 것이 아닌데 uphold와 동점이 돼
     등급이 가렸다.
 
-    **반박(3)은 지금 정렬에 닿지 않는 값이다** - `_pov_targets`가 `_critic_set_aside`로 반박을
-    풀에서 먼저 빼고, 최종 후보는 그 풀의 PoC뿐이다. 그래도 값을 3으로 둔 것은 풀 필터가 풀리거나
-    다른 호출처가 생겨도 반박이 보류 **앞**에 서지 않게 하는 방어 심층이다(`test_nodes.py`가 값을
-    문다).
+    **반박(3)은 맨 뒤다.** ⏵ 2026-10-18 (이슈 #706) - 전엔 `_pov_targets`가 반박을 풀에서 먼저
+    빼서 이 값이 정렬에 닿지 않았다. 이제 반박도 풀에 들고 이 계단이 그 자리를 정한다
+    (`test_nodes.py`가 값을 문다).
 
-    **uphold를 먼저 본다.** 판정은 Finding당 1-튜플 가정이다(`_critic_set_aside` docstring과 같다).
-    둘 이상이 되면 `gate.evaluate`의 `upheld`가 `any(normalize == UPHOLD)`라 uphold가 하나라도
+    **uphold를 먼저 본다.** 판정은 Finding당 1-튜플 가정이다(`state.decisions[...] = (decision,)`가
+    7단계 루프의 한 곳에서 **대입**이다). 둘 이상이 되면 `gate.evaluate`의 `upheld`가
+    `any(normalize == UPHOLD)`라 uphold가 하나라도
     있으면 게이트는 그 Finding을 uphold로 읽으므로 이 함수도 0으로 맞춘다 - 다음은 반박, 그다음
     보류다. 지금은 `state.decisions[...] = (decision,)` 한 자리 대입이라 닿지 않는다."""
     ranks: dict[str, int] = {}
