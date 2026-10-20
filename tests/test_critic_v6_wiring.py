@@ -1,4 +1,4 @@
-"""Critic v6·v7의 실제 배선과 공유 SOURCE 계약 — 모델 판정 품질은 재지 않는다.
+"""Critic v6~v9의 실제 배선과 공유 SOURCE 계약 — 모델 판정 품질은 재지 않는다.
 
 서빙 판은 v9다(2026-10-14 v7 → 같은 날 v8 · 2026-10-18 v9 · `tests/test_critic_v9.py`).
 파일 이름은 v6 배선(#497) 때의 것이다."""
@@ -229,7 +229,7 @@ def test_non_slice_auditor_critic_and_pov_share_the_first_read(ctx):
     ("path", "required"),
     [
         ("PROJECT-CONTEXT.md", "Critic v9 · 근거 본문·SOURCE"),
-        ("config/profiles.yaml", "프롬프트는 v8이다"),
+        ("config/profiles.yaml", "프롬프트는 v9다"),
         ("config/budgets.yaml", "v1 metadata-only 경로의 수"),
         ("docs/agent-contracts.md", "Critic v1 → v6"),
         ("docs/build-plan.md", "#497 — Critic v6"),

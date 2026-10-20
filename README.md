@@ -55,8 +55,8 @@ small LLM. A Joern slicer, which uses no model, prepares the code the models rea
 | --- | --- |
 | 🔭 **Scout** | Picks the spots in the source that look vulnerable |
 | 🔍 **Auditor** | Reads a candidate and writes a Finding with evidence |
-| ⚖️ **Critic** | A model from another family argues against the Finding. Only Findings that hold up move on |
-| 💥 **PoV** | Builds a crashing input for a surviving Finding and submits it to the grader |
+| ⚖️ **Critic** | A model from another family argues against the Finding. Its verdict is one of the keys that order Findings for PoV |
+| 💥 **PoV** | Builds crashing inputs for Findings in that order and submits them to the grader |
 | 🔪 **Slicer** | Runs before the harness and writes `slices.json`, the code fragments to analyze — [rules](docs/slicer-README.md) |
 
 Code and `config/` are the source of truth; the docs summarize them. Project rules: [CLAUDE.md](CLAUDE.md).

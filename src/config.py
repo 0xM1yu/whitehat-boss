@@ -650,11 +650,13 @@ class Thresholds(HarnessModel):
     # 동작이다 — PoV는 8단계에 `VALIDATED`로 들어온 Finding만 돈다. 이 값을 올리면 그 밖에서도
     # 상위 몇 건을 더 시도한다(이슈 #386 ①의 후속).
     # **풀은 「Critic이 밀어 내지 않은 Finding」이다** — Critic이 반박으로 판정한 것만 뺀다(반박된
-    # Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`). ⏵ 2026-10-15 — 판정 호출이
+    # Finding의 PoC가 최종 제출이 되지 않게 — `runner._pov_targets`). (⏵ 2026-10-18 - 이 두 줄은
+    # 낡았다: 반박도 든다, 아래 ⏵ 2026-10-18.) ⏵ 2026-10-15 — 판정 호출이
     # 실패해 버려진 것은 이제 든다(ADR 0015 결정 4 ⏵).
     # ⏵ 2026-10-11 — 보류(`need_evidence`)는 들고 정렬·지정에서 뒤다(이슈 #604).
     # ⏵ 2026-10-18 — 반박(F-6)도 든다(이슈 #706 · @danielcho02 승인 · ADR 0015 결정 4 ⏵
-    # 2026-10-18). 풀은 `validated` 밖 Finding 전부이고 판정은 정렬 계단(반박 3 · 맨 뒤)만 정한다.
+    # 2026-10-18). 풀은 `validated` 밖 Finding 전부이고 판정은 정렬 계단(반박 3 · 같은 Auditor
+    # 결론 계단 안에서 맨 뒤)만 정한다.
     # 드는 것: Critic을 안 거친 Finding(`critic_top_n`에 잘린 것 ·
     # 6단계가 E0로 `QUEUED`한 것)과 재현 명세가 없어 `hypothesized`에 멈춘 것(F-9) 등이다.
     # ⚠ **풀은 이 기능이 처음 겨냥한 run의 Finding을 거르지 않는다** — 그 run(`run_20261003_0003`)의
@@ -804,8 +806,8 @@ class Thresholds(HarnessModel):
     # (`cli._undescribed_source_options`는 Auditor meta를 읽는다 — `AUDITOR_SOURCE_OPTIONS`).
     # `budgets.yaml`은 서빙 판(v16~v18 · ⏵ 2026-10-17 v19)이 서술해 1로 켠다. **Critic·PoV 좌석도
     # 같은 가드다**
-    # (#676): 이 줄을 선언한 판(Critic v8 · PoV v7 - meta `source_options`)이 아니면서 SOURCE를
-    # 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
+    # (#676): 이 줄을 선언한 판(Critic v8·v9 · PoV v7~v11 - meta `source_options`)이 아니면서
+    # SOURCE를 받는 판과 함께 켜면 `cli._undescribed_relayed_options`가 run·doctor에서 막는다
     # (`RELAYED_SOURCE_OPTIONS` · docs/agent-contracts.md §4).
     auditor_write_window_marker: int = Field(default=0, ge=0, le=1)
     # Auditor `SOURCE`에 sink 앞의 구문상 가드 목록을 붙이는가. 0이면 안 붙인다(결정 1-b 그대로).

@@ -288,7 +288,8 @@ DESIGNATION_SOLE_CANDIDATE = "sole_candidate"  # 후보가 하나뿐 — 선택�
 DESIGNATION_SOLE_POC = "sole_poc"  # 후보는 여럿인데 **바이트가 전부 같다** — 선택이 없었다
 DESIGNATION_VUL_CRASH = "vul_crash"  # 자기 vul 응답 코드 — 크래시 < 모름 < 크래시 아님 순
 DESIGNATION_SUBMITTED_OVER_RESCUED = "submitted_over_rescued"  # 같은 계단 - 제출이 구제를 이겼다
-DESIGNATION_CRITIC_VERDICT = "critic_verdict"  # Critic 판정 — uphold < 미경유·판정 호출 실패 < 보류
+# Critic 판정 — uphold < 미경유·판정 실패 < 보류 < 반박
+DESIGNATION_CRITIC_VERDICT = "critic_verdict"
 DESIGNATION_TOP_GRADE = "top_grade"  # 내부 근거 등급이 갈랐다
 DESIGNATION_TOP_CONFIDENCE = "top_confidence"  # 등급 동점 — `confidence`가 갈랐다
 DESIGNATION_SMALLEST_POC = "smallest_poc"  # 등급·confidence 동점 — 바이트가 작은 쪽

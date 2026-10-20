@@ -2,7 +2,7 @@
 
 v8의 `rebut`은 이미 절대값이다(5절: 축마다 약점이 필요로 하는 조건 · `rebut`은 그 조건이 성립
 못 한다). 그런데 Role 절의 「cannot occur as the Auditor decided」는 Auditor 결론에 대한 상대값으로
-읽힐 수 있다 - Critic 입력에 `trigger_status`가 없는데도(`critic._describe_claim`).
+읽힐 수 있다 - Critic 입력에 `trigger_status` 필드가 없는데도(`critic._describe_claim`).
 묶는 것은 넷이다.
 
 1. **v8은 한 글자도 안 바뀌었다** - prefix·body sha256(`prompts/critic/v8/meta.yaml`의 기록).
@@ -110,7 +110,9 @@ def test_v9_prefix_is_the_v8_prefix_with_exactly_the_two_recorded_edits() -> Non
 
 
 def test_v9_no_longer_ties_rebut_to_the_auditor_decision() -> None:
-    """Critic은 Auditor 결론을 못 본다 - 그것에 기대 `rebut`을 정의하는 문장이 남으면 안 된다."""
+    """Critic 입력에 `trigger_status` 필드는 없다 - Auditor의 판단에 기대 `rebut`을 정의하는 문장이
+    남으면 안 된다(`no_signal`은 CLAIM의 「CWE 없음」으로 드러날 수 있지만 `rebut`의 뜻은
+    5절 정의다)."""
     assert "as the Auditor decided" not in _text(_V9 / "prefix.md")
 
 

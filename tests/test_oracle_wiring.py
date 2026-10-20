@@ -2302,3 +2302,28 @@ def test_a_rebutted_poc_loses_on_the_same_crash_tier_but_wins_when_it_alone_cras
 
     assert both == (held_crashed, "critic_verdict", None)
     assert alone == (rebutted, "vul_crash", None)
+
+
+def test_a_rebutted_poc_wins_on_an_earlier_code_tier_or_as_submitted_over_rescued() -> None:
+    """반박 PoC가 이기는 나머지 두 길(⏵ 2026-10-18 이슈 #706 - `runner._pov_targets` docstring의
+    (i)·(ii)). (i) 응답 코드가 「모름」이면 「크래시 아님」인 uphold PoC보다 계단이 앞선다.
+    (ii) 같은 계단에서 자기는 제출이고 상대는 구제된 중간 gen이면 제출 여부 계단에서 앞선다."""
+    grades = {"f_rebut": EvidenceGrade.E0, "f_upheld": EvidenceGrade.E4}
+    verdicts = {"f_rebut": 3, "f_upheld": 0}
+    unknown = _coded("f_rebut", b"\x01rebut", None)
+    no_crash = _coded("f_upheld", b"\x02upheld", 0)
+
+    got = runner._designate_final(
+        _ledger_of(no_crash, unknown), grades, _flat(*grades), verdicts
+    )
+
+    assert got == (unknown, "vul_crash", None)
+
+    submitted = _coded("f_rebut", b"\x01rebut", 1)
+    rescued = vul_ok("f_upheld", b"\x02upheld", _SUB, wall_ms=1, designatable=False)
+
+    got = runner._designate_final(
+        _ledger_of(rescued, submitted), grades, _flat(*grades), verdicts
+    )
+
+    assert got == (submitted, "submitted_over_rescued", None)

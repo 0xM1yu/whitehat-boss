@@ -9,7 +9,7 @@
 > 판정 B(점수): **없음.** `poc_records` 0행. #695로 GT 슬라이스(`slice_0524`)가 컷에 들었지만, Auditor `SOURCE` 조립이 GT 함수를 상한 밖으로
 > 밀어(#702 → PR #703에서 수정) Auditor가 GT를 보지 못했다. Finding 8개 중 GT 함수(`file_regexec`)를 다룬 것은 0이다. Critic이 근거로 「취약하다」고 쓴 Finding 둘은
 > `rebut`으로 빠졌다 — 하나는 모델이 근거와 반대로 판정했고, 하나는 Critic의 「Auditor 판단 반박」을 하네스가 「취약점 기각」으로 읽었다(§3 Critic · #706).
-> ⏵ 2026-10-18 — **이 둘째 해석은 틀렸다.** 둘 다 모델이 근거와 반대로 판정한 것이다(§3 Critic의 ⏵ 정정).
+> ⏵ 2026-10-18 — **이 둘째 해석은 틀렸다.** v8 5절 정의로 보면 둘 다 근거와 반대로 판정한 것이다 — 모델이 왜 그렇게 냈는지는 미측정이다(§3 Critic의 ⏵ 정정).
 > PoV는 사고(reasoning)에서는 6/6 GT 경로를 다뤘지만 `spec` 없는 `gen`만 냈다(#704).
 >
 > ⚠ **이 run은 수정 전 코드다.** `8e843c45` 기준이다. 이 run이 드러낸 결함 중 #698·#602(PR #699 · Auditor v18)와 #702(PR #703 · Auditor v19)는
@@ -53,8 +53,8 @@
 | #695 효과 | ✅ 8번째 타깃이 `slice_0524`(`desc_symbol: file_regexec` · `desc_reserved: true`)로 바뀌었다. 1~7번은 10-16 run과 같다 [실측, trace `target_planned`] |
 | GT 분석 | 🔴 **안 됐다.** `slice_0524`의 Auditor `SOURCE`에 `file_regexec`·`softmagic.c`가 없었고(#702), Auditor 후보 셋 중 GT를 lookup한 것은 0이다 |
 | Auditor | 후보 13 · 호출 39 · Finding 8(triggerable 1) · **스키마 실패로 소실 5**(#602) · 컴파일 경로 probe 3/3 실패(#698) |
-| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706). ⏵ 2026-10-18 — 정정: 원인은 같다, 둘 다 판정–근거 불일치다 |
-| PoV | 대상 풀 5건 중 1순위 `find_0008`(「취약하지 않다」로 굳은 Finding)만 시도했다 [계산값, 코드] · 3 hop 6시도 모두 `gen`에 `spec` 없음 → hop 3 프롬프트(`0073_pov_hop3.md`)를 쓴 뒤 운영자 중단(#704) |
+| Critic | 6건 · `rebut` 3 · `need_evidence` 2 · `uphold` 1. **`rebut` 둘은 근거가 「취약하다」인데 Finding이 기각됐다** — 원인은 둘이 다르다(§3 Critic · #706). ⏵ 2026-10-18 — 정정: 분류는 같다(둘 다 판정–근거 불일치 - rationale은 「취약」인데 `rebut`). 모델이 왜 그렇게 냈는지는 미측정이다 |
+| PoV | 대상 풀 5건 중 1순위 `find_0008`(「취약하지 않다」로 굳은 Finding — ⏵ 2026-10-18 — 「동의」로 단정할 수 없다: `uphold`는 CLAIM의 약점이 SOURCE상 성립한다는 판정이고 Critic 입력에 `trigger_status` 필드는 없다. 다만 `no_signal`은 `cwe`가 null이면 CLAIM에 「CWE 없음」으로 드러날 수 있어, 이 건의 `uphold`가 무엇을 지지했는지는 판정 원문(`state.db` · 이 장비에 없다) 없이 가르지 못한다(§3 Critic의 ⏵ 정정))만 시도했다 [계산값, 코드] · 3 hop 6시도 모두 `gen`에 `spec` 없음 → hop 3 프롬프트(`0073_pov_hop3.md`)를 쓴 뒤 운영자 중단(#704) |
 | 판정 B — 점수 | **없음.** 채점기 제출 0 · `poc_records` 0행 [실측, `poc.db`] |
 
 ## 2. 실험 환경
@@ -153,10 +153,10 @@
 - ADR 0015는 「근거 없는 `rebut`」을 다룬다. 이 건들은 근거가 있는 `rebut`의 방향 문제라 그 결정 밖이다.
 
 ⏵ 2026-10-18 — **정정**(council 2026-10-18 4/4 · 이슈 #706). 위 둘째·셋째 불릿 — 「`dec_0004`는 정의대로 쓴 `rebut`이다」 ·
-「`rebut`의 뜻은 Auditor 결론과 반박 축을 함께 봐야 정해진다」 — 는 **틀렸다.** v8 prefix 13행(「as the Auditor decided」)만 읽고 같은
+「`rebut`의 뜻은 Auditor 결론과 반박 축을 함께 봐야 정해진다」 — 와 다섯째 불릿의 「근거가 있는 `rebut`의 방향 문제」는 **틀렸다.** v8 prefix 13행(「as the Auditor decided」)만 읽고 같은
 파일 5절을 대조하지 않았다(CLAUDE.md §2.1). 5절은 축마다 「약점이 필요로 하는 조건」을 정의하고(`guard` = *no guard blocks every triggering
-value*) `rebut`은 그 조건이 성립 못 한다는 것이다 — Auditor 결론과 무관한 **절대값**이고, Critic은 그 결론(`trigger_status`)을 보지도 않는다
-(넷째 불릿). 그래서:
+value*) `rebut`은 그 조건이 성립 못 한다는 것이다 — Auditor 결론과 무관한 **절대값**이다. Critic 입력에 `trigger_status` 필드도 없다(넷째 불릿 - 다만 `no_signal`은
+`cwe`가 null이면 CLAIM에 「CWE 없음」으로 드러날 수 있다). 그래서:
 
 - `dec_0004`의 rationale(「가드가 음수 `off`를 막지 못한다」)은 5절대로면 `uphold`의 근거다 — `dec_0001`과 **같은 판정–근거 불일치**다.
 - `dec_0005`는 대조군이 아니라 정의대로 쓴 `rebut`이다(`reachability` 조건이 성립 못 한다 → 취약하지 않다).
@@ -176,7 +176,7 @@ value*) `rebut`은 그 조건이 성립 못 한다는 것이다 — Auditor 결�
 | 2 | 10,412 · 8,488 | stop · stop | 893.8초 | 같음 |
 
 - **대상 선정** [계산값 — `8e843c45`의 `_pov_targets`를 `state.db`에 적용. 대상 목록을 남기는 trace 이벤트는 없다]: `VALIDATED`가 0건이라, 대상은 `pov_attempt_top_n: 8`이 붙이는 추가 풀뿐이었다. 추가 풀은 Critic `rebut` 셋(`find_0002`·`0005`·`0010`)을 뺀 5건이다. 정렬 키는 (Critic 판정 계단, −`confidence`, id)다(`_verdict_ranks_by_finding`: uphold 0 · 판정 없음 1 · `need_evidence` 2). 결과는 `find_0008`(uphold) → `find_0012` → `find_0013`(판정 없음) → `find_0004` → `find_0009`(`need_evidence`) 순이다. 첫 대상에서 run이 멈춰 나머지 넷은 돌지 않았다.
-- **이 순서는 Auditor 결론을 보지 않는다.** `find_0008`은 Auditor `no_signal`을 Critic이 `uphold`한 것, 즉 「취약하지 않다」에 둘이 동의한 Finding이다. 그런데 계단 0이라 맨 앞에 섰다. 풀에서 Auditor 결론이 취약 쪽에 가장 가까운 것은 `find_0004`(`reachability_unknown`)였다.
+- **이 순서는 Auditor 결론을 보지 않는다.** `find_0008`은 Auditor `no_signal`을 Critic이 `uphold`한 것, 즉 「취약하지 않다」에 둘이 동의한 Finding이다(⏵ 2026-10-18 — 「동의」로 단정할 수 없다: `uphold`는 CLAIM의 약점이 SOURCE상 성립한다는 판정이고 Critic 입력에 `trigger_status` 필드는 없다. 다만 `no_signal`은 `cwe`가 null이면 CLAIM에 「CWE 없음」으로 드러날 수 있어, 이 건의 `uphold`가 무엇을 지지했는지는 판정 원문(`state.db` · 이 장비에 없다) 없이 가르지 못한다(§3 Critic의 ⏵ 정정)). 그런데 계단 0이라 맨 앞에 섰다. 풀에서 Auditor 결론이 취약 쪽에 가장 가까운 것은 `find_0004`(`reachability_unknown`)였다.
 - 응답 여섯은 모두 `{"action":"gen","rationale":"…","poc_sha256":null}`이다. 빠진 것은 `spec`이다 [실측, `prompts/007[0-2]_pov*_response*.txt`].
 - **무엇을 겨냥했나.** 사고(`*_reasoning*.txt`)는 여섯 모두 과제 설명의 regexec/pmatch 경로를 다뤘다. 응답의 rationale은 셋(`0070` 재시도 · `0071` · `0071` 재시도)이 regexec 또는 pmatch·MSan을 직접 말했다. 둘(`0070` · `0072`)은 「regex match 경로」라고만 썼고, 하나(`0072` 재시도)는 regex 언급 없이 「앞 두 턴이 스키마 오류였으니 빌드가 도는지 본다」였다 [실측].
 - 원인은 스키마다 — `PovActionNamed`의 JSON 스키마는 `required: [action, rationale]`이고 판별 합이 아니라, 디코더가 `spec` 없는 `gen`을 허용한다. PR #699는 Auditor만 판별 합으로 바꿨다 → **#704**. 연속 파싱 실패 상한이 없어 17 hop까지 갈 수 있었다 → #613에 측정 코멘트.
