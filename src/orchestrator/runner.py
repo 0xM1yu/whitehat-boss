@@ -1710,12 +1710,15 @@ def _pov_targets(
     빼면 그런 Finding의 PoV 기회가 영영 없고, 들이면 상한 안의 자리를 쓴다 - Auditor 결론 계단이
     먼저라 `triggerable` 반박은 1순위도 된다(아래 대가).
     ⚠ **대가 - 반박된 Finding의 PoC도 최종 제출이 될 수 있다.** `_designation_key`에서 판정 계단은
-    셋째다(자기 `vul` 응답 코드 · 제출 여부 다음). 앞 두 계단이 같은 후보끼리는 반박 PoC가 지므로,
-    최종이 되는 것은 그 두 계단에서 앞설 때(혼자 크래시를 냈다)와 후보가 그것뿐일 때
-    (`sole_candidate`)다. 그리고 이 풀 정렬에서는 Auditor 결론 계단이 판정 계단 **앞**이라
-    (⏵ 2026-10-17) 반박이 맨 뒤인 것은 **같은 Auditor 결론 계단 안에서만**이다 - `triggerable`인
-    반박 Finding은 `guarded`인 uphold Finding보다 앞선다. `_designation_key`에는 Auditor 계단이
-    없다.
+    셋째다(자기 `vul` 응답 코드 계단 · 제출 여부 다음). 반박 PoC가 다른 판정의 후보를 이기는 것은
+    (i) 자기 `vul` 응답 코드 계단이 상대보다 앞설 때(크래시 < 모름 < 크래시 아님 - 둘 다 크래시면
+    같은 계단이라 이 계단으로는 못 이긴다), (ii) 같은 계단에서 자기는 제출이고 상대는 구제된 중간
+    gen일 때뿐이다. 앞 두 계단이 같으면 판정 계단에서 진다. 후보가 전부 반박이면 판정 계단이
+    동점이라 앞 두 계단 다음에 등급 이하가 가르고, 후보가 하나면 그것이 최종이다(`sole_candidate`).
+    그리고 이 풀 정렬에서는 Auditor 결론 계단이 판정 계단
+    **앞**이라(⏵ 2026-10-17) 반박이 맨 뒤인 것은 **같은 Auditor 결론 계단 안에서만**이다 -
+    `triggerable`인 반박 Finding은 `guarded`인 uphold Finding보다 앞선다. `_designation_key`에는
+    Auditor 계단이 없다.
 
     **왜 뚫었나.** 2026-10-03 첫 실모델·실도구 run은 완주했는데 PoV가 **0건**이었다. 그 run의
     Finding 셋은 `evidence_refs`와 `repro_spec`이 전부 비어 6단계가 E0로 `QUEUED`
@@ -1765,9 +1768,11 @@ def _pov_targets(
     동점은 `finding_id`(정렬이 흔들리면 재현 실행이 갈라진다).
     ⏵ 2026-10-17 — Auditor 결론 계단을 맨 앞에 붙였다. 2026-10-16 arvo:1065 run
     (`run_20261016_0001` · `8e843c45`)에서 Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이
-    판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다. Critic 입력에 `trigger_status`가
-    없어(`nodes/critic._describe_claim` - CLAIM은 제목·CWE뿐) Critic 계단은 Auditor 결론을 담지
-    않는다(`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3).
+    판정 계단 0으로 1순위가 돼 PoV의 유일한 시도를 가져갔다. Critic 입력에 `trigger_status` 필드는
+    없다(`nodes/critic._describe_claim` - CLAIM은 제목·CWE). 다만 `no_signal`은 Auditor가 `cwe`를
+    null로 내면 CLAIM에 「CWE 없음」으로 드러날 수 있다. Critic 계단이 Auditor 결론 계단을 대신하지
+    못하는 것은 Critic의 판정 대상이 CLAIM의 약점이 성립하는가라서다
+    (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3).
     ⏵ 2026-10-18 (이슈 #706) - 전 판의 「Critic 계단은 Critic이 Auditor의 결론을 지지했는가」는
     `rebut`·`uphold`를 Auditor 결론에 대한 상대값으로 읽은 서술이라 지웠다 - Critic v8 prefix
     5절의 판정은 CLAIM의 약점이 성립하는가다. 그 run의 풀은 반박도 들면서 `find_0005`

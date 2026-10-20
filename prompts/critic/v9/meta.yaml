@@ -1,7 +1,7 @@
 # 2026-10-18 - v8을 잇는 새 판(이슈 #706 · council 2026-10-18 · @danielcho02 승인). `rebut`의 뜻을 바꾸지 않고 **읽히는 방향**만 고정한다.
 # v8의 `rebut`은 이미 절대값이다 - 5절이 축마다 「약점이 필요로 하는 조건」을 정의하고(`guard` = *no guard blocks every triggering value*)
 # `rebut`은 그 조건이 성립 못 한다는 것이다. 그런데 Role 절 13행의 「cannot occur as the Auditor decided」는 Auditor 결론에 대한 상대값으로
-# 읽힐 수 있고(Critic 입력에 `trigger_status`는 없다 - `nodes/critic._describe_claim`), 2026-10-16 arvo:1065 run(`run_20261016_0001`)의
+# 읽힐 수 있고(Critic 입력에 `trigger_status` 필드는 없다 - `nodes/critic._describe_claim` · 다만 `no_signal`은 CLAIM의 「CWE 없음」으로 드러날 수 있다), 2026-10-16 arvo:1065 run(`run_20261016_0001`)의
 # `rebut` 3건 중 2건(dec_0001 arithmetic · dec_0004 guard)이 rationale로는 「취약하다」를 쓰고 `rebut`을 냈다
 # (`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 Critic).
 # - body는 v8과 바이트 동일이다. prefix는 두 자리만 v8과 다르다. (1) 13행 - 「the weakness at the PATH sink step cannot occur as the Auditor
@@ -12,11 +12,11 @@
 # 불변 기록: 이 판의 sha는 아래 값이다. 이 판을 바꾸면 새 판을 세운다(`docs/agent-contracts.md` §4 규칙 1).
 #   prefix.md sha256 `c9c53207a6da6710f897f95eeb33af899219bf51ea3431f91120aa5edc83deb6`
 #   body.md   sha256 `44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2` (v8·v7 body와 같다)
-# ⚠ 이 판은 어느 run에도 안 쓰였다. 이 두 문장이 판정–근거 불일치(rationale은 「취약」인데 `rebut`)를 줄이는지는 미실측이다(n=1 run의 2/3이 근거의 전부다).
+# ⚠ 이 판은 어느 run에도 안 쓰였다(2026-10-18 기준). 이 두 문장이 판정–근거 불일치(rationale은 「취약」인데 `rebut`)를 줄이는지는 미실측이다(n=1 run의 2/3이 근거의 전부다).
 # v8 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
 role: critic
 version: v9
 output_schema: DecisionDraft
-description: Critic v8에서 rebut의 정의 한 줄을 Auditor 결론과 무관한 절대값으로 고치고, 반박 축이 단언하는 것과 조건이 성립한다는 근거는 uphold 쪽이라는 한 문단을 더한 판입니다. 판정 절차·출력 규칙·축 어휘는 v8과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
+description: Critic v8에서 rebut의 정의 한 줄을 Auditor 결론에 대한 상대값으로 읽히지 않게 고치고(v8의 rebut도 5절 정의로는 절대값이다), 반박 축이 단언하는 것과 조건이 성립한다는 근거는 uphold 쪽이라는 한 문단을 더한 판입니다. 판정 절차·출력 규칙·축 어휘는 v8과 같고 body는 바이트 동일입니다. 이 서술이 모델 판정을 바꾸는지는 이 저장소 run이 0건이라 미실측입니다.
 # v8과 같은 선언이다(PR #676 가드 - `cli._undescribed_relayed_options`가 읽는다). v9 prefix의 SOURCE 서술은 v8과 바이트 동일이다.
 source_options: [auditor_write_window_marker, auditor_input_context]

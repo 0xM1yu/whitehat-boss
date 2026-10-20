@@ -983,7 +983,7 @@ def test_no_live_source_states_the_old_rebut_rule_in_the_present_tense() -> None
     # 옛 규칙과 무관하게 `uphold`를 읽는 문장). 이 문형들이 실제로 나타나는 이유: 이 PR이 옛 규칙을
     # 지우며 남긴 ⏵ 노트가 전부 이 모양이다.
     for sample in (
-        # runner.py:1438 - `전엔`
+        # runner.py(그 문단은 ⏵ 2026-10-18 이슈 #706로 지웠다 - 문형 표본으로 남긴다) - `전엔`
         "    전엔 `uphold`로 정규화돼 등급·정렬에서 uphold로 읽혔다). 보류(`need_evidence`, F-7)는",
         # decision.py:78 - 괄호 안 `전엔`
         "        남긴다 (⏵ 2026-10-13, ADR 0015 - 전엔 `uphold`로 정규화했다). 여기서 판정만",

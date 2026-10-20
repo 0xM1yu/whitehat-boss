@@ -92,7 +92,7 @@ body 머리 문장도 「전부」라 하지 않는다 — 분석 대상 코드�
 `facts_source`」, 이슈 #67). ⏵ 2026-10-15 — 「전부」라 하지 않는 body는 그 판들만이 아니다.
 **PoV v7~v11**는 `facts_source: false`가 아니면서도 「JSON의 Finding 데이터는
 `finding_id`뿐」이라 적는다(CWE·제목·경로·촉발 상태는 산문 Vulnerability 절 - 이슈 #649).
-**Critic v4~v8**은 「전부」를 「추가 사실
+**Critic v4~v9**은 「전부」를 「추가 사실
 (additional facts)의 전부」로 좁힌다(CLAIM·PATH·EVIDENCE는 산문 블록이다). 「전부」를 그대로
 선언하는 body는 Critic v1~v3 · PoV v2~v6 · Auditor v1~v12(v4_t1 포함) · Scout v1·v2 · scout_* v2 ·
 single v2다(2026-10-15 `prompts/*/*/body.md`를 전부 읽어 센 값 — scout_* v3·v4는 선언하지 않는다).
@@ -753,7 +753,7 @@ def build_facts(
         # ⏵ 2026-10-10 — `facts_source: false` 판(Auditor v13~v19)은 `source`를 여기
         # 안 싣고 body가 「전부」라 하지 않는다(아래 `include_source` · 이슈 #67). 캡슐 섹션 본문은
         # 그 판도 싣는다. ⏵ 2026-10-15 — 「전부」라 못박는 body는 모든 판이 아니다: PoV v7~v11은
-        # 하지 않고(이슈 #649) Critic v4~v8은 「추가 사실의 전부」로 좁힌다(모듈 docstring
+        # 하지 않고(이슈 #649) Critic v4~v9는 「추가 사실의 전부」로 좁힌다(모듈 docstring
         # 「body의 마지막 json 펜스」).
         "capsule_sections": [
             {

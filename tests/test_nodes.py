@@ -1146,7 +1146,7 @@ def test_the_threshold_does_not_widen_the_validate_run_gate(ctx: RunContext) -> 
 # 판정 없음 1 < 보류 2 < 반박 3 · ⏵ 2026-10-17부터 그 앞에 Auditor 결론 계단). 전엔 반박(F-6)을
 # 풀에서 뺐다(#490 MEDIUM-2 - 반박 PoC가 최종 제출이 되지 않게). ⏵ 2026-10-11 보류(이슈 #604) ·
 # ⏵ 2026-10-15 판정 호출 실패 · ⏵ 2026-10-18 반박 순으로 들였다. 아래 검사들은 **상한에 자리가
-# 남는 모양**으로 반박이 실제로 들고 맨 뒤에 서는지를 문다.
+# 남는 모양**으로 반박이 실제로 들고 같은 Auditor 계단 안에서 맨 뒤에 서는지를 문다.
 
 
 def _critic_decision(finding_id: str, verdict: Verdict, *, grounded: bool) -> Decision:
@@ -1341,7 +1341,9 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state, [])] == ["find_0002"]
 
-    rebutted = _finding("find_0003", state=FindingState.QUEUED, confidence=0.5)
+    # 반박의 `confidence`를 보류(0.99)보다 높여 계단 값만으로 가르게 한다 - 0.5면 반박을
+    # 계단 2에 두는 변이도 `confidence`로 같은 결과가 나왔다.
+    rebutted = _finding("find_0003", state=FindingState.QUEUED, confidence=1.0)
     state2 = runner._Accumulator()
     state2.update(held)
     state2.update(rebutted)
@@ -1351,6 +1353,11 @@ def test_a_held_finding_cannot_take_the_slot_of_an_upheld_one_but_takes_a_rebutt
     )
 
     assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == ["find_0001"]
+    _with_top_n(ctx, 2)
+    assert [f.finding_id for f in runner._pov_targets(ctx, state2, [])] == [
+        "find_0001",
+        "find_0003",
+    ], "상한 2면 반박도 든다(⏵ 2026-10-18 이슈 #706) - 같은 Auditor 계단 안에서 보류 뒤다"
 
 
 def _ladder_state() -> runner._Accumulator:
@@ -1412,7 +1419,8 @@ def test_the_extra_pov_pool_orders_upheld_then_uncritiqued_then_held_then_rebutt
     ctx: RunContext, limit: int, expected: list[str]
 ) -> None:
     """상한이 차는 쪽에서 자르는 순서다 - `confidence`는 거꾸로(0.1 · 0.3 · 0.85)여도 판정 계단이
-    앞선다. 반박(`find_0004` · 0.99)은 맨 뒤다(⏵ 2026-10-18 이슈 #706 - 전엔 풀 밖이었다). 미경유를
+    앞선다. 반박(`find_0004` · 0.99)은 Auditor 계단이 같은 이 사다리에서 맨 뒤다(⏵ 2026-10-18
+    이슈 #706 - 전엔 풀 밖이었다). 미경유를
     보류와 같은 계단에 두거나(`not any(UPHOLD)`) uphold와 같은 계단에 두는 변이는 상한 1·2에서,
     반박을 보류 앞에 두는 변이는 상한 3에서 빨개진다."""
     _with_top_n(ctx, limit)
@@ -1537,8 +1545,9 @@ def test_the_extra_pov_pool_reads_the_auditor_conclusion_first_on_the_20261016_r
     ctx: RunContext, limit: int, expected: list[str]
 ) -> None:
     """2026-10-16 run 재생이다. 전 판(`8e843c45`)의 순서는 `find_0008 → 0012 → 0013 → 0004 →
-    0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한(둘 다 「취약하지 않다」) `find_0008`이
-    PoV의 유일한 시도를 가져갔다. 이제 Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
+    0009`였다 - Auditor `no_signal`을 Critic이 `uphold`한 `find_0008`이 판정 계단 0으로
+    PoV의 유일한 시도를 가져갔다(Critic 입력에 `trigger_status` 필드는 없다 - 이슈 #706). 이제
+    Auditor 결론 계단이 Critic 계단 **앞**이라 풀에서 유일한
     `no_signal` 밖 결론인 `find_0004`(`reachability_unknown`)가 1순위였다. `no_signal` 넷 사이는
     종전 키(Critic 계단 → `confidence` → id)가 그대로 가른다.
     ⏵ 2026-10-18 (이슈 #706) - 반박 셋도 풀에 든다. 그래서 1순위는 Auditor `triggerable` · Critic
@@ -1606,7 +1615,7 @@ def test_the_auditor_rank_comes_before_the_critic_rank(
     ]
 
 
-def test_a_stage_7_rebuttal_puts_the_finding_last_in_the_extra_pov_pool(
+def test_a_stage_7_rebuttal_ranks_after_an_upheld_finding_in_the_same_auditor_tier(
     ctx: RunContext, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**실제 7단계가 쓴 `state.decisions`가 풀 정렬에 읽힌다** - 위 검사들은 `decisions`를 손으로

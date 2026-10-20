@@ -20,6 +20,7 @@
 #   prefix.md sha256 `e7cef14b7dca3072206c8853ccf09cbafbc6fe8d0bc8bb69c657d4558ab4c55f`
 #   body.md   sha256 `44860ed579585c49b351edc2ab3cbe1cd56bf54c0b073d0810f5015edd72bda2` (v7 body와 같다)
 # ⚠ 이 판은 어느 run에도 안 쓰였다. 디코더 블록을 슬라이스 코드로 오인하는지 · 표지 줄을 코드로 읽는지 · 관측 절을 Evidence로 오인하는지는 미실측이다.
+# ⏵ 2026-10-18 - 바로 위 줄은 그 날의 서술이다. v8은 2026-10-16 `run_20261016_0001`에서 한 번 돌았다(`docs/experiments/harness/2026-10-17-serving-run-arvo1065-vastai-remote.md` §3 · n=1). 위의 세 오인 여부는 여전히 미실측이다. 서빙은 v9다(이슈 #706).
 # v7 이하와 직접 비교하지 않는다(`docs/evaluation.md` §2.3 규칙 4).
 role: critic
 version: v8
